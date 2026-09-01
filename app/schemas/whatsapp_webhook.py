@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class WhatsAppWebhookPayload(BaseModel):
-    object: Literal["whatsapp_business_account"]
+    object: str = Field(min_length=1, max_length=128)
     entry: list[dict[str, Any]] = Field(min_length=1)
 
     model_config = ConfigDict(extra="allow")

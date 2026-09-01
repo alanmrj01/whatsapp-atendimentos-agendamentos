@@ -3,14 +3,19 @@ from __future__ import annotations
 import secrets
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
+from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.core.database import get_db
 from app.schemas.whatsapp_webhook import (
     WebhookAcknowledgement,
     WhatsAppWebhookPayload,
 )
+from app.whatsapp.processor import process_webhook_events
+from app.whatsapp.webhook import normalize_webhook_payload, verify_meta_signature
 
 router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp-webhook"])
 
@@ -42,7 +47,29 @@ async def verify_whatsapp_webhook(
 
 @router.post("", response_model=WebhookAcknowledgement)
 async def receive_whatsapp_webhook(
-    _: WhatsAppWebhookPayload,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    x_hub_signature_256: Annotated[
+        str | None, Header(alias="X-Hub-Signature-256")
+    ] = None,
 ) -> WebhookAcknowledgement:
-    # O conteúdo não é processado nem registrado nesta etapa da infraestrutura.
+    raw_body = await request.body()
+    app_secret = settings.meta_app_secret.get_secret_value()
+    if not verify_meta_signature(raw_body, x_hub_signature_256, app_secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid webhook signature",
+        )
+
+    try:
+        payload = WhatsAppWebhookPayload.model_validate_json(raw_body)
+    except ValidationError:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid request",
+        ) from None
+
+    events = normalize_webhook_payload(payload)
+    await process_webhook_events(session, events)
     return WebhookAcknowledgement(status="accepted")
