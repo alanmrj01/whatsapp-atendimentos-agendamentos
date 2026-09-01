@@ -30,10 +30,60 @@ def upgrade() -> None:
     op.add_column(
         "businesses",
         sa.Column(
+            "service_origin_latitude",
+            sa.Numeric(precision=9, scale=6),
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        "businesses",
+        sa.Column(
+            "service_origin_longitude",
+            sa.Numeric(precision=9, scale=6),
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        "businesses",
+        sa.Column(
+            "service_origin_is_precise",
+            sa.Boolean(),
+            server_default=sa.text("false"),
+            nullable=False,
+        ),
+    )
+    op.add_column(
+        "businesses",
+        sa.Column(
+            "travel_calculation_method",
+            sa.String(length=32),
+            server_default="configured_estimate",
+            nullable=False,
+        ),
+    )
+    op.add_column(
+        "businesses",
+        sa.Column(
             "default_travel_minutes",
             sa.Integer(),
-            server_default="30",
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        "businesses",
+        sa.Column(
+            "travel_fallback_allowed",
+            sa.Boolean(),
+            server_default=sa.text("false"),
             nullable=False,
+        ),
+    )
+    op.add_column(
+        "businesses",
+        sa.Column(
+            "travel_route_provider",
+            sa.String(length=64),
+            nullable=True,
         ),
     )
     op.add_column(
@@ -64,17 +114,45 @@ def upgrade() -> None:
         ),
     )
     op.create_check_constraint(
-        "ck_businesses_default_travel_minutes_nonnegative",
+        op.f("ck_businesses_default_travel_minutes_nonnegative"),
         "businesses",
-        "default_travel_minutes >= 0",
+        "default_travel_minutes IS NULL OR default_travel_minutes >= 0",
     )
     op.create_check_constraint(
-        "ck_businesses_travel_before_buffer_minutes_nonnegative",
+        op.f("ck_businesses_travel_calculation_method_allowed"),
+        "businesses",
+        "travel_calculation_method IN ('route', 'configured_estimate')",
+    )
+    op.create_check_constraint(
+        op.f("ck_businesses_travel_fallback_requires_minutes"),
+        "businesses",
+        "NOT travel_fallback_allowed OR default_travel_minutes IS NOT NULL",
+    )
+    op.create_check_constraint(
+        op.f("ck_businesses_service_origin_coordinates_together"),
+        "businesses",
+        "(service_origin_latitude IS NULL) = "
+        "(service_origin_longitude IS NULL)",
+    )
+    op.create_check_constraint(
+        op.f("ck_businesses_service_origin_latitude_range"),
+        "businesses",
+        "service_origin_latitude IS NULL OR "
+        "service_origin_latitude BETWEEN -90 AND 90",
+    )
+    op.create_check_constraint(
+        op.f("ck_businesses_service_origin_longitude_range"),
+        "businesses",
+        "service_origin_longitude IS NULL OR "
+        "service_origin_longitude BETWEEN -180 AND 180",
+    )
+    op.create_check_constraint(
+        op.f("ck_businesses_travel_before_buffer_minutes_nonnegative"),
         "businesses",
         "travel_before_buffer_minutes >= 0",
     )
     op.create_check_constraint(
-        "ck_businesses_travel_after_buffer_minutes_nonnegative",
+        op.f("ck_businesses_travel_after_buffer_minutes_nonnegative"),
         "businesses",
         "travel_after_buffer_minutes >= 0",
     )
@@ -184,7 +262,7 @@ def upgrade() -> None:
             "unknown_access_policy IN ('standard', 'conservative', 'human_quote')",
         ),
     ):
-        op.create_check_constraint(name, "services", condition)
+        op.create_check_constraint(op.f(name), "services", condition)
 
     op.add_column(
         "appointments",
@@ -288,7 +366,7 @@ def upgrade() -> None:
             "access_condition IN ('normal', 'difficult', 'unknown')",
         ),
     ):
-        op.create_check_constraint(name, "appointments", condition)
+        op.create_check_constraint(op.f(name), "appointments", condition)
 
     op.create_index(
         "uq_appointments_idempotency_key_present",
@@ -344,7 +422,7 @@ def downgrade() -> None:
         "ck_appointments_estimated_duration_minutes_positive",
         "ck_appointments_quantity_positive",
     ):
-        op.drop_constraint(name, "appointments", type_="check")
+        op.drop_constraint(op.f(name), "appointments", type_="check")
     for column_name in (
         "idempotency_key",
         "site_allowed_end",
@@ -370,7 +448,7 @@ def downgrade() -> None:
         "ck_services_included_quantity_positive",
         "ck_services_pricing_type_allowed",
     ):
-        op.drop_constraint(name, "services", type_="check")
+        op.drop_constraint(op.f(name), "services", type_="check")
     for column_name in (
         "asks_site_time_limit",
         "duration_margin_minutes",
@@ -393,14 +471,25 @@ def downgrade() -> None:
     for name in (
         "ck_businesses_travel_after_buffer_minutes_nonnegative",
         "ck_businesses_travel_before_buffer_minutes_nonnegative",
+        "ck_businesses_service_origin_longitude_range",
+        "ck_businesses_service_origin_latitude_range",
+        "ck_businesses_service_origin_coordinates_together",
+        "ck_businesses_travel_fallback_requires_minutes",
+        "ck_businesses_travel_calculation_method_allowed",
         "ck_businesses_default_travel_minutes_nonnegative",
     ):
-        op.drop_constraint(name, "businesses", type_="check")
+        op.drop_constraint(op.f(name), "businesses", type_="check")
     for column_name in (
         "travel_region_rules",
         "travel_after_buffer_minutes",
         "travel_before_buffer_minutes",
+        "travel_route_provider",
+        "travel_fallback_allowed",
         "default_travel_minutes",
+        "travel_calculation_method",
+        "service_origin_is_precise",
+        "service_origin_longitude",
+        "service_origin_latitude",
         "service_origin_address",
     ):
         op.drop_column("businesses", column_name)

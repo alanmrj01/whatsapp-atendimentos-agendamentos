@@ -87,7 +87,13 @@ def test_booking_configuration_upgrade_and_downgrade_sql() -> None:
 
     for column_name in (
         "service_origin_address",
+        "service_origin_latitude",
+        "service_origin_longitude",
+        "service_origin_is_precise",
+        "travel_calculation_method",
         "default_travel_minutes",
+        "travel_fallback_allowed",
+        "travel_route_provider",
         "pricing_type",
         "automatic_booking",
         "base_price",
@@ -103,6 +109,17 @@ def test_booking_configuration_upgrade_and_downgrade_sql() -> None:
     assert "make_interval(mins => travel_after_minutes)" in upgrade
     assert "uq_appointments_idempotency_key_present" in upgrade
     assert "tstzrange(starts_at, ends_at, '[)')" in downgrade
+    assert "default_travel_minutes integer" in upgrade
+    assert "default_travel_minutes integer default" not in upgrade
+    for constraint_name in (
+        "ck_businesses_travel_calculation_method_allowed",
+        "ck_businesses_travel_fallback_requires_minutes",
+        "ck_businesses_service_origin_coordinates_together",
+        "ck_businesses_service_origin_latitude_range",
+        "ck_businesses_service_origin_longitude_range",
+    ):
+        assert constraint_name in upgrade
+        assert f"drop constraint {constraint_name}" in downgrade
 
 
 def test_outbound_payload_migration_upgrade_and_downgrade_sql() -> None:

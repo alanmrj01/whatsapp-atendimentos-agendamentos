@@ -1,0 +1,252 @@
+{
+  "catalog_version": "2026.09.01.1",
+  "reviewed_at": "2026-09-01",
+  "currency": "BRL",
+  "scope": "Templates comerciais iniciais para climatização; não são tabela oficial nem orçamento vinculante.",
+  "initialization_policy": "Somente uma ação explícita de onboarding poderá copiar um template para uma nova empresa. A cópia passa a ser independente e nunca é atualizada automaticamente por este arquivo.",
+  "services": [
+    {
+      "template_id": "residential_split_simple_installation_v1",
+      "name": "Instalação simples de ar-condicionado split residencial",
+      "category": "residential_air_conditioning",
+      "average_duration_minutes": 180,
+      "duration_reference_range_minutes": {
+        "minimum": 120,
+        "maximum": 240
+      },
+      "reference_price": {
+        "currency": "BRL",
+        "minimum": "300.00",
+        "maximum": "1000.00",
+        "selected_initial": "600.00"
+      },
+      "pricing_type": "estimated",
+      "included_quantity": 1,
+      "additional_unit_duration_minutes": null,
+      "additional_unit_price": null,
+      "difficult_access_price": null,
+      "difficult_access_duration_minutes": null,
+      "duration_margin_minutes": 60,
+      "requires_human_quote": false,
+      "required_customer_fields": [
+        "quantity",
+        "address",
+        "access_condition"
+      ],
+      "handoff_conditions": [
+        "additional_unit_without_business_rule",
+        "difficult_or_unknown_access_without_business_rule",
+        "electrical_or_civil_preparation_not_ready",
+        "commercial_or_complex_installation",
+        "equipment_or_parts_required"
+      ],
+      "value_selection_note": "A referência de R$ 600 é o custo médio publicado. A duração-base de 180 minutos é o ponto médio da faixa publicada de 2 a 4 horas; a margem de 60 minutos leva a reserva conservadora ao limite superior. Aplicável somente ao cenário residencial simples descrito.",
+      "research_reviewed_at": "2026-09-01",
+      "sources": [
+        {
+          "title": "Quanto custa instalação de ar-condicionado?",
+          "url": "https://www.getninjas.com.br/reformas-e-reparos/eletricista/preco/instalacao-de-ar-condicionado",
+          "source_type": "market_reference",
+          "accessed_at": "2026-09-01",
+          "supports": [
+            "reference_price_range",
+            "selected_initial_price",
+            "duration_range"
+          ]
+        }
+      ]
+    },
+    {
+      "template_id": "air_conditioning_cleaning_v1",
+      "name": "Limpeza e higienização de ar-condicionado",
+      "category": "air_conditioning_maintenance",
+      "average_duration_minutes": null,
+      "duration_reference_range_minutes": null,
+      "reference_price": {
+        "currency": "BRL",
+        "minimum": "100.00",
+        "maximum": "450.00",
+        "selected_initial": "250.00"
+      },
+      "pricing_type": "human_quote",
+      "included_quantity": 1,
+      "additional_unit_duration_minutes": null,
+      "additional_unit_price": null,
+      "difficult_access_price": null,
+      "difficult_access_duration_minutes": null,
+      "duration_margin_minutes": null,
+      "requires_human_quote": true,
+      "required_customer_fields": [],
+      "handoff_conditions": [
+        "scope_and_equipment_require_human_validation",
+        "difficult_access",
+        "equipment_condition_uncertain"
+      ],
+      "value_selection_note": "A fonte publica faixa e custo médio, mas não sustenta uma duração operacional única; por isso os valores são apenas referência e o template permanece human_quote.",
+      "research_reviewed_at": "2026-09-01",
+      "sources": [
+        {
+          "title": "Quanto custa uma limpeza de ar-condicionado?",
+          "url": "https://www.getninjas.com.br/assistencia-tecnica/ar-condicionado/preco/limpeza-ar-condicionado",
+          "source_type": "market_reference",
+          "accessed_at": "2026-09-01",
+          "supports": [
+            "reference_price_range",
+            "selected_initial_price",
+            "variation_by_scope_equipment_access_and_region"
+          ]
+        }
+      ]
+    },
+    {
+      "template_id": "preventive_air_conditioning_maintenance_v1",
+      "name": "Manutenção preventiva de ar-condicionado",
+      "category": "air_conditioning_maintenance",
+      "average_duration_minutes": null,
+      "duration_reference_range_minutes": null,
+      "reference_price": {
+        "currency": "BRL",
+        "minimum": "170.00",
+        "maximum": "300.00",
+        "selected_initial": null
+      },
+      "pricing_type": "human_quote",
+      "included_quantity": 1,
+      "additional_unit_duration_minutes": null,
+      "additional_unit_price": null,
+      "difficult_access_price": null,
+      "difficult_access_duration_minutes": null,
+      "duration_margin_minutes": null,
+      "requires_human_quote": true,
+      "required_customer_fields": [],
+      "handoff_conditions": [
+        "maintenance_plan_and_scope_require_human_validation",
+        "equipment_or_parts_required",
+        "commercial_pmoc_scope"
+      ],
+      "value_selection_note": "A faixa de mercado não define escopo, duração ou valor único seguro. O atendente deve planejar o serviço antes do agendamento.",
+      "research_reviewed_at": "2026-09-01",
+      "sources": [
+        {
+          "title": "Quanto custa manutenção de ar-condicionado?",
+          "url": "https://www.getninjas.com.br/assistencia-tecnica/ar-condicionado/preco/manutencao-de-ar-condicionado",
+          "source_type": "market_reference",
+          "accessed_at": "2026-09-01",
+          "supports": [
+            "preventive_maintenance_reference_price_range",
+            "variation_by_type_model_complexity_and_parts"
+          ]
+        }
+      ]
+    },
+    {
+      "template_id": "corrective_diagnosis_v1",
+      "name": "Diagnóstico ou manutenção corretiva",
+      "category": "air_conditioning_corrective",
+      "average_duration_minutes": null,
+      "duration_reference_range_minutes": null,
+      "reference_price": {
+        "currency": "BRL",
+        "minimum": "400.00",
+        "maximum": "500.00",
+        "selected_initial": null
+      },
+      "pricing_type": "human_quote",
+      "included_quantity": 1,
+      "additional_unit_duration_minutes": null,
+      "additional_unit_price": null,
+      "difficult_access_price": null,
+      "difficult_access_duration_minutes": null,
+      "duration_margin_minutes": null,
+      "requires_human_quote": true,
+      "required_customer_fields": [],
+      "handoff_conditions": [
+        "diagnosis_uncertain",
+        "equipment_or_parts_required",
+        "scope_or_duration_unknown"
+      ],
+      "value_selection_note": "A faixa é somente referência de mercado e pode não incluir componentes. Diagnóstico, peças, duração e preço aprovado dependem de atendimento humano.",
+      "research_reviewed_at": "2026-09-01",
+      "sources": [
+        {
+          "title": "Quanto custa manutenção de ar-condicionado?",
+          "url": "https://www.getninjas.com.br/assistencia-tecnica/ar-condicionado/preco/manutencao-de-ar-condicionado",
+          "source_type": "market_reference",
+          "accessed_at": "2026-09-01",
+          "supports": [
+            "corrective_maintenance_reference_price_range",
+            "parts_and_complexity_price_variation"
+          ]
+        }
+      ]
+    },
+    {
+      "template_id": "commercial_hvac_project_v1",
+      "name": "Projeto, instalação ou PMOC comercial",
+      "category": "commercial_hvac",
+      "average_duration_minutes": null,
+      "duration_reference_range_minutes": null,
+      "reference_price": null,
+      "pricing_type": "human_quote",
+      "included_quantity": null,
+      "additional_unit_duration_minutes": null,
+      "additional_unit_price": null,
+      "difficult_access_price": null,
+      "difficult_access_duration_minutes": null,
+      "duration_margin_minutes": null,
+      "requires_human_quote": true,
+      "required_customer_fields": [],
+      "handoff_conditions": [
+        "commercial_project_requires_human_planning",
+        "pmoc_scope_requires_responsible_professional",
+        "equipment_or_parts_required"
+      ],
+      "value_selection_note": "Nenhum preço ou tempo automático: a legislação estabelece obrigações técnicas para sistemas de climatização, mas não fornece referência comercial aplicável ao caso concreto.",
+      "research_reviewed_at": "2026-09-01",
+      "sources": [
+        {
+          "title": "Lei nº 13.589, de 4 de janeiro de 2018",
+          "url": "https://www.presidencia.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13589.htm",
+          "source_type": "official_regulation",
+          "accessed_at": "2026-09-01",
+          "supports": [
+            "pmoc_and_technical_scope_requires_case_specific_planning"
+          ]
+        }
+      ]
+    },
+    {
+      "template_id": "equipment_and_parts_v1",
+      "name": "Equipamentos, componentes e peças",
+      "category": "equipment_and_parts",
+      "average_duration_minutes": null,
+      "duration_reference_range_minutes": null,
+      "reference_price": null,
+      "pricing_type": "human_quote",
+      "included_quantity": null,
+      "additional_unit_duration_minutes": null,
+      "additional_unit_price": null,
+      "difficult_access_price": null,
+      "difficult_access_duration_minutes": null,
+      "duration_margin_minutes": null,
+      "requires_human_quote": true,
+      "required_customer_fields": [],
+      "handoff_conditions": [
+        "equipment_or_parts_always_require_human_quote"
+      ],
+      "value_selection_note": "Sem valor ou duração automática. Disponibilidade, compatibilidade e custo de peças variam por diagnóstico e fornecedor.",
+      "research_reviewed_at": "2026-09-01",
+      "sources": [
+        {
+          "title": "Quanto custa manutenção de ar-condicionado?",
+          "url": "https://www.getninjas.com.br/assistencia-tecnica/ar-condicionado/preco/manutencao-de-ar-condicionado",
+          "source_type": "market_reference",
+          "accessed_at": "2026-09-01",
+          "supports": [
+            "parts_and_components_materially_change_total_price"
+          ]
+        }
+      ]
+    }
+  ]
+}

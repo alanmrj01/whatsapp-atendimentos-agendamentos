@@ -2,12 +2,42 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 from app.schemas.whatsapp_webhook import WhatsAppWebhookPayload
 
 SUPPORTED_MESSAGE_STATUSES = {"sent", "delivered", "read", "failed"}
+INDIVIDUAL_WHATSAPP_ID_PATTERN = re.compile(r"^[1-9][0-9]{6,14}$")
+COLLECTIVE_IDENTIFIER_SUFFIXES = (
+    "@g.us",
+    "@broadcast",
+    "@newsletter",
+    "@community",
+    "@channel",
+)
+COLLECTIVE_INDICATOR_KEYS = {
+    "broadcast_id",
+    "channel_id",
+    "community_id",
+    "group_id",
+    "newsletter_id",
+}
+CONVERSATION_KIND_KEYS = {
+    "chat_type",
+    "conversation_type",
+    "recipient_type",
+    "source_type",
+}
+INDIVIDUAL_CONVERSATION_KINDS = {
+    "1:1",
+    "individual",
+    "one_to_one",
+    "personal",
+    "person",
+    "user",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +128,8 @@ def _normalize_messages(
         message_type = _identifier(raw_message.get("type"), 40)
         if not provider_message_id or not whatsapp_id or not message_type:
             continue
+        if not _is_individual_message(value, raw_message, whatsapp_id):
+            continue
 
         body, interactive_id = _message_content(raw_message, message_type)
         events.append(
@@ -152,6 +184,47 @@ def _meta_phone_number_id(value: dict[str, Any]) -> str | None:
     if not isinstance(metadata, dict):
         return None
     return _identifier(metadata.get("phone_number_id"), 255)
+
+
+def is_individual_whatsapp_id(value: str) -> bool:
+    normalized = value.strip().casefold()
+    if normalized.endswith(COLLECTIVE_IDENTIFIER_SUFFIXES):
+        return False
+    return INDIVIDUAL_WHATSAPP_ID_PATTERN.fullmatch(normalized) is not None
+
+
+def _is_individual_message(
+    value: dict[str, Any],
+    raw_message: dict[str, Any],
+    whatsapp_id: str,
+) -> bool:
+    if not is_individual_whatsapp_id(whatsapp_id):
+        return False
+    return not (
+        _has_collective_indicator(value) or _has_collective_indicator(raw_message)
+    )
+
+
+def _has_collective_indicator(value: dict[str, Any]) -> bool:
+    for key, raw_indicator in value.items():
+        normalized_key = key.casefold()
+        if normalized_key in COLLECTIVE_INDICATOR_KEYS and raw_indicator not in (
+            None,
+            "",
+            False,
+        ):
+            return True
+        if normalized_key in CONVERSATION_KIND_KEYS:
+            if not isinstance(raw_indicator, str):
+                return True
+            if raw_indicator.strip().casefold() not in INDIVIDUAL_CONVERSATION_KINDS:
+                return True
+        if normalized_key in {"context", "metadata"} and isinstance(
+            raw_indicator, dict
+        ):
+            if _has_collective_indicator(raw_indicator):
+                return True
+    return False
 
 
 def _message_content(

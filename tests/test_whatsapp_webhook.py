@@ -108,6 +108,7 @@ class FakeWebhookRepository:
         self.status_updates: list[tuple[str, str]] = []
         self.completed: list[tuple[str, str]] = []
         self.customer_lookups: list[str] = []
+        self.conversation_lookups: list[uuid.UUID] = []
         self.integrity_constraint_name: str | None = None
 
     async def claim_event(self, event: NormalizedWebhookEvent) -> bool:
@@ -137,6 +138,7 @@ class FakeWebhookRepository:
         self, _: uuid.UUID, customer_id: uuid.UUID
     ) -> uuid.UUID:
         assert customer_id == self.customer_id
+        self.conversation_lookups.append(customer_id)
         return self.conversation_id
 
     async def touch_conversation(self, conversation_id: uuid.UUID) -> None:
@@ -219,7 +221,7 @@ async def test_post_accepts_valid_signature(
         messages=[
             {
                 "id": "provider-message-1",
-                "from": "customer-1",
+                "from": "5511999990001",
                 "type": "text",
                 "text": {"body": "hello"},
             }
@@ -313,7 +315,7 @@ async def test_post_normalizes_inbound_text(
         messages=[
             {
                 "id": "provider-text-1",
-                "from": "customer-text-1",
+                "from": "5511999990002",
                 "type": "text",
                 "text": {"body": "text content"},
             }
@@ -330,7 +332,7 @@ async def test_post_normalizes_inbound_text(
             event_type="message.inbound.text",
             meta_phone_number_id="known-phone-id",
             provider_message_id="provider-text-1",
-            whatsapp_id="customer-text-1",
+            whatsapp_id="5511999990002",
             message_type="text",
             body="text content",
             interactive_id=None,
@@ -348,7 +350,7 @@ async def test_post_normalizes_interactive_reply(
         messages=[
             {
                 "id": "provider-interactive-1",
-                "from": "customer-interactive-1",
+                "from": "5511999990003",
                 "type": "interactive",
                 "interactive": {
                     "type": "button_reply",
@@ -378,13 +380,13 @@ async def test_post_supports_multiple_entries_changes_and_messages(
         messages=[
             {
                 "id": "provider-multi-1",
-                "from": "customer-multi",
+                "from": "5511999990004",
                 "type": "text",
                 "text": {"body": "first"},
             },
             {
                 "id": "provider-multi-2",
-                "from": "customer-multi",
+                "from": "5511999990004",
                 "type": "text",
                 "text": {"body": "second"},
             },
@@ -394,7 +396,7 @@ async def test_post_supports_multiple_entries_changes_and_messages(
         messages=[
             {
                 "id": "provider-multi-3",
-                "from": "customer-multi",
+                "from": "5511999990004",
                 "type": "text",
                 "text": {"body": "third"},
             }
@@ -422,6 +424,75 @@ async def test_post_supports_multiple_entries_changes_and_messages(
         "provider-multi-2",
         "provider-multi-3",
     ]
+
+
+@mark.asyncio
+@mark.parametrize(
+    ("sender", "message_indicators"),
+    [
+        ("120363025000000000@g.us", {}),
+        ("5511999990010", {"group_id": "group-reference"}),
+        ("5511999990011", {"context": {"community_id": "community-reference"}}),
+        ("channel-reference@newsletter", {}),
+        ("status@broadcast", {}),
+    ],
+    ids=("group", "group-indicator", "community", "channel", "broadcast"),
+)
+async def test_post_ignores_collective_conversations_before_processing(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+    sender: str,
+    message_indicators: dict[str, Any],
+) -> None:
+    processor = AsyncMock()
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+    payload = messages_payload(
+        messages=[
+            {
+                "id": "provider-collective",
+                "from": sender,
+                "type": "text",
+                "text": {"body": "must not be processed"},
+                **message_indicators,
+            }
+        ]
+    )
+
+    _, response = await post_signed(client, payload)
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    assert processor.await_args.args[1] == []
+
+
+@mark.asyncio
+async def test_processor_defensively_ignores_non_individual_event() -> None:
+    repository = FakeWebhookRepository()
+    conversation_engine = AsyncMock()
+    event = InboundMessageEvent(
+        event_key=build_event_key("inbound", "provider-collective-direct"),
+        event_type="message.inbound.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-collective-direct",
+        whatsapp_id="120363025000000000@g.us",
+        message_type="text",
+        body="must not be persisted",
+        interactive_id=None,
+    )
+
+    await process_webhook_events(
+        FakeSession(),
+        [event],
+        repository,
+        conversation_engine,
+    )
+
+    assert repository.claimed == set()
+    assert repository.customer_lookups == []
+    assert repository.conversation_lookups == []
+    assert repository.persisted_messages == []
+    assert repository.completed == []
+    conversation_engine.process.assert_not_awaited()
 
 
 @mark.asyncio
@@ -459,7 +530,7 @@ async def test_sequential_duplicate_is_processed_once() -> None:
         event_type="message.inbound.text",
         meta_phone_number_id="known-phone-id",
         provider_message_id="provider-duplicate-1",
-        whatsapp_id="customer-duplicate-1",
+        whatsapp_id="5511999990005",
         message_type="text",
         body="duplicate body",
         interactive_id=None,
@@ -480,7 +551,7 @@ async def test_concurrent_duplicate_is_processed_once() -> None:
         event_type="message.inbound.text",
         meta_phone_number_id="known-phone-id",
         provider_message_id="provider-concurrent-1",
-        whatsapp_id="customer-concurrent-1",
+        whatsapp_id="5511999990006",
         message_type="text",
         body=None,
         interactive_id=None,
@@ -556,7 +627,7 @@ async def test_unknown_business_is_safely_ignored(
         event_type="message.inbound.text",
         meta_phone_number_id="unknown-phone-id",
         provider_message_id="provider-unknown-business",
-        whatsapp_id="unknown-customer",
+        whatsapp_id="5511999990007",
         message_type="text",
         body="not persisted",
         interactive_id=None,
@@ -630,7 +701,7 @@ async def test_logs_do_not_include_webhook_pii(
         messages=[
             {
                 "id": "sensitive-provider-id",
-                "from": "sensitive-customer-id",
+                "from": "5511999990008",
                 "type": "text",
                 "text": {"body": "sensitive-message-body"},
             }
@@ -644,7 +715,7 @@ async def test_logs_do_not_include_webhook_pii(
     for sensitive_value in (
         "sensitive-phone-id",
         "sensitive-provider-id",
-        "sensitive-customer-id",
+        "5511999990008",
         "sensitive-message-body",
         signature,
         APP_SECRET,

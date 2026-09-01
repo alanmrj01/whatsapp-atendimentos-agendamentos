@@ -4,7 +4,7 @@ import math
 import uuid
 from collections import defaultdict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -20,11 +20,17 @@ from app.booking.domain import (
     ServiceConfiguration,
     ServiceEstimate,
     ServiceIntake,
+    TravelCalculationMethod,
     TravelEstimate,
+    TravelOrigin,
     UnknownAccessPolicy,
 )
 from app.booking.estimator import ServiceEstimator
-from app.booking.travel import ConfiguredTravelTimePort, TravelTimePort
+from app.booking.travel import (
+    ConfiguredTravelTimePort,
+    TravelTimePort,
+    unavailable_travel_estimate,
+)
 from app.conversations.ports import (
     BookingConfirmation,
     BookingNotFound,
@@ -456,22 +462,65 @@ class PostgresBookingAvailabilityPort:
         elif requirements.address is None:
             travel = _zero_travel_estimate()
         else:
-            travel_port = self.travel_time_port or ConfiguredTravelTimePort(
-                default_minutes=business.default_travel_minutes,
-                region_rules=business.travel_region_rules,
-            )
-            travel = await travel_port.estimate(
-                business.service_origin_address,
-                requirements.address,
-            )
+            try:
+                origin = TravelOrigin(
+                    address=business.service_origin_address,
+                    latitude=(
+                        Decimal(business.service_origin_latitude)
+                        if business.service_origin_latitude is not None
+                        else None
+                    ),
+                    longitude=(
+                        Decimal(business.service_origin_longitude)
+                        if business.service_origin_longitude is not None
+                        else None
+                    ),
+                    is_precise=business.service_origin_is_precise,
+                )
+                configured_port = ConfiguredTravelTimePort(
+                    fallback_minutes=business.default_travel_minutes,
+                    fallback_allowed=business.travel_fallback_allowed,
+                    region_rules=business.travel_region_rules,
+                )
+                calculation_method = TravelCalculationMethod(
+                    business.travel_calculation_method
+                )
+            except ValueError:
+                origin = TravelOrigin(
+                    address="Operational origin unavailable",
+                    is_precise=False,
+                )
+                travel = unavailable_travel_estimate(origin)
+            else:
+                if (
+                    calculation_method is TravelCalculationMethod.ROUTE
+                    and self.travel_time_port is not None
+                ):
+                    travel = await self.travel_time_port.estimate(
+                        origin,
+                        requirements.address,
+                    )
+                    travel = replace(
+                        travel,
+                        estimated=travel.estimated or not origin.is_precise,
+                        origin_is_precise=origin.is_precise,
+                    )
+                else:
+                    travel = await configured_port.estimate(
+                        origin,
+                        requirements.address,
+                    )
 
         requires_handoff = (
             service_estimate.requires_human_quote
+            or not travel.available
             or not travel.within_service_area
         )
         reason = None
         if service_estimate.requires_human_quote:
             reason = "service_estimate_requires_human_quote"
+        elif not travel.available:
+            reason = "travel_estimate_unavailable"
         elif not travel.within_service_area:
             reason = "address_outside_service_area"
         return BookingPlan(

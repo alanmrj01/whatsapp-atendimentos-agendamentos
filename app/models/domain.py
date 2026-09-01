@@ -53,8 +53,31 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "slot_interval_minutes > 0", name="slot_interval_minutes_positive"
         ),
         CheckConstraint(
-            "default_travel_minutes >= 0",
+            "default_travel_minutes IS NULL OR default_travel_minutes >= 0",
             name="default_travel_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "travel_calculation_method IN ('route', 'configured_estimate')",
+            name="travel_calculation_method_allowed",
+        ),
+        CheckConstraint(
+            "NOT travel_fallback_allowed OR default_travel_minutes IS NOT NULL",
+            name="travel_fallback_requires_minutes",
+        ),
+        CheckConstraint(
+            "(service_origin_latitude IS NULL) = "
+            "(service_origin_longitude IS NULL)",
+            name="service_origin_coordinates_together",
+        ),
+        CheckConstraint(
+            "service_origin_latitude IS NULL OR "
+            "service_origin_latitude BETWEEN -90 AND 90",
+            name="service_origin_latitude_range",
+        ),
+        CheckConstraint(
+            "service_origin_longitude IS NULL OR "
+            "service_origin_longitude BETWEEN -180 AND 180",
+            name="service_origin_longitude_range",
         ),
         CheckConstraint(
             "travel_before_buffer_minutes >= 0",
@@ -87,8 +110,29 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default="Zona Leste de São José dos Campos - SP",
         nullable=False,
     )
-    default_travel_minutes: Mapped[int] = mapped_column(
-        Integer, default=30, server_default="30", nullable=False
+    service_origin_latitude: Mapped[Decimal | None] = mapped_column(
+        Numeric(9, 6), nullable=True
+    )
+    service_origin_longitude: Mapped[Decimal | None] = mapped_column(
+        Numeric(9, 6), nullable=True
+    )
+    service_origin_is_precise: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    travel_calculation_method: Mapped[str] = mapped_column(
+        String(32),
+        default="configured_estimate",
+        server_default="configured_estimate",
+        nullable=False,
+    )
+    default_travel_minutes: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    travel_fallback_allowed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    travel_route_provider: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
     )
     travel_before_buffer_minutes: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False

@@ -17,6 +17,7 @@ from app.whatsapp.webhook import (
     InboundMessageEvent,
     MessageStatusEvent,
     NormalizedWebhookEvent,
+    is_individual_whatsapp_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,11 @@ async def process_webhook_events(
         )
 
     for event in events:
+        if isinstance(event, InboundMessageEvent) and not is_individual_whatsapp_id(
+            event.whatsapp_id
+        ):
+            logger.info("webhook_collective_ignored")
+            continue
         try:
             async with session.begin():
                 is_new_event = await event_repository.claim_event(event)

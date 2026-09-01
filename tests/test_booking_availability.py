@@ -22,6 +22,7 @@ from app.booking.domain import (
     ServiceAddress,
     ServiceEstimate,
     TravelEstimate,
+    TravelOrigin,
 )
 from app.conversations.ports import (
     BookingNotFound,
@@ -52,7 +53,13 @@ def business(**changes: Any) -> Business:
         timezone="America/Sao_Paulo",
         slot_interval_minutes=30,
         service_origin_address="Zona Leste de São José dos Campos - SP",
+        service_origin_latitude=None,
+        service_origin_longitude=None,
+        service_origin_is_precise=False,
+        travel_calculation_method="configured_estimate",
         default_travel_minutes=0,
+        travel_fallback_allowed=True,
+        travel_route_provider=None,
         travel_before_buffer_minutes=0,
         travel_after_buffer_minutes=0,
         travel_region_rules=[],
@@ -569,9 +576,9 @@ async def test_service_query_filters_active_and_automatically_bookable_catalog()
 @pytest.mark.asyncio
 async def test_booking_plan_uses_configurable_origin_and_buffers() -> None:
     class RecordingTravel:
-        origin: str | None = None
+        origin: TravelOrigin | None = None
 
-        async def estimate(self, origin: str, destination: ServiceAddress):  # type: ignore[no-untyped-def]
+        async def estimate(self, origin: TravelOrigin, destination: ServiceAddress):  # type: ignore[no-untyped-def]
             self.origin = origin
             return TravelEstimate(
                 travel_minutes=20,
@@ -584,6 +591,7 @@ async def test_booking_plan_uses_configurable_origin_and_buffers() -> None:
     travel = RecordingTravel()
     company = business(
         service_origin_address="Origem configurada pela empresa",
+        travel_calculation_method="route",
         travel_before_buffer_minutes=5,
         travel_after_buffer_minutes=10,
     )
@@ -602,9 +610,39 @@ async def test_booking_plan_uses_configurable_origin_and_buffers() -> None:
         BookingRequirements(address=ServiceAddress("Destino")),
     )
 
-    assert travel.origin == "Origem configurada pela empresa"
+    assert travel.origin is not None
+    assert travel.origin.address == "Origem configurada pela empresa"
+    assert travel.origin.is_precise is False
     assert booking_plan.travel_before_minutes == 25
     assert booking_plan.travel_after_minutes == 30
+    assert booking_plan.travel.estimated is True
+
+
+@pytest.mark.asyncio
+async def test_route_without_provider_or_allowed_fallback_requires_handoff() -> None:
+    company = business(
+        travel_calculation_method="route",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+    )
+
+    class PlanPort(PostgresBookingAvailabilityPort):
+        async def _load_business_service(self, *args: Any):  # type: ignore[no-untyped-def]
+            return company, service()
+
+        async def _require_eligible_employees(self, *args: Any):  # type: ignore[no-untyped-def]
+            return (EMPLOYEE_A,)
+
+    port = PlanPort(object())  # type: ignore[arg-type]
+    booking_plan = await port.estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(address=ServiceAddress("Destino")),
+    )
+
+    assert booking_plan.requires_handoff is True
+    assert booking_plan.handoff_reason == "travel_estimate_unavailable"
+    assert booking_plan.travel.available is False
 
 
 @pytest.mark.asyncio

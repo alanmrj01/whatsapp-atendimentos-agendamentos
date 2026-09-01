@@ -905,7 +905,7 @@ def webhook_event() -> InboundMessageEvent:
         event_type="message.inbound.text",
         meta_phone_number_id="known-phone-id",
         provider_message_id=provider_message_id,
-        whatsapp_id="customer-id",
+        whatsapp_id="5511999990009",
         message_type="text",
         body="hello",
         interactive_id=None,

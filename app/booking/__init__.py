@@ -1,4 +1,5 @@
-"""Domínio de agendamento (reservado para implementação futura)."""
+"""Domínio, agenda PostgreSQL e templates comerciais de agendamento."""
+from app.booking.catalog import load_default_service_catalog
 from app.booking.domain import (
     AccessCondition,
     BookingPlan,
@@ -9,6 +10,8 @@ from app.booking.domain import (
     ServiceEstimate,
     ServiceIntake,
     TravelEstimate,
+    TravelCalculationMethod,
+    TravelOrigin,
     UnknownAccessPolicy,
 )
 from app.booking.estimator import ServiceEstimator
@@ -26,6 +29,9 @@ __all__ = [
     "ServiceEstimator",
     "ServiceIntake",
     "TravelEstimate",
+    "TravelCalculationMethod",
+    "TravelOrigin",
     "TravelTimePort",
     "UnknownAccessPolicy",
+    "load_default_service_catalog",
 ]

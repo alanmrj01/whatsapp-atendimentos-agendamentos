@@ -25,6 +25,11 @@ class UnknownAccessPolicy(StrEnum):
     HUMAN_QUOTE = "human_quote"
 
 
+class TravelCalculationMethod(StrEnum):
+    ROUTE = "route"
+    CONFIGURED_ESTIMATE = "configured_estimate"
+
+
 @dataclass(frozen=True, slots=True)
 class ServiceAddress:
     address_line: str
@@ -93,6 +98,20 @@ class ServiceAddress:
 
 
 @dataclass(frozen=True, slots=True)
+class TravelOrigin:
+    address: str
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
+    is_precise: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.address.strip():
+            raise ValueError("Operational origin cannot be empty")
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("Origin coordinates must be provided together")
+
+
+@dataclass(frozen=True, slots=True)
 class BookingRequirements:
     quantity: int | None = 1
     access_condition: AccessCondition = AccessCondition.NORMAL
@@ -153,6 +172,8 @@ class TravelEstimate:
     method: str
     estimated: bool
     within_service_area: bool = True
+    available: bool = True
+    origin_is_precise: bool = False
 
     def __post_init__(self) -> None:
         if self.travel_minutes < 0:
@@ -179,4 +200,6 @@ class BookingPlan:
             "travel_source": self.travel.source,
             "travel_method": self.travel.method,
             "travel_estimated": self.travel.estimated,
+            "travel_available": self.travel.available,
+            "travel_origin_is_precise": self.travel.origin_is_precise,
         }

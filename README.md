@@ -42,10 +42,31 @@ O access log padrão fica desabilitado para não registrar o token de verificaç
 presente na query string. A aplicação emite logs JSON apenas com metadados
 seguros da requisição.
 
-O catálogo de serviços guarda duração, preço e adicionais editáveis. A origem
-operacional padrão é `Zona Leste de São José dos Campos - SP`, também editável
-por empresa. O fallback de deslocamento usa minutos e regras regionais
-configurados no banco; não exige API paga e não representa rota/GPS real.
+O catálogo de serviços guarda duração, preço e adicionais editáveis. O arquivo
+`data/default_service_catalog.json` oferece templates versionados apenas para a
+inicialização explícita de novas empresas; ele nunca atualiza configurações já
+copiadas. Valores de referência incluem fonte e data, e serviços sem base segura
+permanecem como `human_quote`.
+
+Todo deslocamento parte da base operacional da empresa para o endereço do
+cliente. A origem inicial `Zona Leste de São José dos Campos - SP` é ampla, não
+possui coordenada inventada e fica marcada como imprecisa. O modo `route` usa um
+`TravelTimePort` injetável e independente de fornecedor. O modo
+`configured_estimate` aceita somente regras regionais marcadas como confiáveis;
+um fallback em minutos precisa ser configurado e permitido explicitamente pela
+empresa. Sem provider, regra confiável ou fallback autorizado, o agendamento vai
+para atendimento humano.
+
+O webhook processa somente remetentes individuais 1:1. Indicadores de grupo,
+comunidade, canal/newsletter ou broadcast são descartados antes de qualquer
+customer, conversation ou outbound, mantendo `200` para a Meta. Status legítimos
+de mensagens continuam independentes desse filtro.
+
+Serviços com peças/equipamentos, diagnóstico incerto, projeto comercial complexo
+ou configuração insuficiente exigem atendimento humano sem questionário técnico.
+O fluxo existente só pergunta os campos habilitados no serviço. O contrato para
+um futuro serviço planejado pelo atendente, sem improvisar dados em
+`conversation.context`, está em `docs/planned_services.md`.
 
 Para aplicar as migrations em uma conexão Direct ou Session do Supabase:
 
@@ -61,9 +82,9 @@ sendo a única fonte de alterações de schema; a aplicação nunca usa
 serviço/deslocamento e snapshots históricos do agendamento. Ela não é aplicada
 automaticamente a nenhum projeto Supabase.
 
-Os valores comerciais da migration são defaults operacionais editáveis, não
-cotações de mercado. Preços sem configuração segura devem permanecer como
-`estimated` ou `human_quote`.
+Os valores comerciais da migration são defaults estruturais editáveis, não
+cotações de mercado. A migration não importa o catálogo nem sobrescreve dados de
+empresa. Preços sem configuração segura devem permanecer como `human_quote`.
 
 ## Testes PostgreSQL físicos
 

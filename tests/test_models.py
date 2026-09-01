@@ -245,7 +245,9 @@ def test_required_server_defaults_are_registered() -> None:
         ("businesses", "service_origin_address"): (
             "Zona Leste de São José dos Campos - SP"
         ),
-        ("businesses", "default_travel_minutes"): "30",
+        ("businesses", "service_origin_is_precise"): "false",
+        ("businesses", "travel_calculation_method"): "configured_estimate",
+        ("businesses", "travel_fallback_allowed"): "false",
         ("businesses", "travel_before_buffer_minutes"): "0",
         ("businesses", "travel_after_buffer_minutes"): "0",
         ("businesses", "active"): "true",
@@ -260,6 +262,27 @@ def test_required_server_defaults_are_registered() -> None:
     for (table_name, column_name), expected_default in expected_defaults.items():
         column = Base.metadata.tables[table_name].c[column_name]
         assert str(column.server_default.arg) == expected_default
+
+    default_travel = Base.metadata.tables["businesses"].c.default_travel_minutes
+    assert default_travel.server_default is None
+    assert default_travel.nullable is True
+
+
+def test_business_travel_configuration_constraints_are_registered() -> None:
+    constraints = {
+        constraint.name
+        for constraint in Base.metadata.tables["businesses"].constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert {
+        "ck_businesses_default_travel_minutes_nonnegative",
+        "ck_businesses_travel_calculation_method_allowed",
+        "ck_businesses_travel_fallback_requires_minutes",
+        "ck_businesses_service_origin_coordinates_together",
+        "ck_businesses_service_origin_latitude_range",
+        "ck_businesses_service_origin_longitude_range",
+    } <= constraints
 
 
 def test_confirmed_appointments_have_overlap_exclusion_constraint() -> None:

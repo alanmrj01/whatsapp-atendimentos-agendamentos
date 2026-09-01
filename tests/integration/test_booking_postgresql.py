@@ -134,7 +134,13 @@ async def seed_capacity(
                     service_origin_address=(
                         "Zona Leste de São José dos Campos - SP"
                     ),
+                    service_origin_latitude=None,
+                    service_origin_longitude=None,
+                    service_origin_is_precise=False,
+                    travel_calculation_method="configured_estimate",
                     default_travel_minutes=travel_minutes,
+                    travel_fallback_allowed=True,
+                    travel_route_provider=None,
                     travel_before_buffer_minutes=0,
                     travel_after_buffer_minutes=0,
                     travel_region_rules=[],
