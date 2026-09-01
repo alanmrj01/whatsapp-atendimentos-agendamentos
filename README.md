@@ -123,9 +123,12 @@ O container usa Python 3.12, executa como usuário não-root e respeita a variá
 um único processo Uvicorn e encerra graciosamente ao receber `SIGTERM`. Migrations
 Alembic não são executadas no startup do container.
 
-Em produção, configure `DATABASE_URL` com o Transaction Pooler Supabase `:6543`
-via Secret Manager, além de `META_ACCESS_TOKEN`, `META_APP_SECRET` e
-`META_VERIFY_TOKEN` como secrets. Configure também `META_PHONE_NUMBER_ID`,
-`META_WABA_ID` e `META_GRAPH_VERSION`. O Cloud Run fornece `PORT`; mantenha
-`ENVIRONMENT=production`. Use `ALEMBIC_DATABASE_URL` apenas no processo separado
-de migrations, com conexão Direct ou Session `:5432`.
+Em produção, o startup exige somente `DATABASE_URL`, preferencialmente com o
+Transaction Pooler Supabase `:6543` via Secret Manager, e
+`ENVIRONMENT=production`. O Cloud Run fornece `PORT`. As variáveis `META_*` são
+opcionais até a integração WhatsApp ser ativada; sem os secrets necessários, o
+webhook falha fechado com resposta segura e nenhuma persistência. Quando ativar
+a integração, configure `META_ACCESS_TOKEN`, `META_APP_SECRET` e
+`META_VERIFY_TOKEN` como secrets, além de `META_PHONE_NUMBER_ID`, `META_WABA_ID` e
+`META_GRAPH_VERSION`. Use `ALEMBIC_DATABASE_URL` apenas no processo separado de
+migrations, com conexão Direct ou Session `:5432`.

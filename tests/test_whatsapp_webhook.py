@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api import whatsapp_webhook as webhook_api
 from app.booking.availability import PostgresBookingAvailabilityPort
+from app.main import app
 from app.repositories.whatsapp_webhook import build_claim_event_statement
 from app.whatsapp.processor import process_webhook_events
 from app.whatsapp.webhook import (
@@ -209,6 +210,59 @@ async def test_webhook_verification_with_invalid_parameters(
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Invalid request"
+
+
+@mark.asyncio
+async def test_webhook_verification_fails_closed_without_meta_configuration(
+    client: AsyncClient,
+) -> None:
+    settings_without_meta = webhook_api.get_settings().model_copy(
+        update={"meta_verify_token": None}
+    )
+    app.dependency_overrides[webhook_api.get_settings] = (
+        lambda: settings_without_meta
+    )
+    try:
+        response = await client.get(
+            "/webhook/whatsapp",
+            params={
+                "hub.mode": "subscribe",
+                "hub.verify_token": "unconfigured-token",
+                "hub.challenge": "challenge-value",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(webhook_api.get_settings, None)
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "WhatsApp webhook unavailable"}
+
+
+@mark.asyncio
+async def test_webhook_post_fails_closed_without_meta_configuration(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    processor = AsyncMock()
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+    settings_without_meta = webhook_api.get_settings().model_copy(
+        update={"meta_app_secret": None}
+    )
+    app.dependency_overrides[webhook_api.get_settings] = (
+        lambda: settings_without_meta
+    )
+    try:
+        response = await client.post(
+            "/webhook/whatsapp",
+            content=encode_payload(messages_payload(messages=[])),
+            headers={"Content-Type": "application/json"},
+        )
+    finally:
+        app.dependency_overrides.pop(webhook_api.get_settings, None)
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "WhatsApp webhook unavailable"}
+    processor.assert_not_awaited()
 
 
 @mark.asyncio

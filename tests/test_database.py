@@ -149,6 +149,33 @@ def test_database_url_is_required_only_when_database_is_used(
         settings.require_database_url()
 
 
+def test_meta_configuration_is_optional_at_startup(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    for variable_name in (
+        "META_ACCESS_TOKEN",
+        "META_PHONE_NUMBER_ID",
+        "META_GRAPH_VERSION",
+        "META_WABA_ID",
+        "META_APP_SECRET",
+        "META_VERIFY_TOKEN",
+    ):
+        monkeypatch.delenv(variable_name, raising=False)
+
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql://runtime@localhost:5432/runtime",
+        ENVIRONMENT="production",
+    )
+
+    assert settings.meta_access_token is None
+    assert settings.meta_phone_number_id is None
+    assert settings.meta_graph_version is None
+    assert settings.meta_waba_id is None
+    assert settings.meta_app_secret is None
+    assert settings.meta_verify_token is None
+
+
 def test_postgresql_url_is_normalized_for_asyncpg() -> None:
     settings = Settings(
         _env_file=None,

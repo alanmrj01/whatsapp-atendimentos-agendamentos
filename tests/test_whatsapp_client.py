@@ -35,9 +35,12 @@ def settings() -> Settings:
 @mark.parametrize(
     ("field", "value"),
     [
+        ("meta_access_token", None),
         ("meta_access_token", SecretStr("")),
+        ("meta_phone_number_id", None),
         ("meta_phone_number_id", ""),
         ("meta_phone_number_id", "unsafe/id"),
+        ("meta_graph_version", None),
         ("meta_graph_version", ""),
         ("meta_graph_version", "latest"),
     ],

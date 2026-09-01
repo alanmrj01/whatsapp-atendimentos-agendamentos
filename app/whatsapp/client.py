@@ -6,6 +6,7 @@ from types import TracebackType
 from typing import Any, Self
 
 import httpx
+from pydantic import SecretStr
 
 from app.core.config import Settings
 
@@ -57,11 +58,13 @@ class WhatsAppClient:
         http_client: httpx.AsyncClient | None = None,
         timeout: httpx.Timeout | None = None,
     ) -> None:
-        _validate_client_configuration(settings)
-        self._access_token = settings.meta_access_token
+        access_token, phone_number_id, graph_version = (
+            _validate_client_configuration(settings)
+        )
+        self._access_token = access_token
         self._messages_url = (
-            f"{GRAPH_API_BASE_URL}/{settings.meta_graph_version}/"
-            f"{settings.meta_phone_number_id}/messages"
+            f"{GRAPH_API_BASE_URL}/{graph_version}/"
+            f"{phone_number_id}/messages"
         )
         self._timeout = timeout or httpx.Timeout(10.0, connect=5.0)
         self._owns_http_client = http_client is None
@@ -198,19 +201,29 @@ class WhatsAppClient:
         return response_data
 
 
-def _validate_client_configuration(settings: Settings) -> None:
-    access_token = settings.meta_access_token.get_secret_value()
+def _validate_client_configuration(
+    settings: Settings,
+) -> tuple[SecretStr, str, str]:
+    access_token_secret = settings.meta_access_token
     phone_number_id = settings.meta_phone_number_id
     graph_version = settings.meta_graph_version
+    access_token = (
+        access_token_secret.get_secret_value()
+        if access_token_secret is not None
+        else ""
+    )
     if (
         not access_token
         or access_token != access_token.strip()
+        or phone_number_id is None
+        or graph_version is None
         or not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", phone_number_id)
         or not re.fullmatch(r"v\d{1,3}\.\d{1,3}", graph_version)
     ):
         raise WhatsAppValidationError(
             "WhatsApp client configuration is invalid"
         )
+    return access_token_secret, phone_number_id, graph_version
 
 
 def _raise_for_status(status_code: int) -> None:

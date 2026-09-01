@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.conversations.dependencies import get_booking_availability_port
 from app.conversations.ports import BookingAvailabilityPort
-from app.core.config import Settings, get_settings
+from app.core.config import MetaConfigurationError, Settings, get_settings
 from app.core.database import get_db
 from app.schemas.whatsapp_webhook import (
     WebhookAcknowledgement,
@@ -35,7 +35,13 @@ async def verify_whatsapp_webhook(
     ],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> PlainTextResponse:
-    expected_token = settings.meta_verify_token.get_secret_value()
+    try:
+        expected_token = settings.require_meta_verify_token()
+    except MetaConfigurationError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp webhook unavailable",
+        ) from None
     token_is_valid = secrets.compare_digest(hub_verify_token, expected_token)
 
     if hub_mode != "subscribe" or not token_is_valid:
@@ -61,7 +67,13 @@ async def receive_whatsapp_webhook(
     ] = None,
 ) -> WebhookAcknowledgement:
     raw_body = await request.body()
-    app_secret = settings.meta_app_secret.get_secret_value()
+    try:
+        app_secret = settings.require_meta_app_secret()
+    except MetaConfigurationError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp webhook unavailable",
+        ) from None
     if not verify_meta_signature(raw_body, x_hub_signature_256, app_secret):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

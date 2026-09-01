@@ -18,6 +18,10 @@ class DatabaseConfigurationError(RuntimeError):
     """Erro seguro para configuração ausente do banco de dados."""
 
 
+class MetaConfigurationError(RuntimeError):
+    """Erro seguro para configuração ausente da integração Meta."""
+
+
 class Settings(BaseSettings):
     database_url: SecretStr | None = Field(
         default=None, validation_alias="DATABASE_URL"
@@ -25,15 +29,25 @@ class Settings(BaseSettings):
     alembic_database_url: SecretStr | None = Field(
         default=None, validation_alias="ALEMBIC_DATABASE_URL"
     )
-    meta_access_token: SecretStr = Field(validation_alias="META_ACCESS_TOKEN")
-    meta_phone_number_id: str = Field(validation_alias="META_PHONE_NUMBER_ID")
-    meta_graph_version: str = Field(
-        default="",
+    meta_access_token: SecretStr | None = Field(
+        default=None, validation_alias="META_ACCESS_TOKEN"
+    )
+    meta_phone_number_id: str | None = Field(
+        default=None, validation_alias="META_PHONE_NUMBER_ID"
+    )
+    meta_graph_version: str | None = Field(
+        default=None,
         validation_alias="META_GRAPH_VERSION",
     )
-    meta_waba_id: str = Field(validation_alias="META_WABA_ID")
-    meta_app_secret: SecretStr = Field(validation_alias="META_APP_SECRET")
-    meta_verify_token: SecretStr = Field(validation_alias="META_VERIFY_TOKEN")
+    meta_waba_id: str | None = Field(
+        default=None, validation_alias="META_WABA_ID"
+    )
+    meta_app_secret: SecretStr | None = Field(
+        default=None, validation_alias="META_APP_SECRET"
+    )
+    meta_verify_token: SecretStr | None = Field(
+        default=None, validation_alias="META_VERIFY_TOKEN"
+    )
     environment: Environment = Field(validation_alias="ENVIRONMENT")
 
     model_config = SettingsConfigDict(
@@ -74,6 +88,18 @@ class Settings(BaseSettings):
         if self.alembic_database_url is not None:
             return self.alembic_database_url.get_secret_value()
         return self.require_database_url()
+
+    def require_meta_app_secret(self) -> str:
+        return self._require_meta_secret(self.meta_app_secret)
+
+    def require_meta_verify_token(self) -> str:
+        return self._require_meta_secret(self.meta_verify_token)
+
+    @staticmethod
+    def _require_meta_secret(value: SecretStr | None) -> str:
+        if value is None or not value.get_secret_value().strip():
+            raise MetaConfigurationError("WhatsApp integration is not configured")
+        return value.get_secret_value()
 
 
 @lru_cache
