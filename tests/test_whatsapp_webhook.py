@@ -18,7 +18,9 @@ from app.api import whatsapp_webhook as webhook_api
 from app.booking.availability import PostgresBookingAvailabilityPort
 from app.main import app
 from app.repositories.whatsapp_webhook import build_claim_event_statement
+from app.tasks.cloud_tasks import CloudTasksEnqueueError
 from app.whatsapp.processor import process_webhook_events
+from app.whatsapp.processor import persist_webhook_events_for_tasks
 from app.whatsapp.webhook import (
     InboundMessageEvent,
     MessageStatusEvent,
@@ -28,6 +30,9 @@ from app.whatsapp.webhook import (
 
 
 APP_SECRET = "test-app-secret"
+TASK_INVOKER_EMAIL = (
+    "whatsapp-task-invoker@whatsapp-automacao-prod.iam.gserviceaccount.com"
+)
 
 
 def encode_payload(payload: dict[str, Any]) -> bytes:
@@ -79,6 +84,22 @@ async def post_signed(
     return body, response
 
 
+def cloud_tasks_enabled_settings():  # type: ignore[no-untyped-def]
+    return webhook_api.get_settings().model_copy(
+        update={
+            "cloud_tasks_enabled": True,
+            "gcp_project_id": "whatsapp-automacao-prod",
+            "gcp_region": "southamerica-east1",
+            "cloud_tasks_events_queue": "whatsapp-events",
+            "cloud_tasks_target_url": (
+                "https://service.example.run.app/internal/tasks/whatsapp-event"
+            ),
+            "cloud_tasks_oidc_audience": "https://service.example.run.app",
+            "cloud_tasks_invoker_email": TASK_INVOKER_EMAIL,
+        }
+    )
+
+
 class FakeTransaction:
     async def __aenter__(self) -> None:
         return None
@@ -108,6 +129,7 @@ class FakeWebhookRepository:
         self.persisted_messages: list[InboundMessageEvent] = []
         self.status_updates: list[tuple[str, str]] = []
         self.completed: list[tuple[str, str]] = []
+        self.event_statuses: dict[str, str] = {}
         self.customer_lookups: list[str] = []
         self.conversation_lookups: list[uuid.UUID] = []
         self.integrity_constraint_name: str | None = None
@@ -120,7 +142,14 @@ class FakeWebhookRepository:
             if event.event_key in self.claimed:
                 return False
             self.claimed.add(event.event_key)
+            self.event_statuses[event.event_key] = "processing"
             return True
+
+    async def get_event_status(self, event_key: str) -> str | None:
+        return self.event_statuses.get(event_key)
+
+    async def queue_event(self, event_key: str) -> None:
+        self.event_statuses[event_key] = "queued"
 
     async def find_business_id(
         self, meta_phone_number_id: str
@@ -164,6 +193,7 @@ class FakeWebhookRepository:
 
     async def complete_event(self, event_key: str, event_status: str) -> None:
         self.completed.append((event_key, event_status))
+        self.event_statuses[event_key] = event_status
 
 
 @mark.asyncio
@@ -295,6 +325,102 @@ async def test_post_accepts_valid_signature(
         processor.await_args.kwargs["booking_port"].session
         is processor.await_args.args[0]
     )
+
+
+@mark.asyncio
+async def test_cloud_tasks_enabled_commits_before_enqueue_and_skips_sync_engine(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    order: list[str] = []
+    synchronous_processor = AsyncMock()
+    event_key = build_event_key("inbound", "provider-task-order")
+
+    async def persist(*_: Any, **__: Any) -> list[str]:
+        order.append("committed")
+        return [event_key]
+
+    class Enqueuer:
+        async def enqueue(self, queued_event_key: str) -> None:
+            assert queued_event_key == event_key
+            order.append("enqueued")
+
+    monkeypatch.setattr(
+        webhook_api,
+        "process_webhook_events",
+        synchronous_processor,
+    )
+    monkeypatch.setattr(
+        webhook_api,
+        "persist_webhook_events_for_tasks",
+        persist,
+    )
+    monkeypatch.setattr(
+        webhook_api,
+        "build_event_task_enqueuer",
+        lambda _: Enqueuer(),
+    )
+    app.dependency_overrides[webhook_api.get_settings] = (
+        cloud_tasks_enabled_settings
+    )
+    try:
+        _, response = await post_signed(
+            client,
+            messages_payload(
+                messages=[
+                    {
+                        "id": "provider-task-order",
+                        "from": "5511999990010",
+                        "type": "text",
+                        "text": {"body": "hello"},
+                    }
+                ]
+            ),
+        )
+    finally:
+        app.dependency_overrides.pop(webhook_api.get_settings, None)
+
+    assert response.status_code == 200
+    assert order == ["committed", "enqueued"]
+    synchronous_processor.assert_not_awaited()
+
+
+@mark.asyncio
+async def test_cloud_tasks_enqueue_failure_returns_retryable_response(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    event_key = build_event_key("inbound", "provider-task-retry")
+    persistence = AsyncMock(return_value=[event_key])
+
+    class FailingEnqueuer:
+        async def enqueue(self, _: str) -> None:
+            raise CloudTasksEnqueueError("sanitized")
+
+    monkeypatch.setattr(
+        webhook_api,
+        "persist_webhook_events_for_tasks",
+        persistence,
+    )
+    monkeypatch.setattr(
+        webhook_api,
+        "build_event_task_enqueuer",
+        lambda _: FailingEnqueuer(),
+    )
+    app.dependency_overrides[webhook_api.get_settings] = (
+        cloud_tasks_enabled_settings
+    )
+    try:
+        _, response = await post_signed(
+            client,
+            messages_payload(messages=[]),
+        )
+    finally:
+        app.dependency_overrides.pop(webhook_api.get_settings, None)
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Webhook processing unavailable"}
+    persistence.assert_awaited_once()
 
 
 @mark.asyncio
@@ -595,6 +721,62 @@ async def test_sequential_duplicate_is_processed_once() -> None:
 
     assert len(repository.persisted_messages) == 1
     assert repository.completed == [(event.event_key, "processed")]
+
+
+@mark.asyncio
+async def test_task_persistence_is_idempotent_and_retryable_after_commit() -> None:
+    repository = FakeWebhookRepository()
+    event = InboundMessageEvent(
+        event_key=build_event_key("inbound", "provider-task-persist"),
+        event_type="message.inbound.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-task-persist",
+        whatsapp_id="5511999990011",
+        message_type="text",
+        body="persist once",
+        interactive_id=None,
+    )
+
+    first = await persist_webhook_events_for_tasks(
+        FakeSession(),
+        [event],
+        repository,
+    )
+    retry = await persist_webhook_events_for_tasks(
+        FakeSession(),
+        [event],
+        repository,
+    )
+
+    assert first == [event.event_key]
+    assert retry == [event.event_key]
+    assert repository.persisted_messages == [event]
+    assert repository.event_statuses[event.event_key] == "queued"
+
+
+@mark.asyncio
+async def test_task_persistence_blocks_collective_before_database() -> None:
+    repository = FakeWebhookRepository()
+    event = InboundMessageEvent(
+        event_key=build_event_key("inbound", "provider-task-group"),
+        event_type="message.inbound.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-task-group",
+        whatsapp_id="120363000000000000@g.us",
+        message_type="text",
+        body="collective",
+        interactive_id=None,
+    )
+
+    event_keys = await persist_webhook_events_for_tasks(
+        FakeSession(),
+        [event],
+        repository,
+    )
+
+    assert event_keys == []
+    assert repository.claimed == set()
+    assert repository.persisted_messages == []
 
 
 @mark.asyncio

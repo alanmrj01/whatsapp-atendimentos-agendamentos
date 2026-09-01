@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,6 +22,20 @@ class DatabaseConfigurationError(RuntimeError):
 
 class MetaConfigurationError(RuntimeError):
     """Erro seguro para configuração ausente da integração Meta."""
+
+
+class CloudTasksConfigurationError(RuntimeError):
+    """Erro seguro para configuração ausente do Cloud Tasks."""
+
+
+@dataclass(frozen=True, slots=True)
+class CloudTasksConfiguration:
+    project_id: str
+    region: str
+    queue: str
+    target_url: str
+    oidc_audience: str
+    invoker_email: str
 
 
 class Settings(BaseSettings):
@@ -47,6 +63,25 @@ class Settings(BaseSettings):
     )
     meta_verify_token: SecretStr | None = Field(
         default=None, validation_alias="META_VERIFY_TOKEN"
+    )
+    gcp_project_id: str | None = Field(
+        default=None, validation_alias="GCP_PROJECT_ID"
+    )
+    gcp_region: str | None = Field(default=None, validation_alias="GCP_REGION")
+    cloud_tasks_events_queue: str | None = Field(
+        default=None, validation_alias="CLOUD_TASKS_EVENTS_QUEUE"
+    )
+    cloud_tasks_target_url: str | None = Field(
+        default=None, validation_alias="CLOUD_TASKS_TARGET_URL"
+    )
+    cloud_tasks_oidc_audience: str | None = Field(
+        default=None, validation_alias="CLOUD_TASKS_OIDC_AUDIENCE"
+    )
+    cloud_tasks_invoker_email: str | None = Field(
+        default=None, validation_alias="CLOUD_TASKS_INVOKER_EMAIL"
+    )
+    cloud_tasks_enabled: bool = Field(
+        default=False, validation_alias="CLOUD_TASKS_ENABLED"
     )
     environment: Environment = Field(validation_alias="ENVIRONMENT")
 
@@ -94,6 +129,40 @@ class Settings(BaseSettings):
 
     def require_meta_verify_token(self) -> str:
         return self._require_meta_secret(self.meta_verify_token)
+
+    def require_cloud_tasks_configuration(self) -> CloudTasksConfiguration:
+        if not self.cloud_tasks_enabled:
+            raise CloudTasksConfigurationError("Cloud Tasks is disabled")
+
+        raw_values = {
+            "project_id": self.gcp_project_id,
+            "region": self.gcp_region,
+            "queue": self.cloud_tasks_events_queue,
+            "target_url": self.cloud_tasks_target_url,
+            "oidc_audience": self.cloud_tasks_oidc_audience,
+            "invoker_email": self.cloud_tasks_invoker_email,
+        }
+        values = {
+            key: value.strip() if isinstance(value, str) else ""
+            for key, value in raw_values.items()
+        }
+        if any(not value for value in values.values()):
+            raise CloudTasksConfigurationError(
+                "Cloud Tasks configuration is incomplete"
+            )
+        target_url = urlsplit(values["target_url"])
+        oidc_audience = urlsplit(values["oidc_audience"])
+        if (
+            target_url.scheme != "https"
+            or not target_url.netloc
+            or oidc_audience.scheme != "https"
+            or not oidc_audience.netloc
+            or "@" not in values["invoker_email"]
+        ):
+            raise CloudTasksConfigurationError(
+                "Cloud Tasks configuration is invalid"
+            )
+        return CloudTasksConfiguration(**values)
 
     @staticmethod
     def _require_meta_secret(value: SecretStr | None) -> str:

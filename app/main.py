@@ -11,10 +11,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.health import router as health_router
+from app.api.internal_tasks import router as internal_tasks_router
 from app.api.whatsapp_webhook import router as whatsapp_webhook_router
 from app.core.config import get_settings
 from app.core.database import dispose_engine
 from app.core.logging import configure_logging
+from app.tasks.cloud_tasks import close_cloud_tasks_client
 
 settings = get_settings()
 configure_logging(settings.environment.value)
@@ -23,8 +25,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    yield
-    await dispose_engine()
+    try:
+        yield
+    finally:
+        try:
+            await close_cloud_tasks_client()
+        finally:
+            await dispose_engine()
 
 
 def create_app() -> FastAPI:
@@ -36,6 +43,7 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(health_router)
+    application.include_router(internal_tasks_router)
     application.include_router(whatsapp_webhook_router)
 
     @application.exception_handler(RequestValidationError)

@@ -58,6 +58,12 @@ class WebhookRepository(Protocol):
     async def complete_event(self, event_key: str, event_status: str) -> None: ...
 
 
+class QueuedWebhookRepository(WebhookRepository, Protocol):
+    async def get_event_status(self, event_key: str) -> str | None: ...
+
+    async def queue_event(self, event_key: str) -> None: ...
+
+
 class TransactionSession(Protocol):
     def begin(self) -> AbstractAsyncContextManager[Any]: ...
 
@@ -153,6 +159,82 @@ async def process_webhook_events(
             if not is_duplicate_event_error(exc):
                 raise
             logger.info("webhook_duplicate")
+
+
+async def persist_webhook_events_for_tasks(
+    session: AsyncSession | TransactionSession,
+    events: list[NormalizedWebhookEvent],
+    repository: QueuedWebhookRepository | None = None,
+) -> list[str]:
+    event_repository = repository or WhatsAppWebhookRepository(
+        cast(AsyncSession, session)
+    )
+    event_keys: list[str] = []
+
+    for event in events:
+        if isinstance(event, InboundMessageEvent) and not is_individual_whatsapp_id(
+            event.whatsapp_id
+        ):
+            logger.info("webhook_collective_ignored")
+            continue
+
+        should_enqueue = False
+        try:
+            async with session.begin():
+                is_new_event = await event_repository.claim_event(event)
+                if not is_new_event:
+                    event_status = await event_repository.get_event_status(
+                        event.event_key
+                    )
+                    should_enqueue = event_status in {"queued", "processing"}
+                else:
+                    business_id = await event_repository.find_business_id(
+                        event.meta_phone_number_id
+                    )
+                    if business_id is None:
+                        await event_repository.complete_event(
+                            event.event_key,
+                            "ignored",
+                        )
+                        logger.info("webhook_business_not_found")
+                    else:
+                        if isinstance(event, InboundMessageEvent):
+                            customer_id = (
+                                await event_repository.get_or_create_customer_id(
+                                    business_id,
+                                    event.whatsapp_id,
+                                )
+                            )
+                            conversation_id = (
+                                await event_repository.get_or_create_conversation_id(
+                                    business_id,
+                                    customer_id,
+                                )
+                            )
+                            await event_repository.touch_conversation(
+                                conversation_id
+                            )
+                            await event_repository.persist_inbound_message(
+                                business_id,
+                                conversation_id,
+                                event,
+                            )
+                        await event_repository.queue_event(event.event_key)
+                        should_enqueue = True
+        except IntegrityError as exc:
+            if not is_duplicate_event_error(exc):
+                raise
+            logger.info("webhook_duplicate")
+            async with session.begin():
+                event_status = await event_repository.get_event_status(
+                    event.event_key
+                )
+            should_enqueue = event_status in {"queued", "processing"}
+
+        if should_enqueue and event.event_key not in event_keys:
+            event_keys.append(event.event_key)
+
+    return event_keys
 
 
 def is_duplicate_event_error(exc: IntegrityError) -> bool:

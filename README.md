@@ -132,3 +132,20 @@ a integração, configure `META_ACCESS_TOKEN`, `META_APP_SECRET` e
 `META_VERIFY_TOKEN` como secrets, além de `META_PHONE_NUMBER_ID`, `META_WABA_ID` e
 `META_GRAPH_VERSION`. Use `ALEMBIC_DATABASE_URL` apenas no processo separado de
 migrations, com conexão Direct ou Session `:5432`.
+
+## Cloud Tasks inbound
+
+`CLOUD_TASKS_ENABLED=false` mantém o processamento síncrono atual. Quando a flag
+é habilitada, o webhook confirma assinatura e remetente 1:1, persiste o evento de
+forma idempotente, encerra a transação e publica uma task determinística contendo
+somente `event_key`. O worker autenticado em
+`POST /internal/tasks/whatsapp-event` busca os dados normalizados no PostgreSQL e
+executa o motor conversacional sem enviar a outbox ao WhatsApp.
+
+Configure `GCP_PROJECT_ID`, `GCP_REGION`, `CLOUD_TASKS_EVENTS_QUEUE`,
+`CLOUD_TASKS_TARGET_URL`, `CLOUD_TASKS_OIDC_AUDIENCE` e
+`CLOUD_TASKS_INVOKER_EMAIL`. A identidade esperada em produção é
+`whatsapp-task-invoker@whatsapp-automacao-prod.iam.gserviceaccount.com`; ela deve
+ter permissão de Cloud Run Invoker. Falhas de enqueue retornam erro transitório
+para permitir retry, enquanto nomes repetidos (`AlreadyExists`) são tratados como
+sucesso. Payload bruto, telefone e conteúdo de mensagem nunca entram na task.

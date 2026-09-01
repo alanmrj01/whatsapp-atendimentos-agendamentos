@@ -41,6 +41,21 @@ class WhatsAppWebhookRepository:
         result = await self.session.execute(build_claim_event_statement(event))
         return result.scalar_one_or_none() is not None
 
+    async def get_event_status(self, event_key: str) -> str | None:
+        result = await self.session.execute(
+            select(ProcessedWebhook.status).where(
+                ProcessedWebhook.event_key == event_key
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def queue_event(self, event_key: str) -> None:
+        await self.session.execute(
+            update(ProcessedWebhook)
+            .where(ProcessedWebhook.event_key == event_key)
+            .values(status="queued", processed_at=None)
+        )
+
     async def find_business_id(
         self, meta_phone_number_id: str
     ) -> uuid.UUID | None:

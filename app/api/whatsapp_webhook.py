@@ -10,16 +10,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.conversations.dependencies import get_booking_availability_port
 from app.conversations.ports import BookingAvailabilityPort
-from app.core.config import MetaConfigurationError, Settings, get_settings
+from app.core.config import (
+    CloudTasksConfigurationError,
+    MetaConfigurationError,
+    Settings,
+    get_settings,
+)
 from app.core.database import get_db
 from app.schemas.whatsapp_webhook import (
     WebhookAcknowledgement,
     WhatsAppWebhookPayload,
 )
-from app.whatsapp.processor import process_webhook_events
+from app.tasks.cloud_tasks import (
+    CloudTasksEnqueueError,
+    CloudTasksEventEnqueuer,
+    EventTaskEnqueuer,
+)
+from app.whatsapp.processor import (
+    persist_webhook_events_for_tasks,
+    process_webhook_events,
+)
 from app.whatsapp.webhook import normalize_webhook_payload, verify_meta_signature
 
 router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp-webhook"])
+
+
+def build_event_task_enqueuer(settings: Settings) -> EventTaskEnqueuer:
+    return CloudTasksEventEnqueuer(
+        settings.require_cloud_tasks_configuration()
+    )
 
 
 @router.get("", response_class=PlainTextResponse)
@@ -89,5 +108,25 @@ async def receive_whatsapp_webhook(
         ) from None
 
     events = normalize_webhook_payload(payload)
-    await process_webhook_events(session, events, booking_port=booking_port)
+    if not settings.cloud_tasks_enabled:
+        await process_webhook_events(session, events, booking_port=booking_port)
+        return WebhookAcknowledgement(status="accepted")
+
+    try:
+        enqueuer = build_event_task_enqueuer(settings)
+    except CloudTasksConfigurationError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook processing unavailable",
+        ) from None
+
+    event_keys = await persist_webhook_events_for_tasks(session, events)
+    try:
+        for event_key in event_keys:
+            await enqueuer.enqueue(event_key)
+    except CloudTasksEnqueueError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook processing unavailable",
+        ) from None
     return WebhookAcknowledgement(status="accepted")
