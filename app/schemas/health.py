@@ -10,3 +10,8 @@ class HealthResponse(BaseModel):
 class DatabaseHealthResponse(BaseModel):
     status: Literal["ok", "error"]
     database: Literal["connected", "unavailable"]
+
+
+class ReadinessResponse(BaseModel):
+    status: Literal["ready", "not_ready"]
+    database: Literal["connected", "unavailable"]

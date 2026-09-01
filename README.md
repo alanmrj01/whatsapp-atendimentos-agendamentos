@@ -32,11 +32,15 @@ copie as URIs para o `.env` local e nunca versione esse arquivo.
 ```powershell
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --no-access-log
 pytest -q
-Invoke-RestMethod http://localhost:8080/health/db
+Invoke-RestMethod http://localhost:8080/health
+Invoke-RestMethod http://localhost:8080/ready
 ```
 
 `GET /health/db` executa `SELECT 1`: responde `200` quando o PostgreSQL está
 acessível e `503` sem expor detalhes da conexão quando está indisponível.
+`GET /health` confirma somente que o processo está vivo. `GET /ready` executa a
+mesma verificação segura do PostgreSQL e responde `503` enquanto a dependência
+necessária não estiver disponível.
 
 O access log padrão fica desabilitado para não registrar o token de verificação
 presente na query string. A aplicação emite logs JSON apenas com metadados
@@ -115,4 +119,13 @@ docker run --rm -p 8080:8080 --env-file .env -e PORT=8080 whatsapp-atendimento-a
 ```
 
 O container usa Python 3.12, executa como usuário não-root e respeita a variável
-`PORT` fornecida pelo Cloud Run.
+`PORT` fornecida pelo Cloud Run. A imagem define `ENVIRONMENT=production`, inicia
+um único processo Uvicorn e encerra graciosamente ao receber `SIGTERM`. Migrations
+Alembic não são executadas no startup do container.
+
+Em produção, configure `DATABASE_URL` com o Transaction Pooler Supabase `:6543`
+via Secret Manager, além de `META_ACCESS_TOKEN`, `META_APP_SECRET` e
+`META_VERIFY_TOKEN` como secrets. Configure também `META_PHONE_NUMBER_ID`,
+`META_WABA_ID` e `META_GRAPH_VERSION`. O Cloud Run fornece `PORT`; mantenha
+`ENVIRONMENT=production`. Use `ALEMBIC_DATABASE_URL` apenas no processo separado
+de migrations, com conexão Direct ou Session `:5432`.
