@@ -89,7 +89,7 @@ class WhatsAppWebhookRepository:
                 id=conversation_id,
                 business_id=business_id,
                 customer_id=customer_id,
-                state="new",
+                state="START",
                 context={},
                 automation_enabled=True,
                 handoff_status="none",

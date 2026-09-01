@@ -8,6 +8,9 @@ from typing import Any, Protocol, cast
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.conversations.engine import ConversationEngine
+from app.conversations.types import ConversationInput
+from app.repositories.conversations import ConversationRepository
 from app.repositories.whatsapp_webhook import WhatsAppWebhookRepository
 from app.whatsapp.webhook import (
     InboundMessageEvent,
@@ -57,14 +60,24 @@ class TransactionSession(Protocol):
     def begin(self) -> AbstractAsyncContextManager[Any]: ...
 
 
+class ConversationProcessor(Protocol):
+    async def process(self, inbound: ConversationInput) -> bool: ...
+
+
 async def process_webhook_events(
     session: AsyncSession | TransactionSession,
     events: list[NormalizedWebhookEvent],
     repository: WebhookRepository | None = None,
+    conversation_engine: ConversationProcessor | None = None,
 ) -> None:
     event_repository = repository or WhatsAppWebhookRepository(
         cast(AsyncSession, session)
     )
+    active_conversation_engine = conversation_engine
+    if active_conversation_engine is None and repository is None:
+        active_conversation_engine = ConversationEngine(
+            ConversationRepository(cast(AsyncSession, session))
+        )
 
     for event in events:
         try:
@@ -97,6 +110,18 @@ async def process_webhook_events(
                     await event_repository.persist_inbound_message(
                         business_id, conversation_id, event
                     )
+                    if active_conversation_engine is not None:
+                        await active_conversation_engine.process(
+                            ConversationInput(
+                                business_id=business_id,
+                                customer_id=customer_id,
+                                conversation_id=conversation_id,
+                                provider_message_id=event.provider_message_id,
+                                message_type=event.message_type,
+                                body=event.body,
+                                interactive_id=event.interactive_id,
+                            )
+                        )
                 elif isinstance(event, MessageStatusEvent):
                     await event_repository.update_message_status(
                         business_id,
