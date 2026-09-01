@@ -74,6 +74,63 @@ def test_upgrade_sql_creates_all_tables_and_postgresql_constraints() -> None:
     assert "check (ends_at > starts_at)" in normalized
     assert "where provider_message_id is not null" in normalized
     assert "where idempotency_key is not null" in normalized
+    for constraint_name, foreign_key_sql in {
+        "fk_conversations_business_customer_customers": (
+            "foreign key(business_id, customer_id) "
+            "references customers (business_id, id)"
+        ),
+        "fk_employee_services_business_employee_employees": (
+            "foreign key(business_id, employee_id) "
+            "references employees (business_id, id)"
+        ),
+        "fk_employee_services_business_id_businesses": (
+            "foreign key(business_id) references businesses (id)"
+        ),
+        "fk_employee_services_business_service_services": (
+            "foreign key(business_id, service_id) "
+            "references services (business_id, id)"
+        ),
+        "fk_working_hours_business_employee_employees": (
+            "foreign key(business_id, employee_id) "
+            "references employees (business_id, id)"
+        ),
+        "fk_schedule_blocks_business_employee_employees": (
+            "foreign key(business_id, employee_id) "
+            "references employees (business_id, id)"
+        ),
+        "fk_appointments_business_customer_customers": (
+            "foreign key(business_id, customer_id) "
+            "references customers (business_id, id)"
+        ),
+        "fk_appointments_business_service_services": (
+            "foreign key(business_id, service_id) "
+            "references services (business_id, id)"
+        ),
+        "fk_appointments_business_employee_employees": (
+            "foreign key(business_id, employee_id) "
+            "references employees (business_id, id)"
+        ),
+        "fk_messages_business_conversation_conversations": (
+            "foreign key(business_id, conversation_id) "
+            "references conversations (business_id, id)"
+        ),
+    }.items():
+        assert f"constraint {constraint_name}" in normalized
+        assert foreign_key_sql in normalized
+
+    for constraint_name, unique_sql in {
+        "uq_customers_business_id_id": "unique (business_id, id)",
+        "uq_services_business_id_id": "unique (business_id, id)",
+        "uq_employees_business_id_id": "unique (business_id, id)",
+        "uq_conversations_business_id_id": "unique (business_id, id)",
+    }.items():
+        assert f"constraint {constraint_name} {unique_sql}" in normalized
+
+    employee_services_sql = normalized.split(
+        "create table employee_services", maxsplit=1
+    )[1].split("create index", maxsplit=1)[0]
+    assert "business_id uuid not null" in employee_services_sql
+    assert "ix_employee_services_business_id" in normalized
 
 
 def test_downgrade_sql_drops_schema_in_dependency_safe_order() -> None:

@@ -98,6 +98,11 @@ def upgrade() -> None:
             "whatsapp_id",
             name="uq_customers_business_whatsapp",
         ),
+        sa.UniqueConstraint(
+            "business_id",
+            "id",
+            name="uq_customers_business_id_id",
+        ),
     )
     op.create_index("ix_customers_business_id", "customers", ["business_id"])
 
@@ -144,20 +149,20 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
-            ["business_id"],
-            ["businesses.id"],
-            name="fk_conversations_business_id_businesses",
-        ),
-        sa.ForeignKeyConstraint(
-            ["customer_id"],
-            ["customers.id"],
-            name="fk_conversations_customer_id_customers",
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            name="fk_conversations_business_customer_customers",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_conversations"),
         sa.UniqueConstraint(
             "business_id",
             "customer_id",
             name="uq_conversations_business_customer",
+        ),
+        sa.UniqueConstraint(
+            "business_id",
+            "id",
+            name="uq_conversations_business_id_id",
         ),
     )
     op.create_index(
@@ -210,6 +215,9 @@ def upgrade() -> None:
             name="fk_services_business_id_businesses",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_services"),
+        sa.UniqueConstraint(
+            "business_id", "id", name="uq_services_business_id_id"
+        ),
     )
     op.create_index("ix_services_business_id", "services", ["business_id"])
     op.create_index("ix_services_active", "services", ["active"])
@@ -243,23 +251,32 @@ def upgrade() -> None:
             name="fk_employees_business_id_businesses",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_employees"),
+        sa.UniqueConstraint(
+            "business_id", "id", name="uq_employees_business_id_id"
+        ),
     )
     op.create_index("ix_employees_business_id", "employees", ["business_id"])
     op.create_index("ix_employees_active", "employees", ["active"])
 
     op.create_table(
         "employee_services",
+        sa.Column("business_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("employee_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("service_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.ForeignKeyConstraint(
-            ["employee_id"],
-            ["employees.id"],
-            name="fk_employee_services_employee_id_employees",
+            ["business_id"],
+            ["businesses.id"],
+            name="fk_employee_services_business_id_businesses",
         ),
         sa.ForeignKeyConstraint(
-            ["service_id"],
-            ["services.id"],
-            name="fk_employee_services_service_id_services",
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_employee_services_business_employee_employees",
+        ),
+        sa.ForeignKeyConstraint(
+            ["business_id", "service_id"],
+            ["services.business_id", "services.id"],
+            name="fk_employee_services_business_service_services",
         ),
         sa.PrimaryKeyConstraint(
             "employee_id", "service_id", name="pk_employee_services"
@@ -267,6 +284,9 @@ def upgrade() -> None:
     )
     op.create_index(
         "ix_employee_services_service_id", "employee_services", ["service_id"]
+    )
+    op.create_index(
+        "ix_employee_services_business_id", "employee_services", ["business_id"]
     )
 
     op.create_table(
@@ -286,14 +306,9 @@ def upgrade() -> None:
             name=op.f("ck_working_hours_end_time_after_start_time"),
         ),
         sa.ForeignKeyConstraint(
-            ["business_id"],
-            ["businesses.id"],
-            name="fk_working_hours_business_id_businesses",
-        ),
-        sa.ForeignKeyConstraint(
-            ["employee_id"],
-            ["employees.id"],
-            name="fk_working_hours_employee_id_employees",
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_working_hours_business_employee_employees",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_working_hours"),
     )
@@ -319,14 +334,9 @@ def upgrade() -> None:
             name=op.f("ck_schedule_blocks_ends_at_after_starts_at"),
         ),
         sa.ForeignKeyConstraint(
-            ["business_id"],
-            ["businesses.id"],
-            name="fk_schedule_blocks_business_id_businesses",
-        ),
-        sa.ForeignKeyConstraint(
-            ["employee_id"],
-            ["employees.id"],
-            name="fk_schedule_blocks_employee_id_employees",
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_schedule_blocks_business_employee_employees",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_schedule_blocks"),
     )
@@ -370,24 +380,19 @@ def upgrade() -> None:
             name=op.f("ck_appointments_status_allowed"),
         ),
         sa.ForeignKeyConstraint(
-            ["business_id"],
-            ["businesses.id"],
-            name="fk_appointments_business_id_businesses",
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            name="fk_appointments_business_customer_customers",
         ),
         sa.ForeignKeyConstraint(
-            ["customer_id"],
-            ["customers.id"],
-            name="fk_appointments_customer_id_customers",
+            ["business_id", "service_id"],
+            ["services.business_id", "services.id"],
+            name="fk_appointments_business_service_services",
         ),
         sa.ForeignKeyConstraint(
-            ["employee_id"],
-            ["employees.id"],
-            name="fk_appointments_employee_id_employees",
-        ),
-        sa.ForeignKeyConstraint(
-            ["service_id"],
-            ["services.id"],
-            name="fk_appointments_service_id_services",
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_appointments_business_employee_employees",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_appointments"),
     )
@@ -447,14 +452,9 @@ def upgrade() -> None:
             name=op.f("ck_messages_direction_allowed"),
         ),
         sa.ForeignKeyConstraint(
-            ["business_id"],
-            ["businesses.id"],
-            name="fk_messages_business_id_businesses",
-        ),
-        sa.ForeignKeyConstraint(
-            ["conversation_id"],
-            ["conversations.id"],
-            name="fk_messages_conversation_id_conversations",
+            ["business_id", "conversation_id"],
+            ["conversations.business_id", "conversations.id"],
+            name="fk_messages_business_conversation_conversations",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_messages"),
     )

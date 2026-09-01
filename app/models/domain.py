@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     SmallInteger,
@@ -77,6 +78,9 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint(
             "business_id", "whatsapp_id", name="uq_customers_business_whatsapp"
         ),
+        UniqueConstraint(
+            "business_id", "id", name="uq_customers_business_id_id"
+        ),
         Index("ix_customers_business_id", "business_id"),
     )
 
@@ -94,6 +98,14 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint(
             "business_id", "customer_id", name="uq_conversations_business_customer"
         ),
+        UniqueConstraint(
+            "business_id", "id", name="uq_conversations_business_id_id"
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            name="fk_conversations_business_customer_customers",
+        ),
         Index("ix_conversations_business_id", "business_id"),
         Index("ix_conversations_customer_id", "customer_id"),
         Index("ix_conversations_state", "state"),
@@ -101,12 +113,8 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_conversations_last_interaction_at", "last_interaction_at"),
     )
 
-    business_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
-    )
-    customer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False
-    )
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     state: Mapped[str] = mapped_column(String(64), nullable=False)
     context: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
@@ -129,6 +137,7 @@ class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "services"
     __table_args__ = (
         CheckConstraint("duration_minutes > 0", name="duration_minutes_positive"),
+        UniqueConstraint("business_id", "id", name="uq_services_business_id_id"),
         Index("ix_services_business_id", "business_id"),
         Index("ix_services_active", "active"),
     )
@@ -146,6 +155,7 @@ class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "employees"
     __table_args__ = (
+        UniqueConstraint("business_id", "id", name="uq_employees_business_id_id"),
         Index("ix_employees_business_id", "business_id"),
         Index("ix_employees_active", "active"),
     )
@@ -161,16 +171,31 @@ class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class EmployeeService(Base):
     __tablename__ = "employee_services"
-    __table_args__ = (Index("ix_employee_services_service_id", "service_id"),)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_employee_services_business_employee_employees",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "service_id"],
+            ["services.business_id", "services.id"],
+            name="fk_employee_services_business_service_services",
+        ),
+        Index("ix_employee_services_business_id", "business_id"),
+        Index("ix_employee_services_service_id", "service_id"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
 
     employee_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("employees.id"),
         primary_key=True,
     )
     service_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("services.id"),
         primary_key=True,
     )
 
@@ -180,16 +205,17 @@ class WorkingHours(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (
         CheckConstraint("weekday BETWEEN 0 AND 6", name="weekday_range"),
         CheckConstraint("end_time > start_time", name="end_time_after_start_time"),
+        ForeignKeyConstraint(
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_working_hours_business_employee_employees",
+        ),
         Index("ix_working_hours_business_id", "business_id"),
         Index("ix_working_hours_employee_weekday", "employee_id", "weekday"),
     )
 
-    business_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
-    )
-    employee_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("employees.id"), nullable=False
-    )
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     weekday: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     start_time: Mapped[time] = mapped_column(Time, nullable=False)
     end_time: Mapped[time] = mapped_column(Time, nullable=False)
@@ -199,16 +225,17 @@ class ScheduleBlock(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "schedule_blocks"
     __table_args__ = (
         CheckConstraint("ends_at > starts_at", name="ends_at_after_starts_at"),
+        ForeignKeyConstraint(
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_schedule_blocks_business_employee_employees",
+        ),
         Index("ix_schedule_blocks_business_id", "business_id"),
         Index("ix_schedule_blocks_employee_starts_at", "employee_id", "starts_at"),
     )
 
-    business_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
-    )
-    employee_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("employees.id"), nullable=False
-    )
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     starts_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -223,6 +250,21 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "status IN ('confirmed', 'cancelled', 'completed')",
             name="status_allowed",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            name="fk_appointments_business_customer_customers",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "service_id"],
+            ["services.business_id", "services.id"],
+            name="fk_appointments_business_service_services",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_appointments_business_employee_employees",
         ),
         ExcludeConstraint(
             ("employee_id", "="),
@@ -239,18 +281,10 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_appointments_starts_at", "starts_at"),
     )
 
-    business_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
-    )
-    customer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False
-    )
-    service_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("services.id"), nullable=False
-    )
-    employee_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("employees.id"), nullable=False
-    )
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    service_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     starts_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -263,6 +297,11 @@ class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint(
             "direction IN ('inbound', 'outbound')", name="direction_allowed"
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "conversation_id"],
+            ["conversations.business_id", "conversations.id"],
+            name="fk_messages_business_conversation_conversations",
         ),
         Index("ix_messages_business_id", "business_id"),
         Index("ix_messages_conversation_id", "conversation_id"),
@@ -282,11 +321,9 @@ class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
     )
 
-    business_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
-    )
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False
+        UUID(as_uuid=True), nullable=False
     )
     provider_message_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True

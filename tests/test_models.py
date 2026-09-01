@@ -21,6 +21,18 @@ EXPECTED_TABLES = {
 }
 
 
+def foreign_key_specs(
+    table_name: str,
+) -> dict[str, tuple[tuple[str, ...], tuple[str, ...]]]:
+    return {
+        constraint.name: (
+            tuple(element.parent.name for element in constraint.elements),
+            tuple(element.target_fullname for element in constraint.elements),
+        )
+        for constraint in Base.metadata.tables[table_name].foreign_key_constraints
+    }
+
+
 def test_all_domain_tables_are_registered_in_metadata() -> None:
     assert set(Base.metadata.tables) == EXPECTED_TABLES
 
@@ -90,25 +102,107 @@ def test_schedule_block_and_message_constraints_are_registered() -> None:
     assert message_checks == {"ck_messages_direction_allowed"}
 
 
-def test_business_scoped_uniques_and_composite_primary_key() -> None:
-    customer_uniques = {
-        constraint.name
-        for constraint in Base.metadata.tables["customers"].constraints
-        if isinstance(constraint, UniqueConstraint)
+def test_business_scoped_uniques_support_composite_foreign_keys() -> None:
+    unique_specs = {
+        table_name: {
+            constraint.name: tuple(column.name for column in constraint.columns)
+            for constraint in Base.metadata.tables[table_name].constraints
+            if isinstance(constraint, UniqueConstraint)
+        }
+        for table_name in ("customers", "services", "employees", "conversations")
     }
-    conversation_uniques = {
-        constraint.name
-        for constraint in Base.metadata.tables["conversations"].constraints
-        if isinstance(constraint, UniqueConstraint)
+
+    assert unique_specs["customers"] == {
+        "uq_customers_business_whatsapp": ("business_id", "whatsapp_id"),
+        "uq_customers_business_id_id": ("business_id", "id"),
     }
+    assert unique_specs["services"] == {
+        "uq_services_business_id_id": ("business_id", "id")
+    }
+    assert unique_specs["employees"] == {
+        "uq_employees_business_id_id": ("business_id", "id")
+    }
+    assert unique_specs["conversations"] == {
+        "uq_conversations_business_customer": ("business_id", "customer_id"),
+        "uq_conversations_business_id_id": ("business_id", "id"),
+    }
+
+
+def test_employee_services_preserves_pair_primary_key_and_business_index() -> None:
+    table = Base.metadata.tables["employee_services"]
     employee_service_pk = Base.metadata.tables["employee_services"].primary_key
 
-    assert customer_uniques == {"uq_customers_business_whatsapp"}
-    assert conversation_uniques == {"uq_conversations_business_customer"}
     assert [column.name for column in employee_service_pk.columns] == [
         "employee_id",
         "service_id",
     ]
+    assert table.c.business_id.nullable is False
+    assert "ix_employee_services_business_id" in {
+        index.name for index in table.indexes
+    }
+
+
+def test_cross_business_relationships_use_composite_foreign_keys() -> None:
+    expected_specs = {
+        "conversations": {
+            "fk_conversations_business_customer_customers": (
+                ("business_id", "customer_id"),
+                ("customers.business_id", "customers.id"),
+            )
+        },
+        "working_hours": {
+            "fk_working_hours_business_employee_employees": (
+                ("business_id", "employee_id"),
+                ("employees.business_id", "employees.id"),
+            )
+        },
+        "schedule_blocks": {
+            "fk_schedule_blocks_business_employee_employees": (
+                ("business_id", "employee_id"),
+                ("employees.business_id", "employees.id"),
+            )
+        },
+        "appointments": {
+            "fk_appointments_business_customer_customers": (
+                ("business_id", "customer_id"),
+                ("customers.business_id", "customers.id"),
+            ),
+            "fk_appointments_business_service_services": (
+                ("business_id", "service_id"),
+                ("services.business_id", "services.id"),
+            ),
+            "fk_appointments_business_employee_employees": (
+                ("business_id", "employee_id"),
+                ("employees.business_id", "employees.id"),
+            ),
+        },
+        "messages": {
+            "fk_messages_business_conversation_conversations": (
+                ("business_id", "conversation_id"),
+                ("conversations.business_id", "conversations.id"),
+            )
+        },
+    }
+
+    for table_name, expected in expected_specs.items():
+        assert foreign_key_specs(table_name) == expected
+
+
+def test_employee_services_references_business_employee_and_service() -> None:
+    assert foreign_key_specs("employee_services") == {
+        "fk_employee_services_business_id_businesses": (
+            ("business_id",),
+            ("businesses.id",),
+        ),
+        "fk_employee_services_business_employee_employees": (
+            ("business_id", "employee_id"),
+            ("employees.business_id", "employees.id"),
+        ),
+        "fk_employee_services_business_service_services": (
+            ("business_id", "service_id"),
+            ("services.business_id", "services.id"),
+        ),
+    }
 
 
 def test_external_business_and_webhook_ids_are_unique() -> None:
