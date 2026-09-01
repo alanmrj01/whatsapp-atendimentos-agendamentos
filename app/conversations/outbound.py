@@ -8,10 +8,17 @@ from app.conversations.constants import (
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
+    ACCESS_DIFFICULT,
+    ACCESS_NORMAL,
+    ACCESS_UNKNOWN,
     MENU_BOOK,
     MENU_CANCEL,
     MENU_HUMAN,
     MENU_RESCHEDULE,
+    QUANTITY_OPTION_LIMIT,
+    SITE_LIMIT_17,
+    SITE_LIMIT_18,
+    SITE_LIMIT_NONE,
 )
 from app.conversations.ports import BookingOption
 
@@ -66,6 +73,58 @@ def date_selection_message(
         body=body,
         interactive_id="booking.dates",
         outbound_payload=_list_payload("Datas", options, prefix="date:"),
+    )
+
+
+def quantity_selection_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_list",
+        body="Quantos itens ou aparelhos são?",
+        interactive_id="booking.quantity",
+        outbound_payload=_list_payload(
+            "Quantidade",
+            tuple(
+                BookingOption(f"quantity:{value}", str(value))
+                for value in range(1, QUANTITY_OPTION_LIMIT + 1)
+            ),
+        ),
+    )
+
+
+def access_selection_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="O local de acesso é alto ou difícil?",
+        interactive_id="booking.access",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(ACCESS_NORMAL, "Não"),
+                BookingOption(ACCESS_DIFFICULT, "Sim"),
+                BookingOption(ACCESS_UNKNOWN, "Não sei"),
+            )
+        ),
+    )
+
+
+def address_request_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body="Qual é o endereço completo do serviço, incluindo a cidade?",
+    )
+
+
+def site_limit_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="Existe algum horário limite para realizar o serviço no local?",
+        interactive_id="booking.site_limit",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(SITE_LIMIT_NONE, "Não"),
+                BookingOption(SITE_LIMIT_17, "Até 17h"),
+                BookingOption(SITE_LIMIT_18, "Até 18h"),
+            )
+        ),
     )
 
 
@@ -134,7 +193,7 @@ def no_services_message() -> OutboundMessage:
 def slot_unavailable_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="interactive_button",
-        body="Esse horário não está mais disponível.",
+        body="Esse horário acabou de ficar indisponível. Escolha outro horário.",
         interactive_id="booking.slot_unavailable",
         outbound_payload=_button_payload(
             (

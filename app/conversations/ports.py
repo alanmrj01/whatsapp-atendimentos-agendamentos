@@ -6,6 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from app.booking.domain import (
+    BookingPlan,
+    BookingRequirements,
+    ServiceIntake,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class BookingOption:
@@ -33,16 +39,38 @@ class SlotUnavailable(RuntimeError):
     """O horário selecionado não pode mais ser confirmado."""
 
 
+class BookingRequiresHandoff(RuntimeError):
+    """O agendamento exige avaliação de uma pessoa da equipe."""
+
+
+class BookingNotFound(RuntimeError):
+    """O agendamento não pertence ao cliente informado."""
+
+
 class BookingAvailabilityPort(Protocol):
     async def list_services(
         self,
         business_id: uuid.UUID,
     ) -> Sequence[BookingOption]: ...
 
+    async def get_service_intake(
+        self,
+        business_id: uuid.UUID,
+        service_id: uuid.UUID,
+    ) -> ServiceIntake: ...
+
+    async def estimate(
+        self,
+        business_id: uuid.UUID,
+        service_id: uuid.UUID,
+        requirements: BookingRequirements,
+    ) -> BookingPlan: ...
+
     async def list_dates(
         self,
         business_id: uuid.UUID,
         service_id: uuid.UUID,
+        requirements: BookingRequirements = BookingRequirements(),
     ) -> Sequence[BookingOption]: ...
 
     async def list_times(
@@ -50,6 +78,7 @@ class BookingAvailabilityPort(Protocol):
         business_id: uuid.UUID,
         service_id: uuid.UUID,
         selected_date: str,
+        requirements: BookingRequirements = BookingRequirements(),
     ) -> Sequence[BookingOption]: ...
 
     async def confirm(
@@ -59,4 +88,22 @@ class BookingAvailabilityPort(Protocol):
         service_id: uuid.UUID,
         selected_date: str,
         selected_time: str,
+        requirements: BookingRequirements = BookingRequirements(),
+    ) -> BookingConfirmation: ...
+
+    async def cancel_booking(
+        self,
+        business_id: uuid.UUID,
+        customer_id: uuid.UUID,
+        appointment_id: uuid.UUID,
+    ) -> BookingConfirmation: ...
+
+    async def reschedule_booking_atomic(
+        self,
+        business_id: uuid.UUID,
+        customer_id: uuid.UUID,
+        appointment_id: uuid.UUID,
+        selected_date: str,
+        selected_time: str,
+        requirements: BookingRequirements,
     ) -> BookingConfirmation: ...

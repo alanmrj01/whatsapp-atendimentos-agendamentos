@@ -1,8 +1,9 @@
 # whatsapp-atendimento-agendamento
 
-Base de infraestrutura em FastAPI para receber webhooks do WhatsApp, preparada
-para Cloud Run e PostgreSQL/Supabase. Ainda não há bot, envio de mensagens,
-agenda ou regras de negócio.
+Backend FastAPI para atendimento e agendamento de serviços pelo WhatsApp,
+preparado para Cloud Run e PostgreSQL/Supabase. Possui webhook assinado, outbox,
+cliente isolado da Cloud API, motor determinístico e agenda PostgreSQL. O envio
+automático da outbox ainda não faz parte desta etapa.
 
 ## Instalação local
 
@@ -41,17 +42,42 @@ O access log padrão fica desabilitado para não registrar o token de verificaç
 presente na query string. A aplicação emite logs JSON apenas com metadados
 seguros da requisição.
 
-Para futuras migrações, após criar modelos:
+O catálogo de serviços guarda duração, preço e adicionais editáveis. A origem
+operacional padrão é `Zona Leste de São José dos Campos - SP`, também editável
+por empresa. O fallback de deslocamento usa minutos e regras regionais
+configurados no banco; não exige API paga e não representa rota/GPS real.
+
+Para aplicar as migrations em uma conexão Direct ou Session do Supabase:
 
 ```powershell
-alembic revision --autogenerate -m "descricao"
+$env:ALEMBIC_DATABASE_URL="postgresql://...:5432/postgres"
 alembic upgrade head
 ```
 
 Para migrations, defina `ALEMBIC_DATABASE_URL` com uma conexão Direct ou Session
 `:5432`. Se ela estiver vazia, o Alembic usa `DATABASE_URL`. O Alembic continuará
-sendo a única fonte de alterações de schema; as tabelas de negócio serão criadas
-somente na próxima etapa.
+sendo a única fonte de alterações de schema; a aplicação nunca usa
+`create_all()`. A migration `20260901_0003` adiciona apenas configurações de
+serviço/deslocamento e snapshots históricos do agendamento. Ela não é aplicada
+automaticamente a nenhum projeto Supabase.
+
+Os valores comerciais da migration são defaults operacionais editáveis, não
+cotações de mercado. Preços sem configuração segura devem permanecer como
+`estimated` ou `human_quote`.
+
+## Testes PostgreSQL físicos
+
+Os testes unitários não acessam rede nem Supabase. A suíte física A–J exige um
+PostgreSQL descartável cujo nome contenha `test`; hosts Supabase são bloqueados.
+
+```powershell
+$env:TEST_DATABASE_URL="postgresql://usuario:senha@localhost:5432/booking_test"
+pytest tests/integration/test_booking_postgresql.py -q
+```
+
+Sem `TEST_DATABASE_URL`, esses dez testes aparecem como `skipped` de forma
+explícita. Nunca aponte essa variável para produção: a suíte aplica as migrations,
+limpa dados de teste e executa downgrade até `base` ao terminar.
 
 ## Docker
 

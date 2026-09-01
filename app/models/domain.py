@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, time
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -12,6 +13,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -50,6 +52,18 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "slot_interval_minutes > 0", name="slot_interval_minutes_positive"
         ),
+        CheckConstraint(
+            "default_travel_minutes >= 0",
+            name="default_travel_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "travel_before_buffer_minutes >= 0",
+            name="travel_before_buffer_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "travel_after_buffer_minutes >= 0",
+            name="travel_after_buffer_minutes_nonnegative",
+        ),
         Index("ix_businesses_active", "active"),
     )
 
@@ -66,6 +80,27 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     meta_waba_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     slot_interval_minutes: Mapped[int] = mapped_column(
         Integer, default=30, server_default="30", nullable=False
+    )
+    service_origin_address: Mapped[str] = mapped_column(
+        String(500),
+        default="Zona Leste de São José dos Campos - SP",
+        server_default="Zona Leste de São José dos Campos - SP",
+        nullable=False,
+    )
+    default_travel_minutes: Mapped[int] = mapped_column(
+        Integer, default=30, server_default="30", nullable=False
+    )
+    travel_before_buffer_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    travel_after_buffer_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    travel_region_rules: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+        nullable=False,
     )
     active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true", nullable=False
@@ -137,6 +172,37 @@ class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "services"
     __table_args__ = (
         CheckConstraint("duration_minutes > 0", name="duration_minutes_positive"),
+        CheckConstraint(
+            "pricing_type IN ('fixed', 'estimated', 'human_quote')",
+            name="pricing_type_allowed",
+        ),
+        CheckConstraint(
+            "included_quantity > 0", name="included_quantity_positive"
+        ),
+        CheckConstraint(
+            "additional_unit_duration_minutes >= 0",
+            name="additional_unit_duration_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "additional_unit_price IS NULL OR additional_unit_price >= 0",
+            name="additional_unit_price_nonnegative",
+        ),
+        CheckConstraint(
+            "difficult_access_duration_minutes >= 0",
+            name="difficult_access_duration_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "difficult_access_price IS NULL OR difficult_access_price >= 0",
+            name="difficult_access_price_nonnegative",
+        ),
+        CheckConstraint(
+            "duration_margin_minutes >= 0",
+            name="duration_margin_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "unknown_access_policy IN ('standard', 'conservative', 'human_quote')",
+            name="unknown_access_policy_allowed",
+        ),
         UniqueConstraint("business_id", "id", name="uq_services_business_id_id"),
         Index("ix_services_business_id", "business_id"),
         Index("ix_services_active", "active"),
@@ -146,7 +212,53 @@ class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    pricing_type: Mapped[str] = mapped_column(
+        String(32), default="estimated", server_default="estimated", nullable=False
+    )
+    automatic_booking: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    included_quantity: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    additional_unit_duration_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    additional_unit_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    requires_address: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    requires_quantity: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    considers_difficult_access: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    difficult_access_duration_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    difficult_access_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    unknown_access_policy: Mapped[str] = mapped_column(
+        String(32),
+        default="conservative",
+        server_default="conservative",
+        nullable=False,
+    )
+    duration_margin_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    asks_site_time_limit: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true", nullable=False
     )
@@ -251,6 +363,27 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "status IN ('confirmed', 'cancelled', 'completed')",
             name="status_allowed",
         ),
+        CheckConstraint("quantity > 0", name="quantity_positive"),
+        CheckConstraint(
+            "estimated_duration_minutes > 0",
+            name="estimated_duration_minutes_positive",
+        ),
+        CheckConstraint(
+            "travel_before_minutes >= 0",
+            name="travel_before_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "travel_after_minutes >= 0",
+            name="travel_after_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "pricing_type IN ('fixed', 'estimated', 'human_quote')",
+            name="pricing_type_allowed",
+        ),
+        CheckConstraint(
+            "access_condition IN ('normal', 'difficult', 'unknown')",
+            name="access_condition_allowed",
+        ),
         ForeignKeyConstraint(
             ["business_id", "customer_id"],
             ["customers.business_id", "customers.id"],
@@ -268,7 +401,15 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         ExcludeConstraint(
             ("employee_id", "="),
-            (text("tstzrange(starts_at, ends_at, '[)')"), "&&"),
+            (
+                text(
+                    "tstzrange("
+                    "starts_at - make_interval(mins => travel_before_minutes), "
+                    "ends_at + make_interval(mins => travel_after_minutes), "
+                    "'[)')"
+                ),
+                "&&",
+            ),
             where=text("status = 'confirmed'"),
             using="gist",
             name="excl_appointments_employee_confirmed_overlap",
@@ -279,6 +420,12 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_appointments_employee_starts_at", "employee_id", "starts_at"),
         Index("ix_appointments_status", "status"),
         Index("ix_appointments_starts_at", "starts_at"),
+        Index(
+            "uq_appointments_idempotency_key_present",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
     )
 
     business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -290,6 +437,38 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    service_address: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    quantity: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    access_condition: Mapped[str] = mapped_column(
+        String(16), default="normal", server_default="normal", nullable=False
+    )
+    estimated_duration_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+    travel_before_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    travel_after_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    estimated_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    pricing_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    estimate_details: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        nullable=False,
+    )
+    site_allowed_end: Mapped[time | None] = mapped_column(Time, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
 
 
 class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):

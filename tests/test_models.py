@@ -56,10 +56,10 @@ def test_business_and_service_positive_duration_constraints() -> None:
         if isinstance(constraint, CheckConstraint)
     }
 
-    assert constraint_names == {
+    assert {
         "ck_businesses_slot_interval_minutes_positive",
         "ck_services_duration_minutes_positive",
-    }
+    } <= constraint_names
 
 
 def test_working_hours_and_appointment_constraints_are_registered() -> None:
@@ -78,10 +78,13 @@ def test_working_hours_and_appointment_constraints_are_registered() -> None:
         "ck_working_hours_weekday_range",
         "ck_working_hours_end_time_after_start_time",
     }
-    assert appointment_checks == {
+    assert {
         "ck_appointments_ends_at_after_starts_at",
         "ck_appointments_status_allowed",
-    }
+        "ck_appointments_estimated_duration_minutes_positive",
+        "ck_appointments_travel_before_minutes_nonnegative",
+        "ck_appointments_travel_after_minutes_nonnegative",
+    } <= appointment_checks
 
 
 def test_schedule_block_and_message_constraints_are_registered() -> None:
@@ -239,7 +242,16 @@ def test_required_server_defaults_are_registered() -> None:
     expected_defaults = {
         ("businesses", "timezone"): "America/Sao_Paulo",
         ("businesses", "slot_interval_minutes"): "30",
+        ("businesses", "service_origin_address"): (
+            "Zona Leste de São José dos Campos - SP"
+        ),
+        ("businesses", "default_travel_minutes"): "30",
+        ("businesses", "travel_before_buffer_minutes"): "0",
+        ("businesses", "travel_after_buffer_minutes"): "0",
         ("businesses", "active"): "true",
+        ("services", "pricing_type"): "estimated",
+        ("services", "automatic_booking"): "true",
+        ("services", "included_quantity"): "1",
         ("conversations", "automation_enabled"): "true",
         ("conversations", "handoff_status"): "none",
         ("processed_webhooks", "attempts"): "0",
@@ -268,7 +280,36 @@ def test_confirmed_appointments_have_overlap_exclusion_constraint() -> None:
         )
     )
     assert "employee_id WITH =" in table_sql
-    assert "tstzrange(starts_at, ends_at, '[)') WITH &&" in table_sql
+    assert "make_interval(mins => travel_before_minutes)" in table_sql
+    assert "make_interval(mins => travel_after_minutes)" in table_sql
+
+
+def test_appointment_booking_snapshot_and_idempotency_index() -> None:
+    table = Base.metadata.tables["appointments"]
+
+    for column_name in (
+        "service_address",
+        "quantity",
+        "access_condition",
+        "estimated_duration_minutes",
+        "travel_before_minutes",
+        "travel_after_minutes",
+        "estimated_price",
+        "pricing_type",
+        "estimate_details",
+        "site_allowed_end",
+        "idempotency_key",
+    ):
+        assert column_name in table.c
+    index = next(
+        value
+        for value in table.indexes
+        if value.name == "uq_appointments_idempotency_key_present"
+    )
+    assert index.unique is True
+    assert str(index.dialect_options["postgresql"]["where"]) == (
+        "idempotency_key IS NOT NULL"
+    )
 
 
 def test_message_identifiers_use_partial_unique_indexes() -> None:

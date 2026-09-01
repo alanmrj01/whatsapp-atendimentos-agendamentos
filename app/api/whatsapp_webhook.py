@@ -53,7 +53,7 @@ async def receive_whatsapp_webhook(
     settings: Annotated[Settings, Depends(get_settings)],
     session: Annotated[AsyncSession, Depends(get_db)],
     booking_port: Annotated[
-        BookingAvailabilityPort | None,
+        BookingAvailabilityPort,
         Depends(get_booking_availability_port),
     ],
     x_hub_signature_256: Annotated[

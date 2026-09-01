@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
 from sqlalchemy.exc import IntegrityError
 
 from app.api import whatsapp_webhook as webhook_api
+from app.booking.availability import PostgresBookingAvailabilityPort
 from app.repositories.whatsapp_webhook import build_claim_event_statement
 from app.whatsapp.processor import process_webhook_events
 from app.whatsapp.webhook import (
@@ -230,7 +231,14 @@ async def test_post_accepts_valid_signature(
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
     processor.assert_awaited_once()
-    assert processor.await_args.kwargs == {"booking_port": None}
+    assert isinstance(
+        processor.await_args.kwargs["booking_port"],
+        PostgresBookingAvailabilityPort,
+    )
+    assert (
+        processor.await_args.kwargs["booking_port"].session
+        is processor.await_args.args[0]
+    )
 
 
 @mark.asyncio

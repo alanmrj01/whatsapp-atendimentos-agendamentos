@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 from io import StringIO
 from pathlib import Path
 from types import ModuleType
@@ -20,6 +21,12 @@ OUTBOUND_PAYLOAD_MIGRATION_PATH = (
     / "alembic"
     / "versions"
     / "20260901_0002_add_outbound_payload.py"
+)
+BOOKING_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260901_0003_booking_configuration.py"
 )
 
 
@@ -49,11 +56,53 @@ def render_migration_sql(
     return output.getvalue()
 
 
-def test_outbound_payload_migration_is_the_only_alembic_head() -> None:
+def test_booking_configuration_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260901_0002"]
+    assert script.get_heads() == ["20260901_0003"]
+
+
+def test_previous_migrations_remain_byte_identical() -> None:
+    expected = {
+        MIGRATION_PATH: (
+            "cf5f5686ab0b8381ee4e1a0ef7a09a0c9e066a119f272b235a1e69e6356872f6"
+        ),
+        OUTBOUND_PAYLOAD_MIGRATION_PATH: (
+            "7a8c91faccb6c6131be3f596a7f64dda424021477708e002b7c64e7df0b5ded3"
+        ),
+    }
+
+    for path, digest in expected.items():
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+
+
+def test_booking_configuration_upgrade_and_downgrade_sql() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", BOOKING_MIGRATION_PATH).lower().split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", BOOKING_MIGRATION_PATH).lower().split()
+    )
+
+    for column_name in (
+        "service_origin_address",
+        "default_travel_minutes",
+        "pricing_type",
+        "automatic_booking",
+        "base_price",
+        "estimated_duration_minutes",
+        "travel_before_minutes",
+        "travel_after_minutes",
+        "service_address",
+        "idempotency_key",
+    ):
+        assert column_name in upgrade
+        assert f"drop column {column_name}" in downgrade
+    assert "make_interval(mins => travel_before_minutes)" in upgrade
+    assert "make_interval(mins => travel_after_minutes)" in upgrade
+    assert "uq_appointments_idempotency_key_present" in upgrade
+    assert "tstzrange(starts_at, ends_at, '[)')" in downgrade
 
 
 def test_outbound_payload_migration_upgrade_and_downgrade_sql() -> None:

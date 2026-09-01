@@ -29,6 +29,7 @@ dist/
 
 # Tests, coverage and tooling
 .pytest_cache/
+pytest-cache-files-*/
 .coverage
 .coverage.*
 htmlcov/

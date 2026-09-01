@@ -5,12 +5,22 @@ import copy
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock
 
 from pytest import MonkeyPatch, mark, raises
+
+from app.booking.domain import (
+    BookingPlan,
+    BookingRequirements,
+    PricingType,
+    ServiceEstimate,
+    ServiceIntake,
+    TravelEstimate,
+)
 
 from app.conversations.constants import ConversationState
 from app.conversations.engine import (
@@ -133,9 +143,38 @@ class FakeBookingPort:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.confirmations: list[tuple[Any, ...]] = []
+        self.confirmation_requirements: list[BookingRequirements] = []
         self.services = [BookingOption(str(SERVICE_ID), "Service")]
         self.dates = [BookingOption("2026-09-02", "02/09/2026")]
         self.times = [BookingOption("09:00", "09:00")]
+        self.intake = ServiceIntake(
+            requires_quantity=False,
+            requires_address=False,
+            considers_difficult_access=False,
+            asks_site_time_limit=False,
+            automatic_booking=True,
+            pricing_type=PricingType.ESTIMATED,
+        )
+        self.plan = BookingPlan(
+            service=ServiceEstimate(
+                estimated_duration_minutes=30,
+                estimated_price=Decimal("100.00"),
+                pricing_type=PricingType.ESTIMATED,
+                requires_human_quote=False,
+                applied_rules=("base_duration",),
+                qualifier="estimated",
+            ),
+            travel=TravelEstimate(
+                travel_minutes=0,
+                distance_km=None,
+                source="test",
+                method="test",
+                estimated=False,
+            ),
+            travel_before_minutes=0,
+            travel_after_minutes=0,
+            requires_handoff=False,
+        )
         starts_at = datetime(2026, 9, 2, 12, tzinfo=timezone.utc)
         self.confirmation: BookingConfirmation | None = BookingConfirmation(
             appointment_id=APPOINTMENT_ID,
@@ -149,10 +188,28 @@ class FakeBookingPort:
         self.calls.append("services")
         return tuple(self.services)
 
+    async def get_service_intake(
+        self,
+        _: uuid.UUID,
+        service_id: uuid.UUID,
+    ) -> ServiceIntake:
+        assert service_id == SERVICE_ID
+        return self.intake
+
+    async def estimate(
+        self,
+        _: uuid.UUID,
+        service_id: uuid.UUID,
+        __: BookingRequirements,
+    ) -> BookingPlan:
+        assert service_id == SERVICE_ID
+        return self.plan
+
     async def list_dates(
         self,
         _: uuid.UUID,
         service_id: uuid.UUID,
+        __: BookingRequirements = BookingRequirements(),
     ) -> tuple[BookingOption, ...]:
         assert service_id == SERVICE_ID
         self.calls.append("dates")
@@ -163,6 +220,7 @@ class FakeBookingPort:
         _: uuid.UUID,
         service_id: uuid.UUID,
         selected_date: str,
+        __: BookingRequirements = BookingRequirements(),
     ) -> tuple[BookingOption, ...]:
         assert service_id == SERVICE_ID
         assert selected_date == "2026-09-02"
@@ -176,6 +234,7 @@ class FakeBookingPort:
         service_id: uuid.UUID,
         selected_date: str,
         selected_time: str,
+        _: BookingRequirements = BookingRequirements(),
     ) -> BookingConfirmation | None:
         self.calls.append("confirm")
         self.confirmations.append(
@@ -187,6 +246,7 @@ class FakeBookingPort:
                 selected_time,
             )
         )
+        self.confirmation_requirements.append(_)
         if self.slot_unavailable:
             raise SlotUnavailable("slot is no longer available")
         return self.confirmation
@@ -600,6 +660,112 @@ async def test_booking_confirmation_navigation_uses_stable_ids(
 
     assert repository.state == expected_state
     assert repository.context == expected_context
+
+
+@mark.asyncio
+async def test_booking_collects_only_simple_required_information() -> None:
+    repository = FakeConversationRepository(state=ConversationState.BOOKING_SERVICE)
+    booking_port = FakeBookingPort()
+    booking_port.intake = ServiceIntake(
+        requires_quantity=True,
+        requires_address=True,
+        considers_difficult_access=True,
+        asks_site_time_limit=True,
+        automatic_booking=True,
+        pricing_type=PricingType.ESTIMATED,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1, action=f"service:{SERVICE_ID}"))
+    assert repository.state == ConversationState.BOOKING_QUANTITY
+    await engine.process(inbound(2, action="quantity:3"))
+    assert repository.state == ConversationState.BOOKING_ACCESS
+    await engine.process(inbound(3, action="access.unknown"))
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    await engine.process(
+        inbound(4, body="Rua das Flores, 10, São José dos Campos - SP")
+    )
+    assert repository.state == ConversationState.BOOKING_SITE_LIMIT
+    await engine.process(inbound(5, action="site_limit.17:00"))
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["quantity"] == 3
+    assert repository.context["access_condition"] == "unknown"
+    assert repository.context["site_allowed_end"] == "17:00"
+    questions = " ".join(
+        item.transition.outbound.body or "" for item in repository.outbounds
+    ).casefold()
+    assert "quantos itens ou aparelhos" in questions
+    assert "endereço completo" in questions
+    assert "horário limite" in questions
+    for forbidden in (
+        "linha frigorígena",
+        "desnível",
+        "bitola",
+        "tipo de fluido",
+        "carga térmica",
+    ):
+        assert forbidden not in questions
+
+
+@mark.asyncio
+async def test_human_quote_service_goes_directly_to_handoff() -> None:
+    repository = FakeConversationRepository(state=ConversationState.BOOKING_SERVICE)
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        automatic_booking=False,
+        pricing_type=PricingType.HUMAN_QUOTE,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, action=f"service:{SERVICE_ID}")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+
+
+@mark.asyncio
+async def test_unconfigured_free_text_request_goes_to_handoff() -> None:
+    repository = FakeConversationRepository(state=ConversationState.BOOKING_SERVICE)
+
+    await ConversationEngine(repository, FakeBookingPort()).process(
+        inbound(1, body="Quero comprar uma peça")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+
+
+@mark.asyncio
+async def test_fixed_and_estimated_prices_use_plain_language() -> None:
+    for pricing_type, expected in (
+        (PricingType.FIXED, "O valor do serviço é R$ 100,00."),
+        (PricingType.ESTIMATED, "o valor estimado é R$ 100,00"),
+    ):
+        repository = FakeConversationRepository(
+            state=ConversationState.BOOKING_SERVICE
+        )
+        booking_port = FakeBookingPort()
+        booking_port.intake = replace(
+            booking_port.intake,
+            pricing_type=pricing_type,
+        )
+        booking_port.plan = replace(
+            booking_port.plan,
+            service=replace(
+                booking_port.plan.service,
+                pricing_type=pricing_type,
+            ),
+        )
+
+        await ConversationEngine(repository, booking_port).process(
+            inbound(1, action=f"service:{SERVICE_ID}")
+        )
+
+        assert expected in repository.outbounds[-1].transition.outbound.body
 
 
 @mark.asyncio
