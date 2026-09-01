@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     database_url: SecretStr | None = Field(
         default=None, validation_alias="DATABASE_URL"
     )
+    alembic_database_url: SecretStr | None = Field(
+        default=None, validation_alias="ALEMBIC_DATABASE_URL"
+    )
     meta_access_token: SecretStr = Field(validation_alias="META_ACCESS_TOKEN")
     meta_phone_number_id: str = Field(validation_alias="META_PHONE_NUMBER_ID")
     meta_waba_id: str = Field(validation_alias="META_WABA_ID")
@@ -37,7 +40,7 @@ class Settings(BaseSettings):
         hide_input_in_errors=True,
     )
 
-    @field_validator("database_url", mode="before")
+    @field_validator("database_url", "alembic_database_url", mode="before")
     @classmethod
     def ensure_async_postgresql_url(cls, value: Any) -> str | None:
         if value is None:
@@ -62,6 +65,11 @@ class Settings(BaseSettings):
                 "DATABASE_URL is required to use the database"
             )
         return self.database_url.get_secret_value()
+
+    def require_alembic_database_url(self) -> str:
+        if self.alembic_database_url is not None:
+            return self.alembic_database_url.get_secret_value()
+        return self.require_database_url()
 
 
 @lru_cache

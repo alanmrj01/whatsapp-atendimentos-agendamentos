@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 os.environ.update(
     {
         "DATABASE_URL": "postgresql+asyncpg://test:test@localhost:5432/test",
+        "ALEMBIC_DATABASE_URL": "",
         "META_ACCESS_TOKEN": "test-access-token",
         "META_PHONE_NUMBER_ID": "test-phone-number-id",
         "META_WABA_ID": "test-waba-id",

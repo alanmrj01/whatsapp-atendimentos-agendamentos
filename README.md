@@ -15,15 +15,16 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Preencha todas as variáveis do `.env`. A `DATABASE_URL` aceita os prefixos
-`postgresql://`, `postgres://` ou `postgresql+asyncpg://` e é normalizada para o
-driver assíncrono. Use `development`, `test` ou `production` em `ENVIRONMENT`.
+Preencha todas as variáveis do `.env`. As URLs aceitam os prefixos
+`postgresql://`, `postgres://` ou `postgresql+asyncpg://` e são normalizadas para
+o driver assíncrono. Use `development`, `test` ou `production` em `ENVIRONMENT`.
 
-No Supabase, obtenha a URI em **Dashboard > Connect**. Para um backend persistente,
-use a conexão direta quando houver IPv6 disponível ou o pooler em modo Session
-quando precisar de IPv4. Consulte a
+No Supabase, obtenha as URIs em **Dashboard > Connect**. Use em `DATABASE_URL` o
+Session Pooler `:5432` para execução local ou o Transaction Pooler `:6543` no
+Cloud Run. O modo transaction é detectado automaticamente e usa `NullPool`, sem
+cache de statements/prepared statements. Consulte a
 [documentação oficial de conexão](https://supabase.com/docs/guides/database/connecting-to-postgres),
-copie a URI para `DATABASE_URL` no `.env` local e nunca versione esse arquivo.
+copie as URIs para o `.env` local e nunca versione esse arquivo.
 
 ## Execução e testes
 
@@ -47,9 +48,10 @@ alembic revision --autogenerate -m "descricao"
 alembic upgrade head
 ```
 
-O Alembic usa a mesma `DATABASE_URL` da aplicação e continuará sendo a única
-fonte de alterações de schema. As tabelas de negócio serão criadas somente na
-próxima etapa.
+Para migrations, defina `ALEMBIC_DATABASE_URL` com uma conexão Direct ou Session
+`:5432`. Se ela estiver vazia, o Alembic usa `DATABASE_URL`. O Alembic continuará
+sendo a única fonte de alterações de schema; as tabelas de negócio serão criadas
+somente na próxima etapa.
 
 ## Docker
 

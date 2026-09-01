@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from pytest import MonkeyPatch
+from sqlalchemy.pool import NullPool
 
 from app.core import database
 from app.core.config import DatabaseConfigurationError, Settings
@@ -41,6 +42,35 @@ def test_engine_is_created_lazily_with_pre_ping(monkeypatch: MonkeyPatch) -> Non
     assert database.get_engine() is fake_engine
     assert database.get_engine() is fake_engine
     assert created_with["pool_pre_ping"] is True
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql+asyncpg://user@example.invalid:5432/postgres",
+        "postgresql+asyncpg://user@db.example.invalid:5432/postgres",
+    ],
+    ids=["session-pooler", "direct"],
+)
+def test_session_and_direct_connections_keep_standard_pool(
+    database_url: str,
+) -> None:
+    options = database.build_engine_options(database_url)
+
+    assert options == {"pool_pre_ping": True}
+
+
+def test_transaction_pooler_uses_null_pool_and_disables_statement_caches() -> None:
+    options = database.build_engine_options(
+        "postgresql+asyncpg://user@example.invalid:6543/postgres"
+    )
+
+    assert options["pool_pre_ping"] is True
+    assert options["poolclass"] is NullPool
+    assert options["connect_args"] == {
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -126,3 +156,25 @@ def test_postgresql_url_is_normalized_for_asyncpg() -> None:
     )
 
     assert settings.require_database_url().startswith("postgresql+asyncpg://")
+
+
+def test_alembic_database_url_falls_back_to_runtime_url() -> None:
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql://user@example.invalid:5432/postgres",
+        ALEMBIC_DATABASE_URL="",
+    )
+
+    assert settings.require_alembic_database_url() == settings.require_database_url()
+
+
+def test_alembic_database_url_is_preferred_and_normalized() -> None:
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql://runtime@example.invalid:6543/postgres",
+        ALEMBIC_DATABASE_URL="postgresql://migration@example.invalid:5432/postgres",
+    )
+
+    assert settings.require_alembic_database_url() == (
+        "postgresql+asyncpg://migration@example.invalid:5432/postgres"
+    )
