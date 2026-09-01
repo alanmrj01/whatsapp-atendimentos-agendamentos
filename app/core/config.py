@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     )
     meta_access_token: SecretStr = Field(validation_alias="META_ACCESS_TOKEN")
     meta_phone_number_id: str = Field(validation_alias="META_PHONE_NUMBER_ID")
+    meta_graph_version: str = Field(
+        default="",
+        validation_alias="META_GRAPH_VERSION",
+    )
     meta_waba_id: str = Field(validation_alias="META_WABA_ID")
     meta_app_secret: SecretStr = Field(validation_alias="META_APP_SECRET")
     meta_verify_token: SecretStr = Field(validation_alias="META_VERIFY_TOKEN")

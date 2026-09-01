@@ -10,6 +10,7 @@ os.environ.update(
         "ALEMBIC_DATABASE_URL": "",
         "META_ACCESS_TOKEN": "test-access-token",
         "META_PHONE_NUMBER_ID": "test-phone-number-id",
+        "META_GRAPH_VERSION": "v23.0",
         "META_WABA_ID": "test-waba-id",
         "META_APP_SECRET": "test-app-secret",
         "META_VERIFY_TOKEN": "test-verify-token",
