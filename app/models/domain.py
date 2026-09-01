@@ -448,8 +448,10 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             (
                 text(
                     "tstzrange("
-                    "starts_at - make_interval(mins => travel_before_minutes), "
-                    "ends_at + make_interval(mins => travel_after_minutes), "
+                    "public.booking_add_minutes_immutable("
+                    "starts_at, -travel_before_minutes), "
+                    "public.booking_add_minutes_immutable("
+                    "ends_at, travel_after_minutes), "
                     "'[)')"
                 ),
                 "&&",

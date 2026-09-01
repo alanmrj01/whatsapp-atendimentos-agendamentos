@@ -31,11 +31,14 @@ from app.models import (
     Customer,
     Employee,
     EmployeeService,
+    ScheduleBlock,
     Service,
     WorkingHours,
 )
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "").strip()
+LOCAL_TEST_DATABASE_HOSTS = {"127.0.0.1", "::1", "localhost"}
+SUPABASE_HOST_MARKERS = ("supabase.co", "supabase.com")
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.skipif(
@@ -57,10 +60,22 @@ def _assert_disposable_database(value: str) -> None:
     url = make_url(_async_url(value))
     host = (url.host or "").casefold()
     database = (url.database or "").casefold()
-    if "supabase" in host or "test" not in database:
-        pytest.fail(
-            "TEST_DATABASE_URL deve apontar para PostgreSQL descartável com "
-            "'test' no nome; Supabase é bloqueado"
+    if "supabase" in host or any(
+        marker in host for marker in SUPABASE_HOST_MARKERS
+    ):
+        raise RuntimeError(
+            "TEST_DATABASE_URL não pode apontar para Supabase; use somente "
+            "PostgreSQL local descartável"
+        )
+    if host not in LOCAL_TEST_DATABASE_HOSTS:
+        raise RuntimeError(
+            "TEST_DATABASE_URL deve usar host local loopback "
+            "(localhost, 127.0.0.1 ou ::1)"
+        )
+    if "test" not in database:
+        raise RuntimeError(
+            "TEST_DATABASE_URL deve apontar para banco descartável com "
+            "'test' no nome"
         )
 
 
@@ -94,6 +109,7 @@ async def sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
         async with session.begin():
             for model in (
                 Appointment,
+                ScheduleBlock,
                 WorkingHours,
                 EmployeeService,
                 Employee,
@@ -147,6 +163,7 @@ async def seed_capacity(
                     active=True,
                 )
             )
+            await session.flush()
             session.add(
                 Service(
                     id=service_id,
@@ -185,6 +202,8 @@ async def seed_capacity(
                         active=True,
                     )
                 )
+            await session.flush()
+            for employee_id in employee_ids:
                 session.add(
                     EmployeeService(
                         business_id=business_id,
@@ -396,7 +415,8 @@ async def test_f_travel_buffers_block_adjacent_capacity(
 
     assert "09:00" not in ids
     assert "11:00" not in ids
-    assert "11:30" in ids
+    assert "11:30" not in ids
+    assert "12:00" in ids
 
 
 async def test_g_exclude_constraint_is_final_authority(
@@ -544,6 +564,9 @@ def _physical_appointment(
     employee_id: uuid.UUID,
     starts_at: datetime,
     key: str,
+    *,
+    travel_before_minutes: int = 0,
+    travel_after_minutes: int = 0,
 ) -> Appointment:
     return Appointment(
         business_id=business_id,
@@ -557,8 +580,8 @@ def _physical_appointment(
         quantity=1,
         access_condition="normal",
         estimated_duration_minutes=60,
-        travel_before_minutes=0,
-        travel_after_minutes=0,
+        travel_before_minutes=travel_before_minutes,
+        travel_after_minutes=travel_after_minutes,
         estimated_price=Decimal("100.00"),
         pricing_type="estimated",
         estimate_details={},

@@ -89,16 +89,23 @@ empresa. Preços sem configuração segura devem permanecer como `human_quote`.
 ## Testes PostgreSQL físicos
 
 Os testes unitários não acessam rede nem Supabase. A suíte física A–J exige um
-PostgreSQL descartável cujo nome contenha `test`; hosts Supabase são bloqueados.
+PostgreSQL descartável local cujo nome contenha `test`; qualquer host que não seja
+loopback e hosts Supabase são bloqueados. O compose de teste usa PostgreSQL 16,
+porta local `55432`, healthcheck e armazenamento efêmero sem volume compartilhado.
 
 ```powershell
-$env:TEST_DATABASE_URL="postgresql://usuario:senha@localhost:5432/booking_test"
-pytest tests/integration/test_booking_postgresql.py -q
+$env:POSTGRES_TEST_PASSWORD="<senha-local-descartavel>"
+docker compose -f docker-compose.test.yml up -d --wait
+$env:TEST_DATABASE_URL="postgresql+asyncpg://whatsapp_test:$($env:POSTGRES_TEST_PASSWORD)@127.0.0.1:55432/whatsapp_test"
+pytest tests/integration/test_booking_postgresql.py -vv -p no:cacheprovider
+docker compose -f docker-compose.test.yml down --volumes
+Remove-Item Env:TEST_DATABASE_URL,Env:POSTGRES_TEST_PASSWORD
 ```
 
-Sem `TEST_DATABASE_URL`, esses dez testes aparecem como `skipped` de forma
-explícita. Nunca aponte essa variável para produção: a suíte aplica as migrations,
-limpa dados de teste e executa downgrade até `base` ao terminar.
+Sem `TEST_DATABASE_URL`, os dez cenários A–J e as quatro validações físicas
+suplementares aparecem como `skipped` de forma explícita. Nunca aponte essa
+variável para produção: a suíte aplica as migrations, limpa dados de teste e
+executa downgrade até `base` ao terminar.
 
 ## Docker
 

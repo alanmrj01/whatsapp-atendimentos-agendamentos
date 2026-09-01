@@ -105,8 +105,11 @@ def test_booking_configuration_upgrade_and_downgrade_sql() -> None:
     ):
         assert column_name in upgrade
         assert f"drop column {column_name}" in downgrade
-    assert "make_interval(mins => travel_before_minutes)" in upgrade
-    assert "make_interval(mins => travel_after_minutes)" in upgrade
+    assert "create function public.booking_add_minutes_immutable" in upgrade
+    assert "starts_at, -travel_before_minutes" in upgrade
+    assert "ends_at, travel_after_minutes" in upgrade
+    assert "immutable parallel safe strict" in upgrade
+    assert "drop function public.booking_add_minutes_immutable" in downgrade
     assert "uq_appointments_idempotency_key_present" in upgrade
     assert "tstzrange(starts_at, ends_at, '[)')" in downgrade
     assert "default_travel_minutes integer" in upgrade

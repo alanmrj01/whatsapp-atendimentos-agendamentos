@@ -375,6 +375,22 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("idempotency_key IS NOT NULL"),
     )
+    op.execute(
+        """
+        CREATE FUNCTION public.booking_add_minutes_immutable(
+            value timestamp with time zone,
+            minute_delta integer
+        )
+        RETURNS timestamp with time zone
+        LANGUAGE sql
+        IMMUTABLE
+        PARALLEL SAFE
+        STRICT
+        AS $$
+            SELECT value + make_interval(mins => minute_delta)
+        $$
+        """
+    )
     op.drop_constraint(
         "excl_appointments_employee_confirmed_overlap",
         "appointments",
@@ -386,8 +402,12 @@ def upgrade() -> None:
         EXCLUDE USING gist (
             employee_id WITH =,
             tstzrange(
-                starts_at - make_interval(mins => travel_before_minutes),
-                ends_at + make_interval(mins => travel_after_minutes),
+                public.booking_add_minutes_immutable(
+                    starts_at, -travel_before_minutes
+                ),
+                public.booking_add_minutes_immutable(
+                    ends_at, travel_after_minutes
+                ),
                 '[)'
             ) WITH &&
         ) WHERE (status = 'confirmed')
@@ -408,6 +428,14 @@ def downgrade() -> None:
             employee_id WITH =,
             tstzrange(starts_at, ends_at, '[)') WITH &&
         ) WHERE (status = 'confirmed')
+        """
+    )
+    op.execute(
+        """
+        DROP FUNCTION public.booking_add_minutes_immutable(
+            timestamp with time zone,
+            integer
+        )
         """
     )
     op.drop_index(

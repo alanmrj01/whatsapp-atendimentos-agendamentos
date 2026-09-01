@@ -303,8 +303,9 @@ def test_confirmed_appointments_have_overlap_exclusion_constraint() -> None:
         )
     )
     assert "employee_id WITH =" in table_sql
-    assert "make_interval(mins => travel_before_minutes)" in table_sql
-    assert "make_interval(mins => travel_after_minutes)" in table_sql
+    assert "booking_add_minutes_immutable" in table_sql
+    assert "starts_at, -travel_before_minutes" in table_sql
+    assert "ends_at, travel_after_minutes" in table_sql
 
 
 def test_appointment_booking_snapshot_and_idempotency_index() -> None:
