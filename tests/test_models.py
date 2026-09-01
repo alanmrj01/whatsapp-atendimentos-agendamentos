@@ -228,6 +228,13 @@ def test_conversation_context_uses_jsonb_with_empty_object_default() -> None:
     assert str(context_column.server_default.arg) == "'{}'::jsonb"
 
 
+def test_message_outbound_payload_is_nullable_jsonb() -> None:
+    outbound_payload = Base.metadata.tables["messages"].c.outbound_payload
+
+    assert isinstance(outbound_payload.type, JSONB)
+    assert outbound_payload.nullable is True
+
+
 def test_required_server_defaults_are_registered() -> None:
     expected_defaults = {
         ("businesses", "timezone"): "America/Sao_Paulo",

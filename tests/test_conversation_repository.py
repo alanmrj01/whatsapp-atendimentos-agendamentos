@@ -72,3 +72,17 @@ def test_outbox_insert_is_pending_sanitized_and_idempotent() -> None:
     assert parameters["provider_message_id"] is None
     assert parameters["idempotency_key"] == idempotency_key
     assert parameters["message_type"] == "interactive_list"
+    assert parameters["outbound_payload"] == {
+        "button": "Ver opções",
+        "sections": [
+            {
+                "title": "Atendimento",
+                "rows": [
+                    {"id": "menu.book", "title": "Agendar"},
+                    {"id": "menu.reschedule", "title": "Reagendar"},
+                    {"id": "menu.cancel", "title": "Cancelar"},
+                    {"id": "menu.human", "title": "Falar com atendente"},
+                ],
+            }
+        ],
+    }

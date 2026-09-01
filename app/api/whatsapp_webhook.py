@@ -8,6 +8,8 @@ from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.conversations.dependencies import get_booking_availability_port
+from app.conversations.ports import BookingAvailabilityPort
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.schemas.whatsapp_webhook import (
@@ -50,6 +52,10 @@ async def receive_whatsapp_webhook(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
     session: Annotated[AsyncSession, Depends(get_db)],
+    booking_port: Annotated[
+        BookingAvailabilityPort | None,
+        Depends(get_booking_availability_port),
+    ],
     x_hub_signature_256: Annotated[
         str | None, Header(alias="X-Hub-Signature-256")
     ] = None,
@@ -71,5 +77,5 @@ async def receive_whatsapp_webhook(
         ) from None
 
     events = normalize_webhook_payload(payload)
-    await process_webhook_events(session, events)
+    await process_webhook_events(session, events, booking_port=booking_port)
     return WebhookAcknowledgement(status="accepted")

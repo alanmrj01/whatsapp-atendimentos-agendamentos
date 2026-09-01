@@ -332,6 +332,10 @@ class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     message_type: Mapped[str] = mapped_column(String(64), nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     interactive_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    outbound_payload: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
 

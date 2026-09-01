@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from contextlib import asynccontextmanager
 
 from sqlalchemy import select, update
@@ -48,6 +49,7 @@ def build_outbound_insert_statement(
             message_type=outbound.message_type,
             body=outbound.body,
             interactive_id=outbound.interactive_id,
+            outbound_payload=deepcopy(outbound.outbound_payload),
             status="pending",
             idempotency_key=idempotency_key,
         )

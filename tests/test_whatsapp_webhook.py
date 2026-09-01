@@ -230,6 +230,7 @@ async def test_post_accepts_valid_signature(
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
     processor.assert_awaited_once()
+    assert processor.await_args.kwargs == {"booking_port": None}
 
 
 @mark.asyncio

@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -16,7 +17,11 @@ from app.conversations.engine import (
     ConversationEngine,
     build_outbound_idempotency_key,
 )
-from app.conversations.ports import BookingOption
+from app.conversations.ports import (
+    BookingConfirmation,
+    BookingOption,
+    SlotUnavailable,
+)
 from app.conversations.types import (
     ConversationInput,
     ConversationSnapshot,
@@ -30,6 +35,8 @@ BUSINESS_ID = uuid.UUID("10000000-0000-0000-0000-000000000001")
 CUSTOMER_ID = uuid.UUID("20000000-0000-0000-0000-000000000002")
 CONVERSATION_ID = uuid.UUID("30000000-0000-0000-0000-000000000003")
 SERVICE_ID = uuid.UUID("40000000-0000-0000-0000-000000000004")
+APPOINTMENT_ID = uuid.UUID("50000000-0000-0000-0000-000000000005")
+EMPLOYEE_ID = uuid.UUID("60000000-0000-0000-0000-000000000006")
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,10 +133,21 @@ class FakeBookingPort:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.confirmations: list[tuple[Any, ...]] = []
+        self.services = [BookingOption(str(SERVICE_ID), "Service")]
+        self.dates = [BookingOption("2026-09-02", "02/09/2026")]
+        self.times = [BookingOption("09:00", "09:00")]
+        starts_at = datetime(2026, 9, 2, 12, tzinfo=timezone.utc)
+        self.confirmation: BookingConfirmation | None = BookingConfirmation(
+            appointment_id=APPOINTMENT_ID,
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(minutes=30),
+            employee_id=EMPLOYEE_ID,
+        )
+        self.slot_unavailable = False
 
     async def list_services(self, _: uuid.UUID) -> tuple[BookingOption, ...]:
         self.calls.append("services")
-        return (BookingOption(str(SERVICE_ID), "Service"),)
+        return tuple(self.services)
 
     async def list_dates(
         self,
@@ -138,7 +156,7 @@ class FakeBookingPort:
     ) -> tuple[BookingOption, ...]:
         assert service_id == SERVICE_ID
         self.calls.append("dates")
-        return (BookingOption("2026-09-02", "02/09/2026"),)
+        return tuple(self.dates)
 
     async def list_times(
         self,
@@ -149,7 +167,7 @@ class FakeBookingPort:
         assert service_id == SERVICE_ID
         assert selected_date == "2026-09-02"
         self.calls.append("times")
-        return (BookingOption("09:00", "09:00"),)
+        return tuple(self.times)
 
     async def confirm(
         self,
@@ -158,7 +176,7 @@ class FakeBookingPort:
         service_id: uuid.UUID,
         selected_date: str,
         selected_time: str,
-    ) -> None:
+    ) -> BookingConfirmation | None:
         self.calls.append("confirm")
         self.confirmations.append(
             (
@@ -169,6 +187,9 @@ class FakeBookingPort:
                 selected_time,
             )
         )
+        if self.slot_unavailable:
+            raise SlotUnavailable("slot is no longer available")
+        return self.confirmation
 
 
 def inbound(
@@ -251,6 +272,189 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         "interactive_list",
         "interactive_button",
         "text",
+    ]
+    payloads = [
+        outbound.transition.outbound.outbound_payload
+        for outbound in repository.outbounds
+    ]
+    assert [
+        row["id"] for row in payloads[0]["sections"][0]["rows"]
+    ] == [
+        "menu.book",
+        "menu.reschedule",
+        "menu.cancel",
+        "menu.human",
+    ]
+    assert payloads[1]["sections"][0]["rows"] == [
+        {"id": f"service:{SERVICE_ID}", "title": "Service"}
+    ]
+    assert payloads[2]["sections"][0]["rows"] == [
+        {"id": "date:2026-09-02", "title": "02/09/2026"}
+    ]
+    assert payloads[3]["sections"][0]["rows"] == [
+        {"id": "time:09:00", "title": "09:00"}
+    ]
+    assert [button["id"] for button in payloads[4]["buttons"]] == [
+        "booking.confirm",
+        "booking.back",
+        "booking.cancel",
+    ]
+    assert payloads[5] is None
+
+
+@mark.asyncio
+async def test_outbound_payload_is_snapshot_of_booking_options() -> None:
+    repository = FakeConversationRepository(state=ConversationState.MENU)
+    booking_port = FakeBookingPort()
+    booking_port.services = [BookingOption(str(SERVICE_ID), "Original")]
+    engine = ConversationEngine(repository, booking_port)
+
+    assert await engine.process(inbound(1, action="menu.book")) is True
+    stored_payload = copy.deepcopy(
+        repository.outbounds[0].transition.outbound.outbound_payload
+    )
+
+    booking_port.services[0] = BookingOption(str(SERVICE_ID), "Changed")
+
+    stored_outbound = repository.outbounds[0].transition.outbound
+    assert stored_outbound.outbound_payload == stored_payload
+    assert stored_payload["sections"][0]["rows"][0]["title"] == "Original"
+
+
+@mark.parametrize(
+    ("state", "context", "empty_collection", "action", "expected_state"),
+    [
+        (
+            ConversationState.MENU,
+            {},
+            "services",
+            "menu.book",
+            ConversationState.MENU,
+        ),
+        (
+            ConversationState.BOOKING_SERVICE,
+            {},
+            "dates",
+            f"service:{SERVICE_ID}",
+            ConversationState.BOOKING_SERVICE,
+        ),
+        (
+            ConversationState.BOOKING_DATE,
+            {"service_id": str(SERVICE_ID)},
+            "times",
+            "date:2026-09-02",
+            ConversationState.BOOKING_DATE,
+        ),
+    ],
+)
+@mark.asyncio
+async def test_empty_availability_does_not_advance_to_impossible_choice(
+    state: ConversationState,
+    context: dict[str, Any],
+    empty_collection: str,
+    action: str,
+    expected_state: ConversationState,
+) -> None:
+    repository = FakeConversationRepository(state=state, context=context)
+    booking_port = FakeBookingPort()
+    setattr(booking_port, empty_collection, [])
+    engine = ConversationEngine(repository, booking_port)
+
+    assert await engine.process(inbound(1, action=action)) is True
+
+    assert repository.state == expected_state
+    assert len(repository.outbounds) == 1
+
+
+@mark.parametrize(
+    ("state", "context", "action"),
+    [
+        (ConversationState.MENU, {}, "menu.book"),
+        (ConversationState.BOOKING_SERVICE, {}, f"service:{SERVICE_ID}"),
+        (
+            ConversationState.BOOKING_DATE,
+            {"service_id": str(SERVICE_ID)},
+            "date:2026-09-02",
+        ),
+        (
+            ConversationState.BOOKING_TIME,
+            {
+                "service_id": str(SERVICE_ID),
+                "selected_date": "2026-09-02",
+            },
+            "time:09:00",
+        ),
+        (
+            ConversationState.BOOKING_CONFIRM,
+            {
+                "service_id": str(SERVICE_ID),
+                "selected_date": "2026-09-02",
+                "selected_time": "09:00",
+            },
+            "booking.confirm",
+        ),
+    ],
+)
+@mark.asyncio
+async def test_missing_booking_port_is_fail_closed(
+    state: ConversationState,
+    context: dict[str, Any],
+    action: str,
+) -> None:
+    repository = FakeConversationRepository(state=state, context=context)
+    engine = ConversationEngine(repository, booking_port=None)
+
+    assert await engine.process(inbound(1, action=action)) is True
+
+    assert repository.state == state
+    assert repository.state != ConversationState.COMPLETED
+    assert repository.context == context
+    assert repository.outbounds[0].transition.outbound.message_type == "text"
+    assert repository.outbounds[0].transition.outbound.outbound_payload is None
+
+
+def confirmation_context() -> dict[str, Any]:
+    candidate = {
+        "service_id": str(SERVICE_ID),
+        "selected_date": "2026-09-02",
+        "selected_time": "09:00",
+    }
+    return {**candidate, "candidate_booking": candidate}
+
+
+@mark.asyncio
+async def test_invalid_confirmation_result_does_not_complete_booking() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context=confirmation_context(),
+    )
+    booking_port = FakeBookingPort()
+    booking_port.confirmation = None
+    engine = ConversationEngine(repository, booking_port)
+
+    assert await engine.process(inbound(1, action="booking.confirm")) is True
+
+    assert repository.state == ConversationState.BOOKING_CONFIRM
+    assert repository.context == confirmation_context()
+
+
+@mark.asyncio
+async def test_slot_unavailable_does_not_complete_booking() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context=confirmation_context(),
+    )
+    booking_port = FakeBookingPort()
+    booking_port.slot_unavailable = True
+    engine = ConversationEngine(repository, booking_port)
+
+    assert await engine.process(inbound(1, action="booking.confirm")) is True
+
+    assert repository.state == ConversationState.BOOKING_CONFIRM
+    payload = repository.outbounds[0].transition.outbound.outbound_payload
+    assert [button["id"] for button in payload["buttons"]] == [
+        "booking.back",
+        "booking.cancel",
     ]
 
 

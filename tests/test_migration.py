@@ -15,11 +15,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_PATH = (
     PROJECT_ROOT / "alembic" / "versions" / "20260901_0001_initial_schema.py"
 )
+OUTBOUND_PAYLOAD_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260901_0002_add_outbound_payload.py"
+)
 
 
-def load_migration() -> ModuleType:
+def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
     spec = importlib.util.spec_from_file_location(
-        "initial_schema_migration", MIGRATION_PATH
+        f"migration_{path.stem}", path
     )
     assert spec is not None
     assert spec.loader is not None
@@ -28,23 +34,44 @@ def load_migration() -> ModuleType:
     return module
 
 
-def render_migration_sql(direction: str) -> str:
+def render_migration_sql(
+    direction: str,
+    path: Path = MIGRATION_PATH,
+) -> str:
     output = StringIO()
     context = MigrationContext.configure(
         dialect_name="postgresql",
         opts={"as_sql": True, "output_buffer": output},
     )
-    migration = load_migration()
+    migration = load_migration(path)
     migration.op = Operations(context)
     getattr(migration, direction)()
     return output.getvalue()
 
 
-def test_initial_migration_is_the_only_alembic_head() -> None:
+def test_outbound_payload_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260901_0001"]
+    assert script.get_heads() == ["20260901_0002"]
+
+
+def test_outbound_payload_migration_upgrade_and_downgrade_sql() -> None:
+    upgrade_sql = render_migration_sql(
+        "upgrade",
+        OUTBOUND_PAYLOAD_MIGRATION_PATH,
+    ).lower()
+    downgrade_sql = render_migration_sql(
+        "downgrade",
+        OUTBOUND_PAYLOAD_MIGRATION_PATH,
+    ).lower()
+
+    assert "alter table messages add column outbound_payload jsonb" in " ".join(
+        upgrade_sql.split()
+    )
+    assert "alter table messages drop column outbound_payload" in " ".join(
+        downgrade_sql.split()
+    )
 
 
 def test_upgrade_sql_creates_all_tables_and_postgresql_constraints() -> None:

@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.conversations.engine import ConversationEngine
+from app.conversations.ports import BookingAvailabilityPort
 from app.conversations.types import ConversationInput
 from app.repositories.conversations import ConversationRepository
 from app.repositories.whatsapp_webhook import WhatsAppWebhookRepository
@@ -64,19 +65,31 @@ class ConversationProcessor(Protocol):
     async def process(self, inbound: ConversationInput) -> bool: ...
 
 
+def build_conversation_engine(
+    session: AsyncSession,
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationEngine:
+    return ConversationEngine(
+        ConversationRepository(session),
+        booking_port=booking_port,
+    )
+
+
 async def process_webhook_events(
     session: AsyncSession | TransactionSession,
     events: list[NormalizedWebhookEvent],
     repository: WebhookRepository | None = None,
     conversation_engine: ConversationProcessor | None = None,
+    booking_port: BookingAvailabilityPort | None = None,
 ) -> None:
     event_repository = repository or WhatsAppWebhookRepository(
         cast(AsyncSession, session)
     )
     active_conversation_engine = conversation_engine
     if active_conversation_engine is None and repository is None:
-        active_conversation_engine = ConversationEngine(
-            ConversationRepository(cast(AsyncSession, session))
+        active_conversation_engine = build_conversation_engine(
+            cast(AsyncSession, session),
+            booking_port,
         )
 
     for event in events:
