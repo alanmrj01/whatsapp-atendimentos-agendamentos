@@ -4,11 +4,17 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.models import Conversation, Customer, Message, ProcessedWebhook
+from app.models import (
+    BusinessAutomationExclusion,
+    Conversation,
+    Customer,
+    Message,
+    ProcessedWebhook,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +26,7 @@ class StoredOutboundMessage:
     outbound_payload: dict[str, Any] | None
     status: str
     provider_message_id: str | None
+    automation_blocked: bool = False
 
 
 class OutboundTaskRepository:
@@ -29,8 +36,22 @@ class OutboundTaskRepository:
     async def lock_message(
         self, message_id: uuid.UUID
     ) -> StoredOutboundMessage | None:
+        active_exclusion = exists(
+            select(BusinessAutomationExclusion.id).where(
+                BusinessAutomationExclusion.business_id == Message.business_id,
+                BusinessAutomationExclusion.whatsapp_id == Customer.whatsapp_id,
+                BusinessAutomationExclusion.active.is_(True),
+            )
+        )
         result = await self.session.execute(
-            select(Message, Customer.whatsapp_id)
+            select(
+                Message,
+                Customer.whatsapp_id,
+                or_(
+                    Conversation.automation_suppressed_until > func.now(),
+                    active_exclusion,
+                ).label("automation_blocked"),
+            )
             .join(
                 Conversation,
                 and_(
@@ -54,7 +75,7 @@ class OutboundTaskRepository:
         row = result.one_or_none()
         if row is None:
             return None
-        message, recipient = row
+        message, recipient, automation_blocked = row
         return StoredOutboundMessage(
             message_id=message.id,
             recipient=recipient,
@@ -63,6 +84,7 @@ class OutboundTaskRepository:
             outbound_payload=message.outbound_payload,
             status=message.status,
             provider_message_id=message.provider_message_id,
+            automation_blocked=automation_blocked,
         )
 
     async def list_pending_for_provider_message_ids(

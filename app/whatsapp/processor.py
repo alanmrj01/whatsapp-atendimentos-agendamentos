@@ -3,17 +3,28 @@ from __future__ import annotations
 import logging
 import uuid
 from contextlib import AbstractAsyncContextManager
+from datetime import datetime
 from typing import Any, Protocol, cast
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.automation.domain import AutomationDecision, ExclusionMode
+from app.automation.service import (
+    AutomationPolicyRepository,
+    AutomationPolicyService,
+)
 from app.conversations.engine import ConversationEngine
 from app.conversations.ports import BookingAvailabilityPort
 from app.conversations.types import ConversationInput
 from app.repositories.conversations import ConversationRepository
+from app.repositories.automation import (
+    AutomationRepository,
+    ConversationAutomationControl,
+)
 from app.repositories.whatsapp_webhook import WhatsAppWebhookRepository
 from app.whatsapp.webhook import (
+    BusinessMessageEchoEvent,
     InboundMessageEvent,
     MessageStatusEvent,
     NormalizedWebhookEvent,
@@ -36,7 +47,10 @@ class WebhookRepository(Protocol):
     ) -> uuid.UUID: ...
 
     async def get_or_create_conversation_id(
-        self, business_id: uuid.UUID, customer_id: uuid.UUID
+        self,
+        business_id: uuid.UUID,
+        customer_id: uuid.UUID,
+        initiated_by: str = "customer",
     ) -> uuid.UUID: ...
 
     async def touch_conversation(self, conversation_id: uuid.UUID) -> None: ...
@@ -72,6 +86,43 @@ class ConversationProcessor(Protocol):
     async def process(self, inbound: ConversationInput) -> bool: ...
 
 
+class PermissiveAutomationRepository:
+    """Compatibility seam for isolated repository unit tests."""
+
+    async def get_active_exclusion_mode(
+        self, business_id: uuid.UUID, whatsapp_id: str
+    ) -> ExclusionMode | None:
+        return None
+
+    async def lock_conversation_control(
+        self, business_id: uuid.UUID, conversation_id: uuid.UUID
+    ) -> ConversationAutomationControl:
+        return ConversationAutomationControl(None, "none")
+
+    async def mark_human_only(
+        self, business_id: uuid.UUID, conversation_id: uuid.UUID
+    ) -> None:
+        return None
+
+    async def clear_human_only_marker(
+        self, business_id: uuid.UUID, conversation_id: uuid.UUID
+    ) -> None:
+        return None
+
+    async def clear_temporary_suppression(
+        self, business_id: uuid.UUID, conversation_id: uuid.UUID
+    ) -> None:
+        return None
+
+    async def activate_human_control(
+        self,
+        business_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        occurred_at: datetime,
+    ) -> datetime:
+        return occurred_at
+
+
 def build_conversation_engine(
     session: AsyncSession,
     booking_port: BookingAvailabilityPort | None,
@@ -88,6 +139,7 @@ async def process_webhook_events(
     repository: WebhookRepository | None = None,
     conversation_engine: ConversationProcessor | None = None,
     booking_port: BookingAvailabilityPort | None = None,
+    automation_repository: AutomationPolicyRepository | None = None,
 ) -> None:
     event_repository = repository or WhatsAppWebhookRepository(
         cast(AsyncSession, session)
@@ -98,11 +150,19 @@ async def process_webhook_events(
             cast(AsyncSession, session),
             booking_port,
         )
+    policy = AutomationPolicyService(
+        automation_repository
+        or (
+            AutomationRepository(cast(AsyncSession, session))
+            if isinstance(session, AsyncSession)
+            else PermissiveAutomationRepository()
+        )
+    )
 
     for event in events:
-        if isinstance(event, InboundMessageEvent) and not is_individual_whatsapp_id(
-            event.whatsapp_id
-        ):
+        if isinstance(
+            event, (InboundMessageEvent, BusinessMessageEchoEvent)
+        ) and not is_individual_whatsapp_id(event.whatsapp_id):
             logger.info("webhook_collective_ignored")
             continue
         try:
@@ -121,6 +181,14 @@ async def process_webhook_events(
                     continue
 
                 if isinstance(event, InboundMessageEvent):
+                    exclusion_mode = await policy.active_exclusion(
+                        business_id, event.whatsapp_id
+                    )
+                    if exclusion_mode is ExclusionMode.IGNORE:
+                        await event_repository.complete_event(
+                            event.event_key, "ignored"
+                        )
+                        continue
                     customer_id = (
                         await event_repository.get_or_create_customer_id(
                             business_id, event.whatsapp_id
@@ -135,7 +203,15 @@ async def process_webhook_events(
                     await event_repository.persist_inbound_message(
                         business_id, conversation_id, event
                     )
-                    if active_conversation_engine is not None:
+                    decision = await policy.evaluate_customer_inbound(
+                        business_id,
+                        conversation_id,
+                        exclusion_mode,
+                    )
+                    if (
+                        decision is AutomationDecision.ALLOWED
+                        and active_conversation_engine is not None
+                    ):
                         await active_conversation_engine.process(
                             ConversationInput(
                                 business_id=business_id,
@@ -145,8 +221,46 @@ async def process_webhook_events(
                                 message_type=event.message_type,
                                 body=event.body,
                                 interactive_id=event.interactive_id,
+                                whatsapp_id=event.whatsapp_id,
                             )
                         )
+                    if decision is not AutomationDecision.ALLOWED:
+                        await event_repository.complete_event(
+                            event.event_key, "ignored"
+                        )
+                        continue
+                elif isinstance(event, BusinessMessageEchoEvent):
+                    exclusion_mode = await policy.active_exclusion(
+                        business_id, event.whatsapp_id
+                    )
+                    if exclusion_mode is ExclusionMode.IGNORE:
+                        await event_repository.complete_event(
+                            event.event_key, "ignored"
+                        )
+                        continue
+                    customer_id = (
+                        await event_repository.get_or_create_customer_id(
+                            business_id, event.whatsapp_id
+                        )
+                    )
+                    conversation_id = (
+                        await event_repository.get_or_create_conversation_id(
+                            business_id,
+                            customer_id,
+                            "business",
+                        )
+                    )
+                    if exclusion_mode is ExclusionMode.HUMAN_ONLY:
+                        await policy.evaluate_customer_inbound(
+                            business_id,
+                            conversation_id,
+                            exclusion_mode,
+                        )
+                    await policy.register_manual_business_message(
+                        business_id,
+                        conversation_id,
+                        event.occurred_at,
+                    )
                 elif isinstance(event, MessageStatusEvent):
                     await event_repository.update_message_status(
                         business_id,
@@ -165,16 +279,25 @@ async def persist_webhook_events_for_tasks(
     session: AsyncSession | TransactionSession,
     events: list[NormalizedWebhookEvent],
     repository: QueuedWebhookRepository | None = None,
+    automation_repository: AutomationPolicyRepository | None = None,
 ) -> list[str]:
     event_repository = repository or WhatsAppWebhookRepository(
         cast(AsyncSession, session)
     )
     event_keys: list[str] = []
+    policy = AutomationPolicyService(
+        automation_repository
+        or (
+            AutomationRepository(cast(AsyncSession, session))
+            if isinstance(session, AsyncSession)
+            else PermissiveAutomationRepository()
+        )
+    )
 
     for event in events:
-        if isinstance(event, InboundMessageEvent) and not is_individual_whatsapp_id(
-            event.whatsapp_id
-        ):
+        if isinstance(
+            event, (InboundMessageEvent, BusinessMessageEchoEvent)
+        ) and not is_individual_whatsapp_id(event.whatsapp_id):
             logger.info("webhook_collective_ignored")
             continue
 
@@ -199,6 +322,15 @@ async def persist_webhook_events_for_tasks(
                         logger.info("webhook_business_not_found")
                     else:
                         if isinstance(event, InboundMessageEvent):
+                            exclusion_mode = await policy.active_exclusion(
+                                business_id, event.whatsapp_id
+                            )
+                            if exclusion_mode is ExclusionMode.IGNORE:
+                                await event_repository.complete_event(
+                                    event.event_key,
+                                    "ignored",
+                                )
+                                continue
                             customer_id = (
                                 await event_repository.get_or_create_customer_id(
                                     business_id,
@@ -219,8 +351,60 @@ async def persist_webhook_events_for_tasks(
                                 conversation_id,
                                 event,
                             )
-                        await event_repository.queue_event(event.event_key)
-                        should_enqueue = True
+                            decision = await policy.evaluate_customer_inbound(
+                                business_id,
+                                conversation_id,
+                                exclusion_mode,
+                            )
+                            if decision is not AutomationDecision.ALLOWED:
+                                await event_repository.complete_event(
+                                    event.event_key,
+                                    "ignored",
+                                )
+                                continue
+                            await event_repository.queue_event(event.event_key)
+                            should_enqueue = True
+                        elif isinstance(event, BusinessMessageEchoEvent):
+                            exclusion_mode = await policy.active_exclusion(
+                                business_id, event.whatsapp_id
+                            )
+                            if exclusion_mode is ExclusionMode.IGNORE:
+                                await event_repository.complete_event(
+                                    event.event_key,
+                                    "ignored",
+                                )
+                                continue
+                            customer_id = (
+                                await event_repository.get_or_create_customer_id(
+                                    business_id,
+                                    event.whatsapp_id,
+                                )
+                            )
+                            conversation_id = (
+                                await event_repository.get_or_create_conversation_id(
+                                    business_id,
+                                    customer_id,
+                                    "business",
+                                )
+                            )
+                            if exclusion_mode is ExclusionMode.HUMAN_ONLY:
+                                await policy.evaluate_customer_inbound(
+                                    business_id,
+                                    conversation_id,
+                                    exclusion_mode,
+                                )
+                            await policy.register_manual_business_message(
+                                business_id,
+                                conversation_id,
+                                event.occurred_at,
+                            )
+                            await event_repository.complete_event(
+                                event.event_key,
+                                "processed",
+                            )
+                        else:
+                            await event_repository.queue_event(event.event_key)
+                            should_enqueue = True
         except IntegrityError as exc:
             if not is_duplicate_event_error(exc):
                 raise

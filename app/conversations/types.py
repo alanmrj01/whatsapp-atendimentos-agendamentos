@@ -17,6 +17,7 @@ class ConversationInput:
     message_type: str
     body: str | None
     interactive_id: str | None
+    whatsapp_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

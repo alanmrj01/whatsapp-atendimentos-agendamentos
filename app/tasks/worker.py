@@ -5,13 +5,23 @@ from typing import Any, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.automation.domain import AutomationDecision
+from app.automation.service import (
+    AutomationPolicyRepository,
+    AutomationPolicyService,
+)
 from app.conversations.ports import BookingAvailabilityPort
 from app.conversations.types import ConversationInput
 from app.repositories.cloud_tasks import (
     CloudTaskEventRepository,
     StoredTaskEvent,
 )
-from app.whatsapp.processor import ConversationProcessor, build_conversation_engine
+from app.repositories.automation import AutomationRepository
+from app.whatsapp.processor import (
+    ConversationProcessor,
+    PermissiveAutomationRepository,
+    build_conversation_engine,
+)
 from app.whatsapp.webhook import SUPPORTED_MESSAGE_STATUSES
 
 
@@ -45,9 +55,18 @@ async def process_cloud_task_event(
     repository: TaskWorkerRepository | None = None,
     conversation_engine: ConversationProcessor | None = None,
     booking_port: BookingAvailabilityPort | None = None,
+    automation_repository: AutomationPolicyRepository | None = None,
 ) -> bool:
     event_repository = repository or CloudTaskEventRepository(
         cast(AsyncSession, session)
+    )
+    policy = AutomationPolicyService(
+        automation_repository
+        or (
+            AutomationRepository(cast(AsyncSession, session))
+            if isinstance(session, AsyncSession)
+            else PermissiveAutomationRepository()
+        )
     )
     async with session.begin():
         event = await event_repository.lock_event(event_key)
@@ -63,6 +82,22 @@ async def process_cloud_task_event(
             )
             if inbound is None:
                 raise TaskEventDataUnavailable("Task event data is unavailable")
+            if inbound.whatsapp_id is None and isinstance(session, AsyncSession):
+                await event_repository.complete_event(event_key, "ignored")
+                return False
+            if inbound.whatsapp_id is not None:
+                exclusion_mode = await policy.active_exclusion(
+                    inbound.business_id,
+                    inbound.whatsapp_id,
+                )
+                decision = await policy.evaluate_customer_inbound(
+                    inbound.business_id,
+                    inbound.conversation_id,
+                    exclusion_mode,
+                )
+                if decision is not AutomationDecision.ALLOWED:
+                    await event_repository.complete_event(event_key, "ignored")
+                    return False
             active_engine = conversation_engine or build_conversation_engine(
                 cast(AsyncSession, session),
                 booking_port,

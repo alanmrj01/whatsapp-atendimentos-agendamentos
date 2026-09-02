@@ -6,7 +6,7 @@ from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.conversations.types import ConversationInput
-from app.models import Conversation, Message, ProcessedWebhook
+from app.models import Conversation, Customer, Message, ProcessedWebhook
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,12 +57,20 @@ class CloudTaskEventRepository:
                 Message.message_type,
                 Message.body,
                 Message.interactive_id,
+                Customer.whatsapp_id,
             )
             .join(
                 Conversation,
                 and_(
                     Conversation.business_id == Message.business_id,
                     Conversation.id == Message.conversation_id,
+                ),
+            )
+            .join(
+                Customer,
+                and_(
+                    Customer.business_id == Conversation.business_id,
+                    Customer.id == Conversation.customer_id,
                 ),
             )
             .where(
@@ -81,6 +89,7 @@ class CloudTaskEventRepository:
             message_type=row.message_type,
             body=row.body,
             interactive_id=row.interactive_id,
+            whatsapp_id=row.whatsapp_id,
         )
 
     async def update_message_status(

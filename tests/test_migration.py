@@ -28,6 +28,12 @@ BOOKING_MIGRATION_PATH = (
     / "versions"
     / "20260901_0003_booking_configuration.py"
 )
+AUTOMATION_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260902_0004_automation_coexistence.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -56,11 +62,11 @@ def render_migration_sql(
     return output.getvalue()
 
 
-def test_booking_configuration_migration_is_the_only_alembic_head() -> None:
+def test_automation_coexistence_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260901_0003"]
+    assert script.get_heads() == ["20260902_0004"]
 
 
 def test_previous_migrations_remain_byte_identical() -> None:
@@ -71,10 +77,42 @@ def test_previous_migrations_remain_byte_identical() -> None:
         OUTBOUND_PAYLOAD_MIGRATION_PATH: (
             "7a8c91faccb6c6131be3f596a7f64dda424021477708e002b7c64e7df0b5ded3"
         ),
+        BOOKING_MIGRATION_PATH: (
+            "2408222f854c1eb9a9470e251369d967b59efdfc5912c70f6f940c1f5388fac2"
+        ),
     }
 
     for path, digest in expected.items():
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+
+
+def test_automation_coexistence_upgrade_and_downgrade_sql() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", AUTOMATION_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", AUTOMATION_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "create table business_automation_exclusions" in upgrade
+    assert "unique (business_id, whatsapp_id)" in upgrade
+    assert "human_control_window_minutes integer default '2160' not null" in upgrade
+    assert "human_control_window_minutes in (5, 10, 20, 30, 60, 120, 240, 360, 720, 1440, 2160)" in upgrade
+    for column_name in (
+        "automation_suppressed_until",
+        "suppression_reason",
+        "human_control_started_at",
+        "last_human_message_at",
+        "conversation_initiated_by",
+    ):
+        assert f"add column {column_name}" in upgrade
+        assert f"drop column {column_name}" in downgrade
+    assert "drop table business_automation_exclusions" in downgrade
+    assert "drop column human_control_window_minutes" in downgrade
 
 
 def test_booking_configuration_upgrade_and_downgrade_sql() -> None:

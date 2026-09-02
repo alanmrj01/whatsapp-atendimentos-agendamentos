@@ -87,6 +87,11 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "travel_after_buffer_minutes >= 0",
             name="travel_after_buffer_minutes_nonnegative",
         ),
+        CheckConstraint(
+            "human_control_window_minutes IN "
+            "(5, 10, 20, 30, 60, 120, 240, 360, 720, 1440, 2160)",
+            name="human_control_window_minutes_allowed",
+        ),
         Index("ix_businesses_active", "active"),
     )
 
@@ -146,6 +151,45 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default=text("'[]'::jsonb"),
         nullable=False,
     )
+    human_control_window_minutes: Mapped[int] = mapped_column(
+        Integer, default=2160, server_default="2160", nullable=False
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+
+
+class BusinessAutomationExclusion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "business_automation_exclusions"
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('ignore', 'human_only')",
+            name="mode_allowed",
+        ),
+        CheckConstraint(
+            "whatsapp_id ~ '^[1-9][0-9]{6,14}$'",
+            name="whatsapp_id_normalized",
+        ),
+        UniqueConstraint(
+            "business_id",
+            "whatsapp_id",
+            name="uq_business_automation_exclusions_business_whatsapp",
+        ),
+        Index(
+            "ix_business_automation_exclusions_lookup",
+            "business_id",
+            "whatsapp_id",
+            "active",
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    whatsapp_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true", nullable=False
     )
@@ -185,11 +229,25 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             ["customers.business_id", "customers.id"],
             name="fk_conversations_business_customer_customers",
         ),
+        CheckConstraint(
+            "suppression_reason IS NULL OR "
+            "suppression_reason = 'manual_business_message'",
+            name="suppression_reason_allowed",
+        ),
+        CheckConstraint(
+            "conversation_initiated_by IS NULL OR "
+            "conversation_initiated_by IN ('customer', 'business')",
+            name="initiated_by_allowed",
+        ),
         Index("ix_conversations_business_id", "business_id"),
         Index("ix_conversations_customer_id", "customer_id"),
         Index("ix_conversations_state", "state"),
         Index("ix_conversations_handoff_status", "handoff_status"),
         Index("ix_conversations_last_interaction_at", "last_interaction_at"),
+        Index(
+            "ix_conversations_automation_suppressed_until",
+            "automation_suppressed_until",
+        ),
     )
 
     business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -209,6 +267,21 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     last_interaction_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    automation_suppressed_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    suppression_reason: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    human_control_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_human_message_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    conversation_initiated_by: Mapped[str | None] = mapped_column(
+        String(16), nullable=True
     )
 
 

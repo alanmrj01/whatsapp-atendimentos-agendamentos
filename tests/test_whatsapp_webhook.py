@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -22,11 +23,15 @@ from app.tasks.cloud_tasks import CloudTasksEnqueueError
 from app.whatsapp.processor import process_webhook_events
 from app.whatsapp.processor import persist_webhook_events_for_tasks
 from app.whatsapp.webhook import (
+    BusinessMessageEchoEvent,
     InboundMessageEvent,
     MessageStatusEvent,
     NormalizedWebhookEvent,
     build_event_key,
 )
+from app.automation.domain import ExclusionMode
+from app.repositories.automation import ConversationAutomationControl
+from tests.test_automation_policy import FakeAutomationRepository
 
 
 APP_SECRET = "test-app-secret"
@@ -69,6 +74,39 @@ def messages_payload(
     }
 
 
+def business_echo_payload(
+    *,
+    message_id: str = "provider-business-echo-1",
+    recipient: str | None = "5511999990008",
+    timestamp: datetime | None = None,
+    message_type: str = "text",
+) -> dict[str, Any]:
+    echo: dict[str, Any] = {
+        "id": message_id,
+        "timestamp": str(int((timestamp or datetime.now(timezone.utc)).timestamp())),
+        "type": message_type,
+        "text": {"body": "manual private content"},
+    }
+    if recipient is not None:
+        echo["to"] = recipient
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "test-waba-id",
+                "changes": [
+                    {
+                        "field": "smb_message_echoes",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {"phone_number_id": "known-phone-id"},
+                            "message_echoes": [echo],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
 async def post_signed(
     client: AsyncClient, payload: dict[str, Any]
 ) -> tuple[bytes, Any]:
@@ -150,6 +188,7 @@ class FakeWebhookRepository:
         self.customer_lookups: list[str] = []
         self.conversation_lookups: list[uuid.UUID] = []
         self.integrity_constraint_name: str | None = None
+        self.conversation_initiators: list[str] = []
 
     async def claim_event(self, event: NormalizedWebhookEvent) -> bool:
         if self.integrity_constraint_name is not None:
@@ -182,10 +221,14 @@ class FakeWebhookRepository:
         return self.customer_id
 
     async def get_or_create_conversation_id(
-        self, _: uuid.UUID, customer_id: uuid.UUID
+        self,
+        _: uuid.UUID,
+        customer_id: uuid.UUID,
+        initiated_by: str = "customer",
     ) -> uuid.UUID:
         assert customer_id == self.customer_id
         self.conversation_lookups.append(customer_id)
+        self.conversation_initiators.append(initiated_by)
         return self.conversation_id
 
     async def touch_conversation(self, conversation_id: uuid.UUID) -> None:
@@ -1129,3 +1172,227 @@ def test_processed_webhook_claim_uses_postgresql_unique_barrier() -> None:
         in sql
     )
     assert "RETURNING processed_webhooks.id" in sql
+
+
+@mark.asyncio
+async def test_coexistence_manual_echo_uses_documented_signal_only(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    processor = AsyncMock()
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+
+    _, response = await post_signed(client, business_echo_payload())
+    event = processor.await_args.args[1][0]
+
+    assert response.status_code == 200
+    assert isinstance(event, BusinessMessageEchoEvent)
+    assert event.event_type == "message.business_echo.text"
+    assert event.whatsapp_id == "5511999990008"
+    assert not hasattr(event, "body")
+
+
+@mark.asyncio
+async def test_manual_echo_never_enters_engine_or_creates_fixed_exclusion() -> None:
+    repository = FakeWebhookRepository()
+    automation = FakeAutomationRepository()
+    automation.controls[repository.conversation_id] = (
+        ConversationAutomationControl(None, "none")
+    )
+    engine = AsyncMock()
+    occurred_at = datetime.now(timezone.utc)
+    event = BusinessMessageEchoEvent(
+        event_key=build_event_key("business_echo", "provider-manual-1"),
+        event_type="message.business_echo.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-manual-1",
+        whatsapp_id="5511999990008",
+        message_type="text",
+        occurred_at=occurred_at,
+    )
+
+    await process_webhook_events(
+        FakeSession(),
+        [event],
+        repository,
+        engine,
+        automation_repository=automation,
+    )
+    await process_webhook_events(
+        FakeSession(),
+        [event],
+        repository,
+        engine,
+        automation_repository=automation,
+    )
+
+    engine.process.assert_not_awaited()
+    assert repository.persisted_messages == []
+    assert repository.conversation_initiators == ["business"]
+    assert automation.manual_events == [
+        (repository.business_id, repository.conversation_id, occurred_at)
+    ]
+    assert automation.exclusions == {}
+    assert repository.completed == [(event.event_key, "processed")]
+
+
+@mark.asyncio
+async def test_customer_is_suppressed_then_resumes_automatically_after_expiry() -> None:
+    repository = FakeWebhookRepository()
+    automation = FakeAutomationRepository()
+    automation.controls[repository.conversation_id] = (
+        ConversationAutomationControl(None, "none")
+    )
+    engine = AsyncMock(return_value=True)
+    occurred_at = datetime.now(timezone.utc)
+    echo = BusinessMessageEchoEvent(
+        event_key=build_event_key("business_echo", "provider-manual-window"),
+        event_type="message.business_echo.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-manual-window",
+        whatsapp_id="5511999990008",
+        message_type="text",
+        occurred_at=occurred_at,
+    )
+    during = InboundMessageEvent(
+        event_key=build_event_key("inbound", "provider-during-window"),
+        event_type="message.inbound.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-during-window",
+        whatsapp_id="5511999990008",
+        message_type="text",
+        body="during",
+        interactive_id=None,
+    )
+
+    await process_webhook_events(
+        FakeSession(),
+        [echo, during],
+        repository,
+        engine,
+        automation_repository=automation,
+    )
+    engine.process.assert_not_awaited()
+    assert repository.completed[-1] == (during.event_key, "ignored")
+
+    automation.controls[repository.conversation_id] = (
+        ConversationAutomationControl(
+            datetime.now(timezone.utc) - timedelta(seconds=1),
+            "none",
+        )
+    )
+    after = InboundMessageEvent(
+        event_key=build_event_key("inbound", "provider-after-window"),
+        event_type="message.inbound.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-after-window",
+        whatsapp_id="5511999990008",
+        message_type="text",
+        body="after",
+        interactive_id=None,
+    )
+    await process_webhook_events(
+        FakeSession(),
+        [after],
+        repository,
+        engine,
+        automation_repository=automation,
+    )
+
+    engine.process.assert_awaited_once()
+    assert repository.completed[-1] == (after.event_key, "processed")
+    assert automation.suppressions_cleared == [
+        (repository.business_id, repository.conversation_id)
+    ]
+
+
+@mark.asyncio
+@mark.parametrize("mode", [ExclusionMode.IGNORE, ExclusionMode.HUMAN_ONLY])
+async def test_active_fixed_exclusion_prevents_engine_and_outbound(
+    mode: ExclusionMode,
+) -> None:
+    repository = FakeWebhookRepository()
+    automation = FakeAutomationRepository()
+    automation.controls[repository.conversation_id] = (
+        ConversationAutomationControl(None, "none")
+    )
+    automation.exclusions[(repository.business_id, "5511999990008")] = mode
+    engine = AsyncMock()
+    event = InboundMessageEvent(
+        event_key=build_event_key("inbound", f"provider-{mode.value}"),
+        event_type="message.inbound.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id=f"provider-{mode.value}",
+        whatsapp_id="5511999990008",
+        message_type="text",
+        body="private",
+        interactive_id=None,
+    )
+
+    await process_webhook_events(
+        FakeSession(),
+        [event],
+        repository,
+        engine,
+        automation_repository=automation,
+    )
+
+    engine.process.assert_not_awaited()
+    assert repository.completed == [(event.event_key, "ignored")]
+    assert len(repository.persisted_messages) == (
+        1 if mode is ExclusionMode.HUMAN_ONLY else 0
+    )
+
+
+@mark.asyncio
+async def test_ambiguous_or_collective_coexistence_event_is_fail_closed(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    processor = AsyncMock()
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+
+    _, ambiguous_response = await post_signed(
+        client, business_echo_payload(recipient=None)
+    )
+    _, collective_response = await post_signed(
+        client,
+        business_echo_payload(recipient="120363025000000000@g.us"),
+    )
+
+    assert ambiguous_response.status_code == 200
+    assert collective_response.status_code == 200
+    assert processor.await_args_list[0].args[1] == []
+    assert processor.await_args_list[1].args[1] == []
+
+
+@mark.asyncio
+async def test_cloud_tasks_flow_applies_manual_echo_without_enqueuing() -> None:
+    repository = FakeWebhookRepository()
+    automation = FakeAutomationRepository()
+    automation.controls[repository.conversation_id] = (
+        ConversationAutomationControl(None, "none")
+    )
+    occurred_at = datetime.now(timezone.utc)
+    event = BusinessMessageEchoEvent(
+        event_key=build_event_key("business_echo", "provider-queued-manual"),
+        event_type="message.business_echo.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-queued-manual",
+        whatsapp_id="5511999990008",
+        message_type="text",
+        occurred_at=occurred_at,
+    )
+
+    event_keys = await persist_webhook_events_for_tasks(
+        FakeSession(),
+        [event],
+        repository,
+        automation,
+    )
+
+    assert event_keys == []
+    assert repository.event_statuses[event.event_key] == "processed"
+    assert automation.manual_events == [
+        (repository.business_id, repository.conversation_id, occurred_at)
+    ]

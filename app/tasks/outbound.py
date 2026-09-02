@@ -162,6 +162,9 @@ async def process_outbound_message(
             or message.status != "pending"
         ):
             return "skipped"
+        if message.automation_blocked:
+            await outbound_repository.mark_failed(message.message_id)
+            return "failed"
         if not is_individual_whatsapp_id(message.recipient):
             await outbound_repository.mark_failed(message.message_id)
             return "failed"

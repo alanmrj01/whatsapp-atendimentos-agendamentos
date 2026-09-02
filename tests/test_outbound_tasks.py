@@ -234,6 +234,7 @@ def stored_message(
     message_type: str = "text",
     status: str = "pending",
     recipient: str = "5511999990001",
+    automation_blocked: bool = False,
 ) -> StoredOutboundMessage:
     payloads = {
         "interactive_button": {
@@ -257,6 +258,7 @@ def stored_message(
         outbound_payload=payloads.get(message_type),
         status=status,
         provider_message_id=None,
+        automation_blocked=automation_blocked,
     )
 
 
@@ -374,6 +376,25 @@ async def test_missing_meta_configuration_is_retryable_not_failed() -> None:
 async def test_collective_recipient_is_failed_without_external_call() -> None:
     repository = FakeOutboundRepository(
         stored_message(recipient="120363000000000000@g.us")
+    )
+    factory = AsyncMock()
+
+    result = await process_outbound_message(
+        FakeSession(),
+        MESSAGE_ID,
+        factory,
+        repository,
+    )
+
+    assert result == "failed"
+    factory.assert_not_called()
+    assert repository.failed == [MESSAGE_ID]
+
+
+@pytest.mark.asyncio
+async def test_excluded_or_human_controlled_recipient_is_not_sent() -> None:
+    repository = FakeOutboundRepository(
+        stored_message(automation_blocked=True)
     )
     factory = AsyncMock()
 

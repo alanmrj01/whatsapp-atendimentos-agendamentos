@@ -95,7 +95,10 @@ class WhatsAppWebhookRepository:
         return existing.scalar_one()
 
     async def get_or_create_conversation_id(
-        self, business_id: uuid.UUID, customer_id: uuid.UUID
+        self,
+        business_id: uuid.UUID,
+        customer_id: uuid.UUID,
+        initiated_by: str = "customer",
     ) -> uuid.UUID:
         conversation_id = uuid.uuid4()
         result = await self.session.execute(
@@ -109,6 +112,7 @@ class WhatsAppWebhookRepository:
                 automation_enabled=True,
                 handoff_status="none",
                 last_interaction_at=func.now(),
+                conversation_initiated_by=initiated_by,
             )
             .on_conflict_do_nothing(
                 constraint="uq_conversations_business_customer"

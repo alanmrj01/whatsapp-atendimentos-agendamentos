@@ -9,6 +9,7 @@ from app.models import Base
 EXPECTED_TABLES = {
     "appointments",
     "businesses",
+    "business_automation_exclusions",
     "conversations",
     "customers",
     "employee_services",
@@ -242,6 +243,7 @@ def test_required_server_defaults_are_registered() -> None:
     expected_defaults = {
         ("businesses", "timezone"): "America/Sao_Paulo",
         ("businesses", "slot_interval_minutes"): "30",
+        ("businesses", "human_control_window_minutes"): "2160",
         ("businesses", "service_origin_address"): (
             "Zona Leste de São José dos Campos - SP"
         ),
@@ -266,6 +268,54 @@ def test_required_server_defaults_are_registered() -> None:
     default_travel = Base.metadata.tables["businesses"].c.default_travel_minutes
     assert default_travel.server_default is None
     assert default_travel.nullable is True
+
+
+def test_automation_exclusions_and_human_control_are_registered() -> None:
+    exclusions = Base.metadata.tables["business_automation_exclusions"]
+    businesses = Base.metadata.tables["businesses"]
+    conversations = Base.metadata.tables["conversations"]
+
+    unique_specs = {
+        constraint.name: tuple(column.name for column in constraint.columns)
+        for constraint in exclusions.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+    assert unique_specs == {
+        "uq_business_automation_exclusions_business_whatsapp": (
+            "business_id",
+            "whatsapp_id",
+        )
+    }
+    assert "ix_business_automation_exclusions_lookup" in {
+        index.name for index in exclusions.indexes
+    }
+    assert exclusions.c.business_id.references(businesses.c.id)
+    assert {
+        "automation_suppressed_until",
+        "suppression_reason",
+        "human_control_started_at",
+        "last_human_message_at",
+        "conversation_initiated_by",
+    } <= set(conversations.c.keys())
+    assert "ix_conversations_automation_suppressed_until" in {
+        index.name for index in conversations.indexes
+    }
+
+    business_checks = {
+        constraint.name
+        for constraint in businesses.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    exclusion_checks = {
+        constraint.name
+        for constraint in exclusions.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert "ck_businesses_human_control_window_minutes_allowed" in business_checks
+    assert exclusion_checks == {
+        "ck_business_automation_exclusions_mode_allowed",
+        "ck_business_automation_exclusions_whatsapp_id_normalized",
+    }
 
 
 def test_business_travel_configuration_constraints_are_registered() -> None:

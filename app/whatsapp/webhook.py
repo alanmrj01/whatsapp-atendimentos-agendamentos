@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, TypeAlias
 
 from app.schemas.whatsapp_webhook import WhatsAppWebhookPayload
@@ -61,7 +62,20 @@ class MessageStatusEvent:
     message_status: str
 
 
-NormalizedWebhookEvent: TypeAlias = InboundMessageEvent | MessageStatusEvent
+@dataclass(frozen=True, slots=True)
+class BusinessMessageEchoEvent:
+    event_key: str
+    event_type: str
+    meta_phone_number_id: str
+    provider_message_id: str
+    whatsapp_id: str
+    message_type: str
+    occurred_at: datetime
+
+
+NormalizedWebhookEvent: TypeAlias = (
+    InboundMessageEvent | MessageStatusEvent | BusinessMessageEchoEvent
+)
 
 
 def verify_meta_signature(
@@ -99,7 +113,7 @@ def normalize_webhook_payload(
         if not isinstance(changes, list):
             continue
         for change in changes:
-            if not isinstance(change, dict) or change.get("field") != "messages":
+            if not isinstance(change, dict):
                 continue
             value = change.get("value")
             if not isinstance(value, dict):
@@ -107,8 +121,16 @@ def normalize_webhook_payload(
             meta_phone_number_id = _meta_phone_number_id(value)
             if meta_phone_number_id is None:
                 continue
-            events.extend(_normalize_messages(value, meta_phone_number_id))
-            events.extend(_normalize_statuses(value, meta_phone_number_id))
+            field = change.get("field")
+            if field == "messages":
+                events.extend(_normalize_messages(value, meta_phone_number_id))
+                events.extend(_normalize_statuses(value, meta_phone_number_id))
+            elif field == "smb_message_echoes":
+                events.extend(
+                    _normalize_business_message_echoes(
+                        value, meta_phone_number_id
+                    )
+                )
     return events
 
 
@@ -174,6 +196,45 @@ def _normalize_statuses(
                 meta_phone_number_id=meta_phone_number_id,
                 provider_message_id=provider_message_id,
                 message_status=message_status,
+            )
+        )
+    return events
+
+
+def _normalize_business_message_echoes(
+    value: dict[str, Any], meta_phone_number_id: str
+) -> list[BusinessMessageEchoEvent]:
+    raw_echoes = value.get("message_echoes")
+    if not isinstance(raw_echoes, list):
+        return []
+
+    events: list[BusinessMessageEchoEvent] = []
+    for raw_echo in raw_echoes:
+        if not isinstance(raw_echo, dict):
+            continue
+        provider_message_id = _identifier(raw_echo.get("id"), 255)
+        whatsapp_id = _identifier(raw_echo.get("to"), 255)
+        message_type = _identifier(raw_echo.get("type"), 40)
+        occurred_at = _unix_timestamp(raw_echo.get("timestamp"))
+        if (
+            not provider_message_id
+            or not whatsapp_id
+            or not message_type
+            or occurred_at is None
+            or not _is_individual_message(value, raw_echo, whatsapp_id)
+        ):
+            continue
+        events.append(
+            BusinessMessageEchoEvent(
+                event_key=build_event_key(
+                    "business_echo", provider_message_id
+                ),
+                event_type=f"message.business_echo.{message_type}",
+                meta_phone_number_id=meta_phone_number_id,
+                provider_message_id=provider_message_id,
+                whatsapp_id=whatsapp_id,
+                message_type=message_type,
+                occurred_at=occurred_at,
             )
         )
     return events
@@ -263,3 +324,12 @@ def _identifier(value: Any, max_length: int) -> str | None:
 
 def _body(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _unix_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+        return None
+    try:
+        return datetime.fromtimestamp(int(value), tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
