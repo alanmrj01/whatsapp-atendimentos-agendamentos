@@ -21,6 +21,8 @@ def test_production_startup_health_and_readiness_without_meta() -> None:
     environment = os.environ.copy()
     for variable_name in META_ENVIRONMENT_VARIABLES:
         environment.pop(variable_name, None)
+    environment.pop("CLOUD_TASKS_OUTBOUND_TARGET_URL", None)
+    environment["OUTBOUND_TASKS_ENABLED"] = "false"
     environment.update(
         {
             "DATABASE_URL": (

@@ -1,3 +1,4 @@
+import uuid
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -9,6 +10,12 @@ class WhatsAppEventTaskPayload(BaseModel):
         max_length=255,
         pattern=r"^whatsapp:(?:inbound|status):[a-f0-9]{64}$",
     )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class WhatsAppOutboundTaskPayload(BaseModel):
+    message_id: uuid.UUID
 
     model_config = ConfigDict(extra="forbid")
 

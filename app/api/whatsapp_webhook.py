@@ -26,11 +26,20 @@ from app.tasks.cloud_tasks import (
     CloudTasksEventEnqueuer,
     EventTaskEnqueuer,
 )
+from app.tasks.outbound import (
+    build_outbound_task_enqueuer,
+    enqueue_pending_outbounds_for_events,
+)
 from app.whatsapp.processor import (
     persist_webhook_events_for_tasks,
     process_webhook_events,
 )
-from app.whatsapp.webhook import normalize_webhook_payload, verify_meta_signature
+from app.whatsapp.webhook import (
+    InboundMessageEvent,
+    is_individual_whatsapp_id,
+    normalize_webhook_payload,
+    verify_meta_signature,
+)
 
 router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp-webhook"])
 
@@ -110,6 +119,24 @@ async def receive_whatsapp_webhook(
     events = normalize_webhook_payload(payload)
     if not settings.cloud_tasks_enabled:
         await process_webhook_events(session, events, booking_port=booking_port)
+        has_individual_inbound = any(
+            isinstance(event, InboundMessageEvent)
+            and is_individual_whatsapp_id(event.whatsapp_id)
+            for event in events
+        )
+        if settings.outbound_tasks_enabled and has_individual_inbound:
+            try:
+                outbound_enqueuer = build_outbound_task_enqueuer(settings)
+                await enqueue_pending_outbounds_for_events(
+                    session,
+                    events,
+                    outbound_enqueuer,
+                )
+            except (CloudTasksConfigurationError, CloudTasksEnqueueError):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Webhook processing unavailable",
+                ) from None
         return WebhookAcknowledgement(status="accepted")
 
     try:

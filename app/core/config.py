@@ -83,6 +83,17 @@ class Settings(BaseSettings):
     cloud_tasks_enabled: bool = Field(
         default=False, validation_alias="CLOUD_TASKS_ENABLED"
     )
+    outbound_tasks_enabled: bool = Field(
+        default=False, validation_alias="OUTBOUND_TASKS_ENABLED"
+    )
+    cloud_tasks_outbound_queue: str = Field(
+        default="whatsapp-outbound",
+        validation_alias="CLOUD_TASKS_OUTBOUND_QUEUE",
+    )
+    cloud_tasks_outbound_target_url: str | None = Field(
+        default=None,
+        validation_alias="CLOUD_TASKS_OUTBOUND_TARGET_URL",
+    )
     environment: Environment = Field(validation_alias="ENVIRONMENT")
 
     model_config = SettingsConfigDict(
@@ -131,14 +142,37 @@ class Settings(BaseSettings):
         return self._require_meta_secret(self.meta_verify_token)
 
     def require_cloud_tasks_configuration(self) -> CloudTasksConfiguration:
-        if not self.cloud_tasks_enabled:
-            raise CloudTasksConfigurationError("Cloud Tasks is disabled")
+        return self._require_cloud_tasks_configuration(
+            enabled=self.cloud_tasks_enabled,
+            queue=self.cloud_tasks_events_queue,
+            target_url=self.cloud_tasks_target_url,
+            disabled_message="Cloud Tasks is disabled",
+        )
+
+    def require_outbound_tasks_configuration(self) -> CloudTasksConfiguration:
+        return self._require_cloud_tasks_configuration(
+            enabled=self.outbound_tasks_enabled,
+            queue=self.cloud_tasks_outbound_queue,
+            target_url=self.cloud_tasks_outbound_target_url,
+            disabled_message="Outbound tasks are disabled",
+        )
+
+    def _require_cloud_tasks_configuration(
+        self,
+        *,
+        enabled: bool,
+        queue: str | None,
+        target_url: str | None,
+        disabled_message: str,
+    ) -> CloudTasksConfiguration:
+        if not enabled:
+            raise CloudTasksConfigurationError(disabled_message)
 
         raw_values = {
             "project_id": self.gcp_project_id,
             "region": self.gcp_region,
-            "queue": self.cloud_tasks_events_queue,
-            "target_url": self.cloud_tasks_target_url,
+            "queue": queue,
+            "target_url": target_url,
             "oidc_audience": self.cloud_tasks_oidc_audience,
             "invoker_email": self.cloud_tasks_invoker_email,
         }

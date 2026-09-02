@@ -9,6 +9,7 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import id_token
 
 from app.core.config import (
+    CloudTasksConfiguration,
     CloudTasksConfigurationError,
     Settings,
     get_settings,
@@ -35,6 +36,28 @@ async def require_cloud_tasks_oidc(
             detail="Task processing unavailable",
         ) from None
 
+    await _require_oidc_identity(configuration, authorization)
+
+
+async def require_outbound_tasks_oidc(
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    try:
+        configuration = settings.require_outbound_tasks_configuration()
+    except CloudTasksConfigurationError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Task processing unavailable",
+        ) from None
+
+    await _require_oidc_identity(configuration, authorization)
+
+
+async def _require_oidc_identity(
+    configuration: CloudTasksConfiguration,
+    authorization: str | None,
+) -> None:
     if authorization is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -14,6 +14,7 @@ from app.whatsapp.client import (
     DEFAULT_LIST_BUTTON_TEXT,
     WhatsAppAuthenticationError,
     WhatsAppClient,
+    WhatsAppConfigurationError,
     WhatsAppInvalidResponseError,
     WhatsAppNetworkError,
     WhatsAppPermanentError,
@@ -51,7 +52,7 @@ def test_invalid_client_configuration_is_rejected(
 ) -> None:
     invalid_settings = settings().model_copy(update={field: value})
 
-    with raises(WhatsAppValidationError) as exc_info:
+    with raises(WhatsAppConfigurationError) as exc_info:
         WhatsAppClient(invalid_settings)
 
     assert str(exc_info.value) == "WhatsApp client configuration is invalid"

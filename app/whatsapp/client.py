@@ -22,6 +22,10 @@ class WhatsAppValidationError(WhatsAppClientError):
     """Entrada local inválida; nenhuma chamada externa foi realizada."""
 
 
+class WhatsAppConfigurationError(WhatsAppValidationError):
+    """Configuração da integração ausente ou inválida."""
+
+
 class WhatsAppPermanentError(WhatsAppClientError):
     """Erro permanente retornado pela Meta."""
 
@@ -220,7 +224,7 @@ def _validate_client_configuration(
         or not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", phone_number_id)
         or not re.fullmatch(r"v\d{1,3}\.\d{1,3}", graph_version)
     ):
-        raise WhatsAppValidationError(
+        raise WhatsAppConfigurationError(
             "WhatsApp client configuration is invalid"
         )
     return access_token_secret, phone_number_id, graph_version

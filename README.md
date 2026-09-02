@@ -2,8 +2,8 @@
 
 Backend FastAPI para atendimento e agendamento de serviços pelo WhatsApp,
 preparado para Cloud Run e PostgreSQL/Supabase. Possui webhook assinado, outbox,
-cliente isolado da Cloud API, motor determinístico e agenda PostgreSQL. O envio
-automático da outbox ainda não faz parte desta etapa.
+cliente isolado da Cloud API, motor determinístico, agenda PostgreSQL e envio
+assíncrono opcional da outbox por Cloud Tasks.
 
 ## Instalação local
 
@@ -149,3 +149,26 @@ Configure `GCP_PROJECT_ID`, `GCP_REGION`, `CLOUD_TASKS_EVENTS_QUEUE`,
 ter permissão de Cloud Run Invoker. Falhas de enqueue retornam erro transitório
 para permitir retry, enquanto nomes repetidos (`AlreadyExists`) são tratados como
 sucesso. Payload bruto, telefone e conteúdo de mensagem nunca entram na task.
+
+## Cloud Tasks outbound
+
+`OUTBOUND_TASKS_ENABLED=false` preserva a outbox sem envio automático. Quando a
+flag é habilitada, cada mensagem `pending` criada pelo motor é localizada depois
+do commit e publicada na fila `whatsapp-outbound` com nome determinístico e body
+contendo somente `message_id`. O endpoint autenticado
+`POST /internal/tasks/whatsapp-outbound` bloqueia a linha no PostgreSQL e usa o
+`WhatsAppClient` para texto, botões ou lista.
+
+Configure `CLOUD_TASKS_OUTBOUND_QUEUE=whatsapp-outbound` e
+`CLOUD_TASKS_OUTBOUND_TARGET_URL`, reutilizando projeto, região, audience e conta
+OIDC do inbound. Timeout, limite de taxa e erros 5xx mantêm a mensagem `pending`
+e retornam erro para retry do Cloud Tasks. Erros 4xx permanentes resultam em
+`failed`; `sent`, `delivered`, `read` e `failed` nunca são reenviados. A task e os
+logs não incluem destinatário, conteúdo, token ou payload da mensagem.
+
+O lock transacional impede dois workers locais de enviarem a mesma linha ao
+mesmo tempo. Não existe garantia exactly-once no sistema externo: se a Meta
+aceitar a mensagem e o processo morrer antes de persistir o identificador, um
+retry poderá produzir novo envio. Não há migration nem alteração de schema nesta
+etapa. Com a feature desligada, nenhuma configuração `META_*` adicional é exigida
+no startup; as credenciais só são validadas quando um envio habilitado é executado.

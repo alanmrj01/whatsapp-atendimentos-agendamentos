@@ -100,6 +100,23 @@ def cloud_tasks_enabled_settings():  # type: ignore[no-untyped-def]
     )
 
 
+def outbound_tasks_enabled_settings():  # type: ignore[no-untyped-def]
+    return webhook_api.get_settings().model_copy(
+        update={
+            "cloud_tasks_enabled": False,
+            "outbound_tasks_enabled": True,
+            "gcp_project_id": "whatsapp-automacao-prod",
+            "gcp_region": "southamerica-east1",
+            "cloud_tasks_outbound_queue": "whatsapp-outbound",
+            "cloud_tasks_outbound_target_url": (
+                "https://service.example.run.app/internal/tasks/whatsapp-outbound"
+            ),
+            "cloud_tasks_oidc_audience": "https://service.example.run.app",
+            "cloud_tasks_invoker_email": TASK_INVOKER_EMAIL,
+        }
+    )
+
+
 class FakeTransaction:
     async def __aenter__(self) -> None:
         return None
@@ -424,6 +441,101 @@ async def test_cloud_tasks_enqueue_failure_returns_retryable_response(
 
 
 @mark.asyncio
+async def test_sync_webhook_commits_before_outbound_enqueue(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    order: list[str] = []
+
+    async def process(*_: Any, **__: Any) -> None:
+        order.append("committed")
+
+    async def enqueue(*_: Any, **__: Any) -> list[uuid.UUID]:
+        order.append("outbound_enqueued")
+        return [uuid.UUID(int=7)]
+
+    monkeypatch.setattr(webhook_api, "process_webhook_events", process)
+    monkeypatch.setattr(
+        webhook_api,
+        "build_outbound_task_enqueuer",
+        lambda _: object(),
+    )
+    monkeypatch.setattr(
+        webhook_api,
+        "enqueue_pending_outbounds_for_events",
+        enqueue,
+    )
+    app.dependency_overrides[webhook_api.get_settings] = (
+        outbound_tasks_enabled_settings
+    )
+    try:
+        _, response = await post_signed(
+            client,
+            messages_payload(
+                messages=[
+                    {
+                        "id": "provider-outbound-order",
+                        "from": "5511999990012",
+                        "type": "text",
+                        "text": {"body": "hello"},
+                    }
+                ]
+            ),
+        )
+    finally:
+        app.dependency_overrides.pop(webhook_api.get_settings, None)
+
+    assert response.status_code == 200
+    assert order == ["committed", "outbound_enqueued"]
+
+
+@mark.asyncio
+async def test_sync_outbound_enqueue_failure_requests_webhook_retry(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    processor = AsyncMock()
+
+    async def fail_enqueue(*_: Any, **__: Any) -> list[uuid.UUID]:
+        raise CloudTasksEnqueueError("queue unavailable")
+
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+    monkeypatch.setattr(
+        webhook_api,
+        "build_outbound_task_enqueuer",
+        lambda _: object(),
+    )
+    monkeypatch.setattr(
+        webhook_api,
+        "enqueue_pending_outbounds_for_events",
+        fail_enqueue,
+    )
+    app.dependency_overrides[webhook_api.get_settings] = (
+        outbound_tasks_enabled_settings
+    )
+    try:
+        _, response = await post_signed(
+            client,
+            messages_payload(
+                messages=[
+                    {
+                        "id": "provider-outbound-retry",
+                        "from": "5511999990013",
+                        "type": "text",
+                        "text": {"body": "hello"},
+                    }
+                ]
+            ),
+        )
+    finally:
+        app.dependency_overrides.pop(webhook_api.get_settings, None)
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Webhook processing unavailable"}
+    processor.assert_awaited_once()
+
+
+@mark.asyncio
 async def test_post_rejects_invalid_signature_without_persistence(
     client: AsyncClient, monkeypatch: MonkeyPatch
 ) -> None:
@@ -642,6 +754,46 @@ async def test_post_ignores_collective_conversations_before_processing(
 
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
+    assert processor.await_args.args[1] == []
+
+
+@mark.asyncio
+async def test_collective_never_builds_outbound_task(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    processor = AsyncMock()
+
+    def unexpected_builder(_: Any) -> Any:
+        raise AssertionError("collective must not build outbound task")
+
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+    monkeypatch.setattr(
+        webhook_api,
+        "build_outbound_task_enqueuer",
+        unexpected_builder,
+    )
+    app.dependency_overrides[webhook_api.get_settings] = (
+        outbound_tasks_enabled_settings
+    )
+    try:
+        _, response = await post_signed(
+            client,
+            messages_payload(
+                messages=[
+                    {
+                        "id": "provider-collective-outbound",
+                        "from": "120363025000000000@g.us",
+                        "type": "text",
+                        "text": {"body": "must not be sent"},
+                    }
+                ]
+            ),
+        )
+    finally:
+        app.dependency_overrides.pop(webhook_api.get_settings, None)
+
+    assert response.status_code == 200
     assert processor.await_args.args[1] == []
 
 
