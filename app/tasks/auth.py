@@ -58,28 +58,41 @@ async def _require_oidc_identity(
     configuration: CloudTasksConfiguration,
     authorization: str | None,
 ) -> None:
+    await require_service_oidc_identity(
+        configuration.oidc_audience, configuration.invoker_email, authorization,
+        unauthorized_detail="Unauthorized task request",
+        forbidden_detail="Forbidden task identity",
+    )
+
+
+async def require_service_oidc_identity(
+    audience: str,
+    invoker_email: str,
+    authorization: str | None,
+    *,
+    unauthorized_detail: str = "Unauthorized service request",
+    forbidden_detail: str = "Forbidden service identity",
+) -> None:
     if authorization is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized task request",
+            detail=unauthorized_detail,
         )
     scheme, separator, token = authorization.partition(" ")
     if scheme.casefold() != "bearer" or not separator or not token.strip():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized task request",
+            detail=unauthorized_detail,
         )
 
     try:
         claims = await asyncio.to_thread(
-            _verify_google_oidc_token,
-            token.strip(),
-            configuration.oidc_audience,
+            _verify_google_oidc_token, token.strip(), audience,
         )
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized task request",
+            detail=unauthorized_detail,
         ) from None
 
     token_email = claims.get("email")
@@ -88,10 +101,10 @@ async def _require_oidc_identity(
         or claims.get("email_verified") is not True
         or not secrets.compare_digest(
             token_email.casefold(),
-            configuration.invoker_email.casefold(),
+            invoker_email.casefold(),
         )
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden task identity",
+            detail=forbidden_detail,
         )

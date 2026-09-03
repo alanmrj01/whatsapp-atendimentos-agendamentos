@@ -19,6 +19,7 @@ META_ENVIRONMENT_VARIABLES = (
 
 def test_production_startup_health_and_readiness_without_meta() -> None:
     environment = os.environ.copy()
+    environment.pop("APP_COMMIT_SHA", None)
     for variable_name in META_ENVIRONMENT_VARIABLES:
         environment.pop(variable_name, None)
     environment.pop("CLOUD_TASKS_OUTBOUND_TARGET_URL", None)
@@ -40,13 +41,16 @@ def test_production_startup_health_and_readiness_without_meta() -> None:
     startup_script = """
 from fastapi.testclient import TestClient
 
-from app.core.database import check_database_connection
+from app.diagnostics.dependencies import get_diagnostics_service
+from app.diagnostics.service import DiagnosticsService
+from app.core.config import get_settings
+from tests.diagnostics_fakes import FakeDiagnosticsRepository
 from app.main import app
 
-async def database_connected():
-    return True
-
-app.dependency_overrides[check_database_connection] = database_connected
+assert get_settings().app_commit_sha is None
+app.dependency_overrides[get_diagnostics_service] = lambda: DiagnosticsService(
+    FakeDiagnosticsRepository(), get_settings()
+)
 with TestClient(app) as client:
     health = client.get('/health')
     ready = client.get('/ready')

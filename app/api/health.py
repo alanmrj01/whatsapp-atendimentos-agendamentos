@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
 from app.core.database import check_database_connection
+from app.diagnostics.dependencies import get_readiness
+from app.diagnostics.models import EssentialComponents
 from app.schemas.health import (
     DatabaseHealthResponse,
     HealthResponse,
@@ -24,12 +26,12 @@ async def health() -> HealthResponse:
     responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ReadinessResponse}},
 )
 async def readiness(
-    is_connected: Annotated[bool, Depends(check_database_connection)],
+    components: Annotated[EssentialComponents, Depends(get_readiness)],
 ) -> ReadinessResponse | JSONResponse:
-    if not is_connected:
+    if not components.ready:
         payload = ReadinessResponse(
             status="not_ready",
-            database="unavailable",
+            database="connected" if components.database.details.reachable else "unavailable",
         )
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -3,6 +3,8 @@ from pytest import mark
 
 from app.core.database import check_database_connection
 from app.main import app
+from app.diagnostics.dependencies import get_readiness
+from tests.diagnostics_fakes import essential_report
 
 
 @mark.asyncio
@@ -17,14 +19,14 @@ async def test_health_returns_ok(client: AsyncClient) -> None:
 async def test_readiness_returns_ok_when_database_is_connected(
     client: AsyncClient,
 ) -> None:
-    async def connected_database() -> bool:
-        return True
+    async def connected_database():
+        return await essential_report()
 
-    app.dependency_overrides[check_database_connection] = connected_database
+    app.dependency_overrides[get_readiness] = connected_database
     try:
         response = await client.get("/ready")
     finally:
-        app.dependency_overrides.pop(check_database_connection, None)
+        app.dependency_overrides.pop(get_readiness, None)
 
     assert response.status_code == 200
     assert response.json() == {"status": "ready", "database": "connected"}
@@ -34,14 +36,14 @@ async def test_readiness_returns_ok_when_database_is_connected(
 async def test_readiness_returns_503_when_database_is_unavailable(
     client: AsyncClient,
 ) -> None:
-    async def unavailable_database() -> bool:
-        return False
+    async def unavailable_database():
+        return await essential_report(connected=False)
 
-    app.dependency_overrides[check_database_connection] = unavailable_database
+    app.dependency_overrides[get_readiness] = unavailable_database
     try:
         response = await client.get("/ready")
     finally:
-        app.dependency_overrides.pop(check_database_connection, None)
+        app.dependency_overrides.pop(get_readiness, None)
 
     assert response.status_code == 503
     assert response.json() == {

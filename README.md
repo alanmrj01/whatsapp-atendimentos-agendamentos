@@ -38,9 +38,11 @@ Invoke-RestMethod http://localhost:8080/ready
 
 `GET /health/db` executa `SELECT 1`: responde `200` quando o PostgreSQL está
 acessível e `503` sem expor detalhes da conexão quando está indisponível.
-`GET /health` confirma somente que o processo está vivo. `GET /ready` executa a
-mesma verificação segura do PostgreSQL e responde `503` enquanto a dependência
-necessária não estiver disponível.
+`GET /health` confirma somente que o processo está vivo, sem consultar dependências.
+`GET /ready` verifica inicialização, PostgreSQL e schema esperado `20260902_0005`:
+retorna `200` com `{"status":"ready","database":"connected"}` ou `503` com
+`status=not_ready`. Banco acessível com schema incompatível continua indicando
+`database=connected`. Nenhum desses endpoints executa migrations.
 
 O access log padrão fica desabilitado para não registrar o token de verificação
 presente na query string. A aplicação emite logs JSON apenas com metadados
@@ -132,6 +134,65 @@ a integração, configure `META_ACCESS_TOKEN`, `META_APP_SECRET` e
 `META_VERIFY_TOKEN` como secrets, além de `META_PHONE_NUMBER_ID`, `META_WABA_ID` e
 `META_GRAPH_VERSION`. Use `ALEMBIC_DATABASE_URL` apenas no processo separado de
 migrations, com conexão Direct ou Session `:5432`.
+
+## Diagnóstico operacional privado
+
+`GET /internal/diagnostics` exige Bearer OIDC Google válido, com audience e email
+verificado iguais aos configurados. Usa `CLOUD_TASKS_OIDC_AUDIENCE` e
+`CLOUD_TASKS_INVOKER_EMAIL` mesmo com as filas desligadas. Uma identidade dedicada
+pode ser definida pelo par `DIAGNOSTICS_OIDC_AUDIENCE` /
+`DIAGNOSTICS_INVOKER_EMAIL`; um par incompleto falha fechado (`503`). Não há
+acesso anônimo, inclusive local. Autenticação inválida retorna `401/403`.
+
+O documento autenticado retorna HTTP `200`, `Cache-Control: no-store` e
+`format_version=1`; consumidores devem ler `status` e os códigos por componente.
+Use `/ready` para probes HTTP de prontidão. `APP_COMMIT_SHA` é opcional, informado
+pelo deploy (40 caracteres hexadecimais); sem ele, `version.commit=null`.
+
+O diagnóstico é somente leitura: timeout de 2s por observação e 1,5s por consulta
+PostgreSQL; schema diferente de `0005` impede consultas às tabelas da aplicação.
+Tasks, Meta e credenciais são verificações locais de configuração, não provas de
+acesso remoto (`remote_checked=false`). Não cria tasks, não envia mensagens nem
+consulta Meta/Secret Manager. A validação OIDC pode consultar certificados públicos
+Google, como nos workers existentes. A capacidade atual de credenciais continua
+sendo LEGACY/PILOT; referências a secrets são contabilizadas, nunca retornadas,
+e não implicam suporte físico ao Secret Manager.
+
+Agregação global, em ordem: falha conhecida de aplicação/banco/schema resulta em
+`error`; checagem essencial indeterminada, `unknown`; problema opcional/por empresa,
+`degraded`; checagem opcional indeterminada, `unknown`; somente o restante é `ok`.
+Revisões conhecidas atrás/adiante de `0005` são incompatíveis (`error`); revisão
+ilegível/não reconhecida é `unknown`, nunca prontidão `200`. Outbound habilitado
+mas mal configurado é `degraded`: bloqueia envios globais, mas não derruba a
+ingestão nem elimina a outbox persistida; exige ação operacional. Inbound e outbound
+continuam separados. Filas desabilitadas são `ok` com código `*_TASKS_DISABLED`.
+Uma conexão antiga desconectada, substituída por outra conexão, é contabilizada
+mas não gera alerta de desconexão atual. Falhas recentes de outbound degradam o
+diagnóstico; pendências sozinhas não implicam atraso sem um SLA definido.
+
+Atividade usa janela de 24h pela criação/recebimento e até 10.000 registros por
+amostra, mais um sentinela para detectar truncamento. CTEs materializadas limitam
+as linhas antes de filtros secundários e ordenações. Globalmente, as amostras
+usam os índices de data/status; por empresa, o índice de `business_id`, sem ordenar
+todo o histórico (`selection=bounded_business`). Não há índice composto
+empresa/data: em empresas grandes a amostra não promete conter os eventos mais
+recentes. A mesma limitação explícita vale para histórico de conexões/exclusões.
+Conexão atual indeterminável por truncamento retorna `unknown`, sem escolher uma
+conexão potencialmente errada. Contagens/últimos horários
+são limitados à amostra; `truncated=true` sinaliza resultado parcial, não um total
+exato. Pendências são amostradas sem corte de idade (`pending_scope=all_ages`),
+para não ocultar envios antigos parados. `last_successful_outbound_at` usa `updated_at` de `sent/delivered/read`
+(`success_time_source=last_status_update`), não um horário de envio confirmado
+pela Meta. Queries usam índices existentes e limites; não há alteração de schema.
+Há cinco consultas por diagnóstico global, independentemente do número de empresas,
+sem consultas por tenant em loop. `/ready` faz apenas duas observações de até 2s
+cada; o limite SQL de 1,5s também protege contra planos caros ou bloqueios.
+
+`DiagnosticsService.business_diagnostics(business_id)` prepara o consumo futuro
+pelo SUPER_ADMIN, sem endpoint público por empresa. O chamador deve autorizar o
+business antes de invocar o serviço. Retorna somente UUID, estados, contagens e
+horários, nunca conteúdo/telefone/identificadores Meta. Webhook processado é métrica
+somente global porque a tabela atual não possui `business_id`.
 
 ## Cloud Tasks inbound
 

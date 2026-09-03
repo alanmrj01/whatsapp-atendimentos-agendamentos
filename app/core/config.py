@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -39,6 +40,13 @@ class CloudTasksConfiguration:
 
 
 class Settings(BaseSettings):
+    app_commit_sha: str | None = Field(default=None, validation_alias="APP_COMMIT_SHA")
+    diagnostics_oidc_audience: str | None = Field(
+        default=None, validation_alias="DIAGNOSTICS_OIDC_AUDIENCE"
+    )
+    diagnostics_invoker_email: str | None = Field(
+        default=None, validation_alias="DIAGNOSTICS_INVOKER_EMAIL"
+    )
     database_url: SecretStr | None = Field(
         default=None, validation_alias="DATABASE_URL"
     )
@@ -122,6 +130,19 @@ class Settings(BaseSettings):
         if not raw_value.startswith("postgresql+asyncpg://"):
             raise ValueError("DATABASE_URL must use PostgreSQL")
         return raw_value
+
+    @field_validator("app_commit_sha", mode="before")
+    @classmethod
+    def safe_commit_sha(cls, value: Any) -> str | None:
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40}", value):
+            return value.lower()
+        return None
+
+    @field_validator("diagnostics_oidc_audience", "diagnostics_invoker_email", mode="before")
+    @classmethod
+    def empty_diagnostics_identity(cls, value: Any) -> Any:
+        # Empty entries from .env.example must not disable the existing identity.
+        return None if isinstance(value, str) and not value.strip() else value
 
     def require_database_url(self) -> str:
         if self.database_url is None:
