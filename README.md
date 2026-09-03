@@ -161,7 +161,7 @@ e não implicam suporte físico ao Secret Manager.
 Agregação global, em ordem: falha conhecida de aplicação/banco/schema resulta em
 `error`; checagem essencial indeterminada, `unknown`; problema opcional/por empresa,
 `degraded`; checagem opcional indeterminada, `unknown`; somente o restante é `ok`.
-Revisões conhecidas atrás/adiante de `0005` são incompatíveis (`error`); revisão
+Revisões conhecidas atrás/adiante de `0006` são incompatíveis (`error`); revisão
 ilegível/não reconhecida é `unknown`, nunca prontidão `200`. Outbound habilitado
 mas mal configurado é `degraded`: bloqueia envios globais, mas não derruba a
 ingestão nem elimina a outbox persistida; exige ação operacional. Inbound e outbound
@@ -259,3 +259,56 @@ somente para empresas ainda sem registro novo.
 A `0005` deve ser validada com upgrade/downgrade em PostgreSQL local descartável.
 Ela não é aplicada automaticamente no startup e não deve ser aplicada ao
 Supabase de produção antes da aprovação operacional específica.
+
+## Autenticação do PWA (16.5B, somente feature branch)
+
+A migration `20260903_0006` acrescenta `users`, `business_user_memberships` e
+`auth_sessions`. As migrations 0001–0005 permanecem intactas. Produção ainda está
+em 0005: **não mergear/deployar esta branch nem aplicar 0006 sem aprovação**.
+O diagnóstico desta branch passa a exigir 0006. Nenhuma migration roda no startup.
+
+Configure `AUTH_JWT_SECRET` com pelo menos 32 bytes aleatórios e
+`PWA_ALLOWED_ORIGINS` com origins exatas separadas por vírgula (sem caminho, barra
+final ou wildcard). Produção exige HTTPS. Guarde os valores no ambiente seguro,
+nunca no Git. Sem configuração válida, somente a nova API fica indisponível (503);
+startup, health, webhook e workers existentes continuam independentes de auth.
+
+`/api/v1/auth/login`, `/refresh`, `/logout` e `/active-business` usam JSON; refresh
+e logout recebem `{}`. Login normaliza email, verifica Argon2id e retorna JWT HS256
+de 10 minutos, com `sub`, `session_id`, `exp` e `jti`. O refresh é aleatório, dura
+no máximo 30 dias (prazo absoluto), fica em cookie HttpOnly/SameSite=Lax/Secure em
+produção e só seu SHA-256 é armazenado. Cada refresh troca o hash sob lock; replay
+é rejeitado. Logout revoga a sessão, invalidando também seus access tokens.
+Os parâmetros Argon2id seguem o mínimo [OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
+(19 MiB, duas iterações, paralelismo 1).
+
+O PWA deve usar HTTPS no **mesmo site** da API (ou proxy same-origin) para o cookie
+SameSite=Lax funcionar; CORS sozinho não habilita cookies entre sites distintos.
+Localmente, use o mesmo hostname, por exemplo `127.0.0.1` em ambas as portas.
+Endpoints que alteram cookies exigem Origin permitido; respostas públicas usam
+`Cache-Control: no-store`. O access token existe somente em memória no PWA.
+
+`GET /api/v1/me` retorna o próprio perfil e memberships. A empresa operacional
+sempre vem da sessão e membership ativa, reconsultadas no PostgreSQL em cada
+request. Uma membership é selecionada automaticamente; múltiplas requerem escolha
+autorizada. Revogar membership/usuário/sessão tem efeito no próximo request.
+`super_admin` é reservado a `/admin`, sem acesso operacional arbitrário por tenant.
+`owner/admin` podem planejar onboarding; `attendant/viewer` apenas consultam conexão.
+`GET /api/v1/whatsapp/connection` retorna somente estado/modo.
+`POST /api/v1/whatsapp/onboarding/plan` reutiliza o serviço 16.4, sem HTTP interno,
+conexão Meta ou mutação de dados. Endpoints `/internal/*` continuam com OIDC.
+
+Para provisionar explicitamente o primeiro usuário, após aprovar/aplicar o schema
+no ambiente escolhido, use um terminal interativo:
+
+```bash
+python -m app.auth.cli --super-admin
+python -m app.auth.cli --business-id UUID_DA_EMPRESA --role owner
+```
+
+Email é solicitado no terminal; senha (mínimo 12 caracteres) via `getpass`, nunca
+argumento, seed ou log. O CLI não sobrescreve usuários existentes. Não há cadastro
+público, recuperação de senha, MFA ou OAuth nesta etapa. Antes de exposição pública,
+defina também proteção operacional contra abuso de login (limites por origem/IP).
+Testes físicos usam exclusivamente `TEST_DATABASE_URL` local descartável e validam
+0005 → 0006 → 0005 → 0006; nunca apontar essa variável ao Supabase de produção.

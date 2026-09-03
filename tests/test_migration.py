@@ -68,15 +68,18 @@ def render_migration_sql(
     return output.getvalue()
 
 
-def test_business_whatsapp_connections_migration_is_the_only_alembic_head() -> None:
+def test_pwa_auth_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260902_0005"]
+    assert script.get_heads() == ["20260903_0006"]
 
 
 def test_previous_migrations_remain_byte_identical() -> None:
     expected = {
+        WHATSAPP_CONNECTIONS_MIGRATION_PATH: (
+            "f6e6d32e4c6cc3ec54d5276311bb6eb735524cec4708d3a4e19aba0fb89fad7f"
+        ),
         MIGRATION_PATH: (
             "cf5f5686ab0b8381ee4e1a0ef7a09a0c9e066a119f272b235a1e69e6356872f6"
         ),

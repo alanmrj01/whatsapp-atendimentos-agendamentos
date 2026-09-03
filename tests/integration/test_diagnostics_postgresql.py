@@ -120,7 +120,7 @@ async def test_physical_reports_are_scoped_sanitized_and_read_only(diagnostic_db
     async with engine.connect() as connection:
         # Diagnostics did not mutate messages, schema or human-control state.
         assert await connection.scalar(text("SELECT count(*) FROM messages")) == 7
-        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260902_0005"
+        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260903_0006"
         assert await connection.scalar(text("SELECT count(*) FROM conversations WHERE automation_suppressed_until IS NOT NULL")) == 1
 
     # Expiry is observed without changing the business's human-control policy.
@@ -159,7 +159,7 @@ async def test_physical_schema_mismatch_is_not_ready_without_running_migration(d
             assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260902_0004"
     finally:
         async with engine.begin() as connection:
-            await connection.execute(text("UPDATE alembic_version SET version_num = '20260902_0005'"))
+            await connection.execute(text("UPDATE alembic_version SET version_num = '20260903_0006'"))
 
 
 async def test_physical_activity_limits_are_explicit(diagnostic_db, monkeypatch):
