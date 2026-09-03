@@ -40,6 +40,25 @@ class CloudTasksConfiguration:
 
 
 class Settings(BaseSettings):
+    auth_jwt_secret: SecretStr | None = Field(default=None, validation_alias="AUTH_JWT_SECRET")
+    pwa_allowed_origins: str = Field(default="", validation_alias="PWA_ALLOWED_ORIGINS")
+
+    def allowed_pwa_origins(self) -> tuple[str, ...]:
+        # Invalid auth configuration disables auth/CORS, never application startup.
+        origins = tuple(origin.strip() for origin in self.pwa_allowed_origins.split(",") if origin.strip())
+        try:
+            for origin in origins:
+                url = urlsplit(origin)
+                if (url.scheme not in {"https", "http"} or not url.hostname
+                    or url.username or url.password or url.path or url.query or url.fragment
+                    or "*" in origin or any(c.isspace() for c in origin)
+                    or (self.environment is Environment.production and url.scheme != "https")):
+                    return ()
+                _ = url.port
+        except ValueError:
+            return ()
+        return origins
+
     app_commit_sha: str | None = Field(default=None, validation_alias="APP_COMMIT_SHA")
     diagnostics_oidc_audience: str | None = Field(
         default=None, validation_alias="DIAGNOSTICS_OIDC_AUDIENCE"

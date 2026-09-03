@@ -9,6 +9,9 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.public_pwa import router as public_pwa_router
 
 from app.api.health import router as health_router
 from app.api.diagnostics import router as diagnostics_router
@@ -49,6 +52,12 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(health_router)
+    application.include_router(public_pwa_router)
+    origins = get_settings().allowed_pwa_origins()
+    application.add_middleware(
+        CORSMiddleware, allow_origins=list(origins), allow_credentials=bool(origins),
+        allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"],
+    )
     application.state.initialized = False
     application.include_router(diagnostics_router)
     application.include_router(internal_tasks_router)
@@ -112,7 +121,10 @@ def create_app() -> FastAPI:
                     "detail": "Internal server error",
                     "request_id": request_id,
                 },
-                headers={"X-Request-ID": request_id},
+                headers={"X-Request-ID": request_id, **(
+                    {"Cache-Control": "no-store", "Pragma": "no-cache"}
+                    if request.url.path.startswith("/api/") else {}
+                )},
             )
 
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
@@ -128,6 +140,9 @@ def create_app() -> FastAPI:
             },
         )
         response.headers["X-Request-ID"] = request_id
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
         return response
 
     return application
