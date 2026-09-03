@@ -20,7 +20,7 @@ from app.api.internal_whatsapp_onboarding import (
     router as internal_whatsapp_onboarding_router,
 )
 from app.api.whatsapp_webhook import router as whatsapp_webhook_router
-from app.core.config import get_settings
+from app.core.config import Environment, get_settings
 from app.core.database import dispose_engine
 from app.core.logging import configure_logging
 from app.tasks.cloud_tasks import close_cloud_tasks_client
@@ -44,16 +44,21 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    current_settings = get_settings()
+    production = current_settings.environment is Environment.production
     application = FastAPI(
         title="WhatsApp Atendimento e Agendamento",
         version="0.1.0",
         debug=False,
         lifespan=lifespan,
+        docs_url=None if production else "/docs",
+        redoc_url=None if production else "/redoc",
+        openapi_url=None if production else "/openapi.json",
     )
 
     application.include_router(health_router)
     application.include_router(public_pwa_router)
-    origins = get_settings().allowed_pwa_origins()
+    origins = current_settings.allowed_pwa_origins()
     application.add_middleware(
         CORSMiddleware, allow_origins=list(origins), allow_credentials=bool(origins),
         allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"],
