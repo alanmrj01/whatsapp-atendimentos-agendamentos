@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_auth_config, require_origin, require_principal
+from app.auth.rate_limit import login_rate_limiter
 from app.auth.schemas import (AccessResponse, ActiveBusinessRequest, EmptyRequest, LoginRequest,
     MeResponse, MembershipRole, PublicConnectionResponse, PublicPlanRequest)
 from app.auth.security import COOKIE_NAME, COOKIE_PATH, access_token
@@ -36,7 +37,9 @@ def token_response(response: Response, settings: Settings, user: User, session: 
 
 @router.post("/auth/login", response_model=AccessResponse, dependencies=[Depends(require_origin)])
 async def login(payload: LoginRequest, response: Response, settings: Config, db: Db):
+    await login_rate_limiter.acquire(payload.email)
     user, session, refresh = await AuthService(db).login(payload.email, payload.password.get_secret_value())
+    await login_rate_limiter.success(payload.email)
     return token_response(response, settings, user, session, refresh)
 
 
