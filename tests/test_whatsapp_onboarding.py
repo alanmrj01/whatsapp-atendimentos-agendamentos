@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -71,8 +72,10 @@ class FakeAdministration:
     async def get_connection(
         self,
         business_id: uuid.UUID,
+        *,
+        for_update: bool = False,
     ) -> WhatsAppConnectionStatusView | None:
-        self.calls.append(("get_connection", business_id))
+        self.calls.append(("get_connection_for_update", for_update))
         return self.current
 
     async def update_meta_identifiers(
@@ -209,6 +212,7 @@ async def test_completion_creates_only_provider_confirmed_mode() -> None:
         "create_pending_connection",
         WhatsAppConnectionMode.COEXISTENCE,
     ) in administration.calls
+    assert ("get_connection_for_update", True) in administration.calls
     assert any(
         name == "set_credential_secret_ref"
         for name, _ in administration.calls
@@ -290,3 +294,31 @@ def test_completion_contract_never_accepts_raw_access_token() -> None:
     assert "access_token" not in fields
     assert "meta_access_token" not in fields
     assert "credential_secret_ref" in fields
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("meta_waba_id", "invalid value"),
+        ("meta_phone_number_id", ""),
+        ("graph_version", "latest"),
+        ("credential_secret_ref", "raw-access-token"),
+    ],
+)
+async def test_invalid_provider_completion_never_mutates_or_connects(
+    field: str,
+    value: str,
+) -> None:
+    administration = FakeAdministration()
+    service = WhatsAppOnboardingService(administration)
+    data = completion(
+        intent=WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS,
+        mode=WhatsAppConnectionMode.COEXISTENCE,
+    )
+    invalid = replace(data, **{field: value})
+
+    with pytest.raises(WhatsAppOnboardingError):
+        await service.complete_provider_onboarding(BUSINESS_ID, invalid)
+
+    assert administration.calls == []

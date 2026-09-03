@@ -9,6 +9,9 @@ from app.whatsapp.administration import WhatsAppConnectionStatusView
 from app.whatsapp.connections import (
     WhatsAppConnectionMode,
     WhatsAppConnectionStatus,
+    validate_credential_secret_ref,
+    validate_graph_version,
+    validate_meta_identifier,
 )
 
 
@@ -60,6 +63,8 @@ class WhatsAppOnboardingAdministrationPort(Protocol):
     async def get_connection(
         self,
         business_id: uuid.UUID,
+        *,
+        for_update: bool = False,
     ) -> WhatsAppConnectionStatusView | None: ...
 
     async def update_meta_identifiers(
@@ -193,7 +198,33 @@ class WhatsAppOnboardingService:
                 "Provider mode does not match the approved onboarding path"
             )
 
-        current = await self._administration.get_connection(business_id)
+        try:
+            meta_waba_id = validate_meta_identifier(completion.meta_waba_id)
+            meta_phone_number_id = validate_meta_identifier(
+                completion.meta_phone_number_id
+            )
+            graph_version = validate_graph_version(completion.graph_version)
+            credential_secret_ref = validate_credential_secret_ref(
+                completion.credential_secret_ref
+            )
+        except ValueError:
+            raise WhatsAppOnboardingError(
+                "WhatsApp provider completion is invalid"
+            ) from None
+        if any(
+            value is None
+            for value in (meta_waba_id, meta_phone_number_id, graph_version)
+        ):
+            raise WhatsAppOnboardingError(
+                "WhatsApp provider completion is incomplete"
+            )
+
+        # Serialize from the first state decision. Without this lock, a second
+        # completion could wait on a later update and overwrite a row that had
+        # become connected while it was waiting.
+        current = await self._administration.get_connection(
+            business_id, for_update=True
+        )
         if current is None or current.status is WhatsAppConnectionStatus.DISCONNECTED:
             await self._administration.create_pending_connection(
                 business_id,
@@ -211,13 +242,13 @@ class WhatsAppOnboardingService:
 
         await self._administration.update_meta_identifiers(
             business_id,
-            meta_waba_id=completion.meta_waba_id,
-            meta_phone_number_id=completion.meta_phone_number_id,
-            graph_version=completion.graph_version,
+            meta_waba_id=meta_waba_id,
+            meta_phone_number_id=meta_phone_number_id,
+            graph_version=graph_version,
         )
         await self._administration.set_credential_secret_ref(
             business_id,
-            completion.credential_secret_ref,
+            credential_secret_ref,
         )
         return await self._administration.mark_connected(business_id)
 
@@ -225,7 +256,9 @@ class WhatsAppOnboardingService:
         self,
         business_id: uuid.UUID,
     ) -> WhatsAppConnectionStatusView:
-        current = await self._administration.get_connection(business_id)
+        current = await self._administration.get_connection(
+            business_id, for_update=True
+        )
         if current is None:
             raise WhatsAppOnboardingError(
                 "WhatsApp business connection is not available"
