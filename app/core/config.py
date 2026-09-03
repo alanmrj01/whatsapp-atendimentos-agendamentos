@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     diagnostics_invoker_email: str | None = Field(
         default=None, validation_alias="DIAGNOSTICS_INVOKER_EMAIL"
     )
+    whatsapp_onboarding_oidc_audience: str | None = Field(
+        default=None, validation_alias="WHATSAPP_ONBOARDING_OIDC_AUDIENCE"
+    )
+    whatsapp_onboarding_invoker_email: str | None = Field(
+        default=None, validation_alias="WHATSAPP_ONBOARDING_INVOKER_EMAIL"
+    )
     database_url: SecretStr | None = Field(
         default=None, validation_alias="DATABASE_URL"
     )
@@ -138,10 +144,15 @@ class Settings(BaseSettings):
             return value.lower()
         return None
 
-    @field_validator("diagnostics_oidc_audience", "diagnostics_invoker_email", mode="before")
+    @field_validator(
+        "diagnostics_oidc_audience",
+        "diagnostics_invoker_email",
+        "whatsapp_onboarding_oidc_audience",
+        "whatsapp_onboarding_invoker_email",
+        mode="before",
+    )
     @classmethod
-    def empty_diagnostics_identity(cls, value: Any) -> Any:
-        # Empty entries from .env.example must not disable the existing identity.
+    def empty_optional_identity(cls, value: Any) -> Any:
         return None if isinstance(value, str) and not value.strip() else value
 
     def require_database_url(self) -> str:

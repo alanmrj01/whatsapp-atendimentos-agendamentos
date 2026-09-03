@@ -13,6 +13,9 @@ from fastapi.responses import JSONResponse
 from app.api.health import router as health_router
 from app.api.diagnostics import router as diagnostics_router
 from app.api.internal_tasks import router as internal_tasks_router
+from app.api.internal_whatsapp_onboarding import (
+    router as internal_whatsapp_onboarding_router,
+)
 from app.api.whatsapp_webhook import router as whatsapp_webhook_router
 from app.core.config import get_settings
 from app.core.database import dispose_engine
@@ -49,6 +52,7 @@ def create_app() -> FastAPI:
     application.state.initialized = False
     application.include_router(diagnostics_router)
     application.include_router(internal_tasks_router)
+    application.include_router(internal_whatsapp_onboarding_router)
     application.include_router(whatsapp_webhook_router)
 
     @application.exception_handler(RequestValidationError)

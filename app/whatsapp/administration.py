@@ -76,9 +76,14 @@ class WhatsAppConnectionAdministrationService:
         return _status_view(connection)
 
     async def get_connection(
-        self, business_id: uuid.UUID
+        self,
+        business_id: uuid.UUID,
+        *,
+        for_update: bool = False,
     ) -> WhatsAppConnectionStatusView | None:
-        connection = await self._repository.get_connection(business_id)
+        connection = await self._repository.get_connection(
+            business_id, for_update=for_update
+        )
         if connection is None:
             return None
         return _status_view(connection)
@@ -130,9 +135,17 @@ class WhatsAppConnectionAdministrationService:
         self, business_id: uuid.UUID
     ) -> WhatsAppConnectionStatusView:
         connection = await self._require_connection(business_id)
-        if connection.meta_phone_number_id is None:
+        if any(
+            value is None
+            for value in (
+                connection.meta_waba_id,
+                connection.meta_phone_number_id,
+                connection.graph_version,
+                connection.credential_secret_ref,
+            )
+        ):
             raise WhatsAppConnectionAdministrationError(
-                "WhatsApp connection identifiers are incomplete"
+                "WhatsApp connection configuration is incomplete"
             )
         connection.status = WhatsAppConnectionStatus.CONNECTED.value
         connection.connected_at = datetime.now(timezone.utc)
