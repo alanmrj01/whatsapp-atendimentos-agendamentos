@@ -13,7 +13,7 @@ from argon2.exceptions import InvalidHashError, VerificationError
 
 ACCESS_TTL_SECONDS = 600
 REFRESH_TTL_SECONDS = 30 * 24 * 3600
-COOKIE_NAME = "atende_refresh"
+COOKIE_NAME = "alovia_refresh"
 COOKIE_PATH = "/api/v1/auth"
 hasher = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1, type=Type.ID)
 
