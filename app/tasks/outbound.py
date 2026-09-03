@@ -83,6 +83,10 @@ class WhatsAppSender(Protocol):
     async def aclose(self) -> None: ...
 
 
+class BusinessSenderResolver(Protocol):
+    async def resolve(self, business_id: uuid.UUID) -> WhatsAppSender: ...
+
+
 WhatsAppSenderFactory = Callable[[], WhatsAppSender]
 
 
@@ -147,8 +151,10 @@ async def enqueue_outbound_message_ids(
 async def process_outbound_message(
     session: AsyncSession | TransactionSession,
     message_id: uuid.UUID,
-    client_factory: WhatsAppSenderFactory,
+    client_factory: WhatsAppSenderFactory | None = None,
     repository: OutboundRepository | None = None,
+    *,
+    sender_resolver: BusinessSenderResolver | None = None,
 ) -> OutboundTaskResult:
     outbound_repository = repository or OutboundTaskRepository(
         cast(AsyncSession, session)
@@ -170,7 +176,14 @@ async def process_outbound_message(
             return "failed"
 
         try:
-            client = client_factory()
+            if sender_resolver is not None:
+                client = await sender_resolver.resolve(message.business_id)
+            elif client_factory is not None:
+                client = client_factory()
+            else:
+                raise WhatsAppConfigurationError(
+                    "WhatsApp sender resolver is not configured"
+                )
         except WhatsAppConfigurationError:
             raise OutboundTaskTransientError(
                 "WhatsApp sender is not configured"

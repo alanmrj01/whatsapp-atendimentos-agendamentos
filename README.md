@@ -170,5 +170,31 @@ O lock transacional impede dois workers locais de enviarem a mesma linha ao
 mesmo tempo. Não existe garantia exactly-once no sistema externo: se a Meta
 aceitar a mensagem e o processo morrer antes de persistir o identificador, um
 retry poderá produzir novo envio. Não há migration nem alteração de schema nesta
-etapa. Com a feature desligada, nenhuma configuração `META_*` adicional é exigida
+etapa do sender. Com a feature desligada, nenhuma configuração `META_*` adicional é exigida
 no startup; as credenciais só são validadas quando um envio habilitado é executado.
+
+## Conexões WhatsApp por empresa
+
+A migration `20260902_0005` cria `business_whatsapp_connections`, com no máximo
+uma conexão não desconectada por empresa e Phone Number ID único. Os modos
+`coexistence` e `api_only` e os estados `pending`, `connected`, `disconnected` e
+`error` são domínio explícito; somente `connected` pode enviar. Os campos Meta
+legados em `businesses` permanecem durante a transição.
+
+O outbound parte sempre do `business_id` da mensagem, busca a conexão daquela
+empresa e constrói o cliente com o Phone Number ID e a versão Graph resolvidos.
+O banco guarda apenas `credential_secret_ref`, nunca access token. A porta de
+credenciais já permite um provider futuro de Google Secret Manager; a resolução
+física desse secret não faz parte desta etapa.
+
+O fallback global é exclusivamente `LEGACY/PILOT`: só funciona quando ainda não
+há registro em `business_whatsapp_connections` e o
+`businesses.meta_phone_number_id` da própria empresa coincide exatamente com
+`META_PHONE_NUMBER_ID`. Uma conexão `pending`, `disconnected` ou `error`, uma
+credencial ausente ou qualquer inconsistência de empresa falha de forma fechada.
+No inbound, o novo modelo conectado tem prioridade; o campo legado é consultado
+somente para empresas ainda sem registro novo.
+
+A `0005` deve ser validada com upgrade/downgrade em PostgreSQL local descartável.
+Ela não é aplicada automaticamente no startup e não deve ser aplicada ao
+Supabase de produção antes da aprovação operacional específica.

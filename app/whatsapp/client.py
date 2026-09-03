@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Self
 
@@ -12,6 +13,13 @@ from app.core.config import Settings
 
 GRAPH_API_BASE_URL = "https://graph.facebook.com"
 DEFAULT_LIST_BUTTON_TEXT = "Ver opções"
+
+
+@dataclass(frozen=True, slots=True)
+class WhatsAppClientConfiguration:
+    access_token: SecretStr
+    phone_number_id: str
+    graph_version: str
 
 
 class WhatsAppClientError(RuntimeError):
@@ -57,13 +65,16 @@ class WhatsAppInvalidResponseError(WhatsAppClientError):
 class WhatsAppClient:
     def __init__(
         self,
-        settings: Settings,
+        settings: Settings | None = None,
         *,
+        configuration: WhatsAppClientConfiguration | None = None,
         http_client: httpx.AsyncClient | None = None,
         timeout: httpx.Timeout | None = None,
     ) -> None:
+        if configuration is None:
+            configuration = _legacy_configuration(settings)
         access_token, phone_number_id, graph_version = (
-            _validate_client_configuration(settings)
+            _validate_client_configuration(configuration)
         )
         self._access_token = access_token
         self._messages_url = (
@@ -206,21 +217,15 @@ class WhatsAppClient:
 
 
 def _validate_client_configuration(
-    settings: Settings,
+    configuration: WhatsAppClientConfiguration,
 ) -> tuple[SecretStr, str, str]:
-    access_token_secret = settings.meta_access_token
-    phone_number_id = settings.meta_phone_number_id
-    graph_version = settings.meta_graph_version
-    access_token = (
-        access_token_secret.get_secret_value()
-        if access_token_secret is not None
-        else ""
-    )
+    access_token_secret = configuration.access_token
+    phone_number_id = configuration.phone_number_id
+    graph_version = configuration.graph_version
+    access_token = access_token_secret.get_secret_value()
     if (
         not access_token
         or access_token != access_token.strip()
-        or phone_number_id is None
-        or graph_version is None
         or not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", phone_number_id)
         or not re.fullmatch(r"v\d{1,3}\.\d{1,3}", graph_version)
     ):
@@ -228,6 +233,25 @@ def _validate_client_configuration(
             "WhatsApp client configuration is invalid"
         )
     return access_token_secret, phone_number_id, graph_version
+
+
+def _legacy_configuration(
+    settings: Settings | None,
+) -> WhatsAppClientConfiguration:
+    if (
+        settings is None
+        or settings.meta_access_token is None
+        or settings.meta_phone_number_id is None
+        or settings.meta_graph_version is None
+    ):
+        raise WhatsAppConfigurationError(
+            "WhatsApp client configuration is invalid"
+        )
+    return WhatsAppClientConfiguration(
+        access_token=settings.meta_access_token,
+        phone_number_id=settings.meta_phone_number_id,
+        graph_version=settings.meta_graph_version,
+    )
 
 
 def _raise_for_status(status_code: int) -> None:

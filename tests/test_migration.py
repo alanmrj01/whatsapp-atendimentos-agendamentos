@@ -34,6 +34,12 @@ AUTOMATION_MIGRATION_PATH = (
     / "versions"
     / "20260902_0004_automation_coexistence.py"
 )
+WHATSAPP_CONNECTIONS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260902_0005_business_whatsapp_connections.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -62,11 +68,11 @@ def render_migration_sql(
     return output.getvalue()
 
 
-def test_automation_coexistence_migration_is_the_only_alembic_head() -> None:
+def test_business_whatsapp_connections_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260902_0004"]
+    assert script.get_heads() == ["20260902_0005"]
 
 
 def test_previous_migrations_remain_byte_identical() -> None:
@@ -79,6 +85,9 @@ def test_previous_migrations_remain_byte_identical() -> None:
         ),
         BOOKING_MIGRATION_PATH: (
             "2408222f854c1eb9a9470e251369d967b59efdfc5912c70f6f940c1f5388fac2"
+        ),
+        AUTOMATION_MIGRATION_PATH: (
+            "c9afdeb200cc57d50bb275850b38b81317811a319e60797226afd948a08c8f0a"
         ),
     }
 
@@ -113,6 +122,32 @@ def test_automation_coexistence_upgrade_and_downgrade_sql() -> None:
         assert f"drop column {column_name}" in downgrade
     assert "drop table business_automation_exclusions" in downgrade
     assert "drop column human_control_window_minutes" in downgrade
+
+
+def test_business_whatsapp_connections_upgrade_and_downgrade_sql() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", WHATSAPP_CONNECTIONS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", WHATSAPP_CONNECTIONS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "create table business_whatsapp_connections" in upgrade
+    assert "foreign key(business_id) references businesses (id)" in upgrade
+    assert "provider varchar(16) default 'meta' not null" in upgrade
+    assert "status varchar(32) default 'pending' not null" in upgrade
+    assert "mode in ('coexistence', 'api_only')" in upgrade
+    assert "status in ('pending', 'connected', 'disconnected', 'error')" in upgrade
+    assert "uq_business_whatsapp_connections_active_business" in upgrade
+    assert "where status <> 'disconnected'" in upgrade
+    assert "uq_business_whatsapp_connections_meta_phone_present" in upgrade
+    assert "where meta_phone_number_id is not null" in upgrade
+    assert "access_token" not in upgrade
+    assert "drop table business_whatsapp_connections" in downgrade
 
 
 def test_booking_configuration_upgrade_and_downgrade_sql() -> None:

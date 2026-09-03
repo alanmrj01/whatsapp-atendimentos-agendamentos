@@ -14,6 +14,7 @@ from app.whatsapp.client import (
     DEFAULT_LIST_BUTTON_TEXT,
     WhatsAppAuthenticationError,
     WhatsAppClient,
+    WhatsAppClientConfiguration,
     WhatsAppConfigurationError,
     WhatsAppInvalidResponseError,
     WhatsAppNetworkError,
@@ -56,6 +57,38 @@ def test_invalid_client_configuration_is_rejected(
         WhatsAppClient(invalid_settings)
 
     assert str(exc_info.value) == "WhatsApp client configuration is invalid"
+
+
+@mark.asyncio
+async def test_explicit_business_configuration_overrides_global_settings() -> None:
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(200, json={"messages": [{"id": "wamid.business"}]})
+
+    configuration = WhatsAppClientConfiguration(
+        access_token=SecretStr("business-access-token"),
+        phone_number_id="business-phone-id",
+        graph_version="v24.0",
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = WhatsAppClient(
+            configuration=configuration,
+            http_client=http_client,
+        )
+        assert await client.send_text("recipient", "Hello") == "wamid.business"
+
+    assert captured_request is not None
+    assert str(captured_request.url) == (
+        "https://graph.facebook.com/v24.0/business-phone-id/messages"
+    )
+    assert captured_request.headers["Authorization"] == (
+        "Bearer business-access-token"
+    )
 
 
 @mark.asyncio

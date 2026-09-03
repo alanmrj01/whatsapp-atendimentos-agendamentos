@@ -10,6 +10,7 @@ EXPECTED_TABLES = {
     "appointments",
     "businesses",
     "business_automation_exclusions",
+    "business_whatsapp_connections",
     "conversations",
     "customers",
     "employee_services",
@@ -315,6 +316,56 @@ def test_automation_exclusions_and_human_control_are_registered() -> None:
     assert exclusion_checks == {
         "ck_business_automation_exclusions_mode_allowed",
         "ck_business_automation_exclusions_whatsapp_id_normalized",
+    }
+
+
+def test_business_whatsapp_connections_are_scoped_and_secret_free() -> None:
+    table = Base.metadata.tables["business_whatsapp_connections"]
+    businesses = Base.metadata.tables["businesses"]
+
+    assert table.c.business_id.references(businesses.c.id)
+    assert {
+        "provider",
+        "mode",
+        "status",
+        "meta_waba_id",
+        "meta_phone_number_id",
+        "display_phone_number",
+        "credential_secret_ref",
+        "graph_version",
+        "connected_at",
+        "disconnected_at",
+        "last_error_code",
+    } <= set(table.c.keys())
+    assert not ({"access_token", "token", "credential"} & set(table.c.keys()))
+
+    indexes = {index.name: index for index in table.indexes}
+    assert indexes[
+        "uq_business_whatsapp_connections_active_business"
+    ].unique is True
+    assert str(
+        indexes["uq_business_whatsapp_connections_active_business"]
+        .dialect_options["postgresql"]["where"]
+    ) == "status <> 'disconnected'"
+    assert indexes[
+        "uq_business_whatsapp_connections_meta_phone_present"
+    ].unique is True
+    assert str(
+        indexes["uq_business_whatsapp_connections_meta_phone_present"]
+        .dialect_options["postgresql"]["where"]
+    ) == "meta_phone_number_id IS NOT NULL"
+
+    checks = {
+        constraint.name
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert checks == {
+        "ck_business_whatsapp_connections_provider_allowed",
+        "ck_business_whatsapp_connections_mode_allowed",
+        "ck_business_whatsapp_connections_status_allowed",
+        "ck_business_whatsapp_connections_graph_version_format",
+        "ck_business_whatsapp_connections_last_error_code_sanitized",
     }
 
 

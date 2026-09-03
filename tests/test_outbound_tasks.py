@@ -44,6 +44,7 @@ INVOKER_EMAIL = (
     "whatsapp-task-invoker@whatsapp-automacao-prod.iam.gserviceaccount.com"
 )
 MESSAGE_ID = uuid.UUID("70000000-0000-0000-0000-000000000007")
+BUSINESS_ID = uuid.UUID("80000000-0000-0000-0000-000000000008")
 
 
 def outbound_settings() -> Settings:
@@ -229,6 +230,16 @@ class FakeWhatsAppSender:
         self.closed += 1
 
 
+class FakeBusinessSenderResolver:
+    def __init__(self, sender: FakeWhatsAppSender) -> None:
+        self.sender = sender
+        self.business_ids: list[uuid.UUID] = []
+
+    async def resolve(self, business_id: uuid.UUID) -> FakeWhatsAppSender:
+        self.business_ids.append(business_id)
+        return self.sender
+
+
 def stored_message(
     *,
     message_type: str = "text",
@@ -252,6 +263,7 @@ def stored_message(
     }
     return StoredOutboundMessage(
         message_id=MESSAGE_ID,
+        business_id=BUSINESS_ID,
         recipient=recipient,
         message_type=message_type,
         body="Conteúdo de teste",
@@ -290,6 +302,24 @@ async def test_sender_supports_outbound_payload_types(
     assert sender.closed == 1
     assert repository.sent == [(MESSAGE_ID, "wamid.outbound")]
     assert repository.failed == []
+
+
+@pytest.mark.asyncio
+async def test_outbound_resolves_sender_from_message_business() -> None:
+    repository = FakeOutboundRepository(stored_message())
+    sender = FakeWhatsAppSender()
+    resolver = FakeBusinessSenderResolver(sender)
+
+    result = await process_outbound_message(
+        FakeSession(),
+        MESSAGE_ID,
+        repository=repository,
+        sender_resolver=resolver,
+    )
+
+    assert result == "sent"
+    assert resolver.business_ids == [BUSINESS_ID]
+    assert sender.calls[0][0] == "text"
 
 
 @pytest.mark.parametrize("terminal_status", ["sent", "delivered", "read", "failed"])

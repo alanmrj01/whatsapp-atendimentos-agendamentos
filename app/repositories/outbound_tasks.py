@@ -20,6 +20,7 @@ from app.models import (
 @dataclass(frozen=True, slots=True)
 class StoredOutboundMessage:
     message_id: uuid.UUID
+    business_id: uuid.UUID
     recipient: str
     message_type: str
     body: str | None
@@ -78,6 +79,7 @@ class OutboundTaskRepository:
         message, recipient, automation_blocked = row
         return StoredOutboundMessage(
             message_id=message.id,
+            business_id=message.business_id,
             recipient=recipient,
             message_type=message.message_type,
             body=message.body,

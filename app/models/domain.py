@@ -159,6 +159,79 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class BusinessWhatsAppConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "business_whatsapp_connections"
+    __table_args__ = (
+        CheckConstraint("provider = 'meta'", name="provider_allowed"),
+        CheckConstraint(
+            "mode IN ('coexistence', 'api_only')",
+            name="mode_allowed",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'connected', 'disconnected', 'error')",
+            name="status_allowed",
+        ),
+        CheckConstraint(
+            "graph_version IS NULL OR "
+            "graph_version ~ '^v[0-9]{1,3}\\.[0-9]{1,3}$'",
+            name="graph_version_format",
+        ),
+        CheckConstraint(
+            "last_error_code IS NULL OR "
+            "last_error_code ~ '^[A-Za-z0-9._-]{1,64}$'",
+            name="last_error_code_sanitized",
+        ),
+        Index(
+            "uq_business_whatsapp_connections_active_business",
+            "business_id",
+            unique=True,
+            postgresql_where=text("status <> 'disconnected'"),
+        ),
+        Index(
+            "uq_business_whatsapp_connections_meta_phone_present",
+            "meta_phone_number_id",
+            unique=True,
+            postgresql_where=text("meta_phone_number_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_business_whatsapp_connections_business_status",
+            "business_id",
+            "status",
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(
+        String(16), default="meta", server_default="meta", nullable=False
+    )
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending", nullable=False
+    )
+    meta_waba_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    meta_phone_number_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    display_phone_number: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    credential_secret_ref: Mapped[str | None] = mapped_column(
+        String(512), nullable=True
+    )
+    graph_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    connected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    disconnected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+
+
 class BusinessAutomationExclusion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "business_automation_exclusions"
     __table_args__ = (

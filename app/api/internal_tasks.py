@@ -25,7 +25,8 @@ from app.tasks.outbound import (
     process_outbound_message,
 )
 from app.tasks.worker import process_cloud_task_event
-from app.whatsapp.client import WhatsAppClient
+from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
+from app.whatsapp.sender import build_business_sender_resolver
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/tasks", tags=["internal-tasks"])
@@ -84,7 +85,10 @@ async def process_whatsapp_outbound_task(
         await process_outbound_message(
             session,
             payload.message_id,
-            client_factory=lambda: WhatsAppClient(settings),
+            sender_resolver=build_business_sender_resolver(
+                WhatsAppConnectionRepository(session),
+                settings,
+            ),
         )
     except Exception as exc:
         logger.warning(

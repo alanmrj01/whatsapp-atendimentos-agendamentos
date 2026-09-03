@@ -8,12 +8,12 @@ from sqlalchemy.dialects.postgresql.dml import Insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
-    Business,
     Conversation,
     Customer,
     Message,
     ProcessedWebhook,
 )
+from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.webhook import InboundMessageEvent, NormalizedWebhookEvent
 
 
@@ -59,12 +59,11 @@ class WhatsAppWebhookRepository:
     async def find_business_id(
         self, meta_phone_number_id: str
     ) -> uuid.UUID | None:
-        result = await self.session.execute(
-            select(Business.id).where(
-                Business.meta_phone_number_id == meta_phone_number_id
-            )
+        return await WhatsAppConnectionRepository(
+            self.session
+        ).find_business_id_by_phone_number_id(
+            meta_phone_number_id
         )
-        return result.scalar_one_or_none()
 
     async def get_or_create_customer_id(
         self, business_id: uuid.UUID, whatsapp_id: str
