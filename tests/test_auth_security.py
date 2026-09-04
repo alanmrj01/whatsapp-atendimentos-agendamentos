@@ -75,6 +75,31 @@ async def test_missing_auth_config_does_not_break_production_startup(monkeypatch
     get_settings.cache_clear()
 
 
+@pytest.mark.asyncio
+async def test_pwa_cors_allows_idempotency_key_preflight(monkeypatch):
+    origin = "https://alovia.example.test"
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("PWA_ALLOWED_ORIGINS", origin)
+    get_settings.cache_clear()
+    app = create_app()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.options(
+                "/api/v1/auth/signup",
+                headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "content-type,idempotency-key",
+                },
+            )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+        allowed_headers = response.headers.get("access-control-allow-headers", "").lower()
+        assert "idempotency-key" in allowed_headers
+    finally:
+        get_settings.cache_clear()
+
+
 def test_auth_migration_sql():
     path = PROJECT_ROOT / "alembic/versions/20260903_0006_pwa_auth.py"
     upgrade = render_migration_sql("upgrade", path).lower()

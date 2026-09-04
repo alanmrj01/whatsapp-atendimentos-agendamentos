@@ -62,8 +62,11 @@ def create_app() -> FastAPI:
     application.include_router(platform_admin_router)
     origins = current_settings.allowed_pwa_origins()
     application.add_middleware(
-        CORSMiddleware, allow_origins=list(origins), allow_credentials=bool(origins),
-        allow_methods=["GET", "POST", "PATCH"], allow_headers=["Authorization", "Content-Type"],
+        CORSMiddleware,
+        allow_origins=list(origins),
+        allow_credentials=bool(origins),
+        allow_methods=["GET", "POST", "PATCH"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     )
     application.state.initialized = False
     application.include_router(diagnostics_router)
