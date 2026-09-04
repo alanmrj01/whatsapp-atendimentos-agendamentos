@@ -34,9 +34,9 @@ def settings() -> Settings:
 
 @pytest.mark.parametrize(("values", "code", "status"), [
     ([EXPECTED_SCHEMA_REVISION], Code.MIGRATION_OK, Status.OK),
-    (["20260902_0004"], Code.MIGRATION_BEHIND, Status.ERROR),
+    (["20260903_0006"], Code.MIGRATION_BEHIND, Status.ERROR),
     (["20260901_0001"], Code.MIGRATION_BEHIND, Status.ERROR),
-    (["20260904_0007"], Code.MIGRATION_AHEAD, Status.ERROR),
+    (["20260905_0008"], Code.MIGRATION_AHEAD, Status.ERROR),
     (["untrusted-secret-value"], Code.MIGRATION_UNKNOWN, Status.UNKNOWN),
     (["20260831_0099"], Code.MIGRATION_UNKNOWN, Status.UNKNOWN),
     ([], Code.MIGRATION_UNKNOWN, Status.UNKNOWN),
@@ -336,7 +336,7 @@ async def test_schema_read_error_never_runs_business_queries():
 @pytest.mark.parametrize(("initialized", "revision", "code"), [
     (False, EXPECTED_SCHEMA_REVISION, Code.APPLICATION_NOT_READY),
     (True, "20260902_0004", Code.MIGRATION_BEHIND),
-    (True, "20260904_0007", Code.MIGRATION_AHEAD),
+    (True, "20260905_0008", Code.MIGRATION_AHEAD),
 ])
 async def test_known_essential_failure_is_global_error(initialized, revision, code):
     repo = FakeDiagnosticsRepository()
