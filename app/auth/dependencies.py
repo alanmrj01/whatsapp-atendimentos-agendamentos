@@ -36,3 +36,11 @@ async def require_principal(
     if request.query_params:
         raise HTTPException(400, "Query parameters are not supported")
     return await AuthService(db).authenticate(user_id, session_id)
+
+
+def require_super_admin(
+    principal: Annotated[Principal, Depends(require_principal)],
+) -> Principal:
+    if principal.user.platform_role != "super_admin":
+        raise HTTPException(403, "Platform administration access required")
+    return principal
