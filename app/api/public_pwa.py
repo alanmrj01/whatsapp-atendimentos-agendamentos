@@ -2,14 +2,24 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_auth_config, require_origin, require_principal
 from app.auth.rate_limit import login_rate_limiter
-from app.auth.schemas import (AccessResponse, ActiveBusinessRequest, EmptyRequest, LoginRequest,
-    MeResponse, MembershipRole, PublicConnectionResponse, PublicPlanRequest)
+from app.auth.schemas import (
+    AccessResponse,
+    ActiveBusinessRequest,
+    EmptyRequest,
+    LoginRequest,
+    MeResponse,
+    MembershipRole,
+    PublicConnectionResponse,
+    PublicPlanRequest,
+    SignupRequest,
+)
 from app.auth.security import COOKIE_NAME, COOKIE_PATH, access_token
 from app.auth.service import AuthService, Principal
 from app.core.config import Environment, Settings
@@ -27,18 +37,50 @@ Identity = Annotated[Principal, Depends(require_principal)]
 
 def token_response(response: Response, settings: Settings, user: User, session: AuthSession, refresh: str) -> AccessResponse:
     response.set_cookie(
-        COOKIE_NAME, refresh, httponly=True, secure=settings.environment is Environment.production,
-        samesite="lax", path=COOKIE_PATH,
+        COOKIE_NAME,
+        refresh,
+        httponly=True,
+        secure=settings.environment is Environment.production,
+        samesite="lax",
+        path=COOKIE_PATH,
         max_age=max(0, int((session.expires_at - datetime.now(UTC)).total_seconds())),
         expires=session.expires_at,
     )
-    return AccessResponse(access_token=access_token(user.id, session.id, settings.auth_jwt_secret.get_secret_value()))
+    return AccessResponse(
+        access_token=access_token(
+            user.id,
+            session.id,
+            settings.auth_jwt_secret.get_secret_value(),
+        )
+    )
 
 
 @router.post("/auth/login", response_model=AccessResponse, dependencies=[Depends(require_origin)])
 async def login(payload: LoginRequest, response: Response, settings: Config, db: Db):
     await login_rate_limiter.acquire(payload.email)
-    user, session, refresh = await AuthService(db).login(payload.email, payload.password.get_secret_value())
+    user, session, refresh = await AuthService(db).login(
+        payload.email,
+        payload.password.get_secret_value(),
+    )
+    await login_rate_limiter.success(payload.email)
+    return token_response(response, settings, user, session, refresh)
+
+
+@router.post(
+    "/auth/signup",
+    response_model=AccessResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_origin)],
+)
+async def signup(
+    payload: SignupRequest,
+    response: Response,
+    settings: Config,
+    db: Db,
+    idempotency_key: UUID | None = Header(default=None, alias="Idempotency-Key"),
+):
+    await login_rate_limiter.acquire(payload.email)
+    user, session, refresh = await AuthService(db).signup(payload, idempotency_key)
     await login_rate_limiter.success(payload.email)
     return token_response(response, settings, user, session, refresh)
 
@@ -53,8 +95,13 @@ async def refresh(payload: EmptyRequest, request: Request, response: Response, s
 async def logout(payload: EmptyRequest, request: Request, settings: Config, db: Db):
     await AuthService(db).logout(request.cookies.get(COOKIE_NAME))
     response = Response(status_code=204)
-    response.delete_cookie(COOKIE_NAME, path=COOKIE_PATH, httponly=True,
-                           secure=settings.environment is Environment.production, samesite="lax")
+    response.delete_cookie(
+        COOKIE_NAME,
+        path=COOKIE_PATH,
+        httponly=True,
+        secure=settings.environment is Environment.production,
+        samesite="lax",
+    )
     return response
 
 
@@ -72,16 +119,27 @@ async def active_business(payload: ActiveBusinessRequest, principal: Identity, d
 async def whatsapp_connection(principal: Identity, db: Db):
     business = principal.active_membership()
     connection = await WhatsAppConnectionAdministrationService(db).get_connection(business.business_id)
-    return PublicConnectionResponse(status=connection.status.value if connection else "disconnected",
-                                    mode=connection.mode.value if connection else None)
+    return PublicConnectionResponse(
+        status=connection.status.value if connection else "disconnected",
+        mode=connection.mode.value if connection else None,
+    )
 
 
-@router.post("/whatsapp/onboarding/plan", response_model=WhatsAppOnboardingPlanResponse,
-             dependencies=[Depends(require_origin)])
+@router.post(
+    "/whatsapp/onboarding/plan",
+    response_model=WhatsAppOnboardingPlanResponse,
+    dependencies=[Depends(require_origin)],
+)
 async def onboarding_plan(payload: PublicPlanRequest, principal: Identity, db: Db):
     business = principal.active_membership()
     if business.role not in {MembershipRole.OWNER, MembershipRole.ADMIN}:
         raise HTTPException(403, "Read-only access")
+    if business.access_mode != "paid":
+        raise HTTPException(402, "Paid plan required")
     service = WhatsAppOnboardingService(WhatsAppConnectionAdministrationService(db))
-    return onboarding_plan_response(service.plan(payload.intent,
-        platform_only_impact_confirmed=payload.platform_only_impact_confirmed))
+    return onboarding_plan_response(
+        service.plan(
+            payload.intent,
+            platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
+        )
+    )

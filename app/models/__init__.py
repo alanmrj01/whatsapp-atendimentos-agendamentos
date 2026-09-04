@@ -1,5 +1,5 @@
 from app.models.base import Base
-from app.models.auth import AuthSession, BusinessUserMembership, User
+from app.models.auth import AuthSession, BusinessAccess, BusinessUserMembership, User
 from app.models.domain import (
     Appointment,
     Business,
@@ -18,6 +18,7 @@ from app.models.domain import (
 
 __all__ = [
     "AuthSession",
+    "BusinessAccess",
     "BusinessUserMembership",
     "User",
     "Appointment",
