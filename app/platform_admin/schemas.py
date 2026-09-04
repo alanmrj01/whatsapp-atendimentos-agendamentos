@@ -11,6 +11,7 @@ from app.auth.security import normalize_email
 
 
 class PlatformBusinessCreateRequest(StrictRequest):
+    idempotency_key: UUID
     name: str = Field(min_length=1, max_length=255)
     timezone: str = Field(default="America/Sao_Paulo", min_length=1, max_length=64)
     owner_email: str = Field(max_length=254)
