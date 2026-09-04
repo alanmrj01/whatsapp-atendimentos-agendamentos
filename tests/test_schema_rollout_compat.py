@@ -6,15 +6,20 @@ from app.diagnostics.models import (
 from app.diagnostics.service import migration_result
 
 
-def test_rollout_accepts_current_and_target_schema_revisions() -> None:
-    for revision in ("20260902_0005", EXPECTED_SCHEMA_REVISION):
-        result = migration_result([revision], 1)
-        assert result.status is Status.OK
-        assert result.code is Code.MIGRATION_OK
-        assert result.details.current_revision == revision
+def test_readiness_accepts_only_expected_schema_revision() -> None:
+    current = migration_result([EXPECTED_SCHEMA_REVISION], 1)
+    previous = migration_result(["20260902_0005"], 1)
+
+    assert current.status is Status.OK
+    assert current.code is Code.MIGRATION_OK
+    assert current.details.current_revision == EXPECTED_SCHEMA_REVISION
+
+    assert previous.status is Status.ERROR
+    assert previous.code is Code.MIGRATION_BEHIND
+    assert previous.details.current_revision == "20260902_0005"
 
 
-def test_rollout_keeps_other_known_or_future_revisions_fail_closed() -> None:
+def test_readiness_keeps_other_known_or_future_revisions_fail_closed() -> None:
     behind = migration_result(["20260902_0004"], 1)
     ahead = migration_result(["20260904_0007"], 1)
 

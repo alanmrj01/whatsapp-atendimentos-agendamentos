@@ -24,14 +24,6 @@ from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionS
 
 T = TypeVar("T")
 
-# Temporary zero-downtime rollout window for Etapa 16.5B. The new backend can
-# start safely while production is still on 0005; auth itself remains fail-closed
-# until AUTH_JWT_SECRET/PWA_ALLOWED_ORIGINS are configured after 0006 is applied.
-_ROLLOUT_COMPATIBLE_SCHEMA_REVISIONS = frozenset({
-    "20260902_0005",
-    EXPECTED_SCHEMA_REVISION,
-})
-
 
 def now() -> datetime:
     return datetime.now(UTC)
@@ -70,7 +62,7 @@ def migration_result(revisions: list[str] | None, latency: float | None) -> Comp
     # Unknown strings are never echoed. Only migration identifiers are safe here.
     safe_revision = revision if revision and re.fullmatch(r"\d{8}_\d{4}", revision) else None
     code, state = Code.MIGRATION_UNKNOWN, Status.UNKNOWN
-    if revision in _ROLLOUT_COMPATIBLE_SCHEMA_REVISIONS:
+    if revision == EXPECTED_SCHEMA_REVISION:
         code, state = Code.MIGRATION_OK, Status.OK
     elif revision in SCHEMA_REVISIONS:
         code, state = Code.MIGRATION_BEHIND, Status.ERROR
