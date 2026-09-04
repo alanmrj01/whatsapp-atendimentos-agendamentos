@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.dependencies import require_super_admin
-from app.models import Business
+from app.models import Business, BusinessUserMembership, User
 from app.platform_admin import service as platform_service
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
@@ -137,6 +137,8 @@ async def test_create_business_uses_operation_uuid_as_business_id(monkeypatch) -
         get=AsyncMock(return_value=None),
         scalar=AsyncMock(return_value=None),
         add_all=Mock(),
+        flush=AsyncMock(),
+        add=Mock(),
         commit=AsyncMock(),
         rollback=AsyncMock(),
     )
@@ -161,6 +163,8 @@ async def test_create_business_without_header_stays_backward_compatible(monkeypa
     db = SimpleNamespace(
         scalar=AsyncMock(return_value=None),
         add_all=Mock(),
+        flush=AsyncMock(),
+        add=Mock(),
         commit=AsyncMock(),
         rollback=AsyncMock(),
     )
@@ -173,6 +177,80 @@ async def test_create_business_without_header_stays_backward_compatible(monkeypa
 
     assert isinstance(result.id, UUID)
     db.commit.assert_awaited_once()
+
+
+
+@pytest.mark.asyncio
+async def test_create_business_flushes_parents_before_membership(monkeypatch) -> None:
+    payload = make_payload()
+    events: list[str] = []
+
+    def add_all(items):
+        items = list(items)
+        assert len(items) == 2
+        assert any(isinstance(item, Business) for item in items)
+        assert any(isinstance(item, User) for item in items)
+        events.append("parents")
+
+    async def flush():
+        events.append("flush")
+
+    def add(item):
+        assert isinstance(item, BusinessUserMembership)
+        events.append("membership")
+
+    async def commit():
+        events.append("commit")
+
+    db = SimpleNamespace(
+        scalar=AsyncMock(return_value=None),
+        add_all=Mock(side_effect=add_all),
+        flush=AsyncMock(side_effect=flush),
+        add=Mock(side_effect=add),
+        commit=AsyncMock(side_effect=commit),
+        rollback=AsyncMock(),
+    )
+
+    async def fake_run_sync(*_args, **_kwargs):
+        return "$argon2id$test"
+
+    monkeypatch.setattr(platform_service.to_thread, "run_sync", fake_run_sync)
+
+    await PlatformAdminService(db).create_business(payload)
+
+    assert events == ["parents", "flush", "membership", "commit"]
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_business_rolls_back_when_parent_flush_fails(monkeypatch) -> None:
+    payload = make_payload()
+    operation_id = uuid4()
+    db = SimpleNamespace(
+        get=AsyncMock(side_effect=[None, None]),
+        scalar=AsyncMock(return_value=None),
+        add_all=Mock(),
+        flush=AsyncMock(
+            side_effect=IntegrityError("insert", {}, Exception("foreign key"))
+        ),
+        add=Mock(),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+
+    async def fake_run_sync(*_args, **_kwargs):
+        return "$argon2id$test"
+
+    monkeypatch.setattr(platform_service.to_thread, "run_sync", fake_run_sync)
+
+    with pytest.raises(HTTPException) as error:
+        await PlatformAdminService(db).create_business(payload, operation_id)
+
+    assert error.value.status_code == 409
+    db.rollback.assert_awaited_once()
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
 
 
 @pytest.mark.asyncio
@@ -211,6 +289,8 @@ async def test_create_business_recovers_concurrent_or_lost_response_retry(monkey
         get=AsyncMock(side_effect=[None, business]),
         scalar=AsyncMock(return_value=None),
         add_all=Mock(),
+        flush=AsyncMock(),
+        add=Mock(),
         commit=AsyncMock(side_effect=IntegrityError("insert", {}, Exception("race"))),
         rollback=AsyncMock(),
     )
