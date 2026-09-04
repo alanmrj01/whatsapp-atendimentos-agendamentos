@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.public_pwa import router as public_pwa_router
+from app.api.platform_admin import router as platform_admin_router
 
 from app.api.health import router as health_router
 from app.api.diagnostics import router as diagnostics_router
@@ -58,10 +59,11 @@ def create_app() -> FastAPI:
 
     application.include_router(health_router)
     application.include_router(public_pwa_router)
+    application.include_router(platform_admin_router)
     origins = current_settings.allowed_pwa_origins()
     application.add_middleware(
         CORSMiddleware, allow_origins=list(origins), allow_credentials=bool(origins),
-        allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"],
+        allow_methods=["GET", "POST", "PATCH"], allow_headers=["Authorization", "Content-Type"],
     )
     application.state.initialized = False
     application.include_router(diagnostics_router)
