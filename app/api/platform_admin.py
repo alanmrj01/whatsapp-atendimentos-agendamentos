@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_origin, require_super_admin
@@ -33,9 +33,12 @@ async def list_businesses(_: Admin, db: Db) -> PlatformBusinessListResponse:
     dependencies=[Depends(require_origin)],
 )
 async def create_business(
-    payload: PlatformBusinessCreateRequest, _: Admin, db: Db
+    payload: PlatformBusinessCreateRequest,
+    _: Admin,
+    db: Db,
+    idempotency_key: UUID | None = Header(default=None, alias="Idempotency-Key"),
 ) -> PlatformBusinessResponse:
-    return await PlatformAdminService(db).create_business(payload)
+    return await PlatformAdminService(db).create_business(payload, idempotency_key)
 
 
 @router.patch(

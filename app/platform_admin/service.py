@@ -69,9 +69,37 @@ class PlatformAdminService:
             for business in businesses
         ])
 
+    async def _idempotent_replay(
+        self, payload: PlatformBusinessCreateRequest, idempotency_key: UUID
+    ) -> PlatformBusinessResponse | None:
+        business = await self.db.get(Business, idempotency_key)
+        if business is None:
+            return None
+
+        listing = await self.list_businesses()
+        result = next(
+            (item for item in listing.businesses if item.id == business.id),
+            None,
+        )
+        if (
+            result is None
+            or result.name != payload.name
+            or result.timezone != payload.timezone
+            or payload.owner_email not in result.owners
+        ):
+            raise HTTPException(400, "Idempotency key already used for another request")
+        return result
+
     async def create_business(
-        self, payload: PlatformBusinessCreateRequest
+        self,
+        payload: PlatformBusinessCreateRequest,
+        idempotency_key: UUID | None = None,
     ) -> PlatformBusinessResponse:
+        if idempotency_key is not None:
+            replay = await self._idempotent_replay(payload, idempotency_key)
+            if replay is not None:
+                return replay
+
         existing = await self.db.scalar(select(User).where(User.email == payload.owner_email))
         if existing is not None:
             raise HTTPException(409, "Owner email already registered")
@@ -80,7 +108,7 @@ class PlatformAdminService:
             hash_password, payload.owner_password.get_secret_value()
         )
         business = Business(
-            id=uuid4(),
+            id=idempotency_key or uuid4(),
             name=payload.name,
             timezone=payload.timezone,
             active=True,
@@ -102,6 +130,12 @@ class PlatformAdminService:
             await self.db.commit()
         except IntegrityError:
             await self.db.rollback()
+            if idempotency_key is not None:
+                # Another copy of this same request may have committed while
+                # this one was in flight. Reconcile before reporting a conflict.
+                replay = await self._idempotent_replay(payload, idempotency_key)
+                if replay is not None:
+                    return replay
             raise HTTPException(409, "Business or owner already exists") from None
 
         return PlatformBusinessResponse(
