@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -20,7 +20,6 @@ from app.platform_admin.service import PlatformAdminService
 
 def make_payload(**overrides) -> PlatformBusinessCreateRequest:
     values = {
-        "idempotency_key": uuid4(),
         "name": "Refrigeração Piloto",
         "timezone": "America/Sao_Paulo",
         "owner_email": "owner@example.test",
@@ -31,15 +30,12 @@ def make_payload(**overrides) -> PlatformBusinessCreateRequest:
 
 
 def test_platform_business_create_normalizes_safe_fields_and_hides_password() -> None:
-    operation_id = uuid4()
     payload = PlatformBusinessCreateRequest(
-        idempotency_key=operation_id,
         name="  Refrigeração   Piloto  ",
         timezone="America/Sao_Paulo",
         owner_email=" OWNER@EXAMPLE.TEST ",
         owner_password="correct-horse-battery",
     )
-    assert payload.idempotency_key == operation_id
     assert payload.name == "Refrigeração Piloto"
     assert payload.owner_email == "owner@example.test"
     assert payload.timezone == "America/Sao_Paulo"
@@ -50,7 +46,6 @@ def test_platform_business_create_normalizes_safe_fields_and_hides_password() ->
 def test_platform_business_create_rejects_invalid_timezone(timezone: str) -> None:
     with pytest.raises(ValidationError):
         PlatformBusinessCreateRequest(
-            idempotency_key=uuid4(),
             name="Piloto",
             timezone=timezone,
             owner_email="owner@example.test",
@@ -70,7 +65,6 @@ def test_super_admin_guard_is_fail_closed() -> None:
 def test_platform_business_create_forbids_extra_fields() -> None:
     with pytest.raises(ValidationError):
         PlatformBusinessCreateRequest(
-            idempotency_key=uuid4(),
             name="Piloto",
             owner_email="owner@example.test",
             owner_password="correct-horse-battery",
@@ -81,8 +75,9 @@ def test_platform_business_create_forbids_extra_fields() -> None:
 @pytest.mark.asyncio
 async def test_create_business_replays_same_completed_operation() -> None:
     payload = make_payload()
+    operation_id = uuid4()
     business = Business(
-        id=payload.idempotency_key,
+        id=operation_id,
         name=payload.name,
         timezone=payload.timezone,
         active=True,
@@ -101,15 +96,16 @@ async def test_create_business_replays_same_completed_operation() -> None:
         return_value=PlatformBusinessListResponse(businesses=[expected])
     )
 
-    assert await service.create_business(payload) == expected
+    assert await service.create_business(payload, operation_id) == expected
     service.list_businesses.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_create_business_rejects_reused_key_for_different_request() -> None:
     payload = make_payload()
+    operation_id = uuid4()
     business = Business(
-        id=payload.idempotency_key,
+        id=operation_id,
         name="Outra empresa",
         timezone=payload.timezone,
         active=True,
@@ -129,13 +125,14 @@ async def test_create_business_rejects_reused_key_for_different_request() -> Non
     )
 
     with pytest.raises(HTTPException) as error:
-        await service.create_business(payload)
+        await service.create_business(payload, operation_id)
     assert error.value.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_create_business_uses_operation_uuid_as_business_id(monkeypatch) -> None:
     payload = make_payload()
+    operation_id = uuid4()
     db = SimpleNamespace(
         get=AsyncMock(return_value=None),
         scalar=AsyncMock(return_value=None),
@@ -148,34 +145,56 @@ async def test_create_business_uses_operation_uuid_as_business_id(monkeypatch) -
         return "$argon2id$test"
 
     monkeypatch.setattr(platform_service.to_thread, "run_sync", fake_run_sync)
-    result = await PlatformAdminService(db).create_business(payload)
+    result = await PlatformAdminService(db).create_business(payload, operation_id)
 
-    assert result.id == payload.idempotency_key
+    assert result.id == operation_id
     added = db.add_all.call_args.args[0]
     created_business = next(item for item in added if isinstance(item, Business))
-    assert created_business.id == payload.idempotency_key
+    assert created_business.id == operation_id
     db.commit.assert_awaited_once()
     db.rollback.assert_not_awaited()
 
 
 @pytest.mark.asyncio
+async def test_create_business_without_header_stays_backward_compatible(monkeypatch) -> None:
+    payload = make_payload()
+    db = SimpleNamespace(
+        scalar=AsyncMock(return_value=None),
+        add_all=Mock(),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+
+    async def fake_run_sync(*_args, **_kwargs):
+        return "$argon2id$test"
+
+    monkeypatch.setattr(platform_service.to_thread, "run_sync", fake_run_sync)
+    result = await PlatformAdminService(db).create_business(payload)
+
+    assert isinstance(result.id, UUID)
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_create_business_real_owner_email_conflict_is_409() -> None:
     payload = make_payload()
+    operation_id = uuid4()
     db = SimpleNamespace(
         get=AsyncMock(return_value=None),
         scalar=AsyncMock(return_value=object()),
     )
 
     with pytest.raises(HTTPException) as error:
-        await PlatformAdminService(db).create_business(payload)
+        await PlatformAdminService(db).create_business(payload, operation_id)
     assert error.value.status_code == 409
 
 
 @pytest.mark.asyncio
 async def test_create_business_recovers_concurrent_or_lost_response_retry(monkeypatch) -> None:
     payload = make_payload()
+    operation_id = uuid4()
     business = Business(
-        id=payload.idempotency_key,
+        id=operation_id,
         name=payload.name,
         timezone=payload.timezone,
         active=True,
@@ -205,5 +224,5 @@ async def test_create_business_recovers_concurrent_or_lost_response_retry(monkey
         return_value=PlatformBusinessListResponse(businesses=[expected])
     )
 
-    assert await service.create_business(payload) == expected
+    assert await service.create_business(payload, operation_id) == expected
     db.rollback.assert_awaited_once()
