@@ -17,6 +17,9 @@ class MembershipRole(StrEnum):
     VIEWER = "viewer"
 
 
+AccessMode = Literal["free", "paid"]
+
+
 class StrictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
@@ -24,6 +27,25 @@ class StrictRequest(BaseModel):
 class LoginRequest(StrictRequest):
     email: str = Field(max_length=254)
     password: SecretStr = Field(min_length=1, max_length=1024)
+
+    @field_validator("email")
+    @classmethod
+    def normalized_email(cls, value: str) -> str:
+        return normalize_email(value)
+
+
+class SignupRequest(StrictRequest):
+    business_name: str = Field(min_length=2, max_length=255)
+    email: str = Field(max_length=254)
+    password: SecretStr = Field(min_length=12, max_length=1024)
+
+    @field_validator("business_name")
+    @classmethod
+    def normalized_business_name(cls, value: str) -> str:
+        value = " ".join(value.strip().split())
+        if len(value) < 2:
+            raise ValueError("Business name is required")
+        return value
 
     @field_validator("email")
     @classmethod
@@ -54,6 +76,7 @@ class MembershipResponse(BaseModel):
     business_id: UUID
     business_name: str
     role: MembershipRole
+    access_mode: AccessMode = "free"
 
 
 class MeResponse(BaseModel):

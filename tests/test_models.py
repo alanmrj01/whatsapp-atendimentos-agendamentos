@@ -9,6 +9,7 @@ from app.models import Base
 EXPECTED_TABLES = {
     "users",
     "business_user_memberships",
+    "business_access",
     "auth_sessions",
     "appointments",
     "businesses",

@@ -72,7 +72,7 @@ def test_pwa_auth_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260903_0006"]
+    assert script.get_heads() == ["20260904_0007"]
 
 
 def test_previous_migrations_remain_byte_identical() -> None:

@@ -35,6 +35,19 @@ class BusinessUserMembership(Base):
     role: Mapped[str] = mapped_column(String(16))
 
 
+class BusinessAccess(Base):
+    __tablename__ = "business_access"
+    __table_args__ = (
+        CheckConstraint("access_mode IN ('free', 'paid')", name="access_mode_allowed"),
+    )
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), primary_key=True
+    )
+    access_mode: Mapped[str] = mapped_column(
+        String(16), default="free", server_default=text("'free'"), nullable=False
+    )
+
+
 class AuthSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "auth_sessions"
     __table_args__ = (
