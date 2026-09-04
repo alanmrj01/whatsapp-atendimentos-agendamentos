@@ -125,8 +125,12 @@ class PlatformAdminService:
             business_id=business.id,
             role="owner",
         )
-        self.db.add_all([business, owner, membership])
+        self.db.add_all([business, owner])
         try:
+            # Persist parent rows inside the same transaction before inserting
+            # the membership that references both foreign keys.
+            await self.db.flush()
+            self.db.add(membership)
             await self.db.commit()
         except IntegrityError:
             await self.db.rollback()
