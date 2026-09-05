@@ -36,6 +36,7 @@ class WhatsAppConnectionStatusView:
     connected_at: datetime | None
     disconnected_at: datetime | None
     last_error_code: str | None
+    masked_display_phone_number: str | None = None
 
 
 class WhatsAppConnectionAdministrationService:
@@ -221,7 +222,19 @@ def _status_view(
         connected_at=connection.connected_at,
         disconnected_at=connection.disconnected_at,
         last_error_code=sanitize_error_code(connection.last_error_code),
+        masked_display_phone_number=_mask_display_phone_number(
+            connection.display_phone_number
+        ),
     )
+
+
+def _mask_display_phone_number(value: str | None) -> str | None:
+    if value is None:
+        return None
+    digits = "".join(character for character in value if character.isdigit())
+    if len(digits) < 4:
+        return None
+    return f"•••• {digits[-4:]}"
 
 
 def _validated_mode(mode: WhatsAppConnectionMode) -> WhatsAppConnectionMode:

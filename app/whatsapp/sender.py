@@ -18,7 +18,7 @@ from app.whatsapp.connections import (
     WhatsAppProvider,
 )
 from app.whatsapp.credentials import (
-    GlobalSettingsCredentialProvider,
+    BusinessWhatsAppCredentialProvider,
     WhatsAppCredentialProvider,
 )
 
@@ -68,7 +68,7 @@ class BusinessWhatsAppSenderResolver:
         self._repository = repository
         self._settings = settings
         self._credential_provider = (
-            credential_provider or GlobalSettingsCredentialProvider(settings)
+            credential_provider or BusinessWhatsAppCredentialProvider(settings)
         )
         self._client_builder = client_builder or (
             lambda configuration: WhatsAppClient(configuration=configuration)

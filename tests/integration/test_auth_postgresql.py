@@ -10,6 +10,7 @@ from uuid import uuid4
 import jwt
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 from alembic import command
 from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
@@ -20,7 +21,17 @@ from app.auth.security import COOKIE_NAME, hash_password, token_hash
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.main import create_app
-from app.models import AuthSession, Business, BusinessUserMembership, BusinessWhatsAppConnection, User
+from app.models import (
+    AuthSession,
+    Business,
+    BusinessAccess,
+    BusinessUserMembership,
+    BusinessWhatsAppConnection,
+    User,
+)
+from app.whatsapp.administration import WhatsAppConnectionAdministrationService
+from app.whatsapp.embedded_signup import MetaAuthorizedAssets, MetaEmbeddedSignupService
+from app.whatsapp.onboarding import WhatsAppOnboardingService
 from tests.integration.test_booking_postgresql import TEST_DATABASE_URL, _async_url, migrated_test_database
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(not TEST_DATABASE_URL,
@@ -47,6 +58,10 @@ async def auth_env(monkeypatch):
     key, password = secrets.token_urlsafe(48), secrets.token_urlsafe(24)
     monkeypatch.setenv("AUTH_JWT_SECRET", key)
     monkeypatch.setenv("PWA_ALLOWED_ORIGINS", ORIGIN)
+    monkeypatch.setenv("META_APP_ID", "333333333333333")
+    monkeypatch.setenv("META_EMBEDDED_SIGNUP_CONFIG_ID", "444444444444444")
+    monkeypatch.setenv("META_EMBEDDED_SIGNUP_VERSION", "v4")
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
     get_settings.cache_clear()
     engine = create_async_engine(_async_url(TEST_DATABASE_URL))
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -58,7 +73,14 @@ async def auth_env(monkeypatch):
     a, b = uuid4(), uuid4()
     ids = {name: uuid4() for name in ("owner", "admin", "attendant", "viewer", "multi", "super", "inactive")}
     async with factory() as db, db.begin():
-        for model in (AuthSession, BusinessUserMembership, User, BusinessWhatsAppConnection, Business):
+        for model in (
+            AuthSession,
+            BusinessUserMembership,
+            User,
+            BusinessWhatsAppConnection,
+            BusinessAccess,
+            Business,
+        ):
             await db.execute(delete(model))
         db.add_all([Business(id=a, name="Company A"), Business(id=b, name="Company B")])
         stored_hash = hash_password(password)
@@ -218,6 +240,170 @@ async def test_plan_preserves_confirmation_and_no_mutation(auth_env):
     for extra in ({"business_id":str(env.b)}, {"access_token":secrets.token_urlsafe(24)}, {"platform_only_impact_confirmed":"false"}):
         assert (await env.client.post("/api/v1/whatsapp/onboarding/plan", json={"intent":"keep_whatsapp_business",**extra})).status_code == 422
     assert (await env.client.get("/api/v1/whatsapp/connection")).json()["status"] == "connected"
+
+
+async def test_embedded_signup_free_is_blocked_and_paid_can_start(auth_env):
+    env = auth_env
+    await login(env)
+    async with env.factory() as db, db.begin():
+        db.add(BusinessAccess(business_id=env.a, access_mode="free"))
+    blocked = await env.client.post(
+        "/api/v1/whatsapp/onboarding/embedded-signup/start", json={}
+    )
+    assert blocked.status_code == 402
+
+    async with env.factory() as db, db.begin():
+        access = await db.get(BusinessAccess, env.a)
+        access.access_mode = "paid"
+        await db.execute(
+            delete(BusinessWhatsAppConnection).where(
+                BusinessWhatsAppConnection.business_id == env.a
+            )
+        )
+    started = await env.client.post(
+        "/api/v1/whatsapp/onboarding/embedded-signup/start", json={}
+    )
+    assert started.status_code == 200
+    assert started.json() == {
+        "app_id": "333333333333333",
+        "configuration_id": "444444444444444",
+        "graph_version": "v23.0",
+        "embedded_signup_version": "v4",
+        "mode": "coexistence",
+    }
+    assert "secret" not in started.text.lower()
+    assert "token" not in started.text.lower()
+
+
+class _EmbeddedSignupGateway:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.closed = False
+
+    async def exchange_and_validate(self, authorization_code, **hints):
+        self.calls += 1
+        assert authorization_code.get_secret_value() == "short-lived-code"
+        assert hints["waba_id_hint"] == "111111111111111"
+        return MetaAuthorizedAssets(
+            access_token=SecretStr("synthetic-business-token"),
+            waba_id="111111111111111",
+            phone_number_id="222222222222222",
+            display_phone_number="+55 12 99999-1234",
+        )
+
+    async def subscribe_app(self, assets):
+        return None
+
+    async def aclose(self):
+        self.closed = True
+
+
+class _EmbeddedSignupStore:
+    async def store(self, business_id, credential):
+        assert credential.get_secret_value() == "synthetic-business-token"
+        return (
+            "projects/test-project/secrets/"
+            f"alovia-whatsapp-{business_id.hex}/versions/1"
+        )
+
+
+async def test_embedded_signup_completion_is_tenant_scoped_and_secret_free(
+    auth_env, monkeypatch, caplog
+):
+    from app.api import public_pwa
+
+    env = auth_env
+    await login(env)
+    async with env.factory() as db, db.begin():
+        await db.execute(
+            delete(BusinessWhatsAppConnection).where(
+                BusinessWhatsAppConnection.business_id == env.a
+            )
+        )
+    gateway = _EmbeddedSignupGateway()
+
+    def factory(session, configuration):
+        return (
+            MetaEmbeddedSignupService(
+                WhatsAppOnboardingService(
+                    WhatsAppConnectionAdministrationService(session)
+                ),
+                gateway,
+                _EmbeddedSignupStore(),
+                configuration.graph_version,
+            ),
+            gateway,
+        )
+
+    monkeypatch.setattr(public_pwa, "_embedded_signup_service", factory)
+    caplog.set_level(logging.INFO)
+    payload = {
+        "authorization_code": "short-lived-code",
+        "waba_id": "111111111111111",
+        "phone_number_id": "222222222222222",
+    }
+    cross_tenant = await env.client.post(
+        "/api/v1/whatsapp/onboarding/embedded-signup/complete",
+        json={**payload, "business_id": str(env.b)},
+    )
+    assert cross_tenant.status_code == 422
+    assert gateway.calls == 0
+
+    completed = await env.client.post(
+        "/api/v1/whatsapp/onboarding/embedded-signup/complete",
+        json=payload,
+    )
+    assert completed.status_code == 200
+    assert completed.json() == {
+        "status": "connected",
+        "mode": "coexistence",
+        "display_phone_number": "•••• 1234",
+    }
+    assert gateway.closed is True
+    async with env.factory() as db:
+        connection = await db.scalar(
+            select(BusinessWhatsAppConnection).where(
+                BusinessWhatsAppConnection.business_id == env.a
+            )
+        )
+        assert connection.status == "connected"
+        assert connection.mode == "coexistence"
+        assert connection.meta_waba_id == "111111111111111"
+        assert connection.meta_phone_number_id == "222222222222222"
+        assert connection.credential_secret_ref.endswith("/versions/1")
+        columns = {
+            column.name for column in BusinessWhatsAppConnection.__table__.columns
+        }
+        assert "access_token" not in columns
+    for private in (
+        "short-lived-code",
+        "synthetic-business-token",
+        "+55 12 99999-1234",
+    ):
+        assert private not in completed.text
+        assert private not in caplog.text
+
+
+async def test_connected_embedded_signup_is_not_overwritten(auth_env, monkeypatch):
+    from app.api import public_pwa
+
+    env = auth_env
+    await login(env)
+    gateway = _EmbeddedSignupGateway()
+    monkeypatch.setattr(
+        public_pwa,
+        "_embedded_signup_service",
+        lambda *_: pytest.fail("provider must not be called for connected account"),
+    )
+    result = await env.client.post(
+        "/api/v1/whatsapp/onboarding/embedded-signup/complete",
+        json={
+            "authorization_code": "short-lived-code",
+            "waba_id": "111111111111111",
+        },
+    )
+    assert result.status_code == 409
+    assert gateway.calls == 0
 
 
 @pytest.mark.parametrize("state", ["expired", "revoked", "inactive"])
