@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
+import logging
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +16,8 @@ from app.auth.schemas import (
     ActiveBusinessRequest,
     EmptyRequest,
     LoginRequest,
+    MetaEmbeddedSignupCompleteRequest,
+    MetaEmbeddedSignupStartResponse,
     MeResponse,
     MembershipRole,
     PublicConnectionResponse,
@@ -22,14 +26,36 @@ from app.auth.schemas import (
 )
 from app.auth.security import COOKIE_NAME, COOKIE_PATH, access_token
 from app.auth.service import AuthService, Principal
-from app.core.config import Environment, Settings
+from app.core.config import (
+    Environment,
+    MetaConfigurationError,
+    MetaEmbeddedSignupConfiguration,
+    Settings,
+)
 from app.core.database import get_db
 from app.models import AuthSession, User
 from app.schemas.whatsapp_onboarding import WhatsAppOnboardingPlanResponse, onboarding_plan_response
-from app.whatsapp.administration import WhatsAppConnectionAdministrationService
-from app.whatsapp.onboarding import WhatsAppOnboardingService
+from app.whatsapp.administration import (
+    WhatsAppConnectionAdministrationError,
+    WhatsAppConnectionAdministrationService,
+)
+from app.whatsapp.client import WhatsAppConfigurationError
+from app.whatsapp.credentials import GoogleSecretManagerCredentialStore
+from app.whatsapp.embedded_signup import (
+    MetaEmbeddedSignupError,
+    MetaEmbeddedSignupGateway,
+    MetaEmbeddedSignupRejected,
+    MetaEmbeddedSignupService,
+    MetaEmbeddedSignupUnavailable,
+)
+from app.whatsapp.onboarding import (
+    WhatsAppOnboardingError,
+    WhatsAppOnboardingIntent,
+    WhatsAppOnboardingService,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["pwa"])
+logger = logging.getLogger(__name__)
 Db = Annotated[AsyncSession, Depends(get_db)]
 Config = Annotated[Settings, Depends(require_auth_config)]
 Identity = Annotated[Principal, Depends(require_principal)]
@@ -115,13 +141,20 @@ async def active_business(payload: ActiveBusinessRequest, principal: Identity, d
     return await AuthService(db).select_business(principal, payload.business_id)
 
 
-@router.get("/whatsapp/connection", response_model=PublicConnectionResponse)
+@router.get(
+    "/whatsapp/connection",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+)
 async def whatsapp_connection(principal: Identity, db: Db):
     business = principal.active_membership()
     connection = await WhatsAppConnectionAdministrationService(db).get_connection(business.business_id)
     return PublicConnectionResponse(
         status=connection.status.value if connection else "disconnected",
         mode=connection.mode.value if connection else None,
+        display_phone_number=(
+            connection.masked_display_phone_number if connection else None
+        ),
     )
 
 
@@ -142,4 +175,147 @@ async def onboarding_plan(payload: PublicPlanRequest, principal: Identity, db: D
             payload.intent,
             platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
         )
+    )
+
+
+def _require_paid_whatsapp_administrator(principal: Principal):
+    business = principal.active_membership()
+    if business.role not in {MembershipRole.OWNER, MembershipRole.ADMIN}:
+        raise HTTPException(403, "Read-only access")
+    if business.access_mode != "paid":
+        raise HTTPException(402, "Paid plan required")
+    return business
+
+
+def _embedded_signup_service(
+    session: AsyncSession,
+    configuration: MetaEmbeddedSignupConfiguration,
+) -> tuple[MetaEmbeddedSignupService, MetaEmbeddedSignupGateway]:
+    gateway = MetaEmbeddedSignupGateway(configuration)
+    onboarding = WhatsAppOnboardingService(
+        WhatsAppConnectionAdministrationService(session)
+    )
+    return (
+        MetaEmbeddedSignupService(
+            onboarding,
+            gateway,
+            GoogleSecretManagerCredentialStore(configuration.gcp_project_id),
+            configuration.graph_version,
+        ),
+        gateway,
+    )
+
+
+def _embedded_signup_configuration(
+    settings: Settings,
+) -> MetaEmbeddedSignupConfiguration:
+    try:
+        return settings.require_meta_embedded_signup_configuration()
+    except MetaConfigurationError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Meta Embedded Signup is not configured",
+        ) from None
+
+
+@router.post(
+    "/whatsapp/onboarding/embedded-signup/start",
+    response_model=MetaEmbeddedSignupStartResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def start_meta_embedded_signup(
+    payload: EmptyRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    configuration = _embedded_signup_configuration(settings)
+    administration = WhatsAppConnectionAdministrationService(db)
+    current = await administration.get_connection(business.business_id)
+    if current is not None and current.status.value == "connected":
+        raise HTTPException(409, "WhatsApp account is already connected")
+    plan = WhatsAppOnboardingService(administration).plan(
+        WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
+    )
+    if not plan.ready_to_continue or plan.requested_mode.value != "coexistence":
+        raise HTTPException(409, "WhatsApp onboarding path is unavailable")
+    return MetaEmbeddedSignupStartResponse(
+        app_id=configuration.app_id,
+        configuration_id=configuration.configuration_id,
+        graph_version=configuration.graph_version,
+        embedded_signup_version=configuration.embedded_signup_version,
+    )
+
+
+@router.post(
+    "/whatsapp/onboarding/embedded-signup/complete",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def complete_meta_embedded_signup(
+    payload: MetaEmbeddedSignupCompleteRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    configuration = _embedded_signup_configuration(settings)
+    gateway: MetaEmbeddedSignupGateway | None = None
+    try:
+        current = await WhatsAppConnectionAdministrationService(
+            db
+        ).get_connection(business.business_id, for_update=True)
+        if current is not None and current.status.value == "connected":
+            raise HTTPException(
+                409, "WhatsApp account is already connected"
+            )
+        service, gateway = _embedded_signup_service(db, configuration)
+        view = await service.complete_coexistence(
+            business.business_id,
+            payload.authorization_code,
+            waba_id_hint=payload.waba_id,
+            phone_number_id_hint=payload.phone_number_id,
+        )
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except MetaEmbeddedSignupRejected as exc:
+        await db.rollback()
+        _log_embedded_signup_rejection(exc)
+        raise HTTPException(400, "Meta authorization could not be validated") from None
+    except (
+        MetaEmbeddedSignupUnavailable,
+        WhatsAppConfigurationError,
+    ) as exc:
+        await db.rollback()
+        _log_embedded_signup_rejection(exc)
+        raise HTTPException(503, "Meta onboarding is temporarily unavailable") from None
+    except (
+        MetaEmbeddedSignupError,
+        WhatsAppOnboardingError,
+        WhatsAppConnectionAdministrationError,
+    ) as exc:
+        await db.rollback()
+        _log_embedded_signup_rejection(exc)
+        raise HTTPException(409, "WhatsApp onboarding could not be completed") from None
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        if gateway is not None:
+            await gateway.aclose()
+    return PublicConnectionResponse(
+        status=view.status.value,
+        mode=view.mode.value,
+        display_phone_number=view.masked_display_phone_number,
+    )
+
+
+def _log_embedded_signup_rejection(exc: Exception) -> None:
+    logger.info(
+        "meta_embedded_signup_rejected",
+        extra={"error_type": type(exc).__name__},
     )

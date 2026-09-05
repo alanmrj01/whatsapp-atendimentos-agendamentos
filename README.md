@@ -154,9 +154,10 @@ PostgreSQL; schema diferente de `0005` impede consultas às tabelas da aplicaç�
 Tasks, Meta e credenciais são verificações locais de configuração, não provas de
 acesso remoto (`remote_checked=false`). Não cria tasks, não envia mensagens nem
 consulta Meta/Secret Manager. A validação OIDC pode consultar certificados públicos
-Google, como nos workers existentes. A capacidade atual de credenciais continua
-sendo LEGACY/PILOT; referências a secrets são contabilizadas, nunca retornadas,
-e não implicam suporte físico ao Secret Manager.
+Google, como nos workers existentes. A integração de credenciais suporta
+referências versionadas no Secret Manager, mas o diagnóstico permanece local:
+elas são apenas contabilizadas, nunca retornadas nem acessadas remotamente por
+esse endpoint.
 
 Agregação global, em ordem: falha conhecida de aplicação/banco/schema resulta em
 `error`; checagem essencial indeterminada, `unknown`; problema opcional/por empresa,
@@ -244,9 +245,9 @@ legados em `businesses` permanecem durante a transição.
 
 O outbound parte sempre do `business_id` da mensagem, busca a conexão daquela
 empresa e constrói o cliente com o Phone Number ID e a versão Graph resolvidos.
-O banco guarda apenas `credential_secret_ref`, nunca access token. A porta de
-credenciais já permite um provider futuro de Google Secret Manager; a resolução
-física desse secret não faz parte desta etapa.
+O banco guarda apenas `credential_secret_ref`, nunca access token. Conexões novas
+resolvem essa referência versionada no Google Secret Manager; o fallback global
+continua reservado ao piloto legado descrito abaixo.
 
 O fallback global é exclusivamente `LEGACY/PILOT`: só funciona quando ainda não
 há registro em `business_whatsapp_connections` e o
@@ -255,6 +256,28 @@ há registro em `business_whatsapp_connections` e o
 credencial ausente ou qualquer inconsistência de empresa falha de forma fechada.
 No inbound, o novo modelo conectado tem prioridade; o campo legado é consultado
 somente para empresas ainda sem registro novo.
+
+### Embedded Signup em coexistência
+
+O fluxo público autenticado aceita somente empresas `paid` e papéis `owner/admin`.
+O PWA recebe apenas App ID, Configuration ID e versão Graph, abre o Facebook Login
+for Business com `featureType=whatsapp_business_app_onboarding` e envia ao backend
+o código curto e os identificadores devolvidos pela sessão. O backend troca o
+código, confirma o WABA e o telefone na Graph API, assina o app no WABA, grava o
+token como uma nova versão no Secret Manager e conclui a conexão como
+`connected/coexistence`. O número retornado ao PWA é mascarado.
+
+Configure no Cloud Run `META_APP_ID`, `META_EMBEDDED_SIGNUP_CONFIG_ID`,
+`META_EMBEDDED_SIGNUP_VERSION` (o sample oficial atual recomenda `v4`) e
+`META_GRAPH_VERSION`; mantenha `META_APP_SECRET` exclusivamente no Secret Manager
+do serviço e defina `GCP_PROJECT_ID`. A service account do backend precisa de
+permissão para criar secrets e adicionar/acessar versões no projeto. No painel da
+Meta, o domínio HTTPS do PWA deve estar nos domínios permitidos do JavaScript SDK
+e nos OAuth Redirect URIs, a configuração deve ser do WhatsApp Embedded Signup e
+o app deve ter as permissões aprovadas `whatsapp_business_management` e
+`whatsapp_business_messaging`. O webhook do app deve continuar inscrito em
+`messages`; para Coexistence, habilite também os campos oficiais necessários ao
+espelhamento, incluindo `smb_message_echoes`.
 
 A `0005` deve ser validada com upgrade/downgrade em PostgreSQL local descartável.
 Ela não é aplicada automaticamente no startup e não deve ser aplicada ao

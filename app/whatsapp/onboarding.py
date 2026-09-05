@@ -51,6 +51,7 @@ class WhatsAppProviderCompletion:
     credential_secret_ref: str
     provider_confirmed: bool
     platform_only_impact_confirmed: bool = False
+    display_phone_number: str | None = None
 
 
 class WhatsAppOnboardingAdministrationPort(Protocol):
@@ -244,6 +245,7 @@ class WhatsAppOnboardingService:
             business_id,
             meta_waba_id=meta_waba_id,
             meta_phone_number_id=meta_phone_number_id,
+            display_phone_number=completion.display_phone_number,
             graph_version=graph_version,
         )
         await self._administration.set_credential_secret_ref(

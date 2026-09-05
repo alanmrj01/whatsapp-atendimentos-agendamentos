@@ -90,3 +90,18 @@ class MeResponse(BaseModel):
 class PublicConnectionResponse(BaseModel):
     status: Literal["disconnected", "pending", "connected", "error"]
     mode: Literal["coexistence", "api_only"] | None = None
+    display_phone_number: str | None = None
+
+
+class MetaEmbeddedSignupStartResponse(BaseModel):
+    app_id: str
+    configuration_id: str
+    graph_version: str
+    embedded_signup_version: str
+    mode: Literal["coexistence"] = "coexistence"
+
+
+class MetaEmbeddedSignupCompleteRequest(StrictRequest):
+    authorization_code: SecretStr = Field(min_length=1, max_length=4096)
+    waba_id: str = Field(min_length=1, max_length=32)
+    phone_number_id: str | None = Field(default=None, min_length=1, max_length=32)

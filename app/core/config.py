@@ -30,6 +30,16 @@ class CloudTasksConfigurationError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class MetaEmbeddedSignupConfiguration:
+    app_id: str
+    configuration_id: str
+    graph_version: str
+    embedded_signup_version: str
+    app_secret: SecretStr
+    gcp_project_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class CloudTasksConfiguration:
     project_id: str
     region: str
@@ -83,6 +93,15 @@ class Settings(BaseSettings):
     )
     meta_phone_number_id: str | None = Field(
         default=None, validation_alias="META_PHONE_NUMBER_ID"
+    )
+    meta_app_id: str | None = Field(
+        default=None, validation_alias="META_APP_ID"
+    )
+    meta_embedded_signup_config_id: str | None = Field(
+        default=None, validation_alias="META_EMBEDDED_SIGNUP_CONFIG_ID"
+    )
+    meta_embedded_signup_version: str | None = Field(
+        default=None, validation_alias="META_EMBEDDED_SIGNUP_VERSION"
     )
     meta_graph_version: str | None = Field(
         default=None,
@@ -191,6 +210,44 @@ class Settings(BaseSettings):
 
     def require_meta_verify_token(self) -> str:
         return self._require_meta_secret(self.meta_verify_token)
+
+    def require_meta_embedded_signup_configuration(
+        self,
+    ) -> MetaEmbeddedSignupConfiguration:
+        values = {
+            "app_id": self.meta_app_id,
+            "configuration_id": self.meta_embedded_signup_config_id,
+            "graph_version": self.meta_graph_version,
+            "embedded_signup_version": self.meta_embedded_signup_version,
+            "gcp_project_id": self.gcp_project_id,
+        }
+        normalized = {
+            key: value.strip() if isinstance(value, str) else ""
+            for key, value in values.items()
+        }
+        if (
+            any(not value for value in normalized.values())
+            or not normalized["app_id"].isdigit()
+            or not normalized["configuration_id"].isdigit()
+            or not re.fullmatch(r"v\d{1,3}\.\d{1,3}", normalized["graph_version"])
+            or not re.fullmatch(
+                r"v(?:2|3|4)(?:-public-preview)?",
+                normalized["embedded_signup_version"],
+            )
+            or self.meta_app_secret is None
+            or not self.meta_app_secret.get_secret_value().strip()
+        ):
+            raise MetaConfigurationError(
+                "Meta Embedded Signup configuration is incomplete"
+            )
+        return MetaEmbeddedSignupConfiguration(
+            app_id=normalized["app_id"],
+            configuration_id=normalized["configuration_id"],
+            graph_version=normalized["graph_version"],
+            embedded_signup_version=normalized["embedded_signup_version"],
+            app_secret=self.meta_app_secret,
+            gcp_project_id=normalized["gcp_project_id"],
+        )
 
     def require_cloud_tasks_configuration(self) -> CloudTasksConfiguration:
         return self._require_cloud_tasks_configuration(
