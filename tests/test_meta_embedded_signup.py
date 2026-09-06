@@ -42,7 +42,7 @@ def configuration() -> MetaEmbeddedSignupConfiguration:
     return MetaEmbeddedSignupConfiguration(
         app_id="333333333333333",
         configuration_id="444444444444444",
-        graph_version="v23.0",
+        graph_version="v25.0",
         embedded_signup_version="v4",
         app_secret=SecretStr("synthetic-app-secret-for-tests"),
         gcp_project_id="test-project",
@@ -56,7 +56,7 @@ def settings() -> Settings:
         META_APP_ID="333333333333333",
         META_EMBEDDED_SIGNUP_CONFIG_ID="444444444444444",
         META_EMBEDDED_SIGNUP_VERSION="v4",
-        META_GRAPH_VERSION="v23.0",
+        META_GRAPH_VERSION="v25.0",
         META_APP_SECRET="synthetic-app-secret-for-tests",
         GCP_PROJECT_ID="test-project",
     )
@@ -100,7 +100,7 @@ async def test_paid_business_can_start_and_free_is_blocked(
     assert started.model_dump() == {
         "app_id": "333333333333333",
         "configuration_id": "444444444444444",
-        "graph_version": "v23.0",
+        "graph_version": "v25.0",
         "embedded_signup_version": "v4",
         "mode": "coexistence",
     }
@@ -172,7 +172,7 @@ async def test_graph_exchange_validates_assets_and_subscribes_without_logging_se
     transport, calls = graph_transport()
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="https://graph.facebook.com/v23.0/",
+        base_url="https://graph.facebook.com/v25.0/",
     ) as client:
         gateway = MetaEmbeddedSignupGateway(configuration(), client=client)
         assets = await gateway.exchange_and_validate(
@@ -186,10 +186,10 @@ async def test_graph_exchange_validates_assets_and_subscribes_without_logging_se
     assert assets.phone_number_id == PHONE_ID
     assert assets.access_token.get_secret_value() == RAW_TOKEN
     assert [(request.method, request.url.path) for request in calls] == [
-        ("GET", "/v23.0/oauth/access_token"),
-        ("GET", f"/v23.0/{WABA_ID}"),
-        ("GET", f"/v23.0/{WABA_ID}/phone_numbers"),
-        ("POST", f"/v23.0/{WABA_ID}/subscribed_apps"),
+        ("GET", "/v25.0/oauth/access_token"),
+        ("GET", f"/v25.0/{WABA_ID}"),
+        ("GET", f"/v25.0/{WABA_ID}/phone_numbers"),
+        ("POST", f"/v25.0/{WABA_ID}/subscribed_apps"),
     ]
     assert calls[0].url.params["redirect_uri"] == ""
     assert calls[0].url.params["client_id"] == configuration().app_id
@@ -209,7 +209,7 @@ async def test_graph_resolves_the_only_phone_when_session_info_omits_it() -> Non
     transport, _ = graph_transport()
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="https://graph.facebook.com/v23.0/",
+        base_url="https://graph.facebook.com/v25.0/",
     ) as client:
         assets = await MetaEmbeddedSignupGateway(
             configuration(), client=client
@@ -243,7 +243,7 @@ async def test_graph_rejects_ambiguous_phones_when_session_info_omits_id() -> No
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
-        base_url="https://graph.facebook.com/v23.0/",
+        base_url="https://graph.facebook.com/v25.0/",
     ) as client:
         with pytest.raises(
             MetaEmbeddedSignupRejected,
@@ -275,7 +275,7 @@ async def test_realistic_graph_error_is_sanitized_and_logs_no_secrets(caplog) ->
     )
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="https://graph.facebook.com/v23.0/",
+        base_url="https://graph.facebook.com/v25.0/",
     ) as client:
         with pytest.raises(
             MetaEmbeddedSignupRejected,
@@ -310,7 +310,7 @@ async def test_graph_rejects_unconfirmed_waba_or_phone(
     )
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="https://graph.facebook.com/v23.0/",
+        base_url="https://graph.facebook.com/v25.0/",
     ) as client:
         gateway = MetaEmbeddedSignupGateway(configuration(), client=client)
         with pytest.raises(MetaEmbeddedSignupRejected):
@@ -328,7 +328,7 @@ async def test_invalid_meta_payload_is_rejected_without_provider_details() -> No
     )
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="https://graph.facebook.com/v23.0/",
+        base_url="https://graph.facebook.com/v25.0/",
     ) as client:
         gateway = MetaEmbeddedSignupGateway(configuration(), client=client)
         with pytest.raises(
@@ -455,7 +455,7 @@ async def test_valid_coexistence_completion_is_scoped_and_db_receives_no_token(
     store = FakeStore()
     onboarding = FakeOnboarding()
     service = MetaEmbeddedSignupService(
-        onboarding, gateway, store, "v23.0"
+        onboarding, gateway, store, "v25.0"
     )
     result = await service.complete_coexistence(
         BUSINESS_ID,
