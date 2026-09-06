@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -16,6 +17,9 @@ from app.whatsapp.onboarding import (
     WhatsAppOnboardingService,
     WhatsAppProviderCompletion,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class MetaEmbeddedSignupError(RuntimeError):
@@ -99,6 +103,10 @@ class MetaEmbeddedSignupGateway:
             "oauth/access_token",
             params={
                 "client_id": self._configuration.app_id,
+                # The current Meta reference implementation includes the
+                # redirect_uri parameter for the code exchange. FB.login does
+                # not provide an application redirect URI, so it is empty.
+                "redirect_uri": "",
                 "client_secret": (
                     self._configuration.app_secret.get_secret_value()
                 ),
@@ -110,6 +118,7 @@ class MetaEmbeddedSignupGateway:
             raise MetaEmbeddedSignupRejected(
                 "Meta authorization is invalid"
             )
+        _log_stage("token_exchange_ok")
         access_token = SecretStr(raw_token.strip())
         headers = {
             "Authorization": f"Bearer {access_token.get_secret_value()}"
@@ -125,6 +134,7 @@ class MetaEmbeddedSignupGateway:
             raise MetaEmbeddedSignupRejected(
                 "Meta business account is invalid"
             )
+        _log_stage("waba_validation_ok")
 
         phones_payload = await self._request_json(
             "GET",
@@ -147,6 +157,8 @@ class MetaEmbeddedSignupGateway:
                 )
             selected_id = phone_number_id
 
+        _log_stage("phone_validation_ok")
+
         return MetaAuthorizedAssets(
             access_token=access_token,
             waba_id=waba_id,
@@ -168,6 +180,7 @@ class MetaEmbeddedSignupGateway:
             raise MetaEmbeddedSignupRejected(
                 "Meta webhook subscription was not confirmed"
             )
+        _log_stage("subscription_ok")
 
     async def _request_json(
         self,
@@ -244,7 +257,8 @@ class MetaEmbeddedSignupService:
             business_id,
             assets.access_token,
         )
-        return await self._onboarding.complete_provider_onboarding(
+        _log_stage("secret_store_ok")
+        view = await self._onboarding.complete_provider_onboarding(
             business_id,
             WhatsAppProviderCompletion(
                 intent=WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS,
@@ -257,6 +271,8 @@ class MetaEmbeddedSignupService:
                 display_phone_number=assets.display_phone_number,
             ),
         )
+        _log_stage("connection_saved")
+        return view
 
 
 def _numeric_meta_id(value: str | None) -> str:
@@ -292,3 +308,10 @@ def _phone_assets(payload: dict[str, Any]) -> dict[str, str | None]:
     if not phones:
         raise MetaEmbeddedSignupRejected("Meta phone number is unavailable")
     return phones
+
+
+def _log_stage(stage: str) -> None:
+    logger.info(
+        "meta_embedded_signup_progress",
+        extra={"stage": stage},
+    )

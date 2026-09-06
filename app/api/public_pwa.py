@@ -263,6 +263,14 @@ async def complete_meta_embedded_signup(
     business = _require_paid_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
     gateway: MetaEmbeddedSignupGateway | None = None
+    logger.info(
+        "meta_embedded_signup_progress",
+        extra={
+            "stage": "complete_request_started",
+            "waba_id_received": bool(payload.waba_id),
+            "phone_number_id_received": payload.phone_number_id is not None,
+        },
+    )
     try:
         current = await WhatsAppConnectionAdministrationService(
             db
