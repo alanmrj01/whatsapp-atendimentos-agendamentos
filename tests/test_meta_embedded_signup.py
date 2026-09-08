@@ -42,7 +42,7 @@ def configuration() -> MetaEmbeddedSignupConfiguration:
     return MetaEmbeddedSignupConfiguration(
         app_id="333333333333333",
         configuration_id="444444444444444",
-        graph_version="v23.0",
+        graph_version="v25.0",
         embedded_signup_version="v4",
         app_secret=SecretStr("synthetic-app-secret-for-tests"),
         gcp_project_id="test-project",
@@ -56,18 +56,22 @@ def settings() -> Settings:
         META_APP_ID="333333333333333",
         META_EMBEDDED_SIGNUP_CONFIG_ID="444444444444444",
         META_EMBEDDED_SIGNUP_VERSION="v4",
-        META_GRAPH_VERSION="v23.0",
+        META_GRAPH_VERSION="v25.0",
         META_APP_SECRET="synthetic-app-secret-for-tests",
         GCP_PROJECT_ID="test-project",
     )
 
 
 class FakePrincipal:
-    def __init__(self, access_mode: str = "paid") -> None:
+    def __init__(
+        self,
+        access_mode: str = "paid",
+        role: MembershipRole = MembershipRole.OWNER,
+    ) -> None:
         self.membership = MembershipResponse(
             business_id=BUSINESS_ID,
             business_name="Company A",
-            role=MembershipRole.OWNER,
+            role=role,
             access_mode=access_mode,
         )
 
@@ -96,7 +100,7 @@ async def test_paid_business_can_start_and_free_is_blocked(
     assert started.model_dump() == {
         "app_id": "333333333333333",
         "configuration_id": "444444444444444",
-        "graph_version": "v23.0",
+        "graph_version": "v25.0",
         "embedded_signup_version": "v4",
         "mode": "coexistence",
     }
@@ -109,11 +113,34 @@ async def test_paid_business_can_start_and_free_is_blocked(
     assert blocked.value.status_code == 402
 
 
+@pytest.mark.asyncio
+async def test_only_paid_owner_and_admin_can_start_embedded_signup(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        lambda _: EmptyAdministration(),
+    )
+    for role in (MembershipRole.OWNER, MembershipRole.ADMIN):
+        started = await public_pwa.start_meta_embedded_signup(
+            EmptyRequest(), FakePrincipal(role=role), settings(), object()
+        )
+        assert started.mode == "coexistence"
+
+    for role in (MembershipRole.ATTENDANT, MembershipRole.VIEWER):
+        with pytest.raises(HTTPException) as blocked:
+            await public_pwa.start_meta_embedded_signup(
+                EmptyRequest(), FakePrincipal(role=role), settings(), object()
+            )
+        assert blocked.value.status_code == 403
+
+
 def graph_transport(*, waba_id: str = WABA_ID, phone_id: str = PHONE_ID):
-    calls: list[tuple[str, str]] = []
+    calls: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        calls.append((request.method, request.url.path))
+        calls.append(request)
         if request.url.path.endswith("/oauth/access_token"):
             return httpx.Response(200, json={"access_token": RAW_TOKEN})
         if request.url.path.endswith(f"/{WABA_ID}"):
@@ -145,7 +172,7 @@ async def test_graph_exchange_validates_assets_and_subscribes_without_logging_se
     transport, calls = graph_transport()
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="https://graph.facebook.com/v23.0/",
+        base_url="https://graph.facebook.com/v25.0/",
     ) as client:
         gateway = MetaEmbeddedSignupGateway(configuration(), client=client)
         assets = await gateway.exchange_and_validate(
@@ -158,15 +185,114 @@ async def test_graph_exchange_validates_assets_and_subscribes_without_logging_se
     assert assets.waba_id == WABA_ID
     assert assets.phone_number_id == PHONE_ID
     assert assets.access_token.get_secret_value() == RAW_TOKEN
-    assert calls == [
-        ("GET", "/v23.0/oauth/access_token"),
-        ("GET", f"/v23.0/{WABA_ID}"),
-        ("GET", f"/v23.0/{WABA_ID}/phone_numbers"),
-        ("POST", f"/v23.0/{WABA_ID}/subscribed_apps"),
+    assert [(request.method, request.url.path) for request in calls] == [
+        ("GET", "/v25.0/oauth/access_token"),
+        ("GET", f"/v25.0/{WABA_ID}"),
+        ("GET", f"/v25.0/{WABA_ID}/phone_numbers"),
+        ("POST", f"/v25.0/{WABA_ID}/subscribed_apps"),
     ]
+    assert calls[0].url.params["redirect_uri"] == ""
+    assert calls[0].url.params["client_id"] == configuration().app_id
     assert RAW_TOKEN not in caplog.text
     assert RAW_CODE not in caplog.text
     assert configuration().app_secret.get_secret_value() not in caplog.text
+    assert {
+        "token_exchange_ok",
+        "waba_validation_ok",
+        "phone_validation_ok",
+        "subscription_ok",
+    }.issubset({record.stage for record in caplog.records if hasattr(record, "stage")})
+
+
+@pytest.mark.asyncio
+async def test_graph_resolves_the_only_phone_when_session_info_omits_it() -> None:
+    transport, _ = graph_transport()
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://graph.facebook.com/v25.0/",
+    ) as client:
+        assets = await MetaEmbeddedSignupGateway(
+            configuration(), client=client
+        ).exchange_and_validate(
+            SecretStr(RAW_CODE),
+            waba_id_hint=WABA_ID,
+            phone_number_id_hint=None,
+        )
+
+    assert assets.phone_number_id == PHONE_ID
+
+
+@pytest.mark.asyncio
+async def test_graph_rejects_ambiguous_phones_when_session_info_omits_id() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/oauth/access_token"):
+            return httpx.Response(200, json={"access_token": RAW_TOKEN})
+        if request.url.path.endswith(f"/{WABA_ID}"):
+            return httpx.Response(200, json={"id": WABA_ID})
+        if request.url.path.endswith(f"/{WABA_ID}/phone_numbers"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": PHONE_ID},
+                        {"id": "555555555555555"},
+                    ]
+                },
+            )
+        raise AssertionError("unexpected Graph request")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://graph.facebook.com/v25.0/",
+    ) as client:
+        with pytest.raises(
+            MetaEmbeddedSignupRejected,
+            match="Meta phone number selection is ambiguous",
+        ):
+            await MetaEmbeddedSignupGateway(
+                configuration(), client=client
+            ).exchange_and_validate(
+                SecretStr(RAW_CODE),
+                waba_id_hint=WABA_ID,
+                phone_number_id_hint=None,
+            )
+
+
+@pytest.mark.asyncio
+async def test_realistic_graph_error_is_sanitized_and_logs_no_secrets(caplog) -> None:
+    caplog.set_level(logging.INFO)
+    transport = httpx.MockTransport(
+        lambda _: httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": f"invalid {RAW_CODE} {RAW_TOKEN}",
+                    "type": "OAuthException",
+                    "code": 100,
+                }
+            },
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://graph.facebook.com/v25.0/",
+    ) as client:
+        with pytest.raises(
+            MetaEmbeddedSignupRejected,
+            match="Meta authorization was rejected",
+        ) as rejected:
+            await MetaEmbeddedSignupGateway(
+                configuration(), client=client
+            ).exchange_and_validate(
+                SecretStr(RAW_CODE),
+                waba_id_hint=WABA_ID,
+                phone_number_id_hint=PHONE_ID,
+            )
+
+    assert RAW_CODE not in str(rejected.value)
+    assert RAW_TOKEN not in str(rejected.value)
+    assert RAW_CODE not in caplog.text
+    assert RAW_TOKEN not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -184,7 +310,7 @@ async def test_graph_rejects_unconfirmed_waba_or_phone(
     )
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="https://graph.facebook.com/v23.0/",
+        base_url="https://graph.facebook.com/v25.0/",
     ) as client:
         gateway = MetaEmbeddedSignupGateway(configuration(), client=client)
         with pytest.raises(MetaEmbeddedSignupRejected):
@@ -202,7 +328,7 @@ async def test_invalid_meta_payload_is_rejected_without_provider_details() -> No
     )
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="https://graph.facebook.com/v23.0/",
+        base_url="https://graph.facebook.com/v25.0/",
     ) as client:
         gateway = MetaEmbeddedSignupGateway(configuration(), client=client)
         with pytest.raises(
@@ -218,7 +344,14 @@ async def test_invalid_meta_payload_is_rejected_without_provider_details() -> No
 
 @pytest.mark.parametrize(
     "forbidden_field",
-    ["business_id", "credential_secret_ref", "provider_confirmed", "access_token"],
+    [
+        "business_id",
+        "credential_secret_ref",
+        "provider_confirmed",
+        "access_token",
+        "app_secret",
+        "token",
+    ],
 )
 def test_public_completion_contract_rejects_server_controlled_fields(
     forbidden_field: str,
@@ -314,12 +447,15 @@ class FakeOnboarding:
 
 
 @pytest.mark.asyncio
-async def test_valid_coexistence_completion_is_scoped_and_db_receives_no_token() -> None:
+async def test_valid_coexistence_completion_is_scoped_and_db_receives_no_token(
+    caplog,
+) -> None:
+    caplog.set_level(logging.INFO)
     gateway = FakeGateway()
     store = FakeStore()
     onboarding = FakeOnboarding()
     service = MetaEmbeddedSignupService(
-        onboarding, gateway, store, "v23.0"
+        onboarding, gateway, store, "v25.0"
     )
     result = await service.complete_coexistence(
         BUSINESS_ID,
@@ -335,3 +471,8 @@ async def test_valid_coexistence_completion_is_scoped_and_db_receives_no_token()
     assert onboarding.completion.confirmed_mode is WhatsAppConnectionMode.COEXISTENCE
     assert onboarding.completion.provider_confirmed is True
     assert RAW_TOKEN not in repr(onboarding.completion)
+    assert {"secret_store_ok", "connection_saved"}.issubset(
+        {record.stage for record in caplog.records if hasattr(record, "stage")}
+    )
+    assert RAW_TOKEN not in caplog.text
+    assert RAW_CODE not in caplog.text
