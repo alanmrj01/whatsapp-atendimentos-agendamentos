@@ -33,20 +33,20 @@ def upgrade() -> None:
             UPDATE appointments
             SET
                 status = CASE
-                    WHEN estimate_details -> :rollback_key ->> 'migration' = :revision
-                         AND estimate_details -> :rollback_key ->> 'status' = 'pending'
+                    WHEN estimate_details -> '{_ROLLBACK_KEY}' ->> 'migration' = '{revision}'
+                         AND estimate_details -> '{_ROLLBACK_KEY}' ->> 'status' = 'pending'
                     THEN 'pending'
                     ELSE status
                 END,
                 notes = CASE
-                    WHEN estimate_details -> :rollback_key ->> 'migration' = :revision
-                    THEN estimate_details -> :rollback_key ->> 'notes'
+                    WHEN estimate_details -> '{_ROLLBACK_KEY}' ->> 'migration' = '{revision}'
+                    THEN estimate_details -> '{_ROLLBACK_KEY}' ->> 'notes'
                     ELSE notes
                 END,
-                estimate_details = estimate_details - :rollback_key
-            WHERE estimate_details -> :rollback_key ->> 'migration' = :revision
+                estimate_details = estimate_details - '{_ROLLBACK_KEY}'
+            WHERE estimate_details -> '{_ROLLBACK_KEY}' ->> 'migration' = '{revision}'
             """
-        ).bindparams(rollback_key=_ROLLBACK_KEY, revision=revision)
+        )
     )
 
 
