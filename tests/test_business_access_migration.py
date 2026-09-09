@@ -12,10 +12,10 @@ MIGRATION_PATH = (
 )
 
 
-def test_business_access_is_current_alembic_head() -> None:
+def test_operational_appointments_is_current_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260904_0007"]
+    assert script.get_heads() == ["20260908_0008"]
 
 
 def test_business_access_migration_preserves_existing_tenants_as_paid() -> None:
