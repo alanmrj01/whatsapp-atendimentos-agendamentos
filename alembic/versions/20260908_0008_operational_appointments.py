@@ -68,7 +68,7 @@ def downgrade() -> None:
                         'reserved rollback key {_ROLLBACK_KEY} already exists';
                 END IF;
             END
-            $$;
+            $$
             """
         )
     )
