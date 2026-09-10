@@ -22,7 +22,6 @@ def require_origin(request: Request, settings: Annotated[Settings, Depends(requi
 
 
 async def require_principal(
-    request: Request,
     settings: Annotated[Settings, Depends(require_auth_config)],
     db: Annotated[AsyncSession, Depends(get_db)],
     authorization: Annotated[str | None, Header()] = None,
@@ -33,8 +32,6 @@ async def require_principal(
         user_id, session_id = decode_access(authorization[7:], settings.auth_jwt_secret.get_secret_value())
     except ValueError:
         raise unauthorized() from None
-    if request.query_params:
-        raise HTTPException(400, "Query parameters are not supported")
     return await AuthService(db).authenticate(user_id, session_id)
 
 

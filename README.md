@@ -335,3 +335,19 @@ público, recuperação de senha, MFA ou OAuth nesta etapa. Antes de exposição
 defina também proteção operacional contra abuso de login (limites por origem/IP).
 Testes físicos usam exclusivamente `TEST_DATABASE_URL` local descartável e validam
 0005 → 0006 → 0005 → 0006; nunca apontar essa variável ao Supabase de produção.
+
+## API operacional do PWA
+
+Contas `paid` usam a empresa ativa da sessão em todos os endpoints operacionais;
+nenhum `business_id` enviado pelo cliente é usado para autorização. A API pública
+expõe dashboard diário, agenda, fila e histórico de conversas, empresa, horários,
+automação suportada, técnicos, clientes, serviços e o progresso agregado em
+`GET /api/v1/setup/status`. Leituras aceitam os papéis do tenant. Alterações de
+empresa, horários, automação, equipe e catálogo exigem `owner/admin`; a agenda
+também pode ser operada por `attendant`. `viewer` permanece somente leitura.
+
+A migration `20260908_0008` acrescenta apenas `appointments.notes` e o estado
+`pending` à agenda existente. Ela é aditiva, tem downgrade e não roda no startup.
+Os registros de conversas, clientes, serviços, técnicos e horários existentes são
+reutilizados; não há subsistema paralelo. O PWA gratuito continua usando apenas a
+demonstração local e o backend rejeita acesso operacional `free` de forma fechada.

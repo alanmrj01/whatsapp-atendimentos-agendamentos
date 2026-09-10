@@ -550,7 +550,7 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("ends_at > starts_at", name="ends_at_after_starts_at"),
         CheckConstraint(
-            "status IN ('confirmed', 'cancelled', 'completed')",
+            "status IN ('pending', 'confirmed', 'cancelled', 'completed')",
             name="status_allowed",
         ),
         CheckConstraint("quantity > 0", name="quantity_positive"),
@@ -629,6 +629,7 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     service_address: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True
     )
