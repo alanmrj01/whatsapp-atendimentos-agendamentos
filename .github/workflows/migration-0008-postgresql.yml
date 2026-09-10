@@ -6,6 +6,7 @@ on:
       - 'alembic/**'
       - 'app/models/domain.py'
       - 'tests/integration/test_migration_0008_postgresql.py'
+      - 'tests/integration/test_operational_pwa_postgresql.py'
       - 'tests/test_operational_migration_0008.py'
       - 'requirements*.txt'
       - '.github/workflows/migration-0008-postgresql.yml'
