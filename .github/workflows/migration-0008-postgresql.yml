@@ -5,7 +5,7 @@ on:
     paths:
       - 'alembic/**'
       - 'app/models/domain.py'
-      - 'tests/integration/test_operational_pwa_postgresql.py'
+      - 'tests/integration/test_migration_0008_postgresql.py'
       - 'tests/test_operational_migration_0008.py'
       - 'requirements*.txt'
       - '.github/workflows/migration-0008-postgresql.yml'
@@ -53,7 +53,7 @@ jobs:
       - name: Physical migration roundtrip
         run: >-
           pytest
-          tests/integration/test_operational_pwa_postgresql.py::test_migration_0008_roundtrip_preserves_pending_status_and_notes
+          tests/integration/test_migration_0008_postgresql.py::test_migration_0008_roundtrip_preserves_pending_status_and_notes
           -q -p no:cacheprovider
 
       - name: Directed migration and operational tests
