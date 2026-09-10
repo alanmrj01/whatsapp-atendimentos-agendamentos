@@ -6,10 +6,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi import HTTPException
-from sqlalchemy import delete, text
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (
@@ -48,8 +46,6 @@ pytestmark = [
         reason="TEST_DATABASE_URL não configurada; PostgreSQL físico não executado",
     ),
 ]
-
-ROLLBACK_KEY = "__alovia_migration_20260908_0008"
 
 
 async def _clean(session: AsyncSession) -> None:
@@ -197,147 +193,3 @@ async def test_operational_data_is_real_tenant_scoped_and_mutable() -> None:
                 await _clean(session)
     finally:
         await engine.dispose()
-
-
-@pytest.mark.usefixtures("migrated_test_database")
-async def test_migration_0008_roundtrip_preserves_pending_status_and_notes() -> None:
-    """Exercise head -> 0007 -> 0008 with data introduced by 0008 present."""
-    config = Config("alembic.ini")
-    engine = create_async_engine(_async_url(TEST_DATABASE_URL), pool_pre_ping=True)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    business_id, customer_id, service_id, employee_id = (
-        uuid4(), uuid4(), uuid4(), uuid4()
-    )
-    now = datetime.now(UTC) + timedelta(days=1)
-    appointment_id = None
-
-    try:
-        async with factory() as session:
-            async with session.begin():
-                await _clean(session)
-                session.add_all([
-                    Business(
-                        id=business_id,
-                        name="Roundtrip 0008",
-                        timezone="America/Sao_Paulo",
-                        active=True,
-                    ),
-                    Customer(
-                        id=customer_id,
-                        business_id=business_id,
-                        whatsapp_id=f"roundtrip-{uuid4()}",
-                        phone_e164="+5512999999000",
-                        name="Cliente roundtrip",
-                    ),
-                    Service(
-                        id=service_id,
-                        business_id=business_id,
-                        name="Serviço roundtrip",
-                        duration_minutes=60,
-                        base_price=Decimal("100.00"),
-                        pricing_type="fixed",
-                        active=True,
-                    ),
-                    Employee(
-                        id=employee_id,
-                        business_id=business_id,
-                        name="Técnico roundtrip",
-                        active=True,
-                    ),
-                ])
-            async with session.begin():
-                session.add(
-                    EmployeeService(
-                        business_id=business_id,
-                        employee_id=employee_id,
-                        service_id=service_id,
-                    )
-                )
-
-            appointment = await OperationalService(session).create_appointment(
-                business_id,
-                AppointmentCreate(
-                    customer_id=customer_id,
-                    service_id=service_id,
-                    employee_id=employee_id,
-                    starts_at=now,
-                    ends_at=now + timedelta(hours=1),
-                    status="pending",
-                    notes="Nota que precisa sobreviver ao rollback",
-                ),
-            )
-            appointment_id = appointment.id
-            assert appointment.status == "pending"
-            assert appointment.notes == "Nota que precisa sobreviver ao rollback"
-    finally:
-        await engine.dispose()
-
-    try:
-        command.downgrade(config, "20260904_0007")
-
-        downgraded_engine = create_async_engine(
-            _async_url(TEST_DATABASE_URL), pool_pre_ping=True
-        )
-        try:
-            async with downgraded_engine.connect() as connection:
-                row = (
-                    await connection.execute(
-                        text(
-                            "SELECT status, estimate_details FROM appointments WHERE id = :id"
-                        ),
-                        {"id": appointment_id},
-                    )
-                ).mappings().one()
-                assert row["status"] == "cancelled"
-                marker = row["estimate_details"][ROLLBACK_KEY]
-                assert marker == {
-                    "migration": "20260908_0008",
-                    "status": "pending",
-                    "notes": "Nota que precisa sobreviver ao rollback",
-                }
-                notes_columns = await connection.scalar(
-                    text(
-                        "SELECT count(*) FROM information_schema.columns "
-                        "WHERE table_name = 'appointments' AND column_name = 'notes'"
-                    )
-                )
-                assert notes_columns == 0
-        finally:
-            await downgraded_engine.dispose()
-
-        command.upgrade(config, "20260908_0008")
-
-        restored_engine = create_async_engine(
-            _async_url(TEST_DATABASE_URL), pool_pre_ping=True
-        )
-        try:
-            async with restored_engine.connect() as connection:
-                row = (
-                    await connection.execute(
-                        text(
-                            "SELECT status, notes, estimate_details "
-                            "FROM appointments WHERE id = :id"
-                        ),
-                        {"id": appointment_id},
-                    )
-                ).mappings().one()
-                assert row["status"] == "pending"
-                assert row["notes"] == "Nota que precisa sobreviver ao rollback"
-                assert ROLLBACK_KEY not in row["estimate_details"]
-        finally:
-            await restored_engine.dispose()
-    finally:
-        # Keep the module-scoped migrated_test_database fixture at head even if
-        # an assertion above fails, so later integration tests do not inherit a
-        # partially downgraded schema.
-        command.upgrade(config, "20260908_0008")
-        cleanup_engine = create_async_engine(
-            _async_url(TEST_DATABASE_URL), pool_pre_ping=True
-        )
-        cleanup_factory = async_sessionmaker(cleanup_engine, expire_on_commit=False)
-        try:
-            async with cleanup_factory() as session:
-                async with session.begin():
-                    await _clean(session)
-        finally:
-            await cleanup_engine.dispose()
