@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -11,6 +12,7 @@ from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.config import get_settings
 from app.models import Business, Customer, Employee, EmployeeService, Service
 from app.operations.schemas import AppointmentCreate
 from app.operations.service import OperationalService
@@ -138,6 +140,8 @@ async def _read_0008_state(appointment_id: UUID) -> tuple[str, str | None, dict]
 
 def test_migration_0008_roundtrip_preserves_pending_status_and_notes() -> None:
     _assert_disposable_database(TEST_DATABASE_URL)
+    os.environ["ALEMBIC_DATABASE_URL"] = TEST_DATABASE_URL
+    get_settings.cache_clear()
     config = Config("alembic.ini")
 
     command.upgrade(config, "20260908_0008")
