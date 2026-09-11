@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from app.auth.schemas import StrictRequest
+from app.auth.schemas import AccessMode, StrictRequest
 from app.auth.security import normalize_email
 
 
@@ -49,6 +49,7 @@ class PlatformBusinessResponse(BaseModel):
     name: str
     timezone: str
     active: bool
+    access_mode: AccessMode = "paid"
     owners: list[str]
     whatsapp_status: Literal["disconnected", "pending", "connected", "error"]
 

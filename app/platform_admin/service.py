@@ -10,7 +10,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import hash_password
-from app.models import Business, BusinessUserMembership, BusinessWhatsAppConnection, User
+from app.models import (
+    Business,
+    BusinessAccess,
+    BusinessUserMembership,
+    BusinessWhatsAppConnection,
+    User,
+)
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
     PlatformBusinessListResponse,
@@ -57,12 +63,22 @@ class PlatformAdminService:
         for business_id, status, _ in connection_rows:
             statuses.setdefault(business_id, status)
 
+        access_rows = await self.db.execute(
+            select(BusinessAccess.business_id, BusinessAccess.access_mode).where(
+                BusinessAccess.business_id.in_(ids)
+            )
+        )
+        access_modes = dict(access_rows)
+
         return PlatformBusinessListResponse(businesses=[
             PlatformBusinessResponse(
                 id=business.id,
                 name=business.name,
                 timezone=business.timezone,
                 active=business.active,
+                # Businesses created before explicit access rows retain the
+                # existing paid compatibility used by AuthService.
+                access_mode=access_modes.get(business.id, "paid"),
                 owners=owners.get(business.id, []),
                 whatsapp_status=statuses.get(business.id, "disconnected"),
             )
@@ -147,6 +163,7 @@ class PlatformAdminService:
             name=business.name,
             timezone=business.timezone,
             active=True,
+            access_mode="paid",
             owners=[owner.email],
             whatsapp_status="disconnected",
         )
