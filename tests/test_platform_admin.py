@@ -62,6 +62,35 @@ def test_super_admin_guard_is_fail_closed() -> None:
     assert error.value.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_platform_admin_lists_real_free_or_paid_access_without_inventing_plans() -> None:
+    free_business = Business(
+        id=uuid4(),
+        name="Conta gratuita",
+        timezone="America/Sao_Paulo",
+        active=True,
+    )
+    paid_business = Business(
+        id=uuid4(),
+        name="Conta legada paga",
+        timezone="America/Sao_Paulo",
+        active=True,
+    )
+    db = SimpleNamespace(
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [free_business, paid_business])),
+        execute=AsyncMock(side_effect=[[], [], [(free_business.id, "free")]]),
+    )
+
+    result = await PlatformAdminService(db).list_businesses()
+
+    assert [(item.name, item.access_mode) for item in result.businesses] == [
+        ("Conta gratuita", "free"),
+        ("Conta legada paga", "paid"),
+    ]
+    assert not hasattr(result.businesses[0], "plan_name")
+    assert not hasattr(result.businesses[0], "administrative_override")
+
+
 def test_platform_business_create_forbids_extra_fields() -> None:
     with pytest.raises(ValidationError):
         PlatformBusinessCreateRequest(

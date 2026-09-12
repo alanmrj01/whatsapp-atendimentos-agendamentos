@@ -61,7 +61,14 @@ Config = Annotated[Settings, Depends(require_auth_config)]
 Identity = Annotated[Principal, Depends(require_principal)]
 
 
-def token_response(response: Response, settings: Settings, user: User, session: AuthSession, refresh: str) -> AccessResponse:
+async def token_response(
+    response: Response,
+    settings: Settings,
+    user: User,
+    session: AuthSession,
+    refresh: str,
+    db: AsyncSession,
+) -> AccessResponse:
     response.set_cookie(
         COOKIE_NAME,
         refresh,
@@ -72,12 +79,14 @@ def token_response(response: Response, settings: Settings, user: User, session: 
         max_age=max(0, int((session.expires_at - datetime.now(UTC)).total_seconds())),
         expires=session.expires_at,
     )
+    memberships = await AuthService(db).memberships(user)
     return AccessResponse(
         access_token=access_token(
             user.id,
             session.id,
             settings.auth_jwt_secret.get_secret_value(),
-        )
+        ),
+        session=Principal(user=user, session=session, memberships=memberships).view(),
     )
 
 
@@ -89,7 +98,7 @@ async def login(payload: LoginRequest, response: Response, settings: Config, db:
         payload.password.get_secret_value(),
     )
     await login_rate_limiter.success(payload.email)
-    return token_response(response, settings, user, session, refresh)
+    return await token_response(response, settings, user, session, refresh, db)
 
 
 @router.post(
@@ -108,13 +117,13 @@ async def signup(
     await login_rate_limiter.acquire(payload.email)
     user, session, refresh = await AuthService(db).signup(payload, idempotency_key)
     await login_rate_limiter.success(payload.email)
-    return token_response(response, settings, user, session, refresh)
+    return await token_response(response, settings, user, session, refresh, db)
 
 
 @router.post("/auth/refresh", response_model=AccessResponse, dependencies=[Depends(require_origin)])
 async def refresh(payload: EmptyRequest, request: Request, response: Response, settings: Config, db: Db):
     user, session, replacement = await AuthService(db).refresh(request.cookies.get(COOKIE_NAME))
-    return token_response(response, settings, user, session, replacement)
+    return await token_response(response, settings, user, session, replacement, db)
 
 
 @router.post("/auth/logout", status_code=204, dependencies=[Depends(require_origin)])

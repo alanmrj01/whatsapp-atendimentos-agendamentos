@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.auth.dependencies import require_auth_config
 from app.auth.security import access_token, decode_access, hash_password, token_hash, verify_password
-from app.auth.schemas import LoginRequest
+from app.auth.schemas import AccessResponse, LoginRequest, MeResponse
 from app.core.config import Settings, get_settings
 from app.main import create_app
 from tests.test_migration import PROJECT_ROOT, render_migration_sql
@@ -48,6 +48,23 @@ def test_jwt_minimal_claims_and_ttl():
     claims = jwt.decode(token, key, algorithms=["HS256"])
     assert set(claims) == {"sub", "session_id", "jti", "exp"}
     assert 590 <= claims["exp"] - datetime.now(UTC).timestamp() <= 600
+
+
+def test_access_response_can_hydrate_session_without_a_second_request():
+    user_id = uuid4()
+    response = AccessResponse(
+        access_token="opaque-test-token",
+        session=MeResponse(
+            id=user_id,
+            email="member@example.test",
+            platform_role=None,
+            active_business_id=None,
+            memberships=[],
+        ),
+    )
+
+    assert response.session.id == user_id
+    assert response.session.memberships == []
 
 
 @pytest.mark.parametrize("origins", ["*", "https://*.example.test", "https://app.example.test/path", "http://app.example.test", "https://user:secret@example.test", "https://example.test:invalid"])

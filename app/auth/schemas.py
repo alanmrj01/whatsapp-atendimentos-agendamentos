@@ -66,12 +66,6 @@ class PublicPlanRequest(StrictRequest):
     platform_only_impact_confirmed: bool = Field(default=False, strict=True)
 
 
-class AccessResponse(BaseModel):
-    access_token: str
-    token_type: Literal["bearer"] = "bearer"
-    expires_in: int = 600
-
-
 class MembershipResponse(BaseModel):
     business_id: UUID
     business_name: str
@@ -85,6 +79,15 @@ class MeResponse(BaseModel):
     platform_role: Literal["super_admin"] | None
     active_business_id: UUID | None
     memberships: list[MembershipResponse]
+
+
+class AccessResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int = 600
+    # Additive session snapshot lets the PWA hydrate after login/refresh without
+    # a second network round-trip. Older clients may safely ignore this field.
+    session: MeResponse
 
 
 class PublicConnectionResponse(BaseModel):

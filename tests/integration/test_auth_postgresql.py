@@ -117,7 +117,9 @@ async def test_login_cookie_hash_me_and_no_sensitive_logs(auth_env, caplog):
     cookie = env.client.cookies.get(COOKIE_NAME)
     assert "HttpOnly" in result.headers["set-cookie"] and "SameSite=lax" in result.headers["set-cookie"]
     assert "Path=/api/v1/auth" in result.headers["set-cookie"]
-    assert set(result.json()) == {"access_token", "token_type", "expires_in"}
+    assert set(result.json()) == {"access_token", "token_type", "expires_in", "session"}
+    assert result.json()["session"]["active_business_id"] == str(env.a)
+    assert result.json()["session"]["memberships"][0]["access_mode"] == "paid"
     me = await env.client.get("/api/v1/me")
     assert me.json()["active_business_id"] == str(env.a)
     assert me.json()["memberships"][0]["role"] == "owner"
