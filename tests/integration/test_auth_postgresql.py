@@ -110,6 +110,85 @@ async def login(env, name="owner"):
     return result
 
 
+async def test_platform_super_admin_lists_and_changes_business_access(auth_env):
+    env = auth_env
+    async with env.factory() as db, db.begin():
+        db.add(BusinessAccess(business_id=env.a, access_mode="free"))
+
+    await login(env, "super")
+    listed = await env.client.get("/api/v1/admin/businesses")
+    assert listed.status_code == 200
+    businesses = {item["id"]: item for item in listed.json()["businesses"]}
+    assert businesses[str(env.a)]["access_mode"] == "free"
+    assert businesses[str(env.a)]["owners"] == ["owner@example.test"]
+    assert businesses[str(env.a)]["whatsapp_status"] == "connected"
+    assert businesses[str(env.b)]["access_mode"] == "paid"
+    assert businesses[str(env.b)]["whatsapp_status"] == "pending"
+
+    released = await env.client.patch(
+        f"/api/v1/admin/businesses/{env.a}/access",
+        json={"access_mode": "paid"},
+    )
+    assert released.status_code == 200
+    assert released.json() == {
+        "business_id": str(env.a),
+        "access_mode": "paid",
+    }
+
+    revoked = await env.client.patch(
+        f"/api/v1/admin/businesses/{env.a}/access",
+        json={"access_mode": "free"},
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["access_mode"] == "free"
+
+    upserted = await env.client.patch(
+        f"/api/v1/admin/businesses/{env.b}/access",
+        json={"access_mode": "free"},
+    )
+    assert upserted.status_code == 200
+    async with env.factory() as db:
+        assert (await db.get(BusinessAccess, env.a)).access_mode == "free"
+        assert (await db.get(BusinessAccess, env.b)).access_mode == "free"
+        assert (await db.get(Business, env.a)).active is True
+        connection_a = await db.scalar(select(BusinessWhatsAppConnection).where(
+            BusinessWhatsAppConnection.business_id == env.a
+        ))
+        connection_b = await db.scalar(select(BusinessWhatsAppConnection).where(
+            BusinessWhatsAppConnection.business_id == env.b
+        ))
+        assert connection_a.status == "connected"
+        assert connection_b.status == "pending"
+
+
+async def test_platform_access_is_super_admin_only_and_origin_protected(auth_env):
+    env = auth_env
+    await login(env, "owner")
+    forbidden = await env.client.patch(
+        f"/api/v1/admin/businesses/{env.a}/access",
+        json={"access_mode": "paid"},
+    )
+    assert forbidden.status_code == 403
+
+    await login(env, "super")
+    env.client.headers["Origin"] = "https://not-allowed.example.test"
+    wrong_origin = await env.client.patch(
+        f"/api/v1/admin/businesses/{env.a}/access",
+        json={"access_mode": "paid"},
+    )
+    assert wrong_origin.status_code == 403
+
+
+async def test_platform_access_unknown_business_is_404(auth_env):
+    env = auth_env
+    await login(env, "super")
+    missing = await env.client.patch(
+        f"/api/v1/admin/businesses/{uuid4()}/access",
+        json={"access_mode": "paid"},
+    )
+    assert missing.status_code == 404
+
+
 async def test_login_cookie_hash_me_and_no_sensitive_logs(auth_env, caplog):
     env = auth_env
     caplog.set_level(logging.INFO)

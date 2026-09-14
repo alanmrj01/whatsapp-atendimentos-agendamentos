@@ -8,14 +8,28 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.dependencies import require_super_admin
-from app.models import Business, BusinessUserMembership, User
+from app.models import Business, BusinessAccess, BusinessUserMembership, User
 from app.platform_admin import service as platform_service
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
+    PlatformBusinessAccessRequest,
     PlatformBusinessListResponse,
     PlatformBusinessResponse,
 )
 from app.platform_admin.service import PlatformAdminService
+
+
+class CursorLikeRows:
+    """Matches SQLAlchemy Result's mapping-like surface and row iteration."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def keys(self):
+        return ("business_id", "access_mode")
+
+    def __iter__(self):
+        return iter(self.rows)
 
 
 def make_payload(**overrides) -> PlatformBusinessCreateRequest:
@@ -78,7 +92,7 @@ async def test_platform_admin_lists_real_free_or_paid_access_without_inventing_p
     )
     db = SimpleNamespace(
         scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [free_business, paid_business])),
-        execute=AsyncMock(side_effect=[[], [], [(free_business.id, "free")]]),
+        execute=AsyncMock(side_effect=[[], [], CursorLikeRows([(free_business.id, "free")])]),
     )
 
     result = await PlatformAdminService(db).list_businesses()
@@ -99,6 +113,53 @@ def test_platform_business_create_forbids_extra_fields() -> None:
             owner_password="correct-horse-battery",
             unexpected="value",
         )
+
+
+def test_platform_business_access_request_is_strict() -> None:
+    assert PlatformBusinessAccessRequest(access_mode="free").access_mode == "free"
+    assert PlatformBusinessAccessRequest(access_mode="paid").access_mode == "paid"
+    with pytest.raises(ValidationError):
+        PlatformBusinessAccessRequest(access_mode="premium")
+    with pytest.raises(ValidationError):
+        PlatformBusinessAccessRequest(access_mode="free", billing=True)
+
+
+@pytest.mark.asyncio
+async def test_set_business_access_uses_atomic_upsert() -> None:
+    business = Business(id=uuid4(), name="Conta", active=True)
+    result = SimpleNamespace(one=Mock(return_value=(business.id, "paid")))
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=business),
+        execute=AsyncMock(return_value=result),
+        commit=AsyncMock(),
+    )
+
+    response = await PlatformAdminService(db).set_business_access(
+        business.id, "paid"
+    )
+
+    assert response.business_id == business.id
+    assert response.access_mode == "paid"
+    statement = db.execute.await_args.args[0]
+    assert statement.table.name == BusinessAccess.__tablename__
+    assert "ON CONFLICT" in str(statement)
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_set_business_access_rejects_unknown_business_without_writes() -> None:
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=None),
+        execute=AsyncMock(),
+        commit=AsyncMock(),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await PlatformAdminService(db).set_business_access(uuid4(), "paid")
+
+    assert error.value.status_code == 404
+    db.execute.assert_not_awaited()
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
