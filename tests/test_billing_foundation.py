@@ -8,7 +8,7 @@ from app.billing.asaas import AsaasGateway
 from app.billing.catalog import get_offer
 from app.billing.schemas import CheckoutCreateRequest
 from app.billing.service import BillingService, _cycle_end, _payment_value_cents
-from app.billing.webhooks import SUPPORTED_EVENTS
+from app.billing.webhooks import BillingWebhookService, SUPPORTED_EVENTS
 from app.core.config import AsaasConfigurationError, Environment, Settings
 from app.models import BillingCheckout, BillingWebhookEvent, CommercialSubscription
 
@@ -119,6 +119,19 @@ async def test_sandbox_billing_never_marks_real_operational_history(monkeypatch)
 
     service = BillingService(DbMustNotBeTouched(), object())
     await service._record_operational_history(uuid4())
+
+
+
+
+def test_webhook_event_id_is_namespaced_by_provider_environment() -> None:
+    assert (
+        BillingWebhookService._event_storage_id("sandbox", "evt_123")
+        == "sandbox:evt_123"
+    )
+    assert (
+        BillingWebhookService._event_storage_id("production", "evt_123")
+        == "production:evt_123"
+    )
 
 
 

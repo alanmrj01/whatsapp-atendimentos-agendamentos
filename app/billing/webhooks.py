@@ -56,6 +56,7 @@ class BillingWebhookService:
     def __init__(self, db: AsyncSession, gateway: AsaasGateway) -> None:
         self.db = db
         self.billing = BillingService(db, gateway)
+        self.provider_environment = self.billing.provider_environment
 
     async def process(self, payload: dict) -> None:
         event_id = payload.get("id")
@@ -63,7 +64,6 @@ class BillingWebhookService:
         if (
             not isinstance(event_id, str)
             or not event_id
-            or len(event_id) > 160
             or not isinstance(event_type, str)
             or not event_type
             or len(event_type) > 80
@@ -72,7 +72,15 @@ class BillingWebhookService:
         if event_type not in SUPPORTED_EVENTS:
             return
 
-        existing = await self.db.get(BillingWebhookEvent, event_id)
+        storage_event_id = self._event_storage_id(
+            self.provider_environment, event_id
+        )
+        if len(storage_event_id) > 160:
+            return
+
+        existing = await self.db.get(
+            BillingWebhookEvent, storage_event_id
+        )
         if existing is not None and existing.processed_at is not None:
             return
 
@@ -86,7 +94,7 @@ class BillingWebhookService:
 
         if existing is None:
             existing = BillingWebhookEvent(
-                event_id=event_id,
+                event_id=storage_event_id,
                 event_type=event_type,
                 resource_type=resource_type,
                 resource_id=resource_id,
@@ -121,7 +129,10 @@ class BillingWebhookService:
         from app.models import BillingCheckout
 
         local = await self.db.scalar(
-            select(BillingCheckout).where(BillingCheckout.provider_checkout_id == provider_id)
+            select(BillingCheckout).where(
+                BillingCheckout.provider_checkout_id == provider_id,
+                BillingCheckout.provider_environment == self.provider_environment,
+            )
         )
         if local is None:
             return
@@ -135,6 +146,12 @@ class BillingWebhookService:
         elif event_type == "CHECKOUT_EXPIRED":
             local.status = "expired"
         await self.db.commit()
+
+    @staticmethod
+    def _event_storage_id(
+        provider_environment: str, provider_event_id: str
+    ) -> str:
+        return f"{provider_environment}:{provider_event_id}"
 
     @staticmethod
     def _pix_instruction_refs(event_type: str, resource: dict) -> tuple[str | None, str | None]:
