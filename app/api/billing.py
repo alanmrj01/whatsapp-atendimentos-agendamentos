@@ -56,6 +56,7 @@ async def create_checkout(
     membership = _billing_business(principal)
     return await _service(settings, db).create_checkout(
         business_id=membership.business_id,
+        payer_email=principal.user.email,
         idempotency_key=idempotency_key,
         payload=payload,
         allowed_origins=settings.allowed_pwa_origins(),
