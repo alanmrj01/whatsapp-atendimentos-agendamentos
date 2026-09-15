@@ -20,6 +20,10 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="billing_checkout_cycle_allowed",
         ),
         CheckConstraint(
+            "payment_method IN ('credit_card', 'pix_automatic')",
+            name="billing_checkout_payment_method_allowed",
+        ),
+        CheckConstraint(
             "status IN ('creating', 'active', 'paid', 'canceled', 'expired', 'failed')",
             name="billing_checkout_status_allowed",
         ),
@@ -61,8 +65,16 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="commercial_subscription_cycle_allowed",
         ),
         CheckConstraint(
+            "payment_method IN ('credit_card', 'pix_automatic')",
+            name="commercial_subscription_payment_method_allowed",
+        ),
+        CheckConstraint(
             "status IN ('active', 'past_due', 'canceled', 'suspended')",
             name="commercial_subscription_status_allowed",
+        ),
+        CheckConstraint(
+            "provider_subscription_id IS NOT NULL OR provider_authorization_id IS NOT NULL",
+            name="commercial_subscription_provider_reference_required",
         ),
         Index("ix_commercial_subscriptions_business_id", "business_id"),
         Index("ix_commercial_subscriptions_provider_subscription_id", "provider_subscription_id", unique=True),
