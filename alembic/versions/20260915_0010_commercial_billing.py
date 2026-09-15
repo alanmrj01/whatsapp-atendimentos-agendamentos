@@ -24,10 +24,15 @@ def upgrade() -> None:
         sa.Column("idempotency_key", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("plan_code", sa.String(length=16), nullable=False),
         sa.Column("billing_cycle", sa.String(length=16), nullable=False),
+        sa.Column("payment_method", sa.String(length=24), nullable=False),
         sa.Column("amount_cents", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'creating'"), nullable=False),
         sa.Column("provider_checkout_id", sa.String(length=80), nullable=True),
         sa.Column("checkout_url", sa.Text(), nullable=True),
+        sa.Column("provider_authorization_id", sa.String(length=100), nullable=True),
+        sa.Column("pix_conciliation_identifier", sa.String(length=100), nullable=True),
+        sa.Column("pix_qr_payload", sa.Text(), nullable=True),
+        sa.Column("pix_qr_expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("paid_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("provider_customer_id", sa.String(length=80), nullable=True),
@@ -38,6 +43,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "billing_cycle IN ('monthly', 'quarterly', 'annual')",
             name="billing_checkout_cycle_allowed",
+        ),
+        sa.CheckConstraint(
+            "payment_method IN ('credit_card', 'pix_automatic')",
+            name="billing_checkout_payment_method_allowed",
         ),
         sa.CheckConstraint(
             "status IN ('creating', 'active', 'paid', 'canceled', 'expired', 'failed')",
@@ -55,6 +64,12 @@ def upgrade() -> None:
         ["provider_checkout_id"],
         unique=True,
     )
+    op.create_index(
+        "ix_billing_checkouts_provider_authorization_id",
+        "billing_checkouts",
+        ["provider_authorization_id"],
+        unique=True,
+    )
 
     op.create_table(
         "commercial_subscriptions",
@@ -63,8 +78,10 @@ def upgrade() -> None:
         sa.Column("checkout_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("plan_code", sa.String(length=16), nullable=False),
         sa.Column("billing_cycle", sa.String(length=16), nullable=False),
+        sa.Column("payment_method", sa.String(length=24), nullable=False),
         sa.Column("status", sa.String(length=16), nullable=False),
-        sa.Column("provider_subscription_id", sa.String(length=80), nullable=False),
+        sa.Column("provider_subscription_id", sa.String(length=80), nullable=True),
+        sa.Column("provider_authorization_id", sa.String(length=100), nullable=True),
         sa.Column("provider_customer_id", sa.String(length=80), nullable=True),
         sa.Column("access_until", sa.DateTime(timezone=True), nullable=False),
         sa.Column("canceled_at", sa.DateTime(timezone=True), nullable=True),
@@ -76,8 +93,16 @@ def upgrade() -> None:
             name="commercial_subscription_cycle_allowed",
         ),
         sa.CheckConstraint(
+            "payment_method IN ('credit_card', 'pix_automatic')",
+            name="commercial_subscription_payment_method_allowed",
+        ),
+        sa.CheckConstraint(
             "status IN ('active', 'past_due', 'canceled', 'suspended')",
             name="commercial_subscription_status_allowed",
+        ),
+        sa.CheckConstraint(
+            "provider_subscription_id IS NOT NULL OR provider_authorization_id IS NOT NULL",
+            name="commercial_subscription_provider_reference_required",
         ),
         sa.ForeignKeyConstraint(["business_id"], ["businesses.id"]),
         sa.ForeignKeyConstraint(["checkout_id"], ["billing_checkouts.id"]),
@@ -93,6 +118,12 @@ def upgrade() -> None:
         "ix_commercial_subscriptions_provider_subscription_id",
         "commercial_subscriptions",
         ["provider_subscription_id"],
+        unique=True,
+    )
+    op.create_index(
+        "ix_commercial_subscriptions_provider_authorization_id",
+        "commercial_subscriptions",
+        ["provider_authorization_id"],
         unique=True,
     )
 
@@ -111,11 +142,16 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("billing_webhook_events")
     op.drop_index(
+        "ix_commercial_subscriptions_provider_authorization_id",
+        table_name="commercial_subscriptions",
+    )
+    op.drop_index(
         "ix_commercial_subscriptions_provider_subscription_id",
         table_name="commercial_subscriptions",
     )
     op.drop_index("ix_commercial_subscriptions_business_id", table_name="commercial_subscriptions")
     op.drop_table("commercial_subscriptions")
+    op.drop_index("ix_billing_checkouts_provider_authorization_id", table_name="billing_checkouts")
     op.drop_index("ix_billing_checkouts_provider_checkout_id", table_name="billing_checkouts")
     op.drop_index("ix_billing_checkouts_business_id", table_name="billing_checkouts")
     op.drop_table("billing_checkouts")
