@@ -12,8 +12,9 @@ from sqlalchemy.exc import DBAPIError, SQLAlchemyError, TimeoutError as PoolTime
 
 from app.core.config import DatabaseConfigurationError, Settings
 from app.diagnostics.models import (
-    ACTIVITY_WINDOW_HOURS, EXPECTED_SCHEMA_REVISION, OBSERVATION_LIMIT,
-    QUERY_TIMEOUT_SECONDS, SCHEMA_REVISIONS, ActivityDetails, ApplicationDetails,
+    ACTIVITY_WINDOW_HOURS, COMPATIBLE_SCHEMA_REVISIONS, EXPECTED_SCHEMA_REVISION,
+    OBSERVATION_LIMIT, QUERY_TIMEOUT_SECONDS, SCHEMA_REVISIONS, ActivityDetails,
+    ApplicationDetails,
     AutomationStatus, BusinessDiagnostics, ComponentResult, Components,
     ConnectionCounts, CredentialDetails, DatabaseDetails, DiagnosticCode as Code,
     DiagnosticStatus as Status, DiagnosticsResponse, EssentialComponents,
@@ -62,7 +63,7 @@ def migration_result(revisions: list[str] | None, latency: float | None) -> Comp
     # Unknown strings are never echoed. Only migration identifiers are safe here.
     safe_revision = revision if revision and re.fullmatch(r"\d{8}_\d{4}", revision) else None
     code, state = Code.MIGRATION_UNKNOWN, Status.UNKNOWN
-    if revision == EXPECTED_SCHEMA_REVISION:
+    if revision in COMPATIBLE_SCHEMA_REVISIONS:
         code, state = Code.MIGRATION_OK, Status.OK
     elif revision in SCHEMA_REVISIONS:
         code, state = Code.MIGRATION_BEHIND, Status.ERROR

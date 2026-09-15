@@ -11,6 +11,7 @@ from app.core.config import Environment
 from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionStatus
 
 EXPECTED_SCHEMA_REVISION = "20260915_0010"
+COMPATIBLE_SCHEMA_REVISIONS = ("20260915_0009", EXPECTED_SCHEMA_REVISION)
 SCHEMA_REVISIONS = (
     "20260901_0001", "20260901_0002", "20260901_0003",
     "20260902_0004", "20260902_0005", "20260903_0006", "20260904_0007",
