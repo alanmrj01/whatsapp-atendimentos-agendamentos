@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime
 
@@ -9,6 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
 from app.models.domain import TimestampMixin, UUIDPrimaryKeyMixin
+
+
+def billing_provider_environment() -> str:
+    value = os.getenv("BILLING_PROVIDER_ENVIRONMENT", "production").strip().lower()
+    return value if value in {"sandbox", "production"} else "production"
 
 
 class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -22,6 +28,10 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "payment_method IN ('credit_card', 'pix_automatic')",
             name="billing_checkout_payment_method_allowed",
+        ),
+        CheckConstraint(
+            "provider_environment IN ('sandbox', 'production')",
+            name="billing_checkout_provider_environment_allowed",
         ),
         CheckConstraint(
             "status IN ('creating', 'active', 'paid', 'canceled', 'expired', 'failed')",
@@ -40,6 +50,9 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     plan_code: Mapped[str] = mapped_column(String(16), nullable=False)
     billing_cycle: Mapped[str] = mapped_column(String(16), nullable=False)
     payment_method: Mapped[str] = mapped_column(String(24), nullable=False)
+    provider_environment: Mapped[str] = mapped_column(
+        String(16), default=billing_provider_environment, nullable=False
+    )
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(
         String(16), default="creating", server_default=text("'creating'"), nullable=False
@@ -69,6 +82,10 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="commercial_subscription_payment_method_allowed",
         ),
         CheckConstraint(
+            "provider_environment IN ('sandbox', 'production')",
+            name="commercial_subscription_provider_environment_allowed",
+        ),
+        CheckConstraint(
             "status IN ('active', 'past_due', 'canceled', 'suspended')",
             name="commercial_subscription_status_allowed",
         ),
@@ -90,6 +107,9 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     plan_code: Mapped[str] = mapped_column(String(16), nullable=False)
     billing_cycle: Mapped[str] = mapped_column(String(16), nullable=False)
     payment_method: Mapped[str] = mapped_column(String(24), nullable=False)
+    provider_environment: Mapped[str] = mapped_column(
+        String(16), default=billing_provider_environment, nullable=False
+    )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     provider_subscription_id: Mapped[str | None] = mapped_column(String(80))
     provider_authorization_id: Mapped[str | None] = mapped_column(String(100))
