@@ -14,6 +14,7 @@ class Offer:
     plan_name: str
     amount_cents: int
     asaas_cycle: str
+    asaas_pix_frequency: str
     users: int
     automatic_attendances: int
 
@@ -24,9 +25,24 @@ _PLAN = {
 }
 
 _CYCLE = {
-    "monthly": {"months": 1, "discount_bps": 0, "asaas": "MONTHLY"},
-    "quarterly": {"months": 3, "discount_bps": 1_000, "asaas": "QUARTERLY"},
-    "annual": {"months": 12, "discount_bps": 1_500, "asaas": "YEARLY"},
+    "monthly": {
+        "months": 1,
+        "discount_bps": 0,
+        "asaas": "MONTHLY",
+        "pix_frequency": "MONTHLY",
+    },
+    "quarterly": {
+        "months": 3,
+        "discount_bps": 1_000,
+        "asaas": "QUARTERLY",
+        "pix_frequency": "QUARTERLY",
+    },
+    "annual": {
+        "months": 12,
+        "discount_bps": 1_500,
+        "asaas": "YEARLY",
+        "pix_frequency": "ANNUALLY",
+    },
 }
 
 
@@ -43,6 +59,7 @@ def get_offer(plan: str, cycle: str) -> Offer:
         plan_name=plan_data["name"],
         amount_cents=amount,
         asaas_cycle=cycle_data["asaas"],
+        asaas_pix_frequency=cycle_data["pix_frequency"],
         users=plan_data["users"],
         automatic_attendances=plan_data["attendances"],
     )
