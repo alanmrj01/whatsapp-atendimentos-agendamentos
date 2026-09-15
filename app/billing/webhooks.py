@@ -151,6 +151,10 @@ class BillingWebhookService:
     def _event_storage_id(
         provider_environment: str, provider_event_id: str
     ) -> str:
+        # Preserve legacy production webhook IDs so already-processed
+        # production events remain idempotent after this rollout.
+        if provider_environment == "production":
+            return provider_event_id
         return f"{provider_environment}:{provider_event_id}"
 
     @staticmethod

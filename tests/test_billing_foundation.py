@@ -130,7 +130,7 @@ def test_webhook_event_id_is_namespaced_by_provider_environment() -> None:
     )
     assert (
         BillingWebhookService._event_storage_id("production", "evt_123")
-        == "production:evt_123"
+        == "evt_123"
     )
 
 
