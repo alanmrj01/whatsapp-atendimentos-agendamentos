@@ -100,11 +100,16 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class BillingWebhookEvent(Base):
     __tablename__ = "billing_webhook_events"
+    __table_args__ = (
+        Index("ix_billing_webhook_events_provider_payment_id", "provider_payment_id"),
+    )
 
     event_id: Mapped[str] = mapped_column(String(160), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(80), nullable=False)
     resource_type: Mapped[str | None] = mapped_column(String(32))
     resource_id: Mapped[str | None] = mapped_column(String(100))
+    provider_payment_id: Mapped[str | None] = mapped_column(String(100))
+    provider_authorization_id: Mapped[str | None] = mapped_column(String(100))
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
