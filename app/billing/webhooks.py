@@ -80,6 +80,9 @@ class BillingWebhookService:
         resource_id = resource.get("id") if isinstance(resource, dict) else None
         if not isinstance(resource_id, str) or len(resource_id) > 100:
             resource_id = None
+        provider_payment_id, provider_authorization_id = self._pix_instruction_refs(
+            event_type, resource
+        )
 
         if existing is None:
             existing = BillingWebhookEvent(
@@ -87,9 +90,14 @@ class BillingWebhookService:
                 event_type=event_type,
                 resource_type=resource_type,
                 resource_id=resource_id,
+                provider_payment_id=provider_payment_id,
+                provider_authorization_id=provider_authorization_id,
             )
             self.db.add(existing)
             await self.db.commit()
+        else:
+            existing.provider_payment_id = provider_payment_id
+            existing.provider_authorization_id = provider_authorization_id
 
         if event_type in CHECKOUT_EVENTS:
             await self._checkout(event_type, resource)
@@ -99,8 +107,8 @@ class BillingWebhookService:
             await self.billing.apply_payment_event(event_type, resource)
         elif event_type in PIX_AUTHORIZATION_EVENTS:
             await self.billing.apply_pix_authorization_event(event_type, resource)
-        # Payment-instruction events are persisted for observability/idempotency.
-        # Financial access is changed only by authorization/payment events.
+        # Instruction events correlate authorization -> payment. Access changes only
+        # after the authorization/payment lifecycle confirms the financial event.
 
         existing.processed_at = datetime.now(UTC)
         await self.db.commit()
@@ -127,6 +135,23 @@ class BillingWebhookService:
         elif event_type == "CHECKOUT_EXPIRED":
             local.status = "expired"
         await self.db.commit()
+
+    @staticmethod
+    def _pix_instruction_refs(event_type: str, resource: dict) -> tuple[str | None, str | None]:
+        if event_type not in PIX_PAYMENT_INSTRUCTION_EVENTS:
+            return None, None
+        payment_id = resource.get("paymentId") or resource.get("payment")
+        authorization = resource.get("authorization")
+        authorization_id = authorization.get("id") if isinstance(authorization, dict) else None
+        if not isinstance(payment_id, str) or not payment_id or len(payment_id) > 100:
+            payment_id = None
+        if (
+            not isinstance(authorization_id, str)
+            or not authorization_id
+            or len(authorization_id) > 100
+        ):
+            authorization_id = None
+        return payment_id, authorization_id
 
     @staticmethod
     def _resource(payload: dict, event_type: str) -> tuple[str, dict]:
