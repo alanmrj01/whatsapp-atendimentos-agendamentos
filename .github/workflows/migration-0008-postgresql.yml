@@ -1,13 +1,20 @@
-name: PostgreSQL migration 0008
+name: PostgreSQL migration validation
 
 on:
   pull_request:
     paths:
       - 'alembic/**'
-      - 'app/models/domain.py'
+      - 'app/api/operational_pwa.py'
+      - 'app/auth/**'
+      - 'app/models/**'
+      - 'app/platform_admin/**'
       - 'tests/integration/test_migration_0008_postgresql.py'
       - 'tests/integration/test_operational_pwa_postgresql.py'
       - 'tests/test_operational_migration_0008.py'
+      - 'tests/test_operational_pwa.py'
+      - 'tests/test_access_history.py'
+      - 'tests/test_business_access_migration.py'
+      - 'tests/test_migration.py'
       - 'requirements*.txt'
       - '.github/workflows/migration-0008-postgresql.yml'
   workflow_dispatch:
@@ -16,7 +23,7 @@ permissions:
   contents: read
 
 jobs:
-  migration-0008:
+  migration-validation:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -57,9 +64,12 @@ jobs:
           tests/integration/test_migration_0008_postgresql.py::test_migration_0008_roundtrip_preserves_pending_status_and_notes
           -q -p no:cacheprovider
 
-      - name: Directed migration and operational tests
+      - name: Access history and directed operational tests
         run: >-
           pytest
+          tests/test_access_history.py
+          tests/test_business_access_migration.py
+          tests/test_migration.py
           tests/test_operational_migration_0008.py
           tests/test_operational_pwa.py
           -q -p no:cacheprovider
