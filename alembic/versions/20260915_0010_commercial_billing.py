@@ -25,6 +25,7 @@ def upgrade() -> None:
         sa.Column("plan_code", sa.String(length=16), nullable=False),
         sa.Column("billing_cycle", sa.String(length=16), nullable=False),
         sa.Column("payment_method", sa.String(length=24), nullable=False),
+        sa.Column("provider_environment", sa.String(length=16), nullable=False),
         sa.Column("amount_cents", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'creating'"), nullable=False),
         sa.Column("provider_checkout_id", sa.String(length=80), nullable=True),
@@ -47,6 +48,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "payment_method IN ('credit_card', 'pix_automatic')",
             name="billing_checkout_payment_method_allowed",
+        ),
+        sa.CheckConstraint(
+            "provider_environment IN ('sandbox', 'production')",
+            name="billing_checkout_provider_environment_allowed",
         ),
         sa.CheckConstraint(
             "status IN ('creating', 'active', 'paid', 'canceled', 'expired', 'failed')",
@@ -79,6 +84,7 @@ def upgrade() -> None:
         sa.Column("plan_code", sa.String(length=16), nullable=False),
         sa.Column("billing_cycle", sa.String(length=16), nullable=False),
         sa.Column("payment_method", sa.String(length=24), nullable=False),
+        sa.Column("provider_environment", sa.String(length=16), nullable=False),
         sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("provider_subscription_id", sa.String(length=80), nullable=True),
         sa.Column("provider_authorization_id", sa.String(length=100), nullable=True),
@@ -95,6 +101,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "payment_method IN ('credit_card', 'pix_automatic')",
             name="commercial_subscription_payment_method_allowed",
+        ),
+        sa.CheckConstraint(
+            "provider_environment IN ('sandbox', 'production')",
+            name="commercial_subscription_provider_environment_allowed",
         ),
         sa.CheckConstraint(
             "status IN ('active', 'past_due', 'canceled', 'suspended')",
