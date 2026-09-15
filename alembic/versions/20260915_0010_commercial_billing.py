@@ -133,13 +133,24 @@ def upgrade() -> None:
         sa.Column("event_type", sa.String(length=80), nullable=False),
         sa.Column("resource_type", sa.String(length=32), nullable=True),
         sa.Column("resource_id", sa.String(length=100), nullable=True),
+        sa.Column("provider_payment_id", sa.String(length=100), nullable=True),
+        sa.Column("provider_authorization_id", sa.String(length=100), nullable=True),
         sa.Column("received_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("event_id"),
     )
+    op.create_index(
+        "ix_billing_webhook_events_provider_payment_id",
+        "billing_webhook_events",
+        ["provider_payment_id"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_billing_webhook_events_provider_payment_id",
+        table_name="billing_webhook_events",
+    )
     op.drop_table("billing_webhook_events")
     op.drop_index(
         "ix_commercial_subscriptions_provider_authorization_id",
