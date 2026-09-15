@@ -1,11 +1,12 @@
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from app.billing.asaas import AsaasGateway
 from app.billing.catalog import get_offer
-from app.billing.service import _cycle_end
+from app.billing.schemas import CheckoutCreateRequest
+from app.billing.service import _cycle_end, _payment_value_cents
 from app.billing.webhooks import SUPPORTED_EVENTS
 from app.core.config import AsaasConfigurationError, Environment, Settings
 from app.models import BillingCheckout, BillingWebhookEvent, CommercialSubscription
@@ -24,6 +25,48 @@ def test_server_side_catalog_uses_approved_prices_and_cycles() -> None:
     assert get_offer("plus", "annual").amount_cents == 302_940
     assert get_offer("basic", "quarterly").asaas_cycle == "QUARTERLY"
     assert get_offer("plus", "annual").asaas_cycle == "YEARLY"
+    assert get_offer("basic", "monthly").asaas_pix_frequency == "MONTHLY"
+    assert get_offer("basic", "quarterly").asaas_pix_frequency == "QUARTERLY"
+    assert get_offer("plus", "annual").asaas_pix_frequency == "ANNUALLY"
+
+
+def test_pix_checkout_requires_only_minimum_payer_identity() -> None:
+    request = CheckoutCreateRequest(
+        plan="basic",
+        cycle="quarterly",
+        payment_method="pix_automatic",
+        return_origin="https://alovia.netlify.app",
+        payer_name="  Empresa   Teste  ",
+        payer_cpf_cnpj="12.345.678/0001-95",
+    )
+    assert request.payer_name == "Empresa Teste"
+    assert request.payer_cpf_cnpj == "12345678000195"
+
+    with pytest.raises(ValidationError):
+        CheckoutCreateRequest(
+            plan="basic",
+            cycle="quarterly",
+            payment_method="pix_automatic",
+            return_origin="https://alovia.netlify.app",
+        )
+
+
+def test_card_checkout_does_not_require_document() -> None:
+    request = CheckoutCreateRequest(
+        plan="plus",
+        cycle="annual",
+        payment_method="credit_card",
+        return_origin="https://alovia.netlify.app",
+    )
+    assert request.payer_name is None
+    assert request.payer_cpf_cnpj is None
+
+
+def test_provider_amount_is_compared_in_cents_without_float_trust() -> None:
+    assert _payment_value_cents("531.90") == 53_190
+    assert _payment_value_cents(297) == 29_700
+    assert _payment_value_cents("0") is None
+    assert _payment_value_cents("invalid") is None
 
 
 def test_asaas_key_selects_matching_environment_without_frontend_secret() -> None:
@@ -64,10 +107,13 @@ def test_cycle_end_uses_calendar_months() -> None:
     assert _cycle_end(anchor, "annual") == datetime(2027, 1, 31, 12, 0, tzinfo=UTC)
 
 
-def test_billing_tables_are_separate_from_admin_entitlement() -> None:
+def test_billing_tables_and_webhooks_cover_both_payment_methods() -> None:
     assert BillingCheckout.__tablename__ == "billing_checkouts"
     assert CommercialSubscription.__tablename__ == "commercial_subscriptions"
     assert BillingWebhookEvent.__tablename__ == "billing_webhook_events"
     assert "CHECKOUT_PAID" in SUPPORTED_EVENTS
     assert "SUBSCRIPTION_CREATED" in SUPPORTED_EVENTS
     assert "PAYMENT_CONFIRMED" in SUPPORTED_EVENTS
+    assert "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED" in SUPPORTED_EVENTS
+    assert "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED" in SUPPORTED_EVENTS
+    assert "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_SCHEDULED" in SUPPORTED_EVENTS
