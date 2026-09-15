@@ -6,10 +6,12 @@ from uuid import UUID, uuid4
 from anyio import to_thread
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import hash_password
+from app.auth.schemas import AccessMode
 from app.models import (
     Business,
     BusinessAccess,
@@ -19,6 +21,7 @@ from app.models import (
 )
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
+    PlatformBusinessAccessResponse,
     PlatformBusinessListResponse,
     PlatformBusinessResponse,
     PlatformBusinessStatusResponse,
@@ -68,7 +71,9 @@ class PlatformAdminService:
                 BusinessAccess.business_id.in_(ids)
             )
         )
-        access_modes = dict(access_rows)
+        access_modes = {
+            business_id: access_mode for business_id, access_mode in access_rows
+        }
 
         return PlatformBusinessListResponse(businesses=[
             PlatformBusinessResponse(
@@ -177,3 +182,27 @@ class PlatformAdminService:
         business.active = active
         await self.db.commit()
         return PlatformBusinessStatusResponse(id=business.id, active=business.active)
+
+    async def set_business_access(
+        self, business_id: UUID, access_mode: AccessMode
+    ) -> PlatformBusinessAccessResponse:
+        business = await self.db.get(Business, business_id)
+        if business is None:
+            raise HTTPException(404, "Business not found")
+
+        statement = (
+            insert(BusinessAccess)
+            .values(business_id=business_id, access_mode=access_mode)
+            .on_conflict_do_update(
+                index_elements=[BusinessAccess.business_id],
+                set_={"access_mode": access_mode},
+            )
+            .returning(BusinessAccess.business_id, BusinessAccess.access_mode)
+        )
+        result = await self.db.execute(statement)
+        updated_business_id, updated_access_mode = result.one()
+        await self.db.commit()
+        return PlatformBusinessAccessResponse(
+            business_id=updated_business_id,
+            access_mode=updated_access_mode,
+        )

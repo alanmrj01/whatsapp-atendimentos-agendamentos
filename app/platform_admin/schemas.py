@@ -44,6 +44,10 @@ class PlatformBusinessStatusRequest(StrictRequest):
     active: bool = Field(strict=True)
 
 
+class PlatformBusinessAccessRequest(StrictRequest):
+    access_mode: AccessMode
+
+
 class PlatformBusinessResponse(BaseModel):
     id: UUID
     name: str
@@ -61,3 +65,8 @@ class PlatformBusinessListResponse(BaseModel):
 class PlatformBusinessStatusResponse(BaseModel):
     id: UUID
     active: bool
+
+
+class PlatformBusinessAccessResponse(BaseModel):
+    business_id: UUID
+    access_mode: AccessMode

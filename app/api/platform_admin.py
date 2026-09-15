@@ -8,6 +8,8 @@ from app.auth.dependencies import require_origin, require_super_admin
 from app.auth.service import Principal
 from app.core.database import get_db
 from app.platform_admin.schemas import (
+    PlatformBusinessAccessRequest,
+    PlatformBusinessAccessResponse,
     PlatformBusinessCreateRequest,
     PlatformBusinessListResponse,
     PlatformBusinessResponse,
@@ -53,3 +55,19 @@ async def set_business_active(
     db: Db,
 ) -> PlatformBusinessStatusResponse:
     return await PlatformAdminService(db).set_business_active(business_id, payload.active)
+
+
+@router.patch(
+    "/businesses/{business_id}/access",
+    response_model=PlatformBusinessAccessResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def set_business_access(
+    business_id: UUID,
+    payload: PlatformBusinessAccessRequest,
+    _: Admin,
+    db: Db,
+) -> PlatformBusinessAccessResponse:
+    return await PlatformAdminService(db).set_business_access(
+        business_id, payload.access_mode
+    )
