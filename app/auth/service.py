@@ -26,6 +26,7 @@ from app.models import (
     CommercialSubscription,
     User,
 )
+from app.models.billing import billing_provider_environment
 
 
 def unauthorized() -> HTTPException:
@@ -64,6 +65,7 @@ class Principal:
 class AuthService:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.billing_environment = billing_provider_environment()
 
     async def memberships(self, user: User) -> list[MembershipResponse]:
         if user.platform_role == "super_admin":
@@ -72,13 +74,15 @@ class AuthService:
         commercial_access = exists(
             select(CommercialSubscription.id).where(
                 CommercialSubscription.business_id == Business.id,
+                CommercialSubscription.provider_environment == self.billing_environment,
                 CommercialSubscription.status.in_(("active", "past_due", "canceled")),
                 CommercialSubscription.access_until > func.now(),
             )
         )
         # BusinessAccess remains the administrative override only. A valid
         # commercial subscription is OR'ed at read time so revoking one source
-        # never destroys or falsifies the other.
+        # never destroys or falsifies the other. Sandbox subscriptions are
+        # considered only by runtimes explicitly configured for Sandbox.
         effective_access = case(
             (
                 or_(
