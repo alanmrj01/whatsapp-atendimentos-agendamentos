@@ -19,6 +19,7 @@ from app.billing.schemas import (
     SubscriptionStatusResponse,
 )
 from app.models import BillingCheckout, BusinessAccess, CommercialSubscription
+from app.models.billing import billing_provider_environment
 
 
 BRAZIL_TZ = ZoneInfo("America/Sao_Paulo")
@@ -28,6 +29,7 @@ class BillingService:
     def __init__(self, db: AsyncSession, gateway: AsaasGateway) -> None:
         self.db = db
         self.gateway = gateway
+        self.provider_environment = billing_provider_environment()
 
     async def create_checkout(
         self,
@@ -42,7 +44,10 @@ class BillingService:
             raise HTTPException(400, "Invalid return origin")
         offer = get_offer(payload.plan, payload.cycle)
         existing = await self.db.scalar(
-            select(BillingCheckout).where(BillingCheckout.idempotency_key == idempotency_key)
+            select(BillingCheckout).where(
+                BillingCheckout.idempotency_key == idempotency_key,
+                BillingCheckout.provider_environment == self.provider_environment,
+            )
         )
         if existing is not None:
             if (
@@ -63,6 +68,7 @@ class BillingService:
             plan_code=offer.plan,
             billing_cycle=offer.cycle,
             payment_method=payload.payment_method,
+            provider_environment=self.provider_environment,
             amount_cents=offer.amount_cents,
             status="creating",
             expires_at=datetime.now(UTC) + timedelta(minutes=60),
@@ -171,7 +177,11 @@ class BillingService:
         self, *, business_id: UUID, checkout_id: UUID
     ) -> CheckoutStatusResponse:
         checkout = await self.db.get(BillingCheckout, checkout_id)
-        if checkout is None or checkout.business_id != business_id:
+        if (
+            checkout is None
+            or checkout.business_id != business_id
+            or checkout.provider_environment != self.provider_environment
+        ):
             raise HTTPException(404, "Checkout not found")
         return CheckoutStatusResponse(
             checkout_id=checkout.id,
@@ -184,7 +194,10 @@ class BillingService:
     async def subscription_status(self, *, business_id: UUID) -> SubscriptionStatusResponse:
         subscription = await self.db.scalar(
             select(CommercialSubscription)
-            .where(CommercialSubscription.business_id == business_id)
+            .where(
+                CommercialSubscription.business_id == business_id,
+                CommercialSubscription.provider_environment == self.provider_environment,
+            )
             .order_by(CommercialSubscription.created_at.desc())
             .limit(1)
         )
@@ -201,7 +214,8 @@ class BillingService:
     async def activate_paid_checkout(self, provider_checkout_id: str) -> None:
         checkout = await self.db.scalar(
             select(BillingCheckout).where(
-                BillingCheckout.provider_checkout_id == provider_checkout_id
+                BillingCheckout.provider_checkout_id == provider_checkout_id,
+                BillingCheckout.provider_environment == self.provider_environment,
             )
         )
         if checkout is None or checkout.payment_method != "credit_card":
@@ -242,6 +256,7 @@ class BillingService:
                 plan_code=checkout.plan_code,
                 billing_cycle=checkout.billing_cycle,
                 payment_method="credit_card",
+                provider_environment=self.provider_environment,
                 status="active",
                 provider_subscription_id=provider_subscription_id,
                 provider_customer_id=provider_customer_id,
@@ -267,6 +282,7 @@ class BillingService:
             select(BillingCheckout).where(
                 BillingCheckout.provider_authorization_id == provider_id,
                 BillingCheckout.payment_method == "pix_automatic",
+                BillingCheckout.provider_environment == self.provider_environment,
             )
         )
         if checkout is None:
@@ -286,6 +302,7 @@ class BillingService:
                     plan_code=checkout.plan_code,
                     billing_cycle=checkout.billing_cycle,
                     payment_method="pix_automatic",
+                    provider_environment=self.provider_environment,
                     status="active",
                     provider_authorization_id=provider_id,
                     provider_customer_id=checkout.provider_customer_id,
@@ -335,7 +352,8 @@ class BillingService:
             return
         subscription = await self.db.scalar(
             select(CommercialSubscription).where(
-                CommercialSubscription.provider_subscription_id == provider_id
+                CommercialSubscription.provider_subscription_id == provider_id,
+                CommercialSubscription.provider_environment == self.provider_environment,
             )
         )
         if subscription is None:
@@ -386,7 +404,8 @@ class BillingService:
         if isinstance(provider_subscription_id, str) and provider_subscription_id:
             subscription = await self.db.scalar(
                 select(CommercialSubscription).where(
-                    CommercialSubscription.provider_subscription_id == provider_subscription_id
+                    CommercialSubscription.provider_subscription_id == provider_subscription_id,
+                    CommercialSubscription.provider_environment == self.provider_environment,
                 )
             )
             if subscription is not None:
@@ -396,7 +415,8 @@ class BillingService:
         if isinstance(provider_authorization_id, str) and provider_authorization_id:
             subscription = await self.db.scalar(
                 select(CommercialSubscription).where(
-                    CommercialSubscription.provider_authorization_id == provider_authorization_id
+                    CommercialSubscription.provider_authorization_id == provider_authorization_id,
+                    CommercialSubscription.provider_environment == self.provider_environment,
                 )
             )
             if subscription is not None:
@@ -410,6 +430,7 @@ class BillingService:
             .where(
                 CommercialSubscription.provider_customer_id == customer_id,
                 CommercialSubscription.payment_method == "pix_automatic",
+                CommercialSubscription.provider_environment == self.provider_environment,
             )
             .order_by(CommercialSubscription.created_at.desc())
             .limit(1)
@@ -420,11 +441,15 @@ class BillingService:
     ) -> CommercialSubscription | None:
         return await self.db.scalar(
             select(CommercialSubscription).where(
-                CommercialSubscription.checkout_id == checkout_id
+                CommercialSubscription.checkout_id == checkout_id,
+                CommercialSubscription.provider_environment == self.provider_environment,
             )
         )
 
     async def _record_operational_history(self, business_id: UUID) -> None:
+        # Sandbox billing must never change the real operational-history flag.
+        if self.provider_environment != "production":
+            return
         access = await self.db.get(BusinessAccess, business_id)
         if access is None:
             self.db.add(

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -6,7 +7,7 @@ from pydantic import SecretStr, ValidationError
 from app.billing.asaas import AsaasGateway
 from app.billing.catalog import get_offer
 from app.billing.schemas import CheckoutCreateRequest
-from app.billing.service import _cycle_end, _payment_value_cents
+from app.billing.service import BillingService, _cycle_end, _payment_value_cents
 from app.billing.webhooks import SUPPORTED_EVENTS
 from app.core.config import AsaasConfigurationError, Environment, Settings
 from app.models import BillingCheckout, BillingWebhookEvent, CommercialSubscription
@@ -105,6 +106,20 @@ def test_cycle_end_uses_calendar_months() -> None:
     assert _cycle_end(anchor, "monthly") == datetime(2026, 2, 28, 12, 0, tzinfo=UTC)
     assert _cycle_end(anchor, "quarterly") == datetime(2026, 4, 30, 12, 0, tzinfo=UTC)
     assert _cycle_end(anchor, "annual") == datetime(2027, 1, 31, 12, 0, tzinfo=UTC)
+
+
+
+@pytest.mark.asyncio
+async def test_sandbox_billing_never_marks_real_operational_history(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+
+    class DbMustNotBeTouched:
+        async def get(self, *args, **kwargs):
+            raise AssertionError("Sandbox attempted to mutate BusinessAccess")
+
+    service = BillingService(DbMustNotBeTouched(), object())
+    await service._record_operational_history(uuid4())
+
 
 
 def test_billing_tables_and_webhooks_cover_both_payment_methods() -> None:
