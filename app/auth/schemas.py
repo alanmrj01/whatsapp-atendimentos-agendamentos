@@ -71,6 +71,7 @@ class MembershipResponse(BaseModel):
     business_name: str
     role: MembershipRole
     access_mode: AccessMode = "free"
+    has_had_operational_access: bool = False
 
 
 class MeResponse(BaseModel):

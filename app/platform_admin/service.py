@@ -190,12 +190,27 @@ class PlatformAdminService:
         if business is None:
             raise HTTPException(404, "Business not found")
 
+        # Granting access permanently records that this tenant has operated with
+        # real data. Revoking access changes permissions only; it never clears the
+        # history flag and therefore never turns the tenant back into a demo.
+        history_on_update = (
+            True if access_mode == "paid" else BusinessAccess.has_had_operational_access
+        )
         statement = (
             insert(BusinessAccess)
-            .values(business_id=business_id, access_mode=access_mode)
+            # Missing access rows are legacy paid tenants, so an admin operation on
+            # one of them must preserve that real-operational history even on revoke.
+            .values(
+                business_id=business_id,
+                access_mode=access_mode,
+                has_had_operational_access=True,
+            )
             .on_conflict_do_update(
                 index_elements=[BusinessAccess.business_id],
-                set_={"access_mode": access_mode},
+                set_={
+                    "access_mode": access_mode,
+                    "has_had_operational_access": history_on_update,
+                },
             )
             .returning(BusinessAccess.business_id, BusinessAccess.access_mode)
         )

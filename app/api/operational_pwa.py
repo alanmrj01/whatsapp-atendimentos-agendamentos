@@ -54,13 +54,21 @@ AGENDA_ROLES = {*CONFIG_ROLES, MembershipRole.ATTENDANT}
 
 def _membership(principal: Principal) -> MembershipResponse:
     membership = principal.active_membership()
-    if membership.access_mode != "paid":
-        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "Paid plan required")
+    # A former paid/admin-granted tenant keeps read access to its own operational
+    # data. Only never-activated free tenants are demo-only and blocked here.
+    if (
+        membership.access_mode != "paid"
+        and not membership.has_had_operational_access
+    ):
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "Subscription required")
     return membership
 
 
 def _authorize(principal: Principal, roles: set[MembershipRole]) -> MembershipResponse:
     membership = _membership(principal)
+    # Operational history grants read-only access, never mutation rights.
+    if membership.access_mode != "paid":
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "Active subscription required")
     if membership.role not in roles:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Read-only access")
     return membership
