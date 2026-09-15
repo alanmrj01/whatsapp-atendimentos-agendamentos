@@ -46,6 +46,11 @@ class BusinessAccess(Base):
     access_mode: Mapped[str] = mapped_column(
         String(16), default="free", server_default=text("'free'"), nullable=False
     )
+    # Sticky history flag: once a business has had real operational access, revoking
+    # paid access must never turn it back into a demo account or overwrite its data.
+    has_had_operational_access: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
 
 
 class AuthSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):

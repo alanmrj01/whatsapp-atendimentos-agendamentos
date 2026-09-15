@@ -66,6 +66,9 @@ class AuthService:
                 BusinessUserMembership,
                 Business.name,
                 func.coalesce(BusinessAccess.access_mode, "paid"),
+                # Missing legacy access rows were historically treated as paid,
+                # so they must also be treated as having real operational history.
+                func.coalesce(BusinessAccess.has_had_operational_access, True),
             )
             .join(Business, Business.id == BusinessUserMembership.business_id)
             .outerjoin(BusinessAccess, BusinessAccess.business_id == Business.id)
@@ -78,8 +81,9 @@ class AuthService:
                 business_name=name,
                 role=MembershipRole(m.role),
                 access_mode=access_mode,
+                has_had_operational_access=has_had_operational_access,
             )
-            for m, name, access_mode in rows
+            for m, name, access_mode, has_had_operational_access in rows
         ]
 
     async def _select_default(self, user: User, session: AuthSession) -> None:
@@ -174,7 +178,11 @@ class AuthService:
             is_active=True,
             platform_role=None,
         )
-        access = BusinessAccess(business_id=business.id, access_mode="free")
+        access = BusinessAccess(
+            business_id=business.id,
+            access_mode="free",
+            has_had_operational_access=False,
+        )
         membership = BusinessUserMembership(
             user_id=user.id,
             business_id=business.id,
