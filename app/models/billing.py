@@ -26,6 +26,7 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("amount_cents > 0", name="billing_checkout_amount_positive"),
         Index("ix_billing_checkouts_business_id", "business_id"),
         Index("ix_billing_checkouts_provider_checkout_id", "provider_checkout_id", unique=True),
+        Index("ix_billing_checkouts_provider_authorization_id", "provider_authorization_id", unique=True),
     )
 
     business_id: Mapped[uuid.UUID] = mapped_column(
@@ -34,12 +35,17 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     idempotency_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, nullable=False)
     plan_code: Mapped[str] = mapped_column(String(16), nullable=False)
     billing_cycle: Mapped[str] = mapped_column(String(16), nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(24), nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(
         String(16), default="creating", server_default=text("'creating'"), nullable=False
     )
     provider_checkout_id: Mapped[str | None] = mapped_column(String(80))
     checkout_url: Mapped[str | None] = mapped_column(Text)
+    provider_authorization_id: Mapped[str | None] = mapped_column(String(100))
+    pix_conciliation_identifier: Mapped[str | None] = mapped_column(String(100))
+    pix_qr_payload: Mapped[str | None] = mapped_column(Text)
+    pix_qr_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     provider_customer_id: Mapped[str | None] = mapped_column(String(80))
@@ -59,11 +65,8 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="commercial_subscription_status_allowed",
         ),
         Index("ix_commercial_subscriptions_business_id", "business_id"),
-        Index(
-            "ix_commercial_subscriptions_provider_subscription_id",
-            "provider_subscription_id",
-            unique=True,
-        ),
+        Index("ix_commercial_subscriptions_provider_subscription_id", "provider_subscription_id", unique=True),
+        Index("ix_commercial_subscriptions_provider_authorization_id", "provider_authorization_id", unique=True),
     )
 
     business_id: Mapped[uuid.UUID] = mapped_column(
@@ -74,8 +77,10 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     plan_code: Mapped[str] = mapped_column(String(16), nullable=False)
     billing_cycle: Mapped[str] = mapped_column(String(16), nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(24), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
-    provider_subscription_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    provider_subscription_id: Mapped[str | None] = mapped_column(String(80))
+    provider_authorization_id: Mapped[str | None] = mapped_column(String(100))
     provider_customer_id: Mapped[str | None] = mapped_column(String(80))
     access_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
