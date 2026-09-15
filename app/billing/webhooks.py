@@ -30,7 +30,26 @@ PAYMENT_EVENTS = {
     "PAYMENT_CHARGEBACK_REQUESTED",
     "PAYMENT_AWAITING_CHARGEBACK_REVERSAL",
 }
-SUPPORTED_EVENTS = CHECKOUT_EVENTS | SUBSCRIPTION_EVENTS | PAYMENT_EVENTS
+PIX_AUTHORIZATION_EVENTS = {
+    "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CREATED",
+    "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED",
+    "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED",
+    "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_EXPIRED",
+    "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_REFUSED",
+}
+PIX_PAYMENT_INSTRUCTION_EVENTS = {
+    "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_CREATED",
+    "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_SCHEDULED",
+    "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_REFUSED",
+    "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_CANCELLED",
+}
+SUPPORTED_EVENTS = (
+    CHECKOUT_EVENTS
+    | SUBSCRIPTION_EVENTS
+    | PAYMENT_EVENTS
+    | PIX_AUTHORIZATION_EVENTS
+    | PIX_PAYMENT_INSTRUCTION_EVENTS
+)
 
 
 class BillingWebhookService:
@@ -78,6 +97,10 @@ class BillingWebhookService:
             await self.billing.apply_subscription_event(event_type, resource)
         elif event_type in PAYMENT_EVENTS:
             await self.billing.apply_payment_event(event_type, resource)
+        elif event_type in PIX_AUTHORIZATION_EVENTS:
+            await self.billing.apply_pix_authorization_event(event_type, resource)
+        # Payment-instruction events are persisted for observability/idempotency.
+        # Financial access is changed only by authorization/payment events.
 
         existing.processed_at = datetime.now(UTC)
         await self.db.commit()
@@ -113,5 +136,11 @@ class BillingWebhookService:
         if event_type in SUBSCRIPTION_EVENTS:
             resource = payload.get("subscription")
             return "subscription", resource if isinstance(resource, dict) else {}
+        if event_type in PIX_AUTHORIZATION_EVENTS:
+            resource = payload.get("authorization")
+            return "pix_authorization", resource if isinstance(resource, dict) else {}
+        if event_type in PIX_PAYMENT_INSTRUCTION_EVENTS:
+            resource = payload.get("paymentInstruction")
+            return "pix_payment_instruction", resource if isinstance(resource, dict) else {}
         resource = payload.get("payment")
         return "payment", resource if isinstance(resource, dict) else {}
