@@ -145,3 +145,49 @@ def test_billing_tables_and_webhooks_cover_both_payment_methods() -> None:
     assert "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED" in SUPPORTED_EVENTS
     assert "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED" in SUPPORTED_EVENTS
     assert "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_SCHEDULED" in SUPPORTED_EVENTS
+
+
+@pytest.mark.asyncio
+async def test_pix_automatic_sets_immediate_qr_expiration() -> None:
+    from types import SimpleNamespace
+
+    captured = {}
+
+    class Gateway:
+        async def find_customer(self, **kwargs):
+            return "cus_test"
+
+        async def create_customer(self, **kwargs):
+            raise AssertionError("Cliente existente não deveria ser recriado")
+
+        async def create_pix_authorization(self, payload):
+            captured.update(payload)
+            return SimpleNamespace(
+                authorization_id="auth_test",
+                payload="pix-payload",
+                conciliation_identifier="conciliation-test",
+                expires_at=None,
+            )
+
+    checkout = SimpleNamespace(
+        id=uuid4(),
+        business_id=uuid4(),
+        provider_customer_id=None,
+        provider_authorization_id=None,
+        pix_qr_payload=None,
+        pix_conciliation_identifier=None,
+        pix_qr_expires_at=None,
+        expires_at=None,
+    )
+
+    service = BillingService(object(), Gateway())
+
+    await service._prepare_pix_automatic(
+        checkout=checkout,
+        offer=get_offer("basic", "monthly"),
+        payer_name="Empresa Teste",
+        payer_cpf_cnpj="12345678000195",
+        payer_email="teste@example.com",
+    )
+
+    assert captured["immediateQrCode"] == {"expirationSeconds": 3600}
