@@ -190,4 +190,37 @@ async def test_pix_automatic_sets_immediate_qr_expiration() -> None:
         payer_email="teste@example.com",
     )
 
-    assert captured["immediateQrCode"] == {"expirationSeconds": 3600}
+    assert captured["immediateQrCode"] == {
+        "originalValue": 197.0,
+        "expirationSeconds": 3600,
+    }
+
+
+
+@pytest.mark.asyncio
+async def test_pix_gateway_reads_top_level_payload_from_asaas_response() -> None:
+    gateway = AsaasGateway(
+        settings(
+            ASAAS_API_KEY=SecretStr("$aact_hmlg_example")
+        ).require_asaas_configuration()
+    )
+
+    async def fake_json_request(*args, **kwargs):
+        return {
+            "id": "auth_test_123",
+            "payload": "000201pix-copia-e-cola",
+            "encodedImage": "base64-image",
+            "immediateQrCode": {
+                "conciliationIdentifier": "conciliation-test",
+                "expirationDate": "2026-09-16 01:00:00",
+            },
+        }
+
+    gateway._json_request = fake_json_request  # type: ignore[method-assign]
+
+    result = await gateway.create_pix_authorization({})
+
+    assert result.authorization_id == "auth_test_123"
+    assert result.payload == "000201pix-copia-e-cola"
+    assert result.conciliation_identifier == "conciliation-test"
+    assert result.expires_at is not None

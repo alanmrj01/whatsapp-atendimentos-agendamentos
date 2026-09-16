@@ -112,7 +112,7 @@ class AsaasGateway:
             raise AsaasGatewayError("Asaas Pix Automatic response is invalid")
         if not isinstance(immediate, dict):
             raise AsaasGatewayError("Asaas Pix Automatic QR response is invalid")
-        qr_payload = immediate.get("payload")
+        qr_payload = data.get("payload")
         if not isinstance(qr_payload, str) or not qr_payload.strip() or len(qr_payload) > 8_000:
             raise AsaasGatewayError("Asaas Pix Automatic payload is invalid")
         conciliation = immediate.get("conciliationIdentifier")

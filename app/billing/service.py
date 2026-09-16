@@ -161,7 +161,10 @@ class BillingService:
                 "value": offer.amount_cents / 100,
                 "description": f"ALOVIA {offer.plan_name}",
                 "customerId": customer_id,
-                "immediateQrCode": {"expirationSeconds": 3600},
+                "immediateQrCode": {
+                    "originalValue": offer.amount_cents / 100,
+                    "expirationSeconds": 3600,
+                },
                 "paymentCreationMode": "SUBSCRIPTION",
                 "retryPolicy": "ALLOW_THREE_IN_SEVEN_DAYS",
             }
