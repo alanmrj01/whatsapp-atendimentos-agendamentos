@@ -5,7 +5,12 @@ on:
     paths:
       - 'alembic/**'
       - 'app/api/operational_pwa.py'
+      - 'app/api/billing.py'
+      - 'app/api/asaas_webhook.py'
       - 'app/auth/**'
+      - 'app/billing/**'
+      - 'app/core/config.py'
+      - 'app/main.py'
       - 'app/models/**'
       - 'app/platform_admin/**'
       - 'tests/integration/test_migration_0008_postgresql.py'
@@ -13,6 +18,7 @@ on:
       - 'tests/test_operational_migration_0008.py'
       - 'tests/test_operational_pwa.py'
       - 'tests/test_access_history.py'
+      - 'tests/test_billing_foundation.py'
       - 'tests/test_business_access_migration.py'
       - 'tests/test_migration.py'
       - 'requirements*.txt'
@@ -64,10 +70,11 @@ jobs:
           tests/integration/test_migration_0008_postgresql.py::test_migration_0008_roundtrip_preserves_pending_status_and_notes
           -q -p no:cacheprovider
 
-      - name: Access history and directed operational tests
+      - name: Access, billing and operational tests
         run: >-
           pytest
           tests/test_access_history.py
+          tests/test_billing_foundation.py
           tests/test_business_access_migration.py
           tests/test_migration.py
           tests/test_operational_migration_0008.py

@@ -29,6 +29,10 @@ class CloudTasksConfigurationError(RuntimeError):
     """Erro seguro para configuração ausente do Cloud Tasks."""
 
 
+class AsaasConfigurationError(RuntimeError):
+    """Erro seguro para configuração ausente ou inválida do Asaas."""
+
+
 @dataclass(frozen=True, slots=True)
 class MetaEmbeddedSignupConfiguration:
     app_id: str
@@ -47,6 +51,13 @@ class CloudTasksConfiguration:
     target_url: str
     oidc_audience: str
     invoker_email: str
+
+
+@dataclass(frozen=True, slots=True)
+class AsaasConfiguration:
+    api_key: SecretStr
+    api_base_url: str
+    checkout_base_url: str
 
 
 class Settings(BaseSettings):
@@ -115,6 +126,12 @@ class Settings(BaseSettings):
     )
     meta_verify_token: SecretStr | None = Field(
         default=None, validation_alias="META_VERIFY_TOKEN"
+    )
+    asaas_api_key: SecretStr | None = Field(
+        default=None, validation_alias="ASAAS_API_KEY"
+    )
+    asaas_webhook_token: SecretStr | None = Field(
+        default=None, validation_alias="ASAAS_WEBHOOK_TOKEN"
     )
     gcp_project_id: str | None = Field(
         default=None, validation_alias="GCP_PROJECT_ID"
@@ -210,6 +227,28 @@ class Settings(BaseSettings):
 
     def require_meta_verify_token(self) -> str:
         return self._require_meta_secret(self.meta_verify_token)
+
+    def require_asaas_configuration(self) -> AsaasConfiguration:
+        raw = self.asaas_api_key.get_secret_value().strip() if self.asaas_api_key else ""
+        if raw.startswith("$aact_hmlg_"):
+            api_base_url = "https://api-sandbox.asaas.com/v3"
+            checkout_base_url = "https://sandbox.asaas.com"
+        elif raw.startswith("$aact_prod_"):
+            api_base_url = "https://api.asaas.com/v3"
+            checkout_base_url = "https://asaas.com"
+        else:
+            raise AsaasConfigurationError("Asaas API key is not configured")
+        return AsaasConfiguration(
+            api_key=SecretStr(raw),
+            api_base_url=api_base_url,
+            checkout_base_url=checkout_base_url,
+        )
+
+    def require_asaas_webhook_token(self) -> str:
+        raw = self.asaas_webhook_token.get_secret_value().strip() if self.asaas_webhook_token else ""
+        if len(raw) < 32 or len(raw) > 255:
+            raise AsaasConfigurationError("Asaas webhook token is not configured")
+        return raw
 
     def require_meta_embedded_signup_configuration(
         self,
