@@ -18,10 +18,11 @@ ACCESS_HISTORY_MIGRATION_PATH = (
 )
 
 
-def test_access_history_is_current_alembic_head() -> None:
+def test_access_history_is_followed_by_commercial_billing_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260915_0009"]
+    assert script.get_heads() == ["20260915_0010"]
+    assert script.get_revision("20260915_0010").down_revision == "20260915_0009"
 
 
 def test_business_access_migration_preserves_existing_tenants_as_paid() -> None:

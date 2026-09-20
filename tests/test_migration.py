@@ -68,11 +68,11 @@ def render_migration_sql(
     return output.getvalue()
 
 
-def test_access_history_migration_is_the_only_alembic_head() -> None:
+def test_commercial_billing_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260915_0009"]
+    assert script.get_heads() == ["20260915_0010"]
 
 
 def test_previous_migrations_remain_byte_identical() -> None:
