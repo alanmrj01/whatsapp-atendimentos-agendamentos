@@ -16,6 +16,7 @@ from app.auth.schemas import (
     MembershipResponse,
     MembershipRole,
     MetaEmbeddedSignupCompleteRequest,
+    MetaEmbeddedSignupTelemetryRequest,
 )
 from app.core.config import MetaEmbeddedSignupConfiguration, Settings
 from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionStatus
@@ -134,6 +135,56 @@ async def test_only_paid_owner_and_admin_can_start_embedded_signup(
                 EmptyRequest(), FakePrincipal(role=role), settings(), object()
             )
         assert blocked.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_client_telemetry_is_sanitized_and_access_controlled(caplog) -> None:
+    caplog.set_level(logging.INFO)
+    payload = MetaEmbeddedSignupTelemetryRequest(
+        stage="login_callback_received",
+        authorization_code_received=False,
+        waba_id_received=True,
+    )
+
+    response = await public_pwa.meta_embedded_signup_telemetry(
+        payload, FakePrincipal()
+    )
+
+    assert response.status_code == 204
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "meta_embedded_signup_client_progress"
+    )
+    assert record.stage == "login_callback_received"
+    assert record.authorization_code_received is False
+    assert record.waba_id_received is True
+    assert RAW_CODE not in caplog.text
+    assert RAW_TOKEN not in caplog.text
+
+    with pytest.raises(HTTPException) as free:
+        await public_pwa.meta_embedded_signup_telemetry(
+            payload, FakePrincipal("free")
+        )
+    assert free.value.status_code == 402
+
+    with pytest.raises(HTTPException) as read_only:
+        await public_pwa.meta_embedded_signup_telemetry(
+            payload, FakePrincipal(role=MembershipRole.VIEWER)
+        )
+    assert read_only.value.status_code == 403
+
+
+def test_client_telemetry_contract_rejects_unknown_or_sensitive_fields() -> None:
+    with pytest.raises(ValidationError):
+        MetaEmbeddedSignupTelemetryRequest(
+            stage="unknown",
+        )
+    for sensitive in ("authorization_code", "access_token", "app_secret"):
+        with pytest.raises(ValidationError):
+            MetaEmbeddedSignupTelemetryRequest.model_validate(
+                {"stage": "sdk_ready", sensitive: "private"}
+            )
 
 
 def graph_transport(*, waba_id: str = WABA_ID, phone_id: str = PHONE_ID):

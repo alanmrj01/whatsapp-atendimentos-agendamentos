@@ -105,6 +105,33 @@ class MetaEmbeddedSignupStartResponse(BaseModel):
     mode: Literal["coexistence"] = "coexistence"
 
 
+MetaEmbeddedSignupTelemetryStage = Literal[
+    "sdk_ready",
+    "login_opened",
+    "login_callback_received",
+    "wa_session_event_received",
+    "intermediate_step_received",
+    "page_hidden",
+    "page_visible",
+    "window_focus",
+    "pageshow",
+    "popup_closed",
+    "embedded_signup_ready_to_complete",
+    "complete_request_started",
+    "complete_request_succeeded",
+    "complete_request_failed",
+    "timeout",
+]
+
+
+class MetaEmbeddedSignupTelemetryRequest(StrictRequest):
+    stage: MetaEmbeddedSignupTelemetryStage
+    authorization_code_received: bool | None = Field(default=None, strict=True)
+    waba_id_received: bool | None = Field(default=None, strict=True)
+    phone_number_id_received: bool | None = Field(default=None, strict=True)
+    intermediate_step_received: bool | None = Field(default=None, strict=True)
+
+
 class MetaEmbeddedSignupCompleteRequest(StrictRequest):
     authorization_code: SecretStr = Field(min_length=1, max_length=4096)
     waba_id: str = Field(min_length=1, max_length=32)

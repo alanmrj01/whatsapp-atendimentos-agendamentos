@@ -18,6 +18,7 @@ from app.auth.schemas import (
     LoginRequest,
     MetaEmbeddedSignupCompleteRequest,
     MetaEmbeddedSignupStartResponse,
+    MetaEmbeddedSignupTelemetryRequest,
     MeResponse,
     MembershipRole,
     PublicConnectionResponse,
@@ -258,6 +259,28 @@ async def start_meta_embedded_signup(
 
 
 @router.post(
+    "/whatsapp/onboarding/embedded-signup/telemetry",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def meta_embedded_signup_telemetry(
+    payload: MetaEmbeddedSignupTelemetryRequest,
+    principal: Identity,
+) -> Response:
+    _require_paid_whatsapp_administrator(principal)
+    fields = {
+        name: value
+        for name, value in payload.model_dump(exclude={"stage"}).items()
+        if value is not None
+    }
+    logger.info(
+        "meta_embedded_signup_client_progress",
+        extra={"stage": payload.stage, **fields},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
     "/whatsapp/onboarding/embedded-signup/complete",
     response_model=PublicConnectionResponse,
     response_model_exclude_none=True,
@@ -272,6 +295,7 @@ async def complete_meta_embedded_signup(
     business = _require_paid_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
     gateway: MetaEmbeddedSignupGateway | None = None
+    completed = False
     logger.info(
         "meta_embedded_signup_progress",
         extra={
@@ -296,6 +320,7 @@ async def complete_meta_embedded_signup(
             phone_number_id_hint=payload.phone_number_id,
         )
         await db.commit()
+        completed = True
     except HTTPException:
         await db.rollback()
         raise
@@ -324,6 +349,9 @@ async def complete_meta_embedded_signup(
     finally:
         if gateway is not None:
             await gateway.aclose()
+        _log_embedded_signup_stage(
+            "complete_request_succeeded" if completed else "complete_request_failed"
+        )
     return PublicConnectionResponse(
         status=view.status.value,
         mode=view.mode.value,
@@ -335,4 +363,11 @@ def _log_embedded_signup_rejection(exc: Exception) -> None:
     logger.info(
         "meta_embedded_signup_rejected",
         extra={"error_type": type(exc).__name__},
+    )
+
+
+def _log_embedded_signup_stage(stage: str) -> None:
+    logger.info(
+        "meta_embedded_signup_progress",
+        extra={"stage": stage},
     )
