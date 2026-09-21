@@ -298,7 +298,12 @@ async def _handle_service(
         matched = _service_for_interpretation(services, interpretation)
         service_id = uuid.UUID(matched.id) if matched is not None else None
     if service_id is None or not _option_exists(services, str(service_id)):
-        if inbound.body and inbound.body.strip():
+        if (
+            inbound.body
+            and inbound.body.strip()
+            and interpretation is not None
+            and interpretation.intent is ConversationIntent.UNKNOWN
+        ):
             return _transition(
                 ConversationState.BOOKING_SERVICE,
                 context,
