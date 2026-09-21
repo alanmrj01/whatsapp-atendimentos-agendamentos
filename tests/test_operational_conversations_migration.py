@@ -16,7 +16,8 @@ MIGRATION_PATH = (
 def test_operational_conversations_migration_is_head_after_restored_0010() -> None:
     script = ScriptDirectory.from_config(Config(str(PROJECT_ROOT / "alembic.ini")))
 
-    assert script.get_heads() == ["20260921_0011"]
+    assert script.get_heads() == ["20260921_0012"]
+    assert script.get_revision("20260921_0012").down_revision == "20260921_0011"
     assert script.get_revision("20260921_0011").down_revision == "20260915_0010"
     assert script.get_revision("20260915_0010").down_revision == "20260915_0009"
 
