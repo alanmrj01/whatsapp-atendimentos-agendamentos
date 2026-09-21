@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.automation.domain import ExclusionMode
 from app.automation.service import (
     AutomationAdministrationService,
     AutomationPolicyService,
@@ -18,6 +19,7 @@ from app.automation.service import (
 from app.models import (
     Appointment,
     Business,
+    BusinessAutomationExclusion,
     BusinessWhatsAppConnection,
     Conversation,
     Customer,
@@ -31,12 +33,16 @@ from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
     AppointmentView,
+    AssistantExclusionCreate,
+    AssistantExclusionView,
     AutomationSettingsUpdate,
     AutomationSettingsView,
     BusinessUpdate,
     BusinessView,
     ConversationDetail,
     ConversationAutomationUpdate,
+    ConversationPinUpdate,
+    ConversationReadUpdate,
     ConversationView,
     CustomerNameUpdate,
     CustomerCreate,
@@ -58,7 +64,11 @@ from app.operations.schemas import (
     WorkingHoursView,
 )
 from app.repositories.automation import AutomationRepository
-from app.schemas.automation import BusinessAutomationSettingsUpdate
+from app.schemas.automation import (
+    AutomationExclusionCreate,
+    AutomationExclusionUpdate,
+    BusinessAutomationSettingsUpdate,
+)
 from app.whatsapp.connections import WhatsAppConnectionStatus
 
 
@@ -299,6 +309,185 @@ class OperationalService:
             )
         await self.session.commit()
         return await self.get_conversation(business_id, conversation_id)
+
+    async def set_conversation_pinned(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: ConversationPinUpdate,
+    ) -> ConversationDetail:
+        conversation = await self.session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.archived_at.is_(None),
+            ).with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        conversation.pinned_at = datetime.now(UTC) if values.pinned else None
+        await self.session.commit()
+        return await self.get_conversation(business_id, conversation_id)
+
+    async def set_conversation_read(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: ConversationReadUpdate,
+    ) -> ConversationDetail:
+        conversation = await self.session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.archived_at.is_(None),
+            ).with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        if values.unread:
+            conversation.manual_unread = True
+        else:
+            conversation.last_read_at = datetime.now(UTC)
+            conversation.manual_unread = False
+        await self.session.commit()
+        return await self.get_conversation(business_id, conversation_id)
+
+    async def archive_conversation(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+    ) -> None:
+        conversation = await self.session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.archived_at.is_(None),
+            ).with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        conversation.archived_at = datetime.now(UTC)
+        await self.session.commit()
+
+    async def list_assistant_exclusions(
+        self,
+        business_id: UUID,
+    ) -> list[AssistantExclusionView]:
+        rows = (
+            await self.session.execute(
+                select(
+                    BusinessAutomationExclusion,
+                    Customer.id,
+                    Customer.name,
+                    Customer.whatsapp_profile_name,
+                    Customer.phone_e164,
+                )
+                .outerjoin(
+                    Customer,
+                    and_(
+                        Customer.business_id == BusinessAutomationExclusion.business_id,
+                        Customer.whatsapp_id == BusinessAutomationExclusion.whatsapp_id,
+                    ),
+                )
+                .where(
+                    BusinessAutomationExclusion.business_id == business_id,
+                    BusinessAutomationExclusion.mode == ExclusionMode.HUMAN_ONLY.value,
+                    BusinessAutomationExclusion.active.is_(True),
+                )
+                .order_by(BusinessAutomationExclusion.created_at)
+            )
+        ).all()
+        return [
+            AssistantExclusionView(
+                id=exclusion.id,
+                customer_id=customer_id,
+                customer_name=_display_name(
+                    customer_name,
+                    profile_name,
+                    customer_phone,
+                    exclusion.whatsapp_id,
+                ),
+                customer_phone=customer_phone,
+                reason=exclusion.reason,
+                active=exclusion.active,
+            )
+            for exclusion, customer_id, customer_name, profile_name, customer_phone in rows
+        ]
+
+    async def add_assistant_exclusion(
+        self,
+        business_id: UUID,
+        values: AssistantExclusionCreate,
+    ) -> AssistantExclusionView:
+        customer = await self.session.scalar(
+            select(Customer).where(
+                Customer.business_id == business_id,
+                Customer.id == values.customer_id,
+            )
+        )
+        if customer is None:
+            raise HTTPException(404, "Customer not found")
+
+        repository = AutomationRepository(self.session)
+        existing = await self.session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id == customer.whatsapp_id,
+            )
+        )
+        administration = AutomationAdministrationService(repository)
+        if existing is None:
+            exclusion = await administration.add_exclusion(
+                business_id,
+                AutomationExclusionCreate(
+                    whatsapp_id=customer.whatsapp_id,
+                    mode=ExclusionMode.HUMAN_ONLY,
+                    label=_customer_display_name(customer),
+                    reason=values.reason,
+                    active=True,
+                ),
+            )
+        else:
+            exclusion = await administration.update_exclusion(
+                business_id,
+                existing.id,
+                AutomationExclusionUpdate(
+                    mode=ExclusionMode.HUMAN_ONLY,
+                    label=_customer_display_name(customer),
+                    reason=values.reason,
+                    active=True,
+                ),
+            )
+            if exclusion is None:
+                raise HTTPException(404, "Exclusion not found")
+        await self.session.commit()
+        return AssistantExclusionView(
+            id=exclusion.id,
+            customer_id=customer.id,
+            customer_name=_customer_display_name(customer),
+            customer_phone=customer.phone_e164,
+            reason=exclusion.reason,
+            active=exclusion.active,
+        )
+
+    async def remove_assistant_exclusion(
+        self,
+        business_id: UUID,
+        exclusion_id: UUID,
+    ) -> None:
+        exclusion = await self.session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.id == exclusion_id,
+                BusinessAutomationExclusion.mode == ExclusionMode.HUMAN_ONLY.value,
+            )
+        )
+        if exclusion is None:
+            raise HTTPException(404, "Exclusion not found")
+        await AutomationRepository(self.session).delete_exclusion(
+            business_id, exclusion_id
+        )
+        await self.session.commit()
 
     async def send_manual_message(
         self,
@@ -716,18 +905,15 @@ class OperationalService:
             Message.business_id == Conversation.business_id,
             Message.conversation_id == Conversation.id,
         ).order_by(Message.created_at.desc(), Message.id.desc()).limit(1).correlate(Conversation).scalar_subquery()
-        outbound_message = aliased(Message)
         unread_message = aliased(Message)
-        last_outbound = select(func.max(outbound_message.created_at)).where(
-            outbound_message.business_id == Conversation.business_id,
-            outbound_message.conversation_id == Conversation.id,
-            outbound_message.direction == "outbound",
-        ).correlate(Conversation).scalar_subquery()
         unread = select(func.count()).select_from(unread_message).where(
             unread_message.business_id == Conversation.business_id,
             unread_message.conversation_id == Conversation.id,
             unread_message.direction == "inbound",
-            or_(last_outbound.is_(None), unread_message.created_at > last_outbound),
+            or_(
+                Conversation.last_read_at.is_(None),
+                unread_message.created_at > Conversation.last_read_at,
+            ),
         ).correlate(Conversation).scalar_subquery()
         query = select(
             Conversation, Customer.name, Customer.whatsapp_profile_name,
@@ -735,7 +921,8 @@ class OperationalService:
             latest_body.label("last_content"), latest_time.label("last_message_at"),
             latest_direction.label("last_direction"), unread.label("unread_count"),
         ).join(Customer, and_(Customer.business_id == Conversation.business_id, Customer.id == Conversation.customer_id)).where(
-            Conversation.business_id == business_id
+            Conversation.business_id == business_id,
+            Conversation.archived_at.is_(None),
         )
         if conversation_id is not None:
             query = query.where(Conversation.id == conversation_id)
@@ -766,7 +953,11 @@ class OperationalService:
             select(func.count()).select_from(query.order_by(None).subquery())
         ) or 0)
         query = query.order_by(
-            unread.desc(), latest_time.desc().nullslast(), Conversation.id
+            Conversation.pinned_at.desc().nullslast(),
+            Conversation.manual_unread.desc(),
+            unread.desc(),
+            latest_time.desc().nullslast(),
+            Conversation.id,
         )
         if offset is not None:
             query = query.offset(offset)
@@ -807,7 +998,7 @@ def _conversation_view(row: Any) -> ConversationView:
     status = "waiting" if last_direction == "inbound" else (
         "in_progress" if item.handoff_status != "none" else "answered"
     )
-    unread_value = int(unread_count or 0)
+    unread_value = max(int(unread_count or 0), 1 if item.manual_unread else 0)
     return ConversationView(
         id=item.id,
         customer_id=item.customer_id,
@@ -816,12 +1007,24 @@ def _conversation_view(row: Any) -> ConversationView:
         ),
         customer_phone=customer_phone, last_content=last_content, last_message_at=last_message_at,
         status=status, unread_count=unread_value,
-        priority=unread_value > 0 or item.handoff_status == "waiting", assignee_name=None,
+        priority=item.pinned_at is not None or unread_value > 0 or item.handoff_status == "waiting",
+        pinned=item.pinned_at is not None,
+        assignee_name=None,
     )
 
 
 def _business_view(item: Business) -> BusinessView:
-    return BusinessView(id=item.id, name=item.name, timezone=item.timezone, slot_interval_minutes=item.slot_interval_minutes)
+    return BusinessView(
+        id=item.id,
+        name=item.name,
+        timezone=item.timezone,
+        slot_interval_minutes=item.slot_interval_minutes,
+        service_origin_address=item.service_origin_address,
+        default_travel_minutes=item.default_travel_minutes,
+        travel_fallback_allowed=item.travel_fallback_allowed,
+        travel_before_buffer_minutes=item.travel_before_buffer_minutes,
+        travel_after_buffer_minutes=item.travel_after_buffer_minutes,
+    )
 
 
 def _hours_view(row: Any) -> WorkingHoursView:

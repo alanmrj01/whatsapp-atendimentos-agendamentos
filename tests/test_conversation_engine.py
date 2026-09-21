@@ -319,6 +319,49 @@ async def test_natural_service_request_advances_without_permission_question() ->
 
 
 @mark.asyncio
+async def test_reported_cleaning_phrase_selects_registered_service() -> None:
+    repository = FakeConversationRepository()
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="Eu queria fazer uma limpeza do ar condicionado")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "Tenho disponibilidade" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    )
+
+
+@mark.asyncio
+async def test_booking_word_in_service_selection_reoffers_services_without_fallback() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        fallback_message="FALLBACK NÃO DEVE APARECER",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="agendar")
+    )
+
+    outbound = repository.outbounds[-1].transition.outbound
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert outbound.message_type == "interactive_list"
+    assert "FALLBACK NÃO DEVE APARECER" not in (outbound.body or "")
+    assert outbound.outbound_payload["sections"][0]["rows"][0]["id"] == (
+        f"service:{SERVICE_ID}"
+    )
+
+
+@mark.asyncio
 async def test_probable_diagnostic_asks_only_for_required_address() -> None:
     repository = FakeConversationRepository()
     booking_port = FakeBookingPort()

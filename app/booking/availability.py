@@ -104,21 +104,6 @@ class PostgresBookingAvailabilityPort:
         self,
         business_id: uuid.UUID,
     ) -> Sequence[BookingOption]:
-        eligible_employee = exists(
-            select(EmployeeService.employee_id)
-            .join(
-                Employee,
-                and_(
-                    Employee.business_id == EmployeeService.business_id,
-                    Employee.id == EmployeeService.employee_id,
-                ),
-            )
-            .where(
-                EmployeeService.business_id == business_id,
-                EmployeeService.service_id == Service.id,
-                Employee.active.is_(True),
-            )
-        )
         rows = await self.session.execute(
             select(Service.id, Service.name)
             .join(Business, Business.id == Service.business_id)
@@ -128,7 +113,6 @@ class PostgresBookingAvailabilityPort:
                 Business.active.is_(True),
                 (Service.automatic_booking.is_(True))
                 | (Service.pricing_type == PricingType.HUMAN_QUOTE.value),
-                eligible_employee,
             )
             .order_by(Service.name, Service.id)
         )
