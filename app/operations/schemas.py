@@ -105,6 +105,7 @@ class ConversationView(StrictModel):
     status: ConversationStatus
     unread_count: int
     priority: bool
+    pinned: bool = False
     assignee_name: str | None = None
 
 
@@ -155,17 +156,49 @@ class ConversationAutomationUpdate(StrictModel):
     enabled: bool
 
 
+class ConversationPinUpdate(StrictModel):
+    pinned: bool
+
+
+class ConversationReadUpdate(StrictModel):
+    unread: bool = False
+
+
+class AssistantExclusionCreate(StrictModel):
+    customer_id: UUID
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class AssistantExclusionView(StrictModel):
+    id: UUID
+    customer_id: UUID | None
+    customer_name: str
+    customer_phone: str | None
+    reason: str | None
+    active: bool
+
+
 class BusinessView(StrictModel):
     id: UUID
     name: str
     timezone: str
     slot_interval_minutes: int
+    service_origin_address: str
+    default_travel_minutes: int | None
+    travel_fallback_allowed: bool
+    travel_before_buffer_minutes: int
+    travel_after_buffer_minutes: int
 
 
 class BusinessUpdate(StrictModel):
     name: str | None = Field(default=None, min_length=2, max_length=255)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     slot_interval_minutes: int | None = Field(default=None, ge=5, le=480)
+    service_origin_address: str | None = Field(default=None, min_length=3, max_length=500)
+    default_travel_minutes: int | None = Field(default=None, ge=0, le=480)
+    travel_fallback_allowed: bool | None = None
+    travel_before_buffer_minutes: int | None = Field(default=None, ge=0, le=240)
+    travel_after_buffer_minutes: int | None = Field(default=None, ge=0, le=240)
 
     @field_validator("name")
     @classmethod
@@ -187,6 +220,16 @@ class BusinessUpdate(StrictModel):
         except ZoneInfoNotFoundError:
             raise ValueError("Invalid timezone") from None
         return value
+
+    @field_validator("service_origin_address")
+    @classmethod
+    def normalize_origin(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        if len(normalized) < 3:
+            raise ValueError("Service origin address is required")
+        return normalized
 
     @model_validator(mode="after")
     def require_change(self) -> "BusinessUpdate":
