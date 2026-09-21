@@ -568,7 +568,7 @@ async def test_service_query_filters_active_and_automatically_bookable_catalog()
     assert options[0].label == "Serviço ativo"
     assert "services.active is true" in sql
     assert "businesses.active is true" in sql
-    assert "employees.active is true" in sql
+    assert "employees.active is true" not in sql
     assert "services.automatic_booking is true" in sql
     assert "services.pricing_type = 'human_quote'" in sql
 
