@@ -905,18 +905,15 @@ class OperationalService:
             Message.business_id == Conversation.business_id,
             Message.conversation_id == Conversation.id,
         ).order_by(Message.created_at.desc(), Message.id.desc()).limit(1).correlate(Conversation).scalar_subquery()
-        outbound_message = aliased(Message)
         unread_message = aliased(Message)
-        last_outbound = select(func.max(outbound_message.created_at)).where(
-            outbound_message.business_id == Conversation.business_id,
-            outbound_message.conversation_id == Conversation.id,
-            outbound_message.direction == "outbound",
-        ).correlate(Conversation).scalar_subquery()
         unread = select(func.count()).select_from(unread_message).where(
             unread_message.business_id == Conversation.business_id,
             unread_message.conversation_id == Conversation.id,
             unread_message.direction == "inbound",
-            or_(last_outbound.is_(None), unread_message.created_at > last_outbound),
+            or_(
+                Conversation.last_read_at.is_(None),
+                unread_message.created_at > Conversation.last_read_at,
+            ),
         ).correlate(Conversation).scalar_subquery()
         query = select(
             Conversation, Customer.name, Customer.whatsapp_profile_name,
@@ -924,7 +921,8 @@ class OperationalService:
             latest_body.label("last_content"), latest_time.label("last_message_at"),
             latest_direction.label("last_direction"), unread.label("unread_count"),
         ).join(Customer, and_(Customer.business_id == Conversation.business_id, Customer.id == Conversation.customer_id)).where(
-            Conversation.business_id == business_id
+            Conversation.business_id == business_id,
+            Conversation.archived_at.is_(None),
         )
         if conversation_id is not None:
             query = query.where(Conversation.id == conversation_id)
@@ -955,7 +953,11 @@ class OperationalService:
             select(func.count()).select_from(query.order_by(None).subquery())
         ) or 0)
         query = query.order_by(
-            unread.desc(), latest_time.desc().nullslast(), Conversation.id
+            Conversation.pinned_at.desc().nullslast(),
+            Conversation.manual_unread.desc(),
+            unread.desc(),
+            latest_time.desc().nullslast(),
+            Conversation.id,
         )
         if offset is not None:
             query = query.offset(offset)
@@ -996,7 +998,7 @@ def _conversation_view(row: Any) -> ConversationView:
     status = "waiting" if last_direction == "inbound" else (
         "in_progress" if item.handoff_status != "none" else "answered"
     )
-    unread_value = int(unread_count or 0)
+    unread_value = max(int(unread_count or 0), 1 if item.manual_unread else 0)
     return ConversationView(
         id=item.id,
         customer_id=item.customer_id,
@@ -1005,12 +1007,24 @@ def _conversation_view(row: Any) -> ConversationView:
         ),
         customer_phone=customer_phone, last_content=last_content, last_message_at=last_message_at,
         status=status, unread_count=unread_value,
-        priority=unread_value > 0 or item.handoff_status == "waiting", assignee_name=None,
+        priority=item.pinned_at is not None or unread_value > 0 or item.handoff_status == "waiting",
+        pinned=item.pinned_at is not None,
+        assignee_name=None,
     )
 
 
 def _business_view(item: Business) -> BusinessView:
-    return BusinessView(id=item.id, name=item.name, timezone=item.timezone, slot_interval_minutes=item.slot_interval_minutes)
+    return BusinessView(
+        id=item.id,
+        name=item.name,
+        timezone=item.timezone,
+        slot_interval_minutes=item.slot_interval_minutes,
+        service_origin_address=item.service_origin_address,
+        default_travel_minutes=item.default_travel_minutes,
+        travel_fallback_allowed=item.travel_fallback_allowed,
+        travel_before_buffer_minutes=item.travel_before_buffer_minutes,
+        travel_after_buffer_minutes=item.travel_after_buffer_minutes,
+    )
 
 
 def _hours_view(row: Any) -> WorkingHoursView:
