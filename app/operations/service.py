@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.automation.domain import ExclusionMode
 from app.automation.service import (
     AutomationAdministrationService,
     AutomationPolicyService,
@@ -18,6 +19,7 @@ from app.automation.service import (
 from app.models import (
     Appointment,
     Business,
+    BusinessAutomationExclusion,
     BusinessWhatsAppConnection,
     Conversation,
     Customer,
@@ -31,12 +33,16 @@ from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
     AppointmentView,
+    AssistantExclusionCreate,
+    AssistantExclusionView,
     AutomationSettingsUpdate,
     AutomationSettingsView,
     BusinessUpdate,
     BusinessView,
     ConversationDetail,
     ConversationAutomationUpdate,
+    ConversationPinUpdate,
+    ConversationReadUpdate,
     ConversationView,
     CustomerNameUpdate,
     CustomerCreate,
@@ -58,7 +64,11 @@ from app.operations.schemas import (
     WorkingHoursView,
 )
 from app.repositories.automation import AutomationRepository
-from app.schemas.automation import BusinessAutomationSettingsUpdate
+from app.schemas.automation import (
+    AutomationExclusionCreate,
+    AutomationExclusionUpdate,
+    BusinessAutomationSettingsUpdate,
+)
 from app.whatsapp.connections import WhatsAppConnectionStatus
 
 
