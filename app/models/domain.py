@@ -380,6 +380,18 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     conversation_initiated_by: Mapped[str | None] = mapped_column(
         String(16), nullable=True
     )
+    pinned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    manual_unread: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
 
 class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
