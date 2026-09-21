@@ -310,6 +310,185 @@ class OperationalService:
         await self.session.commit()
         return await self.get_conversation(business_id, conversation_id)
 
+    async def set_conversation_pinned(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: ConversationPinUpdate,
+    ) -> ConversationDetail:
+        conversation = await self.session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.archived_at.is_(None),
+            ).with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        conversation.pinned_at = datetime.now(UTC) if values.pinned else None
+        await self.session.commit()
+        return await self.get_conversation(business_id, conversation_id)
+
+    async def set_conversation_read(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: ConversationReadUpdate,
+    ) -> ConversationDetail:
+        conversation = await self.session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.archived_at.is_(None),
+            ).with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        if values.unread:
+            conversation.manual_unread = True
+        else:
+            conversation.last_read_at = datetime.now(UTC)
+            conversation.manual_unread = False
+        await self.session.commit()
+        return await self.get_conversation(business_id, conversation_id)
+
+    async def archive_conversation(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+    ) -> None:
+        conversation = await self.session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.archived_at.is_(None),
+            ).with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        conversation.archived_at = datetime.now(UTC)
+        await self.session.commit()
+
+    async def list_assistant_exclusions(
+        self,
+        business_id: UUID,
+    ) -> list[AssistantExclusionView]:
+        rows = (
+            await self.session.execute(
+                select(
+                    BusinessAutomationExclusion,
+                    Customer.id,
+                    Customer.name,
+                    Customer.whatsapp_profile_name,
+                    Customer.phone_e164,
+                )
+                .outerjoin(
+                    Customer,
+                    and_(
+                        Customer.business_id == BusinessAutomationExclusion.business_id,
+                        Customer.whatsapp_id == BusinessAutomationExclusion.whatsapp_id,
+                    ),
+                )
+                .where(
+                    BusinessAutomationExclusion.business_id == business_id,
+                    BusinessAutomationExclusion.mode == ExclusionMode.HUMAN_ONLY.value,
+                    BusinessAutomationExclusion.active.is_(True),
+                )
+                .order_by(BusinessAutomationExclusion.created_at)
+            )
+        ).all()
+        return [
+            AssistantExclusionView(
+                id=exclusion.id,
+                customer_id=customer_id,
+                customer_name=_display_name(
+                    customer_name,
+                    profile_name,
+                    customer_phone,
+                    exclusion.whatsapp_id,
+                ),
+                customer_phone=customer_phone,
+                reason=exclusion.reason,
+                active=exclusion.active,
+            )
+            for exclusion, customer_id, customer_name, profile_name, customer_phone in rows
+        ]
+
+    async def add_assistant_exclusion(
+        self,
+        business_id: UUID,
+        values: AssistantExclusionCreate,
+    ) -> AssistantExclusionView:
+        customer = await self.session.scalar(
+            select(Customer).where(
+                Customer.business_id == business_id,
+                Customer.id == values.customer_id,
+            )
+        )
+        if customer is None:
+            raise HTTPException(404, "Customer not found")
+
+        repository = AutomationRepository(self.session)
+        existing = await self.session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id == customer.whatsapp_id,
+            )
+        )
+        administration = AutomationAdministrationService(repository)
+        if existing is None:
+            exclusion = await administration.add_exclusion(
+                business_id,
+                AutomationExclusionCreate(
+                    whatsapp_id=customer.whatsapp_id,
+                    mode=ExclusionMode.HUMAN_ONLY,
+                    label=_customer_display_name(customer),
+                    reason=values.reason,
+                    active=True,
+                ),
+            )
+        else:
+            exclusion = await administration.update_exclusion(
+                business_id,
+                existing.id,
+                AutomationExclusionUpdate(
+                    mode=ExclusionMode.HUMAN_ONLY,
+                    label=_customer_display_name(customer),
+                    reason=values.reason,
+                    active=True,
+                ),
+            )
+            if exclusion is None:
+                raise HTTPException(404, "Exclusion not found")
+        await self.session.commit()
+        return AssistantExclusionView(
+            id=exclusion.id,
+            customer_id=customer.id,
+            customer_name=_customer_display_name(customer),
+            customer_phone=customer.phone_e164,
+            reason=exclusion.reason,
+            active=exclusion.active,
+        )
+
+    async def remove_assistant_exclusion(
+        self,
+        business_id: UUID,
+        exclusion_id: UUID,
+    ) -> None:
+        exclusion = await self.session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.id == exclusion_id,
+                BusinessAutomationExclusion.mode == ExclusionMode.HUMAN_ONLY.value,
+            )
+        )
+        if exclusion is None:
+            raise HTTPException(404, "Exclusion not found")
+        await AutomationRepository(self.session).delete_exclusion(
+            business_id, exclusion_id
+        )
+        await self.session.commit()
+
     async def send_manual_message(
         self,
         business_id: UUID,
