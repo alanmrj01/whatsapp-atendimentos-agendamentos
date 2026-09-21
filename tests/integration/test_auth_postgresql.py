@@ -42,15 +42,18 @@ ORIGIN = "https://pwa.example.test"
 
 async def test_auth_migration_0005_0006_0005_0006():
     config = Config("alembic.ini")
-    for direction, revision in [("downgrade", "20260902_0005"), ("upgrade", "20260903_0006"),
-                                 ("downgrade", "20260902_0005"), ("upgrade", "20260903_0006")]:
-        await asyncio.to_thread(getattr(command, direction), config, revision)
-        engine = create_async_engine(_async_url(TEST_DATABASE_URL))
-        async with engine.connect() as db:
-            assert await db.scalar(text("SELECT version_num FROM alembic_version")) == revision
-            exists = await db.scalar(text("SELECT to_regclass('public.auth_sessions') IS NOT NULL"))
-            assert exists == (revision == "20260903_0006")
-        await engine.dispose()
+    try:
+        for direction, revision in [("downgrade", "20260902_0005"), ("upgrade", "20260903_0006"),
+                                     ("downgrade", "20260902_0005"), ("upgrade", "20260903_0006")]:
+            await asyncio.to_thread(getattr(command, direction), config, revision)
+            engine = create_async_engine(_async_url(TEST_DATABASE_URL))
+            async with engine.connect() as db:
+                assert await db.scalar(text("SELECT version_num FROM alembic_version")) == revision
+                exists = await db.scalar(text("SELECT to_regclass('public.auth_sessions') IS NOT NULL"))
+                assert exists == (revision == "20260903_0006")
+            await engine.dispose()
+    finally:
+        await asyncio.to_thread(command.upgrade, config, "head")
 
 
 @pytest_asyncio.fixture
