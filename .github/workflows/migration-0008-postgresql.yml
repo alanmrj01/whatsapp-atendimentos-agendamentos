@@ -9,6 +9,12 @@ on:
       - 'app/models/**'
       - 'app/platform_admin/**'
       - 'tests/integration/test_migration_0008_postgresql.py'
+      - 'tests/integration/test_booking_postgresql.py'
+      - 'tests/test_booking_availability.py'
+      - 'tests/test_conversation_engine.py'
+      - 'tests/test_conversation_interpreter.py'
+      - 'tests/test_operational_conversations.py'
+      - 'tests/test_operational_conversations_migration.py'
       - 'tests/integration/test_operational_pwa_postgresql.py'
       - 'tests/test_operational_migration_0008.py'
       - 'tests/test_operational_pwa.py'
@@ -72,6 +78,17 @@ jobs:
           tests/test_migration.py
           tests/test_operational_migration_0008.py
           tests/test_operational_pwa.py
+          tests/test_operational_conversations.py
+          tests/test_operational_conversations_migration.py
+          tests/test_booking_availability.py
+          tests/test_conversation_interpreter.py
+          tests/test_conversation_engine.py
+          -q -p no:cacheprovider
+
+      - name: Physical booking engine tests
+        run: >-
+          pytest
+          tests/integration/test_booking_postgresql.py
           -q -p no:cacheprovider
 
       - name: Compile application
