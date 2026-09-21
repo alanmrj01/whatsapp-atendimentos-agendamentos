@@ -4,13 +4,14 @@ from datetime import date, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_origin, require_principal
 from app.auth.schemas import MembershipResponse, MembershipRole
 from app.auth.service import Principal
 from app.core.database import get_db
+from app.core.config import CloudTasksConfigurationError, Settings, get_settings
 from app.operations.schemas import (
     AppointmentCreate,
     AppointmentList,
@@ -21,8 +22,10 @@ from app.operations.schemas import (
     BusinessUpdate,
     BusinessView,
     ConversationDetail,
+    ConversationAutomationUpdate,
     ConversationList,
     CustomerCreate,
+    CustomerNameUpdate,
     CustomerOption,
     CustomerList,
     DashboardToday,
@@ -31,6 +34,8 @@ from app.operations.schemas import (
     EmployeeUpdate,
     EmployeeServicesUpdate,
     EmployeeView,
+    ManualMessageCreate,
+    MessageView,
     ServiceList,
     ServiceCreate,
     ServiceOption,
@@ -42,6 +47,11 @@ from app.operations.schemas import (
     WorkingHoursView,
 )
 from app.operations.service import OperationalService
+from app.tasks.cloud_tasks import CloudTasksEnqueueError
+from app.tasks.outbound import (
+    build_outbound_task_enqueuer,
+    enqueue_outbound_message_ids,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["pwa-operations"])
 Db = Annotated[AsyncSession, Depends(get_db)]
@@ -79,6 +89,7 @@ def get_operational_service(db: Db) -> OperationalService:
 
 
 ServiceDep = Annotated[OperationalService, Depends(get_operational_service)]
+Config = Annotated[Settings, Depends(get_settings)]
 
 
 @router.get("/dashboard/today", response_model=DashboardToday)
@@ -186,6 +197,72 @@ async def get_conversation(conversation_id: UUID, principal: Identity, service: 
     return await service.get_conversation(membership.business_id, conversation_id)
 
 
+@router.patch(
+    "/conversations/{conversation_id}/customer",
+    response_model=ConversationDetail,
+    dependencies=[Depends(require_origin)],
+)
+async def update_conversation_customer(
+    conversation_id: UUID,
+    payload: CustomerNameUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.update_customer_name(
+        membership.business_id, conversation_id, payload
+    )
+
+
+@router.patch(
+    "/conversations/{conversation_id}/assistant",
+    response_model=ConversationDetail,
+    dependencies=[Depends(require_origin)],
+)
+async def update_conversation_assistant(
+    conversation_id: UUID,
+    payload: ConversationAutomationUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.update_conversation_automation(
+        membership.business_id, conversation_id, payload
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages",
+    response_model=MessageView,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_origin)],
+)
+async def send_conversation_message(
+    conversation_id: UUID,
+    payload: ManualMessageCreate,
+    principal: Identity,
+    service: ServiceDep,
+    settings: Config,
+    idempotency_key: UUID = Header(alias="Idempotency-Key"),
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    message = await service.send_manual_message(
+        membership.business_id,
+        conversation_id,
+        payload,
+        idempotency_key,
+    )
+    try:
+        enqueuer = build_outbound_task_enqueuer(settings)
+        await enqueue_outbound_message_ids([message.id], enqueuer)
+    except (CloudTasksConfigurationError, CloudTasksEnqueueError):
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Message delivery is temporarily unavailable",
+        ) from None
+    return message
+
+
 @router.get("/business", response_model=BusinessView)
 async def get_business(principal: Identity, service: ServiceDep):
     membership = _membership(principal)
@@ -258,7 +335,7 @@ async def update_automation(
 ):
     membership = _authorize(principal, CONFIG_ROLES)
     return await service.update_automation(
-        membership.business_id, payload.human_control_window_minutes
+        membership.business_id, payload
     )
 
 

@@ -249,6 +249,16 @@ def test_required_server_defaults_are_registered() -> None:
         ("businesses", "timezone"): "America/Sao_Paulo",
         ("businesses", "slot_interval_minutes"): "30",
         ("businesses", "human_control_window_minutes"): "2160",
+        ("businesses", "assistant_enabled"): "true",
+        ("businesses", "assistant_greeting_message"): (
+            "Olá! Como posso ajudar com seu ar-condicionado?"
+        ),
+        ("businesses", "assistant_fallback_message"): (
+            "Não entendi. Conte em poucas palavras o serviço que você precisa."
+        ),
+        ("businesses", "assistant_handoff_message"): (
+            "Seu atendimento foi encaminhado para uma pessoa da equipe."
+        ),
         ("businesses", "service_origin_address"): (
             "Zona Leste de São José dos Campos - SP"
         ),
@@ -264,6 +274,7 @@ def test_required_server_defaults_are_registered() -> None:
         ("conversations", "automation_enabled"): "true",
         ("conversations", "handoff_status"): "none",
         ("processed_webhooks", "attempts"): "0",
+        ("employees", "operational_role"): "technician",
     }
 
     for (table_name, column_name), expected_default in expected_defaults.items():
@@ -273,6 +284,21 @@ def test_required_server_defaults_are_registered() -> None:
     default_travel = Base.metadata.tables["businesses"].c.default_travel_minutes
     assert default_travel.server_default is None
     assert default_travel.nullable is True
+
+
+def test_operational_roles_and_whatsapp_profile_name_are_registered() -> None:
+    employees = Base.metadata.tables["employees"]
+    customers = Base.metadata.tables["customers"]
+    checks = {
+        constraint.name
+        for constraint in employees.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert "ck_employees_operational_role_allowed" in checks
+    assert employees.c.operational_role.nullable is False
+    assert customers.c.whatsapp_profile_name.nullable is True
+    assert customers.c.whatsapp_profile_name.type.length == 255
 
 
 def test_automation_exclusions_and_human_control_are_registered() -> None:

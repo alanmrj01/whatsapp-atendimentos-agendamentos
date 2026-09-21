@@ -65,11 +65,19 @@ class FakeConversationRepository:
         context: dict[str, Any] | None = None,
         automation_enabled: bool = True,
         handoff_status: str = "none",
+        assistant_enabled: bool = True,
+        greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?",
+        fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
+        handoff_message: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
     ) -> None:
         self.state = state
         self.context = context or {}
         self.automation_enabled = automation_enabled
         self.handoff_status = handoff_status
+        self.assistant_enabled = assistant_enabled
+        self.greeting_message = greeting_message
+        self.fallback_message = fallback_message
+        self.handoff_message = handoff_message
         self.outbounds: list[StoredOutbound] = []
         self.idempotency_keys: set[str] = set()
         self.lock = asyncio.Lock()
@@ -116,6 +124,10 @@ class FakeConversationRepository:
             context=copy.deepcopy(self.context),
             automation_enabled=self.automation_enabled,
             handoff_status=self.handoff_status,
+            assistant_enabled=self.assistant_enabled,
+            greeting_message=self.greeting_message,
+            fallback_message=self.fallback_message,
+            handoff_message=self.handoff_message,
         )
 
     def export_state(self) -> dict[str, Any]:
@@ -125,6 +137,7 @@ class FakeConversationRepository:
                 "context": self.context,
                 "automation_enabled": self.automation_enabled,
                 "handoff_status": self.handoff_status,
+                "assistant_enabled": self.assistant_enabled,
                 "outbounds": self.outbounds,
                 "idempotency_keys": self.idempotency_keys,
             }
@@ -135,6 +148,7 @@ class FakeConversationRepository:
         self.context = state["context"]
         self.automation_enabled = state["automation_enabled"]
         self.handoff_status = state["handoff_status"]
+        self.assistant_enabled = state["assistant_enabled"]
         self.outbounds = state["outbounds"]
         self.idempotency_keys = state["idempotency_keys"]
 
@@ -270,6 +284,142 @@ def inbound(
 
 
 @mark.asyncio
+async def test_global_assistant_switch_stops_outbound_without_losing_inbound_flow() -> None:
+    disabled = FakeConversationRepository(assistant_enabled=False)
+    enabled = FakeConversationRepository()
+
+    assert await ConversationEngine(disabled, FakeBookingPort()).process(
+        inbound(1, body="bom dia")
+    ) is False
+    assert disabled.outbounds == []
+
+    assert await ConversationEngine(enabled, FakeBookingPort()).process(
+        inbound(1, body="bom dia")
+    ) is True
+    assert enabled.outbounds[0].transition.outbound.message_type == "text"
+    assert enabled.outbounds[0].transition.outbound.outbound_payload is None
+
+
+@mark.asyncio
+async def test_natural_service_request_advances_without_permission_question() -> None:
+    repository = FakeConversationRepository()
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="Quero limpar meu ar")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "Tenho disponibilidade" in body
+    assert "Quer que eu" not in body
+
+
+@mark.asyncio
+async def test_probable_diagnostic_asks_only_for_required_address() -> None:
+    repository = FakeConversationRepository()
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Diagnóstico / manutenção corretiva")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="Boa tarde, meu ar não está gelando")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    response = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "endereço" in response
+    assert "compressor" not in response
+    assert "causa" not in response
+
+
+@mark.asyncio
+async def test_natural_handoff_is_direct_and_uses_configured_message() -> None:
+    repository = FakeConversationRepository(
+        handoff_message="Uma pessoa da equipe continuará por aqui."
+    )
+
+    await ConversationEngine(repository, FakeBookingPort()).process(
+        inbound(1, body="Quero falar com uma pessoa")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.outbounds[-1].transition.outbound.body == (
+        "Uma pessoa da equipe continuará por aqui."
+    )
+
+
+@mark.asyncio
+async def test_availability_skips_empty_days_and_offers_first_three_with_slots() -> None:
+    repository = FakeConversationRepository(state=ConversationState.BOOKING_SERVICE)
+    booking_port = FakeBookingPort()
+    booking_port.dates = [
+        BookingOption("2026-09-21", "segunda, 21 de setembro"),
+        BookingOption("2026-09-22", "terça, 22 de setembro"),
+        BookingOption("2026-09-23", "quarta, 23 de setembro"),
+        BookingOption("2026-09-24", "quinta, 24 de setembro"),
+        BookingOption("2026-09-25", "sexta, 25 de setembro"),
+    ]
+    slots = {
+        "2026-09-21": (),
+        "2026-09-22": (BookingOption("09:00", "09:00"),),
+        "2026-09-23": (),
+        "2026-09-24": (
+            BookingOption("10:00", "10:00"),
+            BookingOption("15:00", "15:00"),
+        ),
+        "2026-09-25": (BookingOption("08:00", "08:00"),),
+    }
+    booking_port.list_times = AsyncMock(
+        side_effect=lambda _business, _service, selected_date, _requirements: slots[
+            selected_date
+        ]
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, action=f"service:{SERVICE_ID}")
+    )
+
+    outbound = repository.outbounds[-1].transition.outbound
+    rows = outbound.outbound_payload["sections"][0]["rows"]
+    assert [row["id"] for row in rows] == [
+        "date:2026-09-22",
+        "date:2026-09-24",
+        "date:2026-09-25",
+    ]
+    assert "segunda" not in (outbound.body or "")
+    assert "quarta" not in (outbound.body or "")
+    assert "terça, 22 de setembro — 09:00" in (outbound.body or "")
+    assert "quinta, 24 de setembro — 10:00, 15:00" in (outbound.body or "")
+
+
+@mark.asyncio
+async def test_customer_can_choose_offered_date_and_time_in_one_text_message() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_DATE,
+        context={"service_id": str(SERVICE_ID)},
+    )
+    booking_port = FakeBookingPort()
+    booking_port.dates = [
+        BookingOption("2026-09-02", "quarta, 2 de setembro")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="quarta às 9")
+    )
+
+    assert repository.state == ConversationState.BOOKING_CONFIRM
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+
+
+@mark.asyncio
 async def test_full_booking_flow_persists_canonical_states_and_context() -> None:
     repository = FakeConversationRepository()
     booking_port = FakeBookingPort()
@@ -326,7 +476,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         for outbound in repository.outbounds
     ]
     assert message_types == [
-        "interactive_list",
+        "text",
         "interactive_list",
         "interactive_list",
         "interactive_list",
@@ -337,14 +487,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         outbound.transition.outbound.outbound_payload
         for outbound in repository.outbounds
     ]
-    assert [
-        row["id"] for row in payloads[0]["sections"][0]["rows"]
-    ] == [
-        "menu.book",
-        "menu.reschedule",
-        "menu.cancel",
-        "menu.human",
-    ]
+    assert payloads[0] is None
     assert payloads[1]["sections"][0]["rows"] == [
         {"id": f"service:{SERVICE_ID}", "title": "Service"}
     ]
@@ -728,15 +871,15 @@ async def test_human_quote_service_goes_directly_to_handoff() -> None:
 
 
 @mark.asyncio
-async def test_unconfigured_free_text_request_goes_to_handoff() -> None:
+async def test_unconfigured_free_text_request_asks_for_service_without_handoff() -> None:
     repository = FakeConversationRepository(state=ConversationState.BOOKING_SERVICE)
 
     await ConversationEngine(repository, FakeBookingPort()).process(
         inbound(1, body="Quero comprar uma peça")
     )
 
-    assert repository.state == ConversationState.HUMAN_HANDOFF
-    assert repository.automation_enabled is False
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert repository.automation_enabled is True
 
 
 @mark.asyncio

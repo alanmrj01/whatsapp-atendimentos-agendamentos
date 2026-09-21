@@ -54,6 +54,12 @@ from app.conversations.outbound import (
     slot_unavailable_message,
     time_selection_message,
 )
+from app.conversations.interpreter import (
+    ConversationIntent,
+    DeterministicConversationInterpreter,
+    Interpretation,
+    normalize_portuguese,
+)
 from app.conversations.ports import (
     BookingAvailabilityPort,
     BookingConfirmation,
@@ -74,21 +80,45 @@ async def determine_transition(
     inbound: ConversationInput,
     booking_port: BookingAvailabilityPort | None,
 ) -> ConversationTransition | None:
-    if not conversation.automation_enabled:
+    if not conversation.assistant_enabled or not conversation.automation_enabled:
         return None
 
     state = _canonical_state(conversation.state)
     context = _clean_context(conversation.context)
     action = inbound.interactive_id
+    interpretation = DeterministicConversationInterpreter().interpret(inbound.body)
+
+    if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
+        return _handoff_transition(conversation.handoff_message)
 
     if state in {ConversationState.START, ConversationState.COMPLETED}:
-        return _transition(ConversationState.MENU, {}, main_menu_message())
+        return await _handle_natural_start(
+            conversation,
+            inbound,
+            interpretation,
+            booking_port,
+        )
     if state is ConversationState.HUMAN_HANDOFF:
         return None
     if state is ConversationState.MENU:
-        return await _handle_menu(inbound, action, booking_port)
+        return await _handle_menu(
+            inbound,
+            action,
+            booking_port,
+            interpretation=interpretation,
+            greeting_message=conversation.greeting_message,
+            fallback_message=conversation.fallback_message,
+            handoff_message=conversation.handoff_message,
+        )
     if state is ConversationState.BOOKING_SERVICE:
-        return await _handle_service(inbound, context, action, booking_port)
+        return await _handle_service(
+            inbound,
+            context,
+            action,
+            booking_port,
+            interpretation=interpretation,
+            fallback_message=conversation.fallback_message,
+        )
     if state is ConversationState.BOOKING_QUANTITY:
         return await _handle_quantity(inbound, context, action, booking_port)
     if state is ConversationState.BOOKING_ACCESS:
@@ -114,11 +144,77 @@ async def determine_transition(
     return _transition(ConversationState.MENU, {}, main_menu_message())
 
 
+async def _handle_natural_start(
+    conversation: ConversationSnapshot,
+    inbound: ConversationInput,
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition:
+    if interpretation.intent is ConversationIntent.GREETING:
+        return _transition(
+            ConversationState.MENU,
+            {},
+            _text_message(conversation.greeting_message),
+        )
+    if interpretation.intent is ConversationIntent.RESCHEDULE:
+        return _transition(ConversationState.RESCHEDULE, {}, reschedule_message())
+    if interpretation.intent is ConversationIntent.CANCEL:
+        return _transition(ConversationState.CANCEL, {}, cancel_message())
+    if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
+        return _handoff_transition(conversation.handoff_message)
+    if interpretation.intent in {
+        ConversationIntent.BOOK,
+        ConversationIntent.AVAILABILITY,
+        ConversationIntent.SERVICE_INTENT,
+    }:
+        try:
+            port = _require_booking_port(booking_port)
+            services = _snapshot_options(
+                await port.list_services(inbound.business_id)
+            )
+        except BookingPortUnavailable:
+            return _transition(
+                ConversationState.MENU, {}, booking_unavailable_message()
+            )
+        if not services:
+            return _transition(ConversationState.MENU, {}, no_services_message())
+        matched = _service_for_interpretation(services, interpretation)
+        if matched is not None:
+            return await _handle_service(
+                inbound,
+                {},
+                f"service:{matched.id}",
+                port,
+                interpretation=interpretation,
+                fallback_message=conversation.fallback_message,
+            )
+        return _transition(
+            ConversationState.BOOKING_SERVICE,
+            {},
+            service_selection_message(
+                services, body="Qual serviço você precisa?"
+            ),
+        )
+    return _transition(
+        ConversationState.MENU,
+        {},
+        _text_message(conversation.fallback_message),
+    )
+
+
 async def _handle_menu(
     inbound: ConversationInput,
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
+    *,
+    interpretation: Interpretation | None = None,
+    greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?",
+    fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
+    handoff_message: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
 ) -> ConversationTransition:
+    interpretation = interpretation or DeterministicConversationInterpreter().interpret(
+        inbound.body
+    )
     if action == MENU_BOOK:
         try:
             port = _require_booking_port(booking_port)
@@ -150,9 +246,25 @@ async def _handle_menu(
         return _transition(
             ConversationState.HUMAN_HANDOFF,
             {},
-            handoff_message(),
+            _text_message(handoff_message),
             automation_enabled=False,
             handoff_status="waiting",
+        )
+    if action is None:
+        snapshot = ConversationSnapshot(
+            business_id=inbound.business_id,
+            customer_id=inbound.customer_id,
+            conversation_id=inbound.conversation_id,
+            state=ConversationState.MENU.value,
+            context={},
+            automation_enabled=True,
+            handoff_status="none",
+            greeting_message=greeting_message,
+            fallback_message=fallback_message,
+            handoff_message=handoff_message,
+        )
+        return await _handle_natural_start(
+            snapshot, inbound, interpretation, booking_port
         )
     return _transition(ConversationState.MENU, {}, main_menu_message())
 
@@ -162,6 +274,9 @@ async def _handle_service(
     context: dict[str, Any],
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
+    *,
+    interpretation: Interpretation | None = None,
+    fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -176,9 +291,19 @@ async def _handle_service(
         return _transition(ConversationState.MENU, {}, no_services_message())
 
     service_id = _service_id(action)
+    if service_id is None:
+        interpretation = interpretation or DeterministicConversationInterpreter().interpret(
+            inbound.body
+        )
+        matched = _service_for_interpretation(services, interpretation)
+        service_id = uuid.UUID(matched.id) if matched is not None else None
     if service_id is None or not _option_exists(services, str(service_id)):
         if inbound.body and inbound.body.strip():
-            return _handoff_transition()
+            return _transition(
+                ConversationState.BOOKING_SERVICE,
+                context,
+                service_selection_message(services, body=fallback_message),
+            )
         return _transition(
             ConversationState.BOOKING_SERVICE,
             context,
@@ -383,7 +508,7 @@ async def _handle_date(
             body="Não há datas disponíveis. Escolha outro serviço.",
         )
 
-    selected_date = _selected_date(action)
+    selected_date = _selected_date(action) or _date_from_text(inbound.body, dates)
     if selected_date is None or not _option_exists(dates, selected_date):
         return _transition(
             ConversationState.BOOKING_DATE,
@@ -410,6 +535,22 @@ async def _handle_date(
                 dates,
                 body="Não há horários nessa data. Escolha outra data.",
             ),
+        )
+    selected_time = _time_from_text(inbound.body, times)
+    if selected_time is not None:
+        candidate = {
+            "service_id": str(service_id),
+            "selected_date": selected_date,
+            "selected_time": selected_time,
+        }
+        return _transition(
+            ConversationState.BOOKING_CONFIRM,
+            {
+                **_intake_context(context),
+                **candidate,
+                "candidate_booking": candidate,
+            },
+            booking_confirmation_message(),
         )
     return _transition(
         ConversationState.BOOKING_TIME,
@@ -458,7 +599,7 @@ async def _handle_time(
             requirements,
         )
 
-    selected_time = _selected_time(action)
+    selected_time = _selected_time(action) or _time_from_text(inbound.body, times)
     if selected_time is None or not _option_exists(times, selected_time):
         return _transition(
             ConversationState.BOOKING_TIME,
@@ -484,6 +625,14 @@ async def _handle_confirmation(
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
 ) -> ConversationTransition:
+    if action is None:
+        normalized = normalize_portuguese(inbound.body or "")
+        if normalized in {"confirmar", "confirmo", "sim", "pode confirmar", "pode"}:
+            action = BOOKING_CONFIRM
+        elif normalized in {"voltar", "outro horario", "trocar horario"}:
+            action = BOOKING_BACK
+        elif normalized in {"cancelar", "cancela", "nao"}:
+            action = BOOKING_CANCEL
     if action == BOOKING_CANCEL:
         return _transition(
             ConversationState.MENU,
@@ -649,10 +798,37 @@ async def _offer_dates(
                 body="Não encontrei uma data disponível. Escolha outro serviço.",
             ),
         )
+    available_dates: list[BookingOption] = []
+    availability_lines: list[str] = []
+    for option in dates:
+        times = _snapshot_options(
+            await port.list_times(
+                inbound.business_id,
+                service_id,
+                option.id,
+                requirements,
+            )
+        )
+        if not times:
+            continue
+        available_dates.append(option)
+        labels = ", ".join(item.label for item in times[:3])
+        availability_lines.append(f"{option.label} — {labels}")
+        if len(available_dates) == 3:
+            break
+    if not available_dates:
+        return await _restart_service_selection(
+            inbound,
+            port,
+            body="Não encontrei horários compatíveis. Escolha outro serviço.",
+        )
+    body = _estimate_message(plan) + "\n\nTenho disponibilidade:\n"
+    body += "\n".join(availability_lines)
+    body += "\n\nQual fica melhor?"
     return _transition(
         ConversationState.BOOKING_DATE,
         _intake_context(context),
-        date_selection_message(dates, body=_estimate_message(plan)),
+        date_selection_message(tuple(available_dates), body=body),
     )
 
 
@@ -739,6 +915,64 @@ def _snapshot_options(
 
 def _option_exists(options: Sequence[BookingOption], expected_id: str) -> bool:
     return any(option.id == expected_id for option in options)
+
+
+def _service_for_interpretation(
+    services: Sequence[BookingOption],
+    interpretation: Interpretation,
+) -> BookingOption | None:
+    if interpretation.service_key is None:
+        return None
+    markers = {
+        "split-installation": ("instal", "split"),
+        "cleaning": ("limpeza", "higien"),
+        "preventive-maintenance": ("prevent", "revis"),
+        "diagnostics": ("diagnost", "corretiva"),
+        "gas-recharge": ("gas", "vazamento", "recarga"),
+    }[interpretation.service_key]
+    for service in services:
+        label = normalize_portuguese(service.label)
+        if any(marker in label for marker in markers):
+            return service
+    return None
+
+
+def _date_from_text(
+    body: str | None,
+    dates: Sequence[BookingOption],
+) -> str | None:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return None
+    for option in dates:
+        label = normalize_portuguese(option.label)
+        day_month = date.fromisoformat(option.id).strftime("%d/%m")
+        weekday = label.split(" ", 1)[0]
+        if label in normalized or day_month in normalized or weekday in normalized:
+            return option.id
+    return None
+
+
+def _time_from_text(
+    body: str | None,
+    times: Sequence[BookingOption],
+) -> str | None:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return None
+    tokens = set(normalized.split())
+    for option in times:
+        hour, minute = option.label.split(":", 1)
+        candidates = {option.label, str(int(hour)), f"{int(hour)}h"}
+        if minute != "00":
+            candidates.add(f"{int(hour)} {minute}")
+        if any(candidate in normalized or candidate in tokens for candidate in candidates):
+            return option.id
+    return None
+
+
+def _text_message(body: str) -> OutboundMessage:
+    return OutboundMessage(message_type="text", body=body)
 
 
 def _canonical_state(value: str) -> ConversationState:
@@ -931,11 +1165,13 @@ def _booking_idempotency_key(inbound: ConversationInput) -> str:
     return f"booking:confirm:{hashlib.sha256(stable.encode()).hexdigest()}"
 
 
-def _handoff_transition() -> ConversationTransition:
+def _handoff_transition(
+    body: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
+) -> ConversationTransition:
     return _transition(
         ConversationState.HUMAN_HANDOFF,
         {},
-        handoff_message(),
+        _text_message(body),
         automation_enabled=False,
         handoff_status="waiting",
     )

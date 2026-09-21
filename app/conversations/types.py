@@ -29,6 +29,14 @@ class ConversationSnapshot:
     context: dict[str, Any]
     automation_enabled: bool
     handoff_status: str
+    assistant_enabled: bool = True
+    greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?"
+    fallback_message: str = (
+        "Não entendi. Conte em poucas palavras o serviço que você precisa."
+    )
+    handoff_message: str = (
+        "Seu atendimento foi encaminhado para uma pessoa da equipe."
+    )
 
 
 @dataclass(frozen=True, slots=True)

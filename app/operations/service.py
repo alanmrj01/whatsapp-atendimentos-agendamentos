@@ -11,7 +11,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.automation.service import AutomationAdministrationService
+from app.automation.service import (
+    AutomationAdministrationService,
+    AutomationPolicyService,
+)
 from app.models import (
     Appointment,
     Business,
@@ -28,11 +31,14 @@ from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
     AppointmentView,
+    AutomationSettingsUpdate,
     AutomationSettingsView,
     BusinessUpdate,
     BusinessView,
     ConversationDetail,
+    ConversationAutomationUpdate,
     ConversationView,
+    CustomerNameUpdate,
     CustomerCreate,
     CustomerOption,
     DashboardMetrics,
@@ -42,6 +48,7 @@ from app.operations.schemas import (
     EmployeeUpdate,
     EmployeeView,
     MessageView,
+    ManualMessageCreate,
     ServiceOption,
     ServiceCreate,
     ServiceUpdate,
@@ -51,6 +58,8 @@ from app.operations.schemas import (
     WorkingHoursView,
 )
 from app.repositories.automation import AutomationRepository
+from app.schemas.automation import BusinessAutomationSettingsUpdate
+from app.whatsapp.connections import WhatsAppConnectionStatus
 
 
 class OperationalService:
@@ -203,6 +212,18 @@ class OperationalService:
                 Message.conversation_id == conversation_id,
             ).order_by(Message.created_at, Message.id)
         )).all()
+        last_inbound_at = await self.session.scalar(
+            select(func.max(Message.created_at)).where(
+                Message.business_id == business_id,
+                Message.conversation_id == conversation_id,
+                Message.direction == "inbound",
+            )
+        )
+        window_expires_at = (
+            last_inbound_at + timedelta(hours=24)
+            if last_inbound_at is not None
+            else None
+        )
         return ConversationDetail(
             **view.model_dump(),
             messages=[
@@ -215,7 +236,169 @@ class OperationalService:
                     created_at=item.created_at,
                 ) for item in messages
             ],
+            assistant_enabled=rows[0][0].automation_enabled,
+            automation_suppressed_until=rows[0][0].automation_suppressed_until,
+            free_form_window_open=(
+                window_expires_at is not None and window_expires_at > datetime.now(UTC)
+            ),
+            free_form_window_expires_at=window_expires_at,
         )
+
+    async def update_customer_name(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: CustomerNameUpdate,
+    ) -> ConversationDetail:
+        customer = await self.session.scalar(
+            select(Customer)
+            .join(
+                Conversation,
+                and_(
+                    Conversation.business_id == Customer.business_id,
+                    Conversation.customer_id == Customer.id,
+                ),
+            )
+            .where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+            )
+            .with_for_update()
+        )
+        if customer is None:
+            raise HTTPException(404, "Conversation not found")
+        customer.name = values.name
+        await self.session.commit()
+        return await self.get_conversation(business_id, conversation_id)
+
+    async def update_conversation_automation(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: ConversationAutomationUpdate,
+    ) -> ConversationDetail:
+        conversation = await self.session.scalar(
+            select(Conversation)
+            .where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+            )
+            .with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        conversation.automation_enabled = values.enabled
+        if values.enabled:
+            conversation.handoff_status = "none"
+            conversation.automation_suppressed_until = None
+            conversation.suppression_reason = None
+        else:
+            conversation.handoff_status = "waiting"
+            await AutomationRepository(self.session).cancel_pending_outbounds(
+                business_id, conversation_id
+            )
+        await self.session.commit()
+        return await self.get_conversation(business_id, conversation_id)
+
+    async def send_manual_message(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: ManualMessageCreate,
+        operation_id: UUID,
+    ) -> MessageView:
+        idempotency_key = (
+            f"manual:outbound:{business_id}:{conversation_id}:{operation_id}"
+        )
+        existing = await self.session.scalar(
+            select(Message).where(Message.idempotency_key == idempotency_key)
+        )
+        if existing is not None:
+            return _message_view(existing)
+
+        row = (
+            await self.session.execute(
+                select(Conversation, Customer, Business)
+                .join(
+                    Customer,
+                    and_(
+                        Customer.business_id == Conversation.business_id,
+                        Customer.id == Conversation.customer_id,
+                    ),
+                )
+                .join(Business, Business.id == Conversation.business_id)
+                .where(
+                    Conversation.business_id == business_id,
+                    Conversation.id == conversation_id,
+                )
+                .with_for_update(of=Conversation)
+            )
+        ).one_or_none()
+        if row is None:
+            raise HTTPException(404, "Conversation not found")
+        conversation, _customer, business = row
+
+        connection = await self.session.scalar(
+            select(BusinessWhatsAppConnection)
+            .where(BusinessWhatsAppConnection.business_id == business_id)
+            .order_by(BusinessWhatsAppConnection.created_at.desc())
+            .limit(1)
+        )
+        if connection is not None:
+            connected = connection.status == WhatsAppConnectionStatus.CONNECTED.value
+        else:
+            connected = bool(business.meta_phone_number_id)
+        if not connected:
+            raise HTTPException(409, "WhatsApp connection is unavailable")
+
+        last_inbound_at = await self.session.scalar(
+            select(func.max(Message.created_at)).where(
+                Message.business_id == business_id,
+                Message.conversation_id == conversation_id,
+                Message.direction == "inbound",
+            )
+        )
+        if (
+            last_inbound_at is None
+            or last_inbound_at + timedelta(hours=24) <= datetime.now(UTC)
+        ):
+            raise HTTPException(
+                409,
+                "Customer service window is closed; use an approved template",
+            )
+
+        occurred_at = datetime.now(UTC)
+        await AutomationPolicyService(
+            AutomationRepository(self.session)
+        ).register_manual_business_message(
+            business_id,
+            conversation_id,
+            occurred_at,
+        )
+        message = Message(
+            business_id=business_id,
+            conversation_id=conversation_id,
+            provider_message_id=None,
+            direction="outbound",
+            message_type="text",
+            body=values.text,
+            interactive_id=None,
+            outbound_payload=None,
+            status="pending",
+            idempotency_key=idempotency_key,
+        )
+        self.session.add(message)
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            replay = await self.session.scalar(
+                select(Message).where(Message.idempotency_key == idempotency_key)
+            )
+            if replay is not None:
+                return _message_view(replay)
+            raise
+        return _message_view(message)
 
     async def get_business(self, business_id: UUID) -> BusinessView:
         return _business_view(await self._business(business_id))
@@ -280,17 +463,28 @@ class OperationalService:
         if settings is None:
             raise HTTPException(404, "Business not found")
         return AutomationSettingsView(
-            human_control_window_minutes=settings.human_control_window_minutes
+            human_control_window_minutes=settings.human_control_window_minutes,
+            assistant_enabled=settings.assistant_enabled,
+            greeting_message=settings.greeting_message,
+            fallback_message=settings.fallback_message,
+            handoff_message=settings.handoff_message,
         )
 
-    async def update_automation(self, business_id: UUID, minutes: int) -> AutomationSettingsView:
+    async def update_automation(
+        self,
+        business_id: UUID,
+        values: AutomationSettingsUpdate,
+    ) -> AutomationSettingsView:
         updated = await AutomationAdministrationService(
             AutomationRepository(self.session)
-        ).set_human_control_window(business_id, minutes)
+        ).update_settings(
+            business_id,
+            BusinessAutomationSettingsUpdate(**values.model_dump(exclude_unset=True)),
+        )
         if not updated:
             raise HTTPException(404, "Business not found")
         await self.session.commit()
-        return AutomationSettingsView(human_control_window_minutes=minutes)
+        return await self.get_automation(business_id)
 
     async def list_employees(self, business_id: UUID) -> list[EmployeeView]:
         items = (await self.session.scalars(
@@ -307,7 +501,12 @@ class OperationalService:
         return [_employee_view(item, service_ids.get(item.id, [])) for item in items]
 
     async def create_employee(self, business_id: UUID, values: EmployeeCreate) -> EmployeeView:
-        item = Employee(business_id=business_id, name=values.name, active=True)
+        item = Employee(
+            business_id=business_id,
+            name=values.name,
+            operational_role=values.operational_role,
+            active=True,
+        )
         self.session.add(item)
         await self.session.commit()
         return _employee_view(item, [])
@@ -355,7 +554,14 @@ class OperationalService:
         items = (await self.session.scalars(
             select(Customer).where(Customer.business_id == business_id).order_by(Customer.name, Customer.id)
         )).all()
-        return [CustomerOption(id=item.id, name=item.name or "Cliente", phone=item.phone_e164) for item in items]
+        return [
+            CustomerOption(
+                id=item.id,
+                name=_customer_display_name(item),
+                phone=item.phone_e164,
+            )
+            for item in items
+        ]
 
     async def create_customer(self, business_id: UUID, values: CustomerCreate) -> CustomerOption:
         await self._business(business_id)
@@ -524,7 +730,8 @@ class OperationalService:
             or_(last_outbound.is_(None), unread_message.created_at > last_outbound),
         ).correlate(Conversation).scalar_subquery()
         query = select(
-            Conversation, Customer.name, Customer.phone_e164,
+            Conversation, Customer.name, Customer.whatsapp_profile_name,
+            Customer.phone_e164, Customer.whatsapp_id,
             latest_body.label("last_content"), latest_time.label("last_message_at"),
             latest_direction.label("last_direction"), unread.label("unread_count"),
         ).join(Customer, and_(Customer.business_id == Conversation.business_id, Customer.id == Conversation.customer_id)).where(
@@ -534,7 +741,15 @@ class OperationalService:
             query = query.where(Conversation.id == conversation_id)
         if search:
             pattern = f"%{search}%"
-            query = query.where(or_(Customer.name.ilike(pattern), latest_body.ilike(pattern)))
+            query = query.where(
+                or_(
+                    Customer.name.ilike(pattern),
+                    Customer.whatsapp_profile_name.ilike(pattern),
+                    Customer.phone_e164.ilike(pattern),
+                    Customer.whatsapp_id.ilike(pattern),
+                    latest_body.ilike(pattern),
+                )
+            )
         if status == "waiting":
             query = query.where(latest_direction == "inbound")
         elif status == "in_progress":
@@ -578,13 +793,27 @@ def _appointment_view(row: Any) -> AppointmentView:
 
 
 def _conversation_view(row: Any) -> ConversationView:
-    item, customer_name, customer_phone, last_content, last_message_at, last_direction, unread_count = row
+    (
+        item,
+        customer_name,
+        whatsapp_profile_name,
+        customer_phone,
+        whatsapp_id,
+        last_content,
+        last_message_at,
+        last_direction,
+        unread_count,
+    ) = row
     status = "waiting" if last_direction == "inbound" else (
         "in_progress" if item.handoff_status != "none" else "answered"
     )
     unread_value = int(unread_count or 0)
     return ConversationView(
-        id=item.id, customer_id=item.customer_id, customer_name=customer_name or "Cliente",
+        id=item.id,
+        customer_id=item.customer_id,
+        customer_name=_display_name(
+            customer_name, whatsapp_profile_name, customer_phone, whatsapp_id
+        ),
         customer_phone=customer_phone, last_content=last_content, last_message_at=last_message_at,
         status=status, unread_count=unread_value,
         priority=unread_value > 0 or item.handoff_status == "waiting", assignee_name=None,
@@ -605,8 +834,41 @@ def _hours_view(row: Any) -> WorkingHoursView:
 
 def _employee_view(item: Employee, service_ids: list[UUID]) -> EmployeeView:
     return EmployeeView(
-        id=item.id, name=item.name, active=item.active, service_ids=service_ids
+        id=item.id,
+        name=item.name,
+        active=item.active,
+        operational_role=item.operational_role,
+        service_ids=service_ids,
     )
+
+
+def _message_view(item: Message) -> MessageView:
+    return MessageView(
+        id=item.id,
+        direction=item.direction,
+        message_type=item.message_type,
+        body=item.body,
+        status=item.status,
+        created_at=item.created_at,
+    )
+
+
+def _customer_display_name(item: Customer) -> str:
+    return _display_name(
+        item.name,
+        item.whatsapp_profile_name,
+        item.phone_e164,
+        item.whatsapp_id,
+    )
+
+
+def _display_name(
+    name: str | None,
+    profile_name: str | None,
+    phone: str | None,
+    whatsapp_id: str,
+) -> str:
+    return name or profile_name or phone or whatsapp_id
 
 
 def _service_view(item: Service) -> ServiceOption:

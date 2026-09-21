@@ -17,8 +17,10 @@ from app.api.operational_pwa import (
     list_conversations,
     setup_status,
     update_automation,
+    update_conversation_customer,
     update_employee,
 )
+from app.api import operational_pwa as operational_api
 from app.auth.dependencies import require_origin, require_principal
 from app.auth.schemas import MembershipResponse, MembershipRole
 from app.main import app
@@ -27,6 +29,8 @@ from app.operations.schemas import (
     AppointmentUpdate,
     DashboardMetrics,
     DashboardToday,
+    CustomerNameUpdate,
+    MessageView,
     EmployeeUpdate,
     SetupStatus,
     AutomationSettingsUpdate,
@@ -73,6 +77,18 @@ class FakeOperationalService:
             return_value=AutomationSettingsView(human_control_window_minutes=60)
         )
         self.update_employee = AsyncMock()
+        self.send_manual_message = AsyncMock(
+            return_value=MessageView(
+                id=uuid4(),
+                direction="outbound",
+                message_type="text",
+                body="Resposta da equipe",
+                status="pending",
+                created_at=datetime.now(UTC),
+            )
+        )
+        self.update_customer_name = AsyncMock()
+        self.update_conversation_automation = AsyncMock()
 
     async def _dashboard(self, business_id):
         self.dashboard_business_id = business_id
@@ -197,7 +213,10 @@ async def test_configuration_mutations_use_active_business_and_owner_role() -> N
         AutomationSettingsUpdate(human_control_window_minutes=60), identity, fake
     )
     assert result.human_control_window_minutes == 60
-    fake.update_automation.assert_awaited_once_with(BUSINESS_A, 60)
+    fake.update_automation.assert_awaited_once_with(
+        BUSINESS_A,
+        AutomationSettingsUpdate(human_control_window_minutes=60),
+    )
 
     foreign_employee_id = uuid4()
     await update_employee(
@@ -222,6 +241,91 @@ async def test_viewer_cannot_change_automation() -> None:
         )
     assert caught.value.status_code == 403
     fake.update_automation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_customer_name_edit_is_tenant_scoped_and_viewer_is_read_only() -> None:
+    fake = FakeOperationalService()
+    conversation_id = uuid4()
+    payload = CustomerNameUpdate(name="Nome manual")
+
+    await update_conversation_customer(
+        conversation_id,
+        payload,
+        principal(BUSINESS_A, role=MembershipRole.ATTENDANT),
+        fake,
+    )
+    fake.update_customer_name.assert_awaited_once_with(
+        BUSINESS_A, conversation_id, payload
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await update_conversation_customer(
+            conversation_id,
+            payload,
+            principal(BUSINESS_A, role=MembershipRole.VIEWER),
+            fake,
+        )
+    assert caught.value.status_code == 403
+    assert fake.update_customer_name.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_reply_uses_active_tenant_idempotency_and_outbox(
+    client: AsyncClient, monkeypatch
+) -> None:
+    fake = FakeOperationalService()
+    conversation_id = uuid4()
+    operation_id = uuid4()
+    enqueue = AsyncMock()
+    monkeypatch.setattr(
+        operational_api, "build_outbound_task_enqueuer", lambda _settings: object()
+    )
+    monkeypatch.setattr(operational_api, "enqueue_outbound_message_ids", enqueue)
+    app.dependency_overrides[require_principal] = lambda: principal(BUSINESS_A)
+    app.dependency_overrides[require_origin] = lambda: None
+    app.dependency_overrides[get_operational_service] = lambda: fake
+    try:
+        response = await client.post(
+            f"/api/v1/conversations/{conversation_id}/messages",
+            json={"text": "Resposta da equipe"},
+            headers={"Idempotency-Key": str(operation_id)},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    fake.send_manual_message.assert_awaited_once()
+    business_id, called_conversation, payload, called_operation = (
+        fake.send_manual_message.await_args.args
+    )
+    assert business_id == BUSINESS_A
+    assert called_conversation == conversation_id
+    assert payload.text == "Resposta da equipe"
+    assert called_operation == operation_id
+    enqueue.assert_awaited_once()
+    assert enqueue.await_args.args[0] == [fake.send_manual_message.return_value.id]
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_send_manual_reply(client: AsyncClient) -> None:
+    fake = FakeOperationalService()
+    app.dependency_overrides[require_principal] = lambda: principal(
+        role=MembershipRole.VIEWER
+    )
+    app.dependency_overrides[require_origin] = lambda: None
+    app.dependency_overrides[get_operational_service] = lambda: fake
+    try:
+        response = await client.post(
+            f"/api/v1/conversations/{uuid4()}/messages",
+            json={"text": "Não permitido"},
+            headers={"Idempotency-Key": str(uuid4())},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    fake.send_manual_message.assert_not_awaited()
 
 
 def test_appointment_contract_requires_timezone_and_valid_interval() -> None:

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.models import (
+    Business,
     BusinessAutomationExclusion,
     Conversation,
     Customer,
@@ -44,13 +45,30 @@ class OutboundTaskRepository:
                 BusinessAutomationExclusion.active.is_(True),
             )
         )
+        active_ignore = exists(
+            select(BusinessAutomationExclusion.id).where(
+                BusinessAutomationExclusion.business_id == Message.business_id,
+                BusinessAutomationExclusion.whatsapp_id == Customer.whatsapp_id,
+                BusinessAutomationExclusion.active.is_(True),
+                BusinessAutomationExclusion.mode == "ignore",
+            )
+        )
+        is_manual = Message.idempotency_key.like("manual:outbound:%")
         result = await self.session.execute(
             select(
                 Message,
                 Customer.whatsapp_id,
                 or_(
-                    Conversation.automation_suppressed_until > func.now(),
-                    active_exclusion,
+                    active_ignore,
+                    and_(
+                        ~is_manual,
+                        or_(
+                            Conversation.automation_enabled.is_(False),
+                            Business.assistant_enabled.is_(False),
+                            Conversation.automation_suppressed_until > func.now(),
+                            active_exclusion,
+                        ),
+                    ),
                 ).label("automation_blocked"),
             )
             .join(
@@ -67,6 +85,7 @@ class OutboundTaskRepository:
                     Customer.id == Conversation.customer_id,
                 ),
             )
+            .join(Business, Business.id == Message.business_id)
             .where(
                 Message.id == message_id,
                 Message.direction == "outbound",

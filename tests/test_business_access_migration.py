@@ -21,7 +21,7 @@ ACCESS_HISTORY_MIGRATION_PATH = (
 def test_access_history_is_current_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260915_0009"]
+    assert script.get_heads() == ["20260921_0011"]
 
 
 def test_business_access_migration_preserves_existing_tenants_as_paid() -> None:

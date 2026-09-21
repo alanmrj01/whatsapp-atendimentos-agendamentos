@@ -43,7 +43,10 @@ class WebhookRepository(Protocol):
     ) -> uuid.UUID | None: ...
 
     async def get_or_create_customer_id(
-        self, business_id: uuid.UUID, whatsapp_id: str
+        self,
+        business_id: uuid.UUID,
+        whatsapp_id: str,
+        whatsapp_profile_name: str | None = None,
     ) -> uuid.UUID: ...
 
     async def get_or_create_conversation_id(
@@ -189,10 +192,8 @@ async def process_webhook_events(
                             event.event_key, "ignored"
                         )
                         continue
-                    customer_id = (
-                        await event_repository.get_or_create_customer_id(
-                            business_id, event.whatsapp_id
-                        )
+                    customer_id = await _inbound_customer_id(
+                        event_repository, business_id, event
                     )
                     conversation_id = (
                         await event_repository.get_or_create_conversation_id(
@@ -331,11 +332,8 @@ async def persist_webhook_events_for_tasks(
                                     "ignored",
                                 )
                                 continue
-                            customer_id = (
-                                await event_repository.get_or_create_customer_id(
-                                    business_id,
-                                    event.whatsapp_id,
-                                )
+                            customer_id = await _inbound_customer_id(
+                                event_repository, business_id, event
                             )
                             conversation_id = (
                                 await event_repository.get_or_create_conversation_id(
@@ -433,4 +431,22 @@ def is_duplicate_event_error(exc: IntegrityError) -> bool:
         == PROCESSED_WEBHOOK_EVENT_KEY_CONSTRAINT
         for error in error_chain
         if error is not None
+    )
+
+
+async def _inbound_customer_id(
+    repository: WebhookRepository,
+    business_id: uuid.UUID,
+    event: InboundMessageEvent,
+) -> uuid.UUID:
+    if event.whatsapp_profile_name is None:
+        # Preserve compatibility with isolated test repositories that implement
+        # the pre-profile-name port.
+        return await repository.get_or_create_customer_id(
+            business_id, event.whatsapp_id
+        )
+    return await repository.get_or_create_customer_id(
+        business_id,
+        event.whatsapp_id,
+        event.whatsapp_profile_name,
     )

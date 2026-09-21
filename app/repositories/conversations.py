@@ -15,15 +15,22 @@ from app.conversations.types import (
     ConversationSnapshot,
     ConversationTransition,
 )
-from app.models import Conversation, Message
+from app.models import Business, Conversation, Message
 
 
 def build_lock_conversation_statement(
     business_id: uuid.UUID,
     conversation_id: uuid.UUID,
-) -> Select[tuple[Conversation]]:
+) -> Select:
     return (
-        select(Conversation)
+        select(
+            Conversation,
+            Business.assistant_enabled,
+            Business.assistant_greeting_message,
+            Business.assistant_fallback_message,
+            Business.assistant_handoff_message,
+        )
+        .join(Business, Business.id == Conversation.business_id)
         .where(
             Conversation.business_id == business_id,
             Conversation.id == conversation_id,
@@ -74,7 +81,8 @@ class ConversationRepository:
         result = await self.session.execute(
             build_lock_conversation_statement(business_id, conversation_id)
         )
-        conversation = result.scalar_one()
+        row = result.one()
+        conversation = row[0]
         yield ConversationSnapshot(
             business_id=conversation.business_id,
             customer_id=conversation.customer_id,
@@ -83,6 +91,10 @@ class ConversationRepository:
             context=dict(conversation.context),
             automation_enabled=conversation.automation_enabled,
             handoff_status=conversation.handoff_status,
+            assistant_enabled=row.assistant_enabled,
+            greeting_message=row.assistant_greeting_message,
+            fallback_message=row.assistant_fallback_message,
+            handoff_message=row.assistant_handoff_message,
         )
 
     async def outbound_exists(self, idempotency_key: str) -> bool:

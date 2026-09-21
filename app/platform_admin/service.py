@@ -19,6 +19,7 @@ from app.models import (
     BusinessWhatsAppConnection,
     User,
 )
+from app.operations.defaults import default_services_for_business
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
     PlatformBusinessAccessResponse,
@@ -151,7 +152,9 @@ class PlatformAdminService:
             # Persist parent rows inside the same transaction before inserting
             # the membership that references both foreign keys.
             await self.db.flush()
-            self.db.add(membership)
+            self.db.add_all(
+                [membership, *default_services_for_business(business.id)]
+            )
             await self.db.commit()
         except IntegrityError:
             await self.db.rollback()

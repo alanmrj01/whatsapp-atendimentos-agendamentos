@@ -7,8 +7,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.automation.domain import normalize_assistant_message
+
 AppointmentStatus = Literal["pending", "confirmed", "cancelled", "completed"]
 ConversationStatus = Literal["waiting", "in_progress", "answered"]
+OperationalRole = Literal["technician", "assistant", "administrator"]
 
 
 class StrictModel(BaseModel):
@@ -114,6 +117,42 @@ class ConversationList(StrictModel):
 
 class ConversationDetail(ConversationView):
     messages: list[MessageView]
+    assistant_enabled: bool
+    automation_suppressed_until: datetime | None
+    free_form_window_open: bool
+    free_form_window_expires_at: datetime | None
+
+
+class CustomerNameUpdate(StrictModel):
+    name: str | None = Field(default=None, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        if not normalized:
+            return None
+        if len(normalized) > 255:
+            raise ValueError("Customer name is too long")
+        return normalized
+
+
+class ManualMessageCreate(StrictModel):
+    text: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("text")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Message cannot be empty")
+        return normalized
+
+
+class ConversationAutomationUpdate(StrictModel):
+    enabled: bool
 
 
 class BusinessView(StrictModel):
@@ -197,24 +236,58 @@ class WorkingHoursList(StrictModel):
 
 class AutomationSettingsView(StrictModel):
     human_control_window_minutes: int
-    supported_options: tuple[str, ...] = ("human_control_window_minutes",)
+    assistant_enabled: bool = True
+    greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?"
+    fallback_message: str = (
+        "Não entendi. Conte em poucas palavras o serviço que você precisa."
+    )
+    handoff_message: str = (
+        "Seu atendimento foi encaminhado para uma pessoa da equipe."
+    )
+    supported_options: tuple[str, ...] = (
+        "assistant_enabled",
+        "human_control_window_minutes",
+        "greeting_message",
+        "fallback_message",
+        "handoff_message",
+    )
 
 
 class AutomationSettingsUpdate(StrictModel):
     human_control_window_minutes: Literal[
         5, 10, 20, 30, 60, 120, 240, 360, 720, 1440, 2160
-    ]
+    ] | None = None
+    assistant_enabled: bool | None = None
+    greeting_message: str | None = None
+    fallback_message: str | None = None
+    handoff_message: str | None = None
+
+    @field_validator("greeting_message", "fallback_message", "handoff_message")
+    @classmethod
+    def validate_message(cls, value: str | None) -> str | None:
+        return normalize_assistant_message(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "AutomationSettingsUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one field is required")
+        for field_name in self.model_fields_set:
+            if getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be null")
+        return self
 
 
 class EmployeeView(StrictModel):
     id: UUID
     name: str
     active: bool
+    operational_role: OperationalRole
     service_ids: list[UUID] = Field(default_factory=list)
 
 
 class EmployeeCreate(StrictModel):
     name: str = Field(min_length=2, max_length=255)
+    operational_role: OperationalRole = "technician"
 
     @field_validator("name")
     @classmethod
@@ -228,6 +301,7 @@ class EmployeeCreate(StrictModel):
 class EmployeeUpdate(StrictModel):
     name: str | None = Field(default=None, min_length=2, max_length=255)
     active: bool | None = None
+    operational_role: OperationalRole | None = None
 
     @field_validator("name")
     @classmethod
@@ -243,6 +317,11 @@ class EmployeeUpdate(StrictModel):
     def require_change(self) -> "EmployeeUpdate":
         if not self.model_fields_set:
             raise ValueError("At least one field is required")
+        if (
+            "operational_role" in self.model_fields_set
+            and self.operational_role is None
+        ):
+            raise ValueError("operational_role cannot be null")
         return self
 
 

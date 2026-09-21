@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import uuid
 from contextlib import AbstractAsyncContextManager
+from dataclasses import replace
 from typing import Protocol
 
+from app.conversations.constants import ConversationState
 from app.conversations.ports import BookingAvailabilityPort
 from app.conversations.transitions import determine_transition
 from app.conversations.types import (
@@ -45,7 +47,10 @@ class ConversationEngine:
             inbound.business_id,
             inbound.conversation_id,
         ) as conversation:
-            if not conversation.automation_enabled:
+            if (
+                not conversation.assistant_enabled
+                or not conversation.automation_enabled
+            ):
                 return False
 
             idempotency_key = build_outbound_idempotency_key(inbound)
@@ -59,6 +64,14 @@ class ConversationEngine:
             )
             if transition is None:
                 return False
+            if transition.state is ConversationState.HUMAN_HANDOFF:
+                transition = replace(
+                    transition,
+                    outbound=replace(
+                        transition.outbound,
+                        body=conversation.handoff_message,
+                    ),
+                )
             return await self.repository.persist_transition(
                 conversation,
                 transition,

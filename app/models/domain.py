@@ -154,6 +154,27 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     human_control_window_minutes: Mapped[int] = mapped_column(
         Integer, default=2160, server_default="2160", nullable=False
     )
+    assistant_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    assistant_greeting_message: Mapped[str] = mapped_column(
+        String(1000),
+        default="Olá! Como posso ajudar com seu ar-condicionado?",
+        server_default="Olá! Como posso ajudar com seu ar-condicionado?",
+        nullable=False,
+    )
+    assistant_fallback_message: Mapped[str] = mapped_column(
+        String(1000),
+        default="Não entendi. Conte em poucas palavras o serviço que você precisa.",
+        server_default="Não entendi. Conte em poucas palavras o serviço que você precisa.",
+        nullable=False,
+    )
+    assistant_handoff_message: Mapped[str] = mapped_column(
+        String(1000),
+        default="Seu atendimento foi encaminhado para uma pessoa da equipe.",
+        server_default="Seu atendimento foi encaminhado para uma pessoa da equipe.",
+        nullable=False,
+    )
     active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true", nullable=False
     )
@@ -286,6 +307,9 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     whatsapp_id: Mapped[str] = mapped_column(String(255), nullable=False)
     phone_e164: Mapped[str | None] = mapped_column(String(32), nullable=True)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    whatsapp_profile_name: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
 
 
 class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -457,6 +481,10 @@ class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "employees"
     __table_args__ = (
+        CheckConstraint(
+            "operational_role IN ('technician', 'assistant', 'administrator')",
+            name="operational_role_allowed",
+        ),
         UniqueConstraint("business_id", "id", name="uq_employees_business_id_id"),
         Index("ix_employees_business_id", "business_id"),
         Index("ix_employees_active", "active"),
@@ -466,6 +494,9 @@ class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    operational_role: Mapped[str] = mapped_column(
+        String(32), default="technician", server_default="technician", nullable=False
+    )
     active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true", nullable=False
     )

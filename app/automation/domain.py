@@ -17,6 +17,14 @@ HUMAN_CONTROL_WINDOW_PRESETS = (
     2160,
 )
 DEFAULT_HUMAN_CONTROL_WINDOW_MINUTES = 2160
+DEFAULT_ASSISTANT_GREETING = "Olá! Como posso ajudar com seu ar-condicionado?"
+DEFAULT_ASSISTANT_FALLBACK = (
+    "Não entendi. Conte em poucas palavras o serviço que você precisa."
+)
+DEFAULT_ASSISTANT_HANDOFF = (
+    "Seu atendimento foi encaminhado para uma pessoa da equipe."
+)
+ASSISTANT_MESSAGE_MAX_LENGTH = 1000
 _INDIVIDUAL_ID = re.compile(r"^[1-9][0-9]{6,14}$")
 
 
@@ -44,4 +52,13 @@ def normalize_whatsapp_id(value: str) -> str:
         normalized = normalized[1:]
     if _INDIVIDUAL_ID.fullmatch(normalized) is None:
         raise ValueError("WhatsApp identifier must represent one individual")
+    return normalized
+
+
+def normalize_assistant_message(value: str) -> str:
+    normalized = " ".join(value.split())
+    if not normalized or len(normalized) > ASSISTANT_MESSAGE_MAX_LENGTH:
+        raise ValueError("Assistant message has an invalid length")
+    if "<" in normalized or ">" in normalized:
+        raise ValueError("Assistant message must be plain text")
     return normalized

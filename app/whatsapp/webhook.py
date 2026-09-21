@@ -51,6 +51,8 @@ class InboundMessageEvent:
     message_type: str
     body: str | None
     interactive_id: str | None
+    whatsapp_profile_name: str | None = None
+    occurred_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +144,7 @@ def _normalize_messages(
         return []
 
     events: list[InboundMessageEvent] = []
+    profile_names = _profile_names(value)
     for raw_message in raw_messages:
         if not isinstance(raw_message, dict):
             continue
@@ -164,6 +167,8 @@ def _normalize_messages(
                 message_type=message_type,
                 body=body,
                 interactive_id=interactive_id,
+                whatsapp_profile_name=profile_names.get(whatsapp_id),
+                occurred_at=_unix_timestamp(raw_message.get("timestamp")),
             )
         )
     return events
@@ -324,6 +329,27 @@ def _identifier(value: Any, max_length: int) -> str | None:
 
 def _body(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _profile_names(value: dict[str, Any]) -> dict[str, str]:
+    contacts = value.get("contacts")
+    if not isinstance(contacts, list):
+        return {}
+    names: dict[str, str] = {}
+    for contact in contacts:
+        if not isinstance(contact, dict):
+            continue
+        whatsapp_id = _identifier(contact.get("wa_id"), 255)
+        profile = contact.get("profile")
+        if not whatsapp_id or not isinstance(profile, dict):
+            continue
+        raw_name = profile.get("name")
+        if not isinstance(raw_name, str):
+            continue
+        normalized = " ".join(raw_name.split())
+        if normalized and len(normalized) <= 255:
+            names[whatsapp_id] = normalized
+    return names
 
 
 def _unix_timestamp(value: Any) -> datetime | None:

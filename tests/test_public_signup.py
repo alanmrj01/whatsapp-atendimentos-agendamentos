@@ -9,7 +9,15 @@ from pydantic import ValidationError
 from app.auth import service as auth_service
 from app.auth.schemas import SignupRequest
 from app.auth.service import AuthService
-from app.models import AuthSession, Business, BusinessAccess, BusinessUserMembership, User
+from app.models import (
+    AuthSession,
+    Business,
+    BusinessAccess,
+    BusinessUserMembership,
+    Service,
+    User,
+)
+from app.operations.defaults import DEFAULT_OPERATIONAL_SERVICES
 
 
 def make_payload(**overrides) -> SignupRequest:
@@ -77,6 +85,7 @@ async def test_signup_creates_free_business_owner_and_active_session(monkeypatch
     created_user = next(item for item in parents if isinstance(item, User))
     access = next(item for item in children if isinstance(item, BusinessAccess))
     membership = next(item for item in children if isinstance(item, BusinessUserMembership))
+    services = [item for item in children if isinstance(item, Service)]
 
     assert business.id == operation_id
     assert business.name == payload.business_name
@@ -86,6 +95,14 @@ async def test_signup_creates_free_business_owner_and_active_session(monkeypatch
     assert membership.user_id == user.id
     assert membership.business_id == business.id
     assert membership.role == "owner"
+    assert [(item.name, item.duration_minutes) for item in services] == [
+        (item.name, item.duration_minutes)
+        for item in DEFAULT_OPERATIONAL_SERVICES
+    ]
+    assert len(services) == 5
+    assert all(item.business_id == business.id for item in services)
+    assert all(item.base_price is None for item in services)
+    assert all(item.active and item.automatic_booking for item in services)
     assert isinstance(session, AuthSession)
     assert session.user_id == user.id
     assert session.active_business_id == business.id

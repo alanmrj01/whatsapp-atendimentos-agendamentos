@@ -17,6 +17,7 @@ from app.schemas.automation import (
     AutomationExclusionCreate,
     AutomationExclusionUpdate,
     BusinessAutomationSettings,
+    BusinessAutomationSettingsUpdate,
 )
 
 
@@ -178,10 +179,37 @@ class AutomationAdministrationService:
         self,
         business_id: uuid.UUID,
     ) -> BusinessAutomationSettings | None:
-        minutes = await self.repository.get_business_window(business_id)
-        if minutes is None:
+        if hasattr(self.repository, "get_business_settings"):
+            values = await self.repository.get_business_settings(business_id)
+        else:
+            minutes = await self.repository.get_business_window(business_id)
+            values = None if minutes is None else (minutes, True, None, None, None)
+        if values is None:
             return None
+        minutes, enabled, greeting, fallback, handoff = values
+        defaults = BusinessAutomationSettings(
+            business_id=business_id,
+            human_control_window_minutes=minutes,
+        )
         return BusinessAutomationSettings(
             business_id=business_id,
             human_control_window_minutes=minutes,
+            assistant_enabled=enabled,
+            greeting_message=greeting or defaults.greeting_message,
+            fallback_message=fallback or defaults.fallback_message,
+            handoff_message=handoff or defaults.handoff_message,
+        )
+
+    async def update_settings(
+        self,
+        business_id: uuid.UUID,
+        values: BusinessAutomationSettingsUpdate,
+    ) -> bool:
+        updates = values.model_dump(exclude_unset=True)
+        if "human_control_window_minutes" in updates:
+            updates["human_control_window_minutes"] = validate_human_control_window(
+                updates["human_control_window_minutes"]
+            )
+        return await self.repository.update_business_settings(
+            business_id, updates
         )

@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.dependencies import require_super_admin
-from app.models import Business, BusinessAccess, BusinessUserMembership, User
+from app.models import Business, BusinessAccess, BusinessUserMembership, Service, User
 from app.platform_admin import service as platform_service
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
@@ -240,9 +240,12 @@ async def test_create_business_uses_operation_uuid_as_business_id(monkeypatch) -
     result = await PlatformAdminService(db).create_business(payload, operation_id)
 
     assert result.id == operation_id
-    added = db.add_all.call_args.args[0]
-    created_business = next(item for item in added if isinstance(item, Business))
+    parents = db.add_all.call_args_list[0].args[0]
+    children = db.add_all.call_args_list[1].args[0]
+    created_business = next(item for item in parents if isinstance(item, Business))
     assert created_business.id == operation_id
+    assert sum(isinstance(item, Service) for item in children) == 5
+    assert any(isinstance(item, BusinessUserMembership) for item in children)
     db.commit.assert_awaited_once()
     db.rollback.assert_not_awaited()
 
@@ -277,17 +280,18 @@ async def test_create_business_flushes_parents_before_membership(monkeypatch) ->
 
     def add_all(items):
         items = list(items)
-        assert len(items) == 2
-        assert any(isinstance(item, Business) for item in items)
-        assert any(isinstance(item, User) for item in items)
-        events.append("parents")
+        if any(isinstance(item, Business) for item in items):
+            assert len(items) == 2
+            assert any(isinstance(item, User) for item in items)
+            events.append("parents")
+        else:
+            assert len(items) == 6
+            assert sum(isinstance(item, Service) for item in items) == 5
+            assert any(isinstance(item, BusinessUserMembership) for item in items)
+            events.append("membership_and_services")
 
     async def flush():
         events.append("flush")
-
-    def add(item):
-        assert isinstance(item, BusinessUserMembership)
-        events.append("membership")
 
     async def commit():
         events.append("commit")
@@ -296,7 +300,7 @@ async def test_create_business_flushes_parents_before_membership(monkeypatch) ->
         scalar=AsyncMock(return_value=None),
         add_all=Mock(side_effect=add_all),
         flush=AsyncMock(side_effect=flush),
-        add=Mock(side_effect=add),
+        add=Mock(),
         commit=AsyncMock(side_effect=commit),
         rollback=AsyncMock(),
     )
@@ -308,7 +312,7 @@ async def test_create_business_flushes_parents_before_membership(monkeypatch) ->
 
     await PlatformAdminService(db).create_business(payload)
 
-    assert events == ["parents", "flush", "membership", "commit"]
+    assert events == ["parents", "flush", "membership_and_services", "commit"]
     db.rollback.assert_not_awaited()
 
 

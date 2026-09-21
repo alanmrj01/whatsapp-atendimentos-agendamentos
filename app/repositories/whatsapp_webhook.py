@@ -66,7 +66,10 @@ class WhatsAppWebhookRepository:
         )
 
     async def get_or_create_customer_id(
-        self, business_id: uuid.UUID, whatsapp_id: str
+        self,
+        business_id: uuid.UUID,
+        whatsapp_id: str,
+        whatsapp_profile_name: str | None = None,
     ) -> uuid.UUID:
         customer_id = uuid.uuid4()
         result = await self.session.execute(
@@ -75,6 +78,7 @@ class WhatsAppWebhookRepository:
                 id=customer_id,
                 business_id=business_id,
                 whatsapp_id=whatsapp_id,
+                whatsapp_profile_name=whatsapp_profile_name,
             )
             .on_conflict_do_nothing(
                 constraint="uq_customers_business_whatsapp"
@@ -84,6 +88,16 @@ class WhatsAppWebhookRepository:
         created_id = result.scalar_one_or_none()
         if created_id is not None:
             return created_id
+
+        if whatsapp_profile_name is not None:
+            await self.session.execute(
+                update(Customer)
+                .where(
+                    Customer.business_id == business_id,
+                    Customer.whatsapp_id == whatsapp_id,
+                )
+                .values(whatsapp_profile_name=whatsapp_profile_name)
+            )
 
         existing = await self.session.execute(
             select(Customer.id).where(
@@ -154,6 +168,7 @@ class WhatsAppWebhookRepository:
                 body=event.body,
                 interactive_id=event.interactive_id,
                 status="received",
+                created_at=event.occurred_at or func.now(),
             )
         )
 

@@ -53,6 +53,7 @@ def messages_payload(
     *,
     messages: list[dict[str, Any]] | None = None,
     statuses: list[dict[str, Any]] | None = None,
+    contacts: list[Any] | None = None,
     phone_number_id: str = "known-phone-id",
 ) -> dict[str, Any]:
     value: dict[str, Any] = {
@@ -63,6 +64,8 @@ def messages_payload(
         value["messages"] = messages
     if statuses is not None:
         value["statuses"] = statuses
+    if contacts is not None:
+        value["contacts"] = contacts
     return {
         "object": "whatsapp_business_account",
         "entry": [
@@ -186,6 +189,7 @@ class FakeWebhookRepository:
         self.completed: list[tuple[str, str]] = []
         self.event_statuses: dict[str, str] = {}
         self.customer_lookups: list[str] = []
+        self.customer_profile_names: list[str | None] = []
         self.conversation_lookups: list[uuid.UUID] = []
         self.integrity_constraint_name: str | None = None
         self.conversation_initiators: list[str] = []
@@ -215,9 +219,13 @@ class FakeWebhookRepository:
         return self.business_id
 
     async def get_or_create_customer_id(
-        self, _: uuid.UUID, whatsapp_id: str
+        self,
+        _: uuid.UUID,
+        whatsapp_id: str,
+        whatsapp_profile_name: str | None = None,
     ) -> uuid.UUID:
         self.customer_lookups.append(whatsapp_id)
+        self.customer_profile_names.append(whatsapp_profile_name)
         return self.customer_id
 
     async def get_or_create_conversation_id(
@@ -676,6 +684,74 @@ async def test_post_normalizes_inbound_text(
 
 
 @mark.asyncio
+async def test_profile_name_is_normalized_and_associated_by_whatsapp_id(
+    client: AsyncClient, monkeypatch: MonkeyPatch
+) -> None:
+    processor = AsyncMock()
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+    payload = messages_payload(
+        contacts=[
+            {"wa_id": "5511999990999", "profile": {"name": "Outro contato"}},
+            {"wa_id": "5511999990002", "profile": {"name": "  Ana   Paula  "}},
+        ],
+        messages=[
+            {
+                "id": "provider-profile-1",
+                "from": "5511999990002",
+                "timestamp": "1789952400",
+                "type": "text",
+                "text": {"body": "olá"},
+            }
+        ],
+    )
+
+    _, response = await post_signed(client, payload)
+    event = processor.await_args.args[1][0]
+
+    assert response.status_code == 200
+    assert event.whatsapp_profile_name == "Ana Paula"
+    assert event.occurred_at == datetime.fromtimestamp(
+        1789952400, tz=timezone.utc
+    )
+
+
+@mark.parametrize(
+    "contact",
+    [
+        {"wa_id": "5511999990002", "profile": {"name": 123}},
+        {"wa_id": "5511999990002", "profile": {"name": "x" * 256}},
+        {"wa_id": "5511999990002", "profile": None},
+        "malformed",
+    ],
+)
+@mark.asyncio
+async def test_malformed_profile_name_is_ignored(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+    contact: Any,
+) -> None:
+    processor = AsyncMock()
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+    payload = messages_payload(
+        contacts=[contact],
+        messages=[
+            {
+                "id": f"provider-profile-malformed-{type(contact).__name__}",
+                "from": "5511999990002",
+                "type": "text",
+                "text": {"body": "olá"},
+            }
+        ],
+    )
+
+    _, response = await post_signed(client, payload)
+    event = processor.await_args.args[1][0]
+
+    assert response.status_code == 200
+    assert event.whatsapp_profile_name is None
+
+
+@mark.asyncio
 async def test_post_normalizes_interactive_reply(
     client: AsyncClient, monkeypatch: MonkeyPatch
 ) -> None:
@@ -916,6 +992,28 @@ async def test_sequential_duplicate_is_processed_once() -> None:
 
     assert len(repository.persisted_messages) == 1
     assert repository.completed == [(event.event_key, "processed")]
+
+
+@mark.asyncio
+async def test_processor_passes_profile_name_to_customer_upsert() -> None:
+    repository = FakeWebhookRepository()
+    event = InboundMessageEvent(
+        event_key=build_event_key("inbound", "provider-profile-upsert"),
+        event_type="message.inbound.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-profile-upsert",
+        whatsapp_id="5511999990005",
+        message_type="text",
+        body="olá",
+        interactive_id=None,
+        whatsapp_profile_name="Nome do WhatsApp",
+    )
+
+    await process_webhook_events(FakeSession(), [event], repository)
+
+    assert repository.customer_lookups == [event.whatsapp_id]
+    assert repository.customer_profile_names == ["Nome do WhatsApp"]
+    assert repository.persisted_messages == [event]
 
 
 @mark.asyncio

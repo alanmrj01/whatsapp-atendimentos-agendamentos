@@ -19,6 +19,7 @@ from app.auth.security import (
     verify_password,
 )
 from app.models import AuthSession, Business, BusinessAccess, BusinessUserMembership, User
+from app.operations.defaults import default_services_for_business
 
 
 def unauthorized() -> HTTPException:
@@ -193,7 +194,9 @@ class AuthService:
         try:
             self.db.add_all([business, user])
             await self.db.flush()
-            self.db.add_all([access, membership])
+            self.db.add_all(
+                [access, membership, *default_services_for_business(business.id)]
+            )
             await self.db.flush()
             self.db.add(session)
             await self.db.commit()

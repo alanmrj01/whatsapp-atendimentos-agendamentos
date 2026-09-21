@@ -245,6 +245,27 @@ class AutomationRepository:
         )
         return result.scalar_one_or_none() is not None
 
+    async def update_business_settings(
+        self,
+        business_id: uuid.UUID,
+        values: dict[str, object],
+    ) -> bool:
+        columns = {
+            "human_control_window_minutes": "human_control_window_minutes",
+            "assistant_enabled": "assistant_enabled",
+            "greeting_message": "assistant_greeting_message",
+            "fallback_message": "assistant_fallback_message",
+            "handoff_message": "assistant_handoff_message",
+        }
+        updates = {columns[key]: value for key, value in values.items()}
+        result = await self.session.execute(
+            update(Business)
+            .where(Business.id == business_id)
+            .values(**updates)
+            .returning(Business.id)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def get_business_window(
         self,
         business_id: uuid.UUID,
@@ -255,6 +276,29 @@ class AutomationRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_business_settings(
+        self, business_id: uuid.UUID
+    ) -> tuple[int, bool, str, str, str] | None:
+        result = await self.session.execute(
+            select(
+                Business.human_control_window_minutes,
+                Business.assistant_enabled,
+                Business.assistant_greeting_message,
+                Business.assistant_fallback_message,
+                Business.assistant_handoff_message,
+            ).where(Business.id == business_id)
+        )
+        row = result.one_or_none()
+        if row is None:
+            return None
+        return (
+            row.human_control_window_minutes,
+            row.assistant_enabled,
+            row.assistant_greeting_message,
+            row.assistant_fallback_message,
+            row.assistant_handoff_message,
+        )
 
     async def cancel_pending_for_contact(
         self,
