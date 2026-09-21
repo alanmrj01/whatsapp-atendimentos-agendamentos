@@ -18,6 +18,11 @@ from app.conversations.interpreter import (
         ("Quero falar com uma pessoa", ConversationIntent.HUMAN_HANDOFF, None),
         ("Quero limpar meu ar", ConversationIntent.SERVICE_INTENT, "cleaning"),
         (
+            "Eu queria fazer uma limpeza do ar condicionado",
+            ConversationIntent.SERVICE_INTENT,
+            "cleaning",
+        ),
+        (
             "Boa tarde, meu ar não está gelando",
             ConversationIntent.SERVICE_INTENT,
             "diagnostics",
