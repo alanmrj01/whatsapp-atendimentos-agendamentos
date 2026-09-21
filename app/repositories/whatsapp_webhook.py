@@ -148,7 +148,7 @@ class WhatsAppWebhookRepository:
         await self.session.execute(
             update(Conversation)
             .where(Conversation.id == conversation_id)
-            .values(last_interaction_at=func.now())
+            .values(last_interaction_at=func.now(), archived_at=None)
         )
 
     async def persist_inbound_message(
