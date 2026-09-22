@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,7 +42,6 @@ from app.models import (
     Appointment,
     Business,
     Employee,
-    EmployeeService,
     ScheduleBlock,
     Service,
     WorkingHours,
@@ -104,23 +103,17 @@ class PostgresBookingAvailabilityPort:
         self,
         business_id: uuid.UUID,
     ) -> Sequence[BookingOption]:
-        eligible_employee = exists(
-            select(EmployeeService.employee_id)
-            .join(
-                Employee,
-                and_(
-                    Employee.business_id == EmployeeService.business_id,
-                    Employee.id == EmployeeService.employee_id,
-                ),
-            )
-            .where(
-                EmployeeService.business_id == business_id,
-                EmployeeService.service_id == Service.id,
+        active_technician = await self.session.scalar(
+            select(func.count()).select_from(Employee).where(
+                Employee.business_id == business_id,
                 Employee.active.is_(True),
+                Employee.operational_role == "technician",
             )
         )
+        if not active_technician:
+            return ()
         rows = await self.session.execute(
-            select(Service.id, Service.name)
+            select(Service.id, Service.name, Service.intent_examples)
             .join(Business, Business.id == Service.business_id)
             .where(
                 Service.business_id == business_id,
@@ -128,13 +121,16 @@ class PostgresBookingAvailabilityPort:
                 Business.active.is_(True),
                 (Service.automatic_booking.is_(True))
                 | (Service.pricing_type == PricingType.HUMAN_QUOTE.value),
-                eligible_employee,
             )
             .order_by(Service.name, Service.id)
         )
         return tuple(
-            BookingOption(id=str(service_id), label=name)
-            for service_id, name in rows.all()
+            BookingOption(
+                id=str(service_id),
+                label=name,
+                examples=tuple(example for example in (intent_examples or []) if isinstance(example, str)),
+            )
+            for service_id, name, intent_examples in rows.all()
         )
 
     async def get_service_intake(
@@ -391,25 +387,21 @@ class PostgresBookingAvailabilityPort:
         business_id: uuid.UUID,
         service_id: uuid.UUID,
     ) -> tuple[uuid.UUID, ...]:
+        # Small service businesses usually do not maintain skill matrices.
+        # Any active technician can be allocated unless a future explicit
+        # restriction is introduced.
         rows = await self.session.scalars(
             select(Employee.id)
-            .join(
-                EmployeeService,
-                and_(
-                    EmployeeService.business_id == Employee.business_id,
-                    EmployeeService.employee_id == Employee.id,
-                ),
-            )
             .where(
                 Employee.business_id == business_id,
                 Employee.active.is_(True),
-                EmployeeService.service_id == service_id,
+                Employee.operational_role == "technician",
             )
             .order_by(Employee.id)
         )
         employee_ids = tuple(rows.all())
         if not employee_ids:
-            raise BookingRequiresHandoff("No eligible capacity")
+            raise BookingRequiresHandoff("No active technician")
         return employee_ids
 
     async def _build_plan(
