@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -104,23 +104,12 @@ class PostgresBookingAvailabilityPort:
         self,
         business_id: uuid.UUID,
     ) -> Sequence[BookingOption]:
-        eligible_employee = exists(
-            select(EmployeeService.employee_id)
-            .join(
-                Employee,
-                and_(
-                    Employee.business_id == EmployeeService.business_id,
-                    Employee.id == EmployeeService.employee_id,
-                ),
-            )
-            .where(
-                EmployeeService.business_id == business_id,
-                EmployeeService.service_id == Service.id,
-                Employee.active.is_(True),
-            )
-        )
         rows = await self.session.execute(
-            select(Service.id, Service.name)
+            select(
+                Service.id,
+                Service.name,
+                Service.interpretation_examples,
+            )
             .join(Business, Business.id == Service.business_id)
             .where(
                 Service.business_id == business_id,
@@ -128,13 +117,16 @@ class PostgresBookingAvailabilityPort:
                 Business.active.is_(True),
                 (Service.automatic_booking.is_(True))
                 | (Service.pricing_type == PricingType.HUMAN_QUOTE.value),
-                eligible_employee,
             )
             .order_by(Service.name, Service.id)
         )
         return tuple(
-            BookingOption(id=str(service_id), label=name)
-            for service_id, name in rows.all()
+            BookingOption(
+                id=str(service_id),
+                label=name,
+                examples=tuple(examples or ()),
+            )
+            for service_id, name, examples in rows.all()
         )
 
     async def get_service_intake(
@@ -391,25 +383,18 @@ class PostgresBookingAvailabilityPort:
         business_id: uuid.UUID,
         service_id: uuid.UUID,
     ) -> tuple[uuid.UUID, ...]:
+        del service_id
         rows = await self.session.scalars(
             select(Employee.id)
-            .join(
-                EmployeeService,
-                and_(
-                    EmployeeService.business_id == Employee.business_id,
-                    EmployeeService.employee_id == Employee.id,
-                ),
-            )
             .where(
                 Employee.business_id == business_id,
                 Employee.active.is_(True),
-                EmployeeService.service_id == service_id,
             )
             .order_by(Employee.id)
         )
         employee_ids = tuple(rows.all())
         if not employee_ids:
-            raise BookingRequiresHandoff("No eligible capacity")
+            raise BookingRequiresHandoff("No active technician capacity")
         return employee_ids
 
     async def _build_plan(
@@ -523,14 +508,22 @@ class PostgresBookingAvailabilityPort:
             reason = "travel_estimate_unavailable"
         elif not travel.within_service_area:
             reason = "address_outside_service_area"
+        preparation, completion, gap = _planning_minutes(
+            business, service, requirements
+        )
         return BookingPlan(
             service=service_estimate,
             travel=travel,
             travel_before_minutes=(
-                travel.travel_minutes + business.travel_before_buffer_minutes
+                travel.travel_minutes
+                + business.travel_before_buffer_minutes
+                + preparation
             ),
             travel_after_minutes=(
-                travel.travel_minutes + business.travel_after_buffer_minutes
+                travel.travel_minutes
+                + business.travel_after_buffer_minutes
+                + completion
+                + gap
             ),
             requires_handoff=requires_handoff,
             handoff_reason=reason,
@@ -564,6 +557,12 @@ class PostgresBookingAvailabilityPort:
         now = self.now_provider()
         if now.tzinfo is None:
             raise ValueError("now_provider must return an aware datetime")
+        notice_minutes = (
+            service.minimum_booking_notice_minutes
+            if service.minimum_booking_notice_minutes is not None
+            else business.minimum_booking_notice_minutes
+        )
+        minimum_start = now + timedelta(minutes=notice_minutes or 0)
 
         starts: dict[datetime, set[uuid.UUID]] = defaultdict(set)
         day = first_date
@@ -601,7 +600,7 @@ class PostgresBookingAvailabilityPort:
                         minutes=plan.travel_after_minutes
                     )
                     if (
-                        candidate.astimezone(timezone.utc) > now
+                        candidate.astimezone(timezone.utc) > minimum_start
                         and self._within_site_limit(
                             day, service_end, requirements.site_allowed_end
                         )
@@ -875,6 +874,62 @@ def _portuguese_date_label(value: date) -> str:
         f"{PORTUGUESE_WEEKDAYS[value.weekday()]}, {value.day} de "
         f"{PORTUGUESE_MONTHS[value.month - 1]}"
     )
+
+
+def _planning_minutes(
+    business: Business,
+    service: Service,
+    requirements: BookingRequirements,
+) -> tuple[int, int, int]:
+    preparation = (
+        service.preparation_minutes
+        if service.preparation_minutes is not None
+        else business.default_preparation_minutes
+    )
+    completion = (
+        service.completion_minutes
+        if service.completion_minutes is not None
+        else business.default_completion_minutes
+    )
+    gap = (
+        service.service_gap_minutes
+        if service.service_gap_minutes is not None
+        else business.default_service_gap_minutes
+    )
+
+    automatic_parts = [
+        preparation is None,
+        completion is None,
+        gap is None,
+    ]
+    if preparation is None:
+        preparation = 10
+        if (requirements.quantity or 1) >= 3:
+            preparation += 10
+        if requirements.access_condition.value == "difficult":
+            preparation += 15
+    if completion is None:
+        completion = 5
+    if gap is None:
+        gap = 5
+
+    # Automatic logistics must stay conservative without swallowing the day.
+    # Explicit user values are respected, while auto-calculated portions are
+    # reduced proportionally so their combined overhead never exceeds 50 min.
+    total = preparation + completion + gap
+    if total > 50 and any(automatic_parts):
+        overflow = total - 50
+        if gap is not None and automatic_parts[2]:
+            cut = min(gap, overflow)
+            gap -= cut
+            overflow -= cut
+        if overflow and automatic_parts[1]:
+            cut = min(completion, overflow)
+            completion -= cut
+            overflow -= cut
+        if overflow and automatic_parts[0]:
+            preparation = max(0, preparation - overflow)
+    return preparation, completion, gap
 
 
 def _zero_travel_estimate() -> TravelEstimate:
