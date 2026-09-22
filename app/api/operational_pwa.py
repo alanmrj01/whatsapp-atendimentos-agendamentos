@@ -17,6 +17,8 @@ from app.operations.schemas import (
     AppointmentList,
     AppointmentUpdate,
     AppointmentView,
+    AssistantExclusionCreate,
+    AssistantExclusionView,
     AutomationSettingsUpdate,
     AutomationSettingsView,
     BusinessUpdate,
@@ -27,6 +29,8 @@ from app.operations.schemas import (
     CatalogItemView,
     ConversationDetail,
     ConversationAutomationUpdate,
+    ConversationPinnedUpdate,
+    ConversationReadUpdate,
     ConversationList,
     CustomerCreate,
     CustomerNameUpdate,
@@ -204,6 +208,55 @@ async def get_conversation(conversation_id: UUID, principal: Identity, service: 
 
 
 @router.patch(
+    "/conversations/{conversation_id}/pinned",
+    response_model=ConversationDetail,
+    dependencies=[Depends(require_origin)],
+)
+async def update_conversation_pinned(
+    conversation_id: UUID,
+    payload: ConversationPinnedUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.update_conversation_pinned(
+        membership.business_id, conversation_id, payload
+    )
+
+
+@router.patch(
+    "/conversations/{conversation_id}/read",
+    response_model=ConversationDetail,
+    dependencies=[Depends(require_origin)],
+)
+async def update_conversation_read(
+    conversation_id: UUID,
+    payload: ConversationReadUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.update_conversation_read(
+        membership.business_id, conversation_id, payload
+    )
+
+
+@router.delete(
+    "/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def archive_conversation(
+    conversation_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    await service.archive_conversation(membership.business_id, conversation_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch(
     "/conversations/{conversation_id}/customer",
     response_model=ConversationDetail,
     dependencies=[Depends(require_origin)],
@@ -329,6 +382,42 @@ async def delete_working_hours(hours_id: UUID, principal: Identity, service: Ser
 async def get_automation(principal: Identity, service: ServiceDep):
     membership = _membership(principal)
     return await service.get_automation(membership.business_id)
+
+
+@router.get("/automation/exclusions", response_model=list[AssistantExclusionView])
+async def list_assistant_exclusions(principal: Identity, service: ServiceDep):
+    membership = _membership(principal)
+    return await service.list_assistant_exclusions(membership.business_id)
+
+
+@router.post(
+    "/automation/exclusions",
+    response_model=AssistantExclusionView,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_origin)],
+)
+async def add_assistant_exclusion(
+    payload: AssistantExclusionCreate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.add_assistant_exclusion(membership.business_id, payload)
+
+
+@router.delete(
+    "/automation/exclusions/{exclusion_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def delete_assistant_exclusion(
+    exclusion_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    await service.delete_assistant_exclusion(membership.business_id, exclusion_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch(
