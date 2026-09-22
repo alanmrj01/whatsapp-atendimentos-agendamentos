@@ -496,6 +496,12 @@ class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     asks_site_time_limit: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    asks_tubing_length: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    included_tubing_meters: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 2), nullable=True
+    )
     intent_examples: Mapped[list[str]] = mapped_column(
         JSONB,
         default=list,
