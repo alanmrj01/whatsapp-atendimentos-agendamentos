@@ -1028,9 +1028,11 @@ class OperationalService:
             outbound_message.conversation_id == Conversation.id,
             outbound_message.direction == "outbound",
         ).correlate(Conversation).scalar_subquery()
-        read_boundary = func.greatest(
-            func.coalesce(last_outbound, Conversation.read_through_at),
-            func.coalesce(Conversation.read_through_at, last_outbound),
+        read_boundary = case(
+            (last_outbound.is_(None), Conversation.read_through_at),
+            (Conversation.read_through_at.is_(None), last_outbound),
+            (last_outbound >= Conversation.read_through_at, last_outbound),
+            else_=Conversation.read_through_at,
         )
         natural_unread = select(func.count()).select_from(unread_message).where(
             unread_message.business_id == Conversation.business_id,
@@ -1042,7 +1044,10 @@ class OperationalService:
             ),
         ).correlate(Conversation).scalar_subquery()
         unread = case(
-            (Conversation.force_unread.is_(True), func.greatest(natural_unread, 1)),
+            (
+                Conversation.force_unread.is_(True),
+                case((natural_unread < 1, 1), else_=natural_unread),
+            ),
             else_=natural_unread,
         )
         query = select(
