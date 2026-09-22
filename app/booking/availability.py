@@ -348,6 +348,11 @@ class PostgresBookingAvailabilityPort:
                 access_condition=access,
                 address=address,
                 site_allowed_end=appointment.site_allowed_end,
+                tubing_meters=(
+                    Decimal(appointment.tubing_meters)
+                    if appointment.tubing_meters is not None
+                    else None
+                ),
             )
             local_start = appointment.starts_at.astimezone(timezone_info)
             label = (
@@ -951,6 +956,7 @@ class PostgresBookingAvailabilityPort:
             else None
         )
         appointment.quantity = requirements.quantity or 1
+        appointment.tubing_meters = requirements.tubing_meters
         appointment.access_condition = requirements.access_condition.value
         appointment.estimated_duration_minutes = (
             plan.service.estimated_duration_minutes
