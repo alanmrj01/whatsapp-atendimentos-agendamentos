@@ -60,6 +60,7 @@ from app.conversations.interpreter import (
     Interpretation,
     normalize_portuguese,
 )
+from app.conversations.service_semantics import semantic_service_score
 from app.conversations.ports import (
     BookingAvailabilityPort,
     BookingConfirmation,
@@ -298,6 +299,18 @@ async def _handle_service(
         matched = _service_for_interpretation(services, interpretation)
         service_id = uuid.UUID(matched.id) if matched is not None else None
     if service_id is None or not _option_exists(services, str(service_id)):
+        if interpretation and interpretation.intent in {
+            ConversationIntent.BOOK,
+            ConversationIntent.AVAILABILITY,
+        }:
+            return _transition(
+                ConversationState.BOOKING_SERVICE,
+                context,
+                service_selection_message(
+                    services,
+                    body="Claro. Qual serviço você quer agendar?",
+                ),
+            )
         if inbound.body and inbound.body.strip():
             return _transition(
                 ConversationState.BOOKING_SERVICE,
@@ -910,7 +923,10 @@ def _require_booking_port(
 def _snapshot_options(
     options: Sequence[BookingOption],
 ) -> tuple[BookingOption, ...]:
-    return tuple(BookingOption(option.id, option.label) for option in options)
+    return tuple(
+        BookingOption(option.id, option.label, tuple(option.examples))
+        for option in options
+    )
 
 
 def _option_exists(options: Sequence[BookingOption], expected_id: str) -> bool:
@@ -921,20 +937,26 @@ def _service_for_interpretation(
     services: Sequence[BookingOption],
     interpretation: Interpretation,
 ) -> BookingOption | None:
-    if interpretation.service_key is None:
+    text = interpretation.normalized_text
+    if not text:
         return None
-    markers = {
-        "split-installation": ("instal", "split"),
-        "cleaning": ("limpeza", "higien"),
-        "preventive-maintenance": ("prevent", "revis"),
-        "diagnostics": ("diagnost", "corretiva"),
-        "gas-recharge": ("gas", "vazamento", "recarga"),
-    }[interpretation.service_key]
-    for service in services:
-        label = normalize_portuguese(service.label)
-        if any(marker in label for marker in markers):
-            return service
-    return None
+
+    ranked = sorted(
+        (
+            (
+                semantic_service_score(text, service.label, service.examples),
+                service,
+            )
+            for service in services
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    if not ranked or ranked[0][0] < 0.48:
+        return None
+    if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < 0.08:
+        return None
+    return ranked[0][1]
 
 
 def _date_from_text(
