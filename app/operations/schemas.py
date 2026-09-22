@@ -164,6 +164,10 @@ class BusinessView(StrictModel):
     service_origin_configured: bool
     timezone: str
     slot_interval_minutes: int
+    default_travel_minutes: int | None = None
+    travel_fallback_allowed: bool = False
+    travel_before_buffer_minutes: int = 0
+    travel_after_buffer_minutes: int = 0
     default_service_gap_minutes: int | None = None
     default_preparation_minutes: int | None = None
     default_completion_minutes: int | None = None
@@ -177,6 +181,10 @@ class BusinessUpdate(StrictModel):
     service_origin_address: str | None = Field(default=None, min_length=5, max_length=500)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     slot_interval_minutes: int | None = Field(default=None, ge=5, le=480)
+    default_travel_minutes: int | None = Field(default=None, ge=0, le=480)
+    travel_fallback_allowed: bool | None = None
+    travel_before_buffer_minutes: int | None = Field(default=None, ge=0, le=240)
+    travel_after_buffer_minutes: int | None = Field(default=None, ge=0, le=240)
     default_service_gap_minutes: int | None = Field(default=None, ge=0, le=50)
     default_preparation_minutes: int | None = Field(default=None, ge=0, le=50)
     default_completion_minutes: int | None = Field(default=None, ge=0, le=50)
