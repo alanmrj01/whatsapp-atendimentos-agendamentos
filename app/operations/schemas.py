@@ -296,6 +296,19 @@ class AutomationSettingsUpdate(StrictModel):
         return self
 
 
+class AutomationExclusionView(StrictModel):
+    id: UUID
+    whatsapp_id: str
+    mode: Literal["ignore", "human_only"]
+    label: str | None
+    reason: str | None
+    active: bool
+
+
+class AutomationExclusionList(StrictModel):
+    items: list[AutomationExclusionView]
+
+
 class EmployeeView(StrictModel):
     id: UUID
     name: str
