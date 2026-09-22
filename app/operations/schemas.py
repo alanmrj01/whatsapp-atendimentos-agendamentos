@@ -106,6 +106,7 @@ class ConversationView(StrictModel):
     status: ConversationStatus
     unread_count: int
     priority: bool
+    pinned: bool = False
     assignee_name: str | None = None
 
 
@@ -154,6 +155,28 @@ class ManualMessageCreate(StrictModel):
 
 class ConversationAutomationUpdate(StrictModel):
     enabled: bool
+
+
+class ConversationPinnedUpdate(StrictModel):
+    pinned: bool
+
+
+class ConversationReadUpdate(StrictModel):
+    unread: bool
+
+
+class AssistantExclusionView(StrictModel):
+    id: UUID
+    customer_id: UUID | None
+    customer_name: str
+    customer_phone: str | None
+    reason: str | None
+    active: bool
+
+
+class AssistantExclusionCreate(StrictModel):
+    customer_id: UUID
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class BusinessView(StrictModel):
