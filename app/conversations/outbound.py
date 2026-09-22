@@ -116,6 +116,17 @@ def address_request_message() -> OutboundMessage:
     )
 
 
+def tubing_length_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body=(
+            "A instalação vai usar aproximadamente quantos metros de tubulação "
+            "entre as unidades? A instalação padrão considera até 3 metros. "
+            "Se não souber, responda “não sei”."
+        ),
+    )
+
+
 def site_limit_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="interactive_button",
