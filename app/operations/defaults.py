@@ -55,6 +55,8 @@ def default_services_for_business(business_id: UUID) -> list[Service]:
             pricing_type="estimated",
             automatic_booking=True,
             requires_address=True,
+            asks_tubing_length=item.key == "split-installation",
+            included_tubing_meters=3 if item.key == "split-installation" else None,
             intent_examples=list(generate_service_intent_examples(item.name)),
             active=True,
         )
