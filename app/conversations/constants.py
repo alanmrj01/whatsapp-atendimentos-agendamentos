@@ -8,6 +8,7 @@ class ConversationState(StrEnum):
     BOOKING_QUANTITY = "BOOKING_QUANTITY"
     BOOKING_ACCESS = "BOOKING_ACCESS"
     BOOKING_ADDRESS = "BOOKING_ADDRESS"
+    BOOKING_TUBING = "BOOKING_TUBING"
     BOOKING_SITE_LIMIT = "BOOKING_SITE_LIMIT"
     BOOKING_DATE = "BOOKING_DATE"
     BOOKING_TIME = "BOOKING_TIME"
@@ -50,6 +51,8 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "quantity",
         "access_condition",
         "service_address",
+        "tubing_meters",
+        "tubing_length_answered",
         "site_allowed_end",
         "site_limit_answered",
     }
