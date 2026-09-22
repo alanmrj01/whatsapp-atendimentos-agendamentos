@@ -116,6 +116,40 @@ def upgrade() -> None:
     )
 
     op.add_column(
+        "conversations",
+        sa.Column("pinned_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "conversations",
+        sa.Column("read_through_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "conversations",
+        sa.Column(
+            "force_unread",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("false"),
+        ),
+    )
+    op.add_column(
+        "conversations",
+        sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.create_index(
+        op.f("ix_conversations_pinned_at"),
+        "conversations",
+        ["pinned_at"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_conversations_archived_at"),
+        "conversations",
+        ["archived_at"],
+        unique=False,
+    )
+
+    op.add_column(
         "services",
         sa.Column(
             "interpretation_examples",
@@ -265,6 +299,13 @@ def downgrade() -> None:
             )
         op.drop_column("services", name)
     op.drop_column("services", "interpretation_examples")
+
+    op.drop_index(op.f("ix_conversations_archived_at"), table_name="conversations")
+    op.drop_index(op.f("ix_conversations_pinned_at"), table_name="conversations")
+    op.drop_column("conversations", "archived_at")
+    op.drop_column("conversations", "force_unread")
+    op.drop_column("conversations", "read_through_at")
+    op.drop_column("conversations", "pinned_at")
 
     op.drop_constraint(
         op.f("ck_businesses_minimum_booking_notice_minutes_range"),
