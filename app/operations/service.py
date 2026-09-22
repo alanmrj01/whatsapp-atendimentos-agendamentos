@@ -338,12 +338,27 @@ class OperationalService:
                 conversation.manual_unread = False
             else:
                 conversation.manual_unread = True
-        if "deleted" in updates:
-            conversation.deleted_at = now if updates["deleted"] else None
         await self.session.commit()
-        if conversation.deleted_at is not None:
-            raise HTTPException(410, "Conversation removed")
         return await self.get_conversation(business_id, conversation_id)
+
+    async def delete_conversation(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+    ) -> None:
+        conversation = await self.session.scalar(
+            select(Conversation)
+            .where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        conversation.deleted_at = datetime.now(UTC)
+        await self.session.commit()
 
     async def send_manual_message(
         self,
