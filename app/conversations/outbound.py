@@ -8,6 +8,9 @@ from app.conversations.constants import (
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
+    CANCEL_ABORT,
+    CANCEL_CONFIRM,
+    RESCHEDULE_CONFIRM,
     ACCESS_DIFFICULT,
     ACCESS_NORMAL,
     ACCESS_UNKNOWN,
@@ -204,17 +207,82 @@ def slot_unavailable_message() -> OutboundMessage:
     )
 
 
+def existing_booking_selection_message(
+    options: Sequence[BookingOption],
+    *,
+    purpose: str,
+) -> OutboundMessage:
+    body = (
+        "Qual agendamento você quer reagendar?"
+        if purpose == "reschedule"
+        else "Qual agendamento você quer cancelar?"
+    )
+    return OutboundMessage(
+        message_type="interactive_list",
+        body=body,
+        interactive_id=f"{purpose}.appointments",
+        outbound_payload=_list_payload(
+            "Agendamentos",
+            options,
+            prefix="appointment:",
+        ),
+    )
+
+
+def reschedule_confirmation_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="Confirmar o novo dia e horário deste agendamento?",
+        interactive_id="reschedule.confirmation",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(RESCHEDULE_CONFIRM, "Confirmar"),
+                BookingOption(BOOKING_BACK, "Voltar"),
+                BookingOption(BOOKING_CANCEL, "Sair"),
+            )
+        ),
+    )
+
+
+def reschedule_completed_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body="Agendamento reagendado com sucesso.",
+    )
+
+
+def cancel_confirmation_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="Tem certeza que deseja cancelar este agendamento?",
+        interactive_id="cancel.confirmation",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(CANCEL_CONFIRM, "Cancelar agendamento"),
+                BookingOption(CANCEL_ABORT, "Manter agendamento"),
+            )
+        ),
+    )
+
+
+def cancel_completed_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body="Agendamento cancelado com sucesso.",
+    )
+
+
 def reschedule_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="text",
-        body="O fluxo de reagendamento será disponibilizado em breve.",
+        body="Não encontrei um agendamento futuro para reagendar.",
     )
 
 
 def cancel_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="text",
-        body="O fluxo de cancelamento será disponibilizado em breve.",
+        body="Não encontrei um agendamento futuro para cancelar.",
     )
 
 
