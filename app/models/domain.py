@@ -360,6 +360,8 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "ix_conversations_automation_suppressed_until",
             "automation_suppressed_until",
         ),
+        Index("ix_conversations_pinned_at", "pinned_at"),
+        Index("ix_conversations_deleted_at", "deleted_at"),
     )
 
     business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -395,6 +397,12 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     conversation_initiated_by: Mapped[str | None] = mapped_column(
         String(16), nullable=True
     )
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    manual_unread: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
