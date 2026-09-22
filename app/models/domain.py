@@ -728,6 +728,9 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     quantity: Mapped[int] = mapped_column(
         Integer, default=1, server_default="1", nullable=False
     )
+    tubing_meters: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 2), nullable=True
+    )
     access_condition: Mapped[str] = mapped_column(
         String(16), default="normal", server_default="normal", nullable=False
     )
