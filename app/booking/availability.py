@@ -31,6 +31,7 @@ from app.booking.travel import (
     TravelTimePort,
     unavailable_travel_estimate,
 )
+from app.conversations.service_semantics import generate_service_intent_examples
 from app.conversations.ports import (
     BookingConfirmation,
     BookingNotFound,
@@ -128,7 +129,14 @@ class PostgresBookingAvailabilityPort:
             BookingOption(
                 id=str(service_id),
                 label=name,
-                examples=tuple(example for example in (intent_examples or []) if isinstance(example, str)),
+                examples=tuple(
+                    example
+                    for example in (
+                        intent_examples
+                        or generate_service_intent_examples(name)
+                    )
+                    if isinstance(example, str)
+                ),
             )
             for service_id, name, intent_examples in rows.all()
         )
