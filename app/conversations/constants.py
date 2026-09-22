@@ -26,6 +26,9 @@ MENU_HUMAN = "menu.human"
 BOOKING_CONFIRM = "booking.confirm"
 BOOKING_BACK = "booking.back"
 BOOKING_CANCEL = "booking.cancel"
+RESCHEDULE_CONFIRM = "reschedule.confirm"
+CANCEL_CONFIRM = "cancel.confirm"
+CANCEL_ABORT = "cancel.abort"
 
 ACCESS_NORMAL = "access.normal"
 ACCESS_DIFFICULT = "access.difficult"
@@ -39,6 +42,7 @@ QUANTITY_OPTION_LIMIT = 5
 
 ALLOWED_CONTEXT_KEYS = frozenset(
     {
+        "appointment_id",
         "service_id",
         "selected_date",
         "selected_time",
