@@ -18,6 +18,7 @@ from app.automation.service import (
 from app.models import (
     Appointment,
     Business,
+    BusinessCatalogItem,
     BusinessWhatsAppConnection,
     Conversation,
     Customer,
@@ -35,6 +36,9 @@ from app.operations.schemas import (
     AutomationSettingsView,
     BusinessUpdate,
     BusinessView,
+    CatalogItemCreate,
+    CatalogItemUpdate,
+    CatalogItemView,
     ConversationDetail,
     ConversationAutomationUpdate,
     ConversationView,
@@ -57,6 +61,7 @@ from app.operations.schemas import (
     WorkingHoursUpdate,
     WorkingHoursView,
 )
+from app.conversations.service_semantics import generate_service_intent_examples
 from app.repositories.automation import AutomationRepository
 from app.schemas.automation import BusinessAutomationSettingsUpdate
 from app.whatsapp.connections import WhatsAppConnectionStatus
@@ -583,7 +588,7 @@ class OperationalService:
         items = (await self.session.scalars(
             select(Service).where(Service.business_id == business_id).order_by(Service.active.desc(), Service.name)
         )).all()
-        return [ServiceOption(id=item.id, name=item.name, duration_minutes=item.duration_minutes, active=item.active) for item in items]
+        return [_service_view(item) for item in items]
 
     async def create_service(self, business_id: UUID, values: ServiceCreate) -> ServiceOption:
         await self._business(business_id)
@@ -591,9 +596,11 @@ class OperationalService:
             business_id=business_id,
             name=values.name,
             duration_minutes=values.duration_minutes,
-            base_price=None,
-            pricing_type="human_quote",
-            automatic_booking=False,
+            base_price=values.price,
+            pricing_type="fixed" if values.price is not None else "estimated",
+            automatic_booking=True,
+            requires_address=True,
+            intent_examples=list(generate_service_intent_examples(values.name)),
             active=True,
         )
         self.session.add(item)
@@ -608,39 +615,211 @@ class OperationalService:
         ).with_for_update())
         if item is None:
             raise HTTPException(404, "Service not found")
-        for field, value in values.model_dump(exclude_unset=True).items():
+        updates = values.model_dump(exclude_unset=True)
+        explicit_examples = "intent_examples" in updates
+        if "price" in updates:
+            item.base_price = updates.pop("price")
+            item.pricing_type = "fixed" if item.base_price is not None else "estimated"
+            item.automatic_booking = True
+        if "name" in updates and not explicit_examples:
+            item.intent_examples = list(generate_service_intent_examples(updates["name"]))
+        for field, value in updates.items():
             setattr(item, field, value)
         await self.session.commit()
         return _service_view(item)
 
+    async def list_catalog_items(self, business_id: UUID) -> list[CatalogItemView]:
+        await self._business(business_id)
+        await self._ensure_catalog_presets(business_id)
+        items = (await self.session.scalars(
+            select(BusinessCatalogItem)
+            .where(BusinessCatalogItem.business_id == business_id)
+            .order_by(BusinessCatalogItem.active.desc(), BusinessCatalogItem.name)
+        )).all()
+        return [_catalog_item_view(item) for item in items]
+
+    async def create_catalog_item(
+        self, business_id: UUID, values: CatalogItemCreate
+    ) -> CatalogItemView:
+        await self._business(business_id)
+        item = BusinessCatalogItem(
+            business_id=business_id,
+            kind=values.kind,
+            name=values.name,
+            description=values.description,
+            price=values.price,
+            unit_label=values.unit_label,
+            active=True,
+        )
+        self.session.add(item)
+        await self.session.commit()
+        return _catalog_item_view(item)
+
+    async def update_catalog_item(
+        self, business_id: UUID, item_id: UUID, values: CatalogItemUpdate
+    ) -> CatalogItemView:
+        item = await self.session.scalar(
+            select(BusinessCatalogItem).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.id == item_id,
+            ).with_for_update()
+        )
+        if item is None:
+            raise HTTPException(404, "Catalog item not found")
+        for field, value in values.model_dump(exclude_unset=True).items():
+            setattr(item, field, value)
+        await self.session.commit()
+        return _catalog_item_view(item)
+
+    async def delete_catalog_item(self, business_id: UUID, item_id: UUID) -> None:
+        item = await self.session.scalar(
+            select(BusinessCatalogItem).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.id == item_id,
+            ).with_for_update()
+        )
+        if item is None:
+            raise HTTPException(404, "Catalog item not found")
+        if item.preset_key:
+            item.active = False
+            item.price = None
+        else:
+            await self.session.delete(item)
+        await self.session.commit()
+
     async def setup_status(self, business_id: UUID) -> SetupStatus:
         business = await self._business(business_id)
+        await self._ensure_catalog_presets(business_id)
+
+        active_technicians = int(await self.session.scalar(
+            select(func.count()).select_from(Employee).where(
+                Employee.business_id == business_id,
+                Employee.active.is_(True),
+                Employee.operational_role == "technician",
+            )
+        ) or 0)
         hours = bool(await self.session.scalar(
             select(func.count()).select_from(WorkingHours).join(
-                Employee, and_(Employee.business_id == WorkingHours.business_id, Employee.id == WorkingHours.employee_id)
-            ).where(WorkingHours.business_id == business_id, Employee.active.is_(True))
+                Employee, and_(
+                    Employee.business_id == WorkingHours.business_id,
+                    Employee.id == WorkingHours.employee_id,
+                )
+            ).where(
+                WorkingHours.business_id == business_id,
+                Employee.active.is_(True),
+                Employee.operational_role == "technician",
+            )
         ))
-        agenda = bool(await self.session.scalar(
-            select(func.count()).select_from(EmployeeService)
-            .join(Employee, and_(Employee.business_id == EmployeeService.business_id, Employee.id == EmployeeService.employee_id))
-            .join(Service, and_(Service.business_id == EmployeeService.business_id, Service.id == EmployeeService.service_id))
-            .join(WorkingHours, and_(WorkingHours.business_id == EmployeeService.business_id, WorkingHours.employee_id == EmployeeService.employee_id))
-            .where(EmployeeService.business_id == business_id, Employee.active.is_(True), Service.active.is_(True))
-        )) and hours and business.slot_interval_minutes > 0
-        whatsapp = bool(await self.session.scalar(select(func.count()).select_from(BusinessWhatsAppConnection).where(
-            BusinessWhatsAppConnection.business_id == business_id,
-            BusinessWhatsAppConnection.status == "connected",
-        )))
+        active_services = (await self.session.scalars(
+            select(Service).where(
+                Service.business_id == business_id,
+                Service.active.is_(True),
+            )
+        )).all()
+        active_materials = (await self.session.scalars(
+            select(BusinessCatalogItem).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.active.is_(True),
+            )
+        )).all()
+        whatsapp = bool(await self.session.scalar(
+            select(func.count()).select_from(BusinessWhatsAppConnection).where(
+                BusinessWhatsAppConnection.business_id == business_id,
+                BusinessWhatsAppConnection.status == "connected",
+            )
+        ))
+
+        company = bool(
+            business.name.strip()
+            and (business.responsible_name or "").strip()
+            and (business.service_origin_address or "").strip()
+        )
+        team = active_technicians > 0
+        services = bool(active_services) and all(item.base_price is not None for item in active_services)
+        materials = bool(active_materials) and all(item.price is not None for item in active_materials)
+        agenda = bool(business.agenda_preferences_reviewed)
+
         values = {
-            "company": bool(business.name.strip()),
+            "company": company,
+            "team": team,
             "business_hours": hours,
-            "automation": business.human_control_window_minutes in {5,10,20,30,60,120,240,360,720,1440,2160},
+            "services": services,
+            "materials": materials,
             "agenda": agenda,
             "whatsapp": whatsapp,
         }
         completed = sum(values.values())
         next_step = next((key for key, ready in values.items() if not ready), "complete")
-        return SetupStatus(**values, completed=completed, next_step=next_step)
+        reasons: list[str] = []
+        if not company:
+            reasons.append("Preencha nome, responsável e endereço da empresa.")
+        if not team:
+            reasons.append("Cadastre pelo menos um técnico ativo.")
+        if not hours:
+            reasons.append("Cadastre pelo menos um horário de funcionamento.")
+        if not services:
+            reasons.append("Mantenha pelo menos um serviço ativo com preço definido.")
+        if not materials:
+            reasons.append("Ative pelo menos um material ou equipamento com preço definido.")
+        if not agenda:
+            reasons.append("Revise as preferências de agenda e disponibilidade.")
+        if not whatsapp:
+            reasons.append("Conecte o WhatsApp Business.")
+
+        return SetupStatus(
+            **values,
+            completed=completed,
+            next_step=next_step,
+            onboarding_completed=business.onboarding_completed_at is not None,
+            onboarding_completed_at=business.onboarding_completed_at,
+            onboarding_version=business.onboarding_version,
+            blocking_reasons=reasons,
+        )
+
+    async def complete_onboarding(self, business_id: UUID) -> SetupStatus:
+        status = await self.setup_status(business_id)
+        if status.completed != status.total:
+            raise HTTPException(
+                409,
+                {"message": "Onboarding is incomplete", "blocking_reasons": status.blocking_reasons},
+            )
+        business = await self._business(business_id, for_update=True)
+        if business.onboarding_completed_at is None:
+            business.onboarding_completed_at = datetime.now(UTC)
+        business.onboarding_version = max(business.onboarding_version, 1)
+        await self.session.commit()
+        return await self.setup_status(business_id)
+
+    async def _ensure_catalog_presets(self, business_id: UUID) -> None:
+        presets = (
+            ("extra-tubing-meter", "material", "Metro adicional de tubulação", "Cobrança por metro acima da metragem incluída no serviço.", "metro"),
+            ("extra-drain-meter", "material", "Metro adicional de dreno", "Material adicional de drenagem quando necessário.", "metro"),
+            ("extra-electrical-cable-meter", "material", "Metro adicional de cabo elétrico", "Cabo elétrico adicional utilizado na instalação.", "metro"),
+            ("condenser-bracket", "equipment", "Suporte para condensadora", "Suporte utilizado na instalação da unidade externa.", "unidade"),
+            ("wall-bracket-fixings", "material", "Kit de fixação", "Parafusos, buchas e itens de fixação adicionais.", "kit"),
+        )
+        existing = set((await self.session.scalars(
+            select(BusinessCatalogItem.preset_key).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.preset_key.is_not(None),
+            )
+        )).all())
+        missing = [preset for preset in presets if preset[0] not in existing]
+        if not missing:
+            return
+        self.session.add_all([
+            BusinessCatalogItem(
+                business_id=business_id,
+                preset_key=key,
+                kind=kind,
+                name=name,
+                description=description,
+                unit_label=unit_label,
+                active=False,
+            )
+            for key, kind, name, description, unit_label in missing
+        ])
+        await self.session.commit()
 
     async def _business(self, business_id: UUID, *, for_update: bool = False) -> Business:
         query = select(Business).where(Business.id == business_id, Business.active.is_(True))
@@ -669,13 +848,6 @@ class OperationalService:
         employee = await self.session.scalar(select(Employee).where(Employee.business_id == business_id, Employee.id == employee_id, Employee.active.is_(True)))
         if customer is None or service is None or employee is None:
             raise HTTPException(404, "Appointment reference not found")
-        eligible = await self.session.scalar(select(EmployeeService.employee_id).where(
-            EmployeeService.business_id == business_id,
-            EmployeeService.employee_id == employee_id,
-            EmployeeService.service_id == service_id,
-        ))
-        if eligible is None:
-            raise HTTPException(422, "Employee is not assigned to service")
         return business, customer, service, employee
 
     async def _commit_appointment(self) -> None:
@@ -821,7 +993,22 @@ def _conversation_view(row: Any) -> ConversationView:
 
 
 def _business_view(item: Business) -> BusinessView:
-    return BusinessView(id=item.id, name=item.name, timezone=item.timezone, slot_interval_minutes=item.slot_interval_minutes)
+    return BusinessView(
+        id=item.id,
+        name=item.name,
+        responsible_name=item.responsible_name,
+        timezone=item.timezone,
+        service_origin_address=item.service_origin_address,
+        slot_interval_minutes=item.slot_interval_minutes,
+        interval_between_services_minutes=item.interval_between_services_minutes,
+        preparation_minutes=item.preparation_minutes,
+        finishing_minutes=item.finishing_minutes,
+        minimum_booking_notice_minutes=item.minimum_booking_notice_minutes,
+        materials_catalog_reviewed=item.materials_catalog_reviewed,
+        agenda_preferences_reviewed=item.agenda_preferences_reviewed,
+        onboarding_completed_at=item.onboarding_completed_at,
+        onboarding_version=item.onboarding_version,
+    )
 
 
 def _hours_view(row: Any) -> WorkingHoursView:
@@ -872,9 +1059,25 @@ def _display_name(
 
 
 def _service_view(item: Service) -> ServiceOption:
+    examples = item.intent_examples or list(generate_service_intent_examples(item.name))
     return ServiceOption(
         id=item.id,
         name=item.name,
         duration_minutes=item.duration_minutes,
+        price=item.base_price,
+        active=item.active,
+        intent_examples=list(examples),
+    )
+
+
+def _catalog_item_view(item: BusinessCatalogItem) -> CatalogItemView:
+    return CatalogItemView(
+        id=item.id,
+        kind=item.kind,
+        name=item.name,
+        description=item.description,
+        price=item.price,
+        unit_label=item.unit_label,
+        preset_key=item.preset_key,
         active=item.active,
     )
