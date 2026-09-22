@@ -32,6 +32,7 @@ from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
     AppointmentView,
+    AutomationExclusionView,
     AutomationSettingsUpdate,
     AutomationSettingsView,
     BusinessUpdate,
@@ -63,7 +64,11 @@ from app.operations.schemas import (
 )
 from app.conversations.service_semantics import generate_service_intent_examples
 from app.repositories.automation import AutomationRepository
-from app.schemas.automation import BusinessAutomationSettingsUpdate
+from app.schemas.automation import (
+    AutomationExclusionCreate,
+    AutomationExclusionUpdate,
+    BusinessAutomationSettingsUpdate,
+)
 from app.whatsapp.connections import WhatsAppConnectionStatus
 
 
@@ -490,6 +495,57 @@ class OperationalService:
             raise HTTPException(404, "Business not found")
         await self.session.commit()
         return await self.get_automation(business_id)
+
+
+    async def list_automation_exclusions(
+        self, business_id: UUID
+    ) -> list[AutomationExclusionView]:
+        items = await AutomationAdministrationService(
+            AutomationRepository(self.session)
+        ).list_exclusions(business_id)
+        return [_automation_exclusion_view(item) for item in items]
+
+    async def create_automation_exclusion(
+        self,
+        business_id: UUID,
+        values: AutomationExclusionCreate,
+    ) -> AutomationExclusionView:
+        repository = AutomationRepository(self.session)
+        item = await AutomationAdministrationService(repository).add_exclusion(
+            business_id, values
+        )
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            raise HTTPException(409, "Contact is already configured") from None
+        return _automation_exclusion_view(item)
+
+    async def update_automation_exclusion(
+        self,
+        business_id: UUID,
+        exclusion_id: UUID,
+        values: AutomationExclusionUpdate,
+    ) -> AutomationExclusionView:
+        item = await AutomationAdministrationService(
+            AutomationRepository(self.session)
+        ).update_exclusion(business_id, exclusion_id, values)
+        if item is None:
+            raise HTTPException(404, "Automation exclusion not found")
+        await self.session.commit()
+        return _automation_exclusion_view(item)
+
+    async def delete_automation_exclusion(
+        self,
+        business_id: UUID,
+        exclusion_id: UUID,
+    ) -> None:
+        repository = AutomationRepository(self.session)
+        item = await repository.get_exclusion(business_id, exclusion_id)
+        if item is None:
+            raise HTTPException(404, "Automation exclusion not found")
+        await repository.delete_exclusion(business_id, exclusion_id)
+        await self.session.commit()
 
     async def list_employees(self, business_id: UUID) -> list[EmployeeView]:
         items = (await self.session.scalars(
@@ -1016,6 +1072,17 @@ def _hours_view(row: Any) -> WorkingHoursView:
     return WorkingHoursView(
         id=item.id, employee_id=item.employee_id, employee_name=employee_name,
         weekday=item.weekday, start_time=item.start_time, end_time=item.end_time,
+    )
+
+
+def _automation_exclusion_view(item) -> AutomationExclusionView:
+    return AutomationExclusionView(
+        id=item.id,
+        whatsapp_id=item.whatsapp_id,
+        mode=item.mode,
+        label=item.label,
+        reason=item.reason,
+        active=item.active,
     )
 
 
