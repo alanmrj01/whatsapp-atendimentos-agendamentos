@@ -41,6 +41,7 @@ from app.operations.schemas import (
     CatalogItemUpdate,
     CatalogItemView,
     ConversationDetail,
+    ConversationActionUpdate,
     ConversationAutomationUpdate,
     ConversationView,
     CustomerNameUpdate,
@@ -308,6 +309,40 @@ class OperationalService:
                 business_id, conversation_id
             )
         await self.session.commit()
+        return await self.get_conversation(business_id, conversation_id)
+
+
+    async def update_conversation_actions(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: ConversationActionUpdate,
+    ) -> ConversationDetail:
+        conversation = await self.session.scalar(
+            select(Conversation)
+            .where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+            )
+            .with_for_update()
+        )
+        if conversation is None or conversation.deleted_at is not None:
+            raise HTTPException(404, "Conversation not found")
+        updates = values.model_dump(exclude_unset=True)
+        now = datetime.now(UTC)
+        if "pinned" in updates:
+            conversation.pinned_at = now if updates["pinned"] else None
+        if "read" in updates:
+            if updates["read"]:
+                conversation.last_read_at = now
+                conversation.manual_unread = False
+            else:
+                conversation.manual_unread = True
+        if "deleted" in updates:
+            conversation.deleted_at = now if updates["deleted"] else None
+        await self.session.commit()
+        if conversation.deleted_at is not None:
+            raise HTTPException(410, "Conversation removed")
         return await self.get_conversation(business_id, conversation_id)
 
     async def send_manual_message(
@@ -951,11 +986,15 @@ class OperationalService:
             outbound_message.conversation_id == Conversation.id,
             outbound_message.direction == "outbound",
         ).correlate(Conversation).scalar_subquery()
+        read_boundary = func.greatest(
+            func.coalesce(last_outbound, func.to_timestamp(0)),
+            func.coalesce(Conversation.last_read_at, func.to_timestamp(0)),
+        )
         unread = select(func.count()).select_from(unread_message).where(
             unread_message.business_id == Conversation.business_id,
             unread_message.conversation_id == Conversation.id,
             unread_message.direction == "inbound",
-            or_(last_outbound.is_(None), unread_message.created_at > last_outbound),
+            unread_message.created_at > read_boundary,
         ).correlate(Conversation).scalar_subquery()
         query = select(
             Conversation, Customer.name, Customer.whatsapp_profile_name,
@@ -963,7 +1002,8 @@ class OperationalService:
             latest_body.label("last_content"), latest_time.label("last_message_at"),
             latest_direction.label("last_direction"), unread.label("unread_count"),
         ).join(Customer, and_(Customer.business_id == Conversation.business_id, Customer.id == Conversation.customer_id)).where(
-            Conversation.business_id == business_id
+            Conversation.business_id == business_id,
+            Conversation.deleted_at.is_(None),
         )
         if conversation_id is not None:
             query = query.where(Conversation.id == conversation_id)
@@ -994,7 +1034,11 @@ class OperationalService:
             select(func.count()).select_from(query.order_by(None).subquery())
         ) or 0)
         query = query.order_by(
-            unread.desc(), latest_time.desc().nullslast(), Conversation.id
+            Conversation.pinned_at.desc().nullslast(),
+            Conversation.manual_unread.desc(),
+            unread.desc(),
+            latest_time.desc().nullslast(),
+            Conversation.id,
         )
         if offset is not None:
             query = query.offset(offset)
@@ -1036,15 +1080,23 @@ def _conversation_view(row: Any) -> ConversationView:
         "in_progress" if item.handoff_status != "none" else "answered"
     )
     unread_value = int(unread_count or 0)
+    if item.manual_unread and unread_value == 0:
+        unread_value = 1
     return ConversationView(
         id=item.id,
         customer_id=item.customer_id,
         customer_name=_display_name(
             customer_name, whatsapp_profile_name, customer_phone, whatsapp_id
         ),
-        customer_phone=customer_phone, last_content=last_content, last_message_at=last_message_at,
-        status=status, unread_count=unread_value,
-        priority=unread_value > 0 or item.handoff_status == "waiting", assignee_name=None,
+        customer_phone=customer_phone,
+        last_content=last_content,
+        last_message_at=last_message_at,
+        status=status,
+        unread_count=unread_value,
+        priority=unread_value > 0 or item.handoff_status == "waiting",
+        pinned=item.pinned_at is not None,
+        manual_unread=item.manual_unread,
+        assignee_name=None,
     )
 
 
