@@ -515,14 +515,27 @@ class PostgresBookingAvailabilityPort:
             reason = "travel_estimate_unavailable"
         elif not travel.within_service_area:
             reason = "address_outside_service_area"
+        preparation, finishing, interval = _operational_buffers(
+            business,
+            requirements,
+            service_estimate,
+        )
+        interval_before = interval // 2
+        interval_after = interval - interval_before
         return BookingPlan(
             service=service_estimate,
             travel=travel,
             travel_before_minutes=(
-                travel.travel_minutes + business.travel_before_buffer_minutes
+                travel.travel_minutes
+                + business.travel_before_buffer_minutes
+                + preparation
+                + interval_before
             ),
             travel_after_minutes=(
-                travel.travel_minutes + business.travel_after_buffer_minutes
+                travel.travel_minutes
+                + business.travel_after_buffer_minutes
+                + finishing
+                + interval_after
             ),
             requires_handoff=requires_handoff,
             handoff_reason=reason,
@@ -556,6 +569,15 @@ class PostgresBookingAvailabilityPort:
         now = self.now_provider()
         if now.tzinfo is None:
             raise ValueError("now_provider must return an aware datetime")
+        local_now = now.astimezone(timezone_info)
+        notice_minutes = business.minimum_booking_notice_minutes
+        if notice_minutes is None:
+            notice_minutes = _automatic_booking_notice_minutes(
+                service,
+                requirements,
+                plan.service,
+            )
+        earliest_allowed_start = local_now + timedelta(minutes=notice_minutes)
 
         starts: dict[datetime, set[uuid.UUID]] = defaultdict(set)
         day = first_date
@@ -593,7 +615,7 @@ class PostgresBookingAvailabilityPort:
                         minutes=plan.travel_after_minutes
                     )
                     if (
-                        candidate.astimezone(timezone.utc) > now
+                        candidate > earliest_allowed_start
                         and self._within_site_limit(
                             day, service_end, requirements.site_allowed_end
                         )
@@ -867,6 +889,81 @@ def _portuguese_date_label(value: date) -> str:
         f"{PORTUGUESE_WEEKDAYS[value.weekday()]}, {value.day} de "
         f"{PORTUGUESE_MONTHS[value.month - 1]}"
     )
+
+
+def _operational_buffers(
+    business: Business,
+    requirements: BookingRequirements,
+    service_estimate: ServiceEstimate,
+) -> tuple[int, int, int]:
+    """Return preparation, finishing and between-service buffers.
+
+    Blank business settings intentionally mean "automatic by ALOVIA". Automatic
+    operational buffers are bounded to 50 minutes total; travel is calculated
+    separately and does not consume this cap.
+    """
+
+    quantity = max(1, requirements.quantity or 1)
+    difficult = requirements.access_condition.value == "difficult"
+
+    automatic_preparation = min(
+        25,
+        8 + min(12, max(0, quantity - 1) * 4) + (8 if difficult else 0),
+    )
+    automatic_finishing = 8 if service_estimate.estimated_duration_minutes < 180 else 12
+    automatic_interval = 5 if service_estimate.estimated_duration_minutes < 120 else 10
+
+    preparation = (
+        business.preparation_minutes
+        if business.preparation_minutes is not None
+        else automatic_preparation
+    )
+    finishing = (
+        business.finishing_minutes
+        if business.finishing_minutes is not None
+        else automatic_finishing
+    )
+    interval = (
+        business.interval_between_services_minutes
+        if business.interval_between_services_minutes is not None
+        else automatic_interval
+    )
+
+    auto_values = [
+        business.preparation_minutes is None,
+        business.finishing_minutes is None,
+        business.interval_between_services_minutes is None,
+    ]
+    if any(auto_values):
+        total = preparation + finishing + interval
+        if total > 50:
+            overflow = total - 50
+            if business.interval_between_services_minutes is None:
+                reduction = min(interval, overflow)
+                interval -= reduction
+                overflow -= reduction
+            if overflow and business.finishing_minutes is None:
+                reduction = min(finishing, overflow)
+                finishing -= reduction
+                overflow -= reduction
+            if overflow and business.preparation_minutes is None:
+                preparation = max(0, preparation - overflow)
+
+    return preparation, finishing, interval
+
+
+def _automatic_booking_notice_minutes(
+    service: Service,
+    requirements: BookingRequirements,
+    service_estimate: ServiceEstimate,
+) -> int:
+    quantity = max(1, requirements.quantity or 1)
+    notice = 120
+    if service_estimate.estimated_duration_minutes >= 180:
+        notice = 180
+    if quantity >= 3 or requirements.access_condition.value == "difficult":
+        notice = max(notice, 240)
+    return notice
 
 
 def _zero_travel_estimate() -> TravelEstimate:
