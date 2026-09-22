@@ -4,6 +4,7 @@ from app.conversations.interpreter import (
     ConversationIntent,
     DeterministicConversationInterpreter,
     normalize_portuguese,
+    service_match_score,
 )
 
 
@@ -46,3 +47,47 @@ def test_aliases_use_word_boundaries_instead_of_substring_guessing() -> None:
     )
 
     assert result.intent is ConversationIntent.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("message", "label", "examples"),
+    [
+        (
+            "Quero fazer uma limpeza no meu ar condicionado",
+            "Higienização de split",
+            ("preciso higienizar o ar", "limpeza do ar condicionado"),
+        ),
+        (
+            "Meu split está sujo e queria lavar",
+            "Limpeza e higienização",
+            ("quero limpar meu ar condicionado",),
+        ),
+        (
+            "Comprei um aparelho e preciso colocar ele na parede",
+            "Instalação de ar-condicionado",
+            ("quero instalar um ar condicionado",),
+        ),
+    ],
+)
+def test_semantic_service_match_understands_natural_customer_phrasing(
+    message: str,
+    label: str,
+    examples: tuple[str, ...],
+) -> None:
+    assert service_match_score(message, label, examples) >= 0.44
+
+
+def test_semantic_service_match_does_not_confuse_unrelated_service() -> None:
+    cleaning = service_match_score(
+        "quero instalar um ar condicionado novo",
+        "Limpeza e higienização",
+        ("quero limpar meu ar condicionado",),
+    )
+    installation = service_match_score(
+        "quero instalar um ar condicionado novo",
+        "Instalação de ar-condicionado",
+        ("quero instalar um ar condicionado",),
+    )
+
+    assert installation > cleaning
+    assert installation >= 0.44
