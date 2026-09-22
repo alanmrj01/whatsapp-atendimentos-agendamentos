@@ -106,6 +106,8 @@ class ConversationView(StrictModel):
     status: ConversationStatus
     unread_count: int
     priority: bool
+    pinned: bool = False
+    manual_unread: bool = False
     assignee_name: str | None = None
 
 
@@ -154,6 +156,18 @@ class ManualMessageCreate(StrictModel):
 
 class ConversationAutomationUpdate(StrictModel):
     enabled: bool
+
+
+class ConversationActionUpdate(StrictModel):
+    pinned: bool | None = None
+    read: bool | None = None
+    deleted: bool | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ConversationActionUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one conversation action is required")
+        return self
 
 
 class BusinessView(StrictModel):
