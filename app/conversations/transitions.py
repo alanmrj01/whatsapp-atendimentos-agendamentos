@@ -60,6 +60,7 @@ from app.conversations.outbound import (
     service_selection_message,
     site_limit_message,
     slot_unavailable_message,
+    tubing_length_message,
     time_selection_message,
 )
 from app.conversations.interpreter import (
@@ -135,6 +136,8 @@ async def determine_transition(
         return await _handle_access(inbound, context, action, booking_port)
     if state is ConversationState.BOOKING_ADDRESS:
         return await _handle_address(inbound, context, booking_port)
+    if state is ConversationState.BOOKING_TUBING:
+        return await _handle_tubing(inbound, context, booking_port)
     if state is ConversationState.BOOKING_SITE_LIMIT:
         return await _handle_site_limit(inbound, context, action, booking_port)
     if state is ConversationState.BOOKING_DATE:
@@ -450,6 +453,44 @@ async def _handle_address(
             "service_address": address.to_snapshot(),
         },
     )
+
+
+async def _handle_tubing(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_TUBING,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff:
+        return _handoff_transition()
+
+    normalized = normalize_portuguese(inbound.body or "")
+    updated = {
+        **context,
+        "service_id": str(service_id),
+        "tubing_length_answered": True,
+    }
+    if normalized in {"nao sei", "não sei", "nao tenho certeza", "não tenho certeza"}:
+        updated.pop("tubing_meters", None)
+        return await _advance_intake(inbound, port, intake, updated)
+
+    meters = _decimal_from_text(inbound.body)
+    if meters is None or meters <= 0 or meters > Decimal("100"):
+        return _transition(
+            ConversationState.BOOKING_TUBING,
+            context,
+            tubing_length_message(),
+        )
+    updated["tubing_meters"] = str(meters)
+    return await _advance_intake(inbound, port, intake, updated)
 
 
 async def _handle_site_limit(
@@ -1046,6 +1087,12 @@ async def _advance_intake(
             context,
             address_request_message(),
         )
+    if intake.asks_tubing_length and context.get("tubing_length_answered") is not True:
+        return _transition(
+            ConversationState.BOOKING_TUBING,
+            context,
+            tubing_length_message(),
+        )
     if intake.asks_site_time_limit and context.get("site_limit_answered") is not True:
         return _transition(
             ConversationState.BOOKING_SITE_LIMIT,
@@ -1336,6 +1383,9 @@ def _context_from_existing_booking(booking) -> dict[str, Any]:
     }
     if requirements.address is not None:
         context["service_address"] = requirements.address.to_snapshot()
+    if requirements.tubing_meters is not None:
+        context["tubing_meters"] = str(requirements.tubing_meters)
+        context["tubing_length_answered"] = True
     if requirements.site_allowed_end is not None:
         context["site_allowed_end"] = requirements.site_allowed_end.strftime("%H:%M")
         context["site_limit_answered"] = True
@@ -1411,6 +1461,8 @@ def _intake_context(context: dict[str, Any]) -> dict[str, Any]:
             "quantity",
             "access_condition",
             "service_address",
+            "tubing_meters",
+            "tubing_length_answered",
             "site_allowed_end",
             "site_limit_answered",
         }
@@ -1438,12 +1490,31 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
                 site_limit = parsed
         except ValueError:
             pass
+    tubing_value = _context_string(context, "tubing_meters")
+    tubing: Decimal | None = None
+    if tubing_value is not None:
+        try:
+            tubing = Decimal(tubing_value)
+        except Exception:
+            tubing = None
     return BookingRequirements(
         quantity=quantity,
         access_condition=access,
         address=address,
         site_allowed_end=site_limit,
+        tubing_meters=tubing,
     )
+
+
+def _decimal_from_text(body: str | None) -> Decimal | None:
+    normalized = normalize_portuguese(body or "").replace(",", ".")
+    match = __import__("re").search(r"\b(\d+(?:\.\d{1,2})?)\b", normalized)
+    if match is None:
+        return None
+    try:
+        return Decimal(match.group(1))
+    except Exception:
+        return None
 
 
 def _quantity(action: str | None, body: str | None) -> int | None:
