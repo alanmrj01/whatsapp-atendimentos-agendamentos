@@ -45,6 +45,7 @@ from app.conversations.ports import (
 from app.models import (
     Appointment,
     Business,
+    BusinessCatalogItem,
     Employee,
     ScheduleBlock,
     Service,
@@ -162,6 +163,7 @@ class PostgresBookingAvailabilityPort:
             requires_address=service.requires_address,
             considers_difficult_access=service.considers_difficult_access,
             asks_site_time_limit=service.asks_site_time_limit,
+            asks_tubing_length=service.asks_tubing_length,
             automatic_booking=service.automatic_booking,
             pricing_type=pricing_type,
         )
@@ -519,6 +521,12 @@ class PostgresBookingAvailabilityPort:
             raise BookingRequiresHandoff("Invalid service configuration") from None
 
         service_estimate = self.estimator.estimate(configuration, requirements)
+        service_estimate = await self._apply_catalog_additions(
+            business.id,
+            service,
+            requirements,
+            service_estimate,
+        )
         if service_estimate.requires_human_quote:
             travel = _zero_travel_estimate()
         elif requirements.address is None:
@@ -611,6 +619,64 @@ class PostgresBookingAvailabilityPort:
             ),
             requires_handoff=requires_handoff,
             handoff_reason=reason,
+        )
+
+    async def _apply_catalog_additions(
+        self,
+        business_id: uuid.UUID,
+        service: Service,
+        requirements: BookingRequirements,
+        estimate: ServiceEstimate,
+    ) -> ServiceEstimate:
+        if (
+            not service.asks_tubing_length
+            or requirements.tubing_meters is None
+            or service.included_tubing_meters is None
+        ):
+            return estimate
+
+        extra_meters = requirements.tubing_meters - Decimal(service.included_tubing_meters)
+        if extra_meters <= 0:
+            return estimate
+
+        item = await self.session.scalar(
+            select(BusinessCatalogItem).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.preset_key == "extra-tubing-meter",
+                BusinessCatalogItem.active.is_(True),
+            )
+        )
+        if item is None or item.price is None:
+            return replace(
+                estimate,
+                requires_human_quote=True,
+                qualifier="Preço da tubulação adicional não configurado.",
+                applied_rules=(
+                    *estimate.applied_rules,
+                    "extra_tubing_requires_human_quote",
+                ),
+            )
+
+        additional_price = extra_meters * Decimal(item.price)
+        base_price = estimate.estimated_price
+        if base_price is None:
+            return replace(
+                estimate,
+                requires_human_quote=True,
+                qualifier="Preço base do serviço não configurado.",
+                applied_rules=(
+                    *estimate.applied_rules,
+                    "base_price_required_for_extra_tubing",
+                ),
+            )
+        return replace(
+            estimate,
+            estimated_price=base_price + additional_price,
+            applied_rules=(
+                *estimate.applied_rules,
+                f"extra_tubing_meters:{extra_meters}",
+                f"extra_tubing_price:{additional_price}",
+            ),
         )
 
     async def _available_starts(
