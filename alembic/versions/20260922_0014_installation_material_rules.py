@@ -33,10 +33,7 @@ def upgrade() -> None:
         UPDATE services
         SET asks_tubing_length = true,
             included_tubing_meters = COALESCE(included_tubing_meters, 3)
-        WHERE (
-            lower(unaccent(name)) LIKE '%instala%'
-            OR lower(name) LIKE '%instala%'
-        )
+        WHERE lower(name) LIKE '%instala%'
         """
     )
 
