@@ -463,6 +463,8 @@ class PostgresBookingAvailabilityPort:
             travel = _zero_travel_estimate()
         else:
             try:
+                if not business.service_origin_address:
+                    raise ValueError("Operational origin is not configured")
                 origin = TravelOrigin(
                     address=business.service_origin_address,
                     latitude=(
