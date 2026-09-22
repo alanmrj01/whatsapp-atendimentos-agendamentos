@@ -59,6 +59,7 @@ from app.conversations.interpreter import (
     DeterministicConversationInterpreter,
     Interpretation,
     normalize_portuguese,
+    service_match_score,
 )
 from app.conversations.ports import (
     BookingAvailabilityPort,
@@ -921,20 +922,37 @@ def _service_for_interpretation(
     services: Sequence[BookingOption],
     interpretation: Interpretation,
 ) -> BookingOption | None:
-    if interpretation.service_key is None:
+    if not interpretation.normalized_text:
         return None
-    markers = {
+
+    markers_by_key = {
         "split-installation": ("instal", "split"),
-        "cleaning": ("limpeza", "higien"),
+        "cleaning": ("limpeza", "higien", "lavagem"),
         "preventive-maintenance": ("prevent", "revis"),
-        "diagnostics": ("diagnost", "corretiva"),
+        "diagnostics": ("diagnost", "corretiva", "manutenc"),
         "gas-recharge": ("gas", "vazamento", "recarga"),
-    }[interpretation.service_key]
+    }
+    scored: list[tuple[float, BookingOption]] = []
     for service in services:
+        score = service_match_score(
+            interpretation.normalized_text,
+            service.label,
+            service.examples,
+        )
+        markers = markers_by_key.get(interpretation.service_key or "", ())
         label = normalize_portuguese(service.label)
-        if any(marker in label for marker in markers):
-            return service
-    return None
+        if markers and any(marker in label for marker in markers):
+            score = min(1.0, score + 0.25)
+        scored.append((score, service))
+
+    scored.sort(key=lambda item: (-item[0], item[1].label, item[1].id))
+    if not scored or scored[0][0] < 0.44:
+        return None
+    if len(scored) > 1:
+        first, second = scored[0][0], scored[1][0]
+        if first < 0.78 and first - second < 0.08:
+            return None
+    return scored[0][1]
 
 
 def _date_from_text(
