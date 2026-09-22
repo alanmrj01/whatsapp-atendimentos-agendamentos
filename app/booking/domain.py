@@ -153,9 +153,9 @@ class ServiceIntake:
     requires_address: bool
     considers_difficult_access: bool
     asks_site_time_limit: bool
-    asks_tubing_length: bool
     automatic_booking: bool
     pricing_type: PricingType
+    asks_tubing_length: bool = False
 
 
 @dataclass(frozen=True, slots=True)
