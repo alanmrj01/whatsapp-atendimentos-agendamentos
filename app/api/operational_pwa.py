@@ -21,6 +21,10 @@ from app.operations.schemas import (
     AutomationSettingsView,
     BusinessUpdate,
     BusinessView,
+    CatalogItemCreate,
+    CatalogItemList,
+    CatalogItemUpdate,
+    CatalogItemView,
     ConversationDetail,
     ConversationAutomationUpdate,
     ConversationList,
@@ -41,6 +45,8 @@ from app.operations.schemas import (
     ServiceOption,
     ServiceUpdate,
     SetupStatus,
+    OnboardingFinalizeResponse,
+    OnboardingStepComplete,
     WorkingHoursCreate,
     WorkingHoursList,
     WorkingHoursUpdate,
@@ -429,6 +435,86 @@ async def update_service(
 ):
     membership = _authorize(principal, CONFIG_ROLES)
     return await service.update_service(membership.business_id, service_id, payload)
+
+
+@router.get("/catalog-items", response_model=CatalogItemList)
+async def list_catalog_items(principal: Identity, service: ServiceDep):
+    membership = _membership(principal)
+    return CatalogItemList(items=await service.list_catalog_items(membership.business_id))
+
+
+@router.post(
+    "/catalog-items",
+    response_model=CatalogItemView,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_origin)],
+)
+async def create_catalog_item(
+    payload: CatalogItemCreate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.create_catalog_item(membership.business_id, payload)
+
+
+@router.patch(
+    "/catalog-items/{item_id}",
+    response_model=CatalogItemView,
+    dependencies=[Depends(require_origin)],
+)
+async def update_catalog_item(
+    item_id: UUID,
+    payload: CatalogItemUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.update_catalog_item(membership.business_id, item_id, payload)
+
+
+@router.delete(
+    "/catalog-items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def delete_catalog_item(
+    item_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    await service.delete_catalog_item(membership.business_id, item_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/onboarding/steps/complete",
+    response_model=SetupStatus,
+    dependencies=[Depends(require_origin)],
+)
+async def complete_onboarding_step(
+    payload: OnboardingStepComplete,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.complete_onboarding_step(
+        membership.business_id, payload.step
+    )
+
+
+@router.post(
+    "/onboarding/finalize",
+    response_model=OnboardingFinalizeResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def finalize_onboarding(
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.finalize_onboarding(membership.business_id)
 
 
 @router.get("/setup/status", response_model=SetupStatus)
