@@ -63,7 +63,10 @@ from app.operations.schemas import (
     WorkingHoursUpdate,
     WorkingHoursView,
 )
-from app.conversations.service_semantics import generate_service_intent_examples
+from app.conversations.service_semantics import (
+    generate_service_intent_examples,
+    normalize_service_text,
+)
 from app.repositories.automation import AutomationRepository
 from app.schemas.automation import (
     AutomationExclusionCreate,
@@ -698,6 +701,7 @@ class OperationalService:
 
     async def create_service(self, business_id: UUID, values: ServiceCreate) -> ServiceOption:
         await self._business(business_id)
+        installation = "instala" in normalize_service_text(values.name)
         item = Service(
             business_id=business_id,
             name=values.name,
@@ -706,6 +710,8 @@ class OperationalService:
             pricing_type="fixed" if values.price is not None else "estimated",
             automatic_booking=True,
             requires_address=True,
+            asks_tubing_length=installation,
+            included_tubing_meters=3 if installation else None,
             intent_examples=list(generate_service_intent_examples(values.name)),
             active=True,
         )
@@ -727,8 +733,13 @@ class OperationalService:
             item.base_price = updates.pop("price")
             item.pricing_type = "fixed" if item.base_price is not None else "estimated"
             item.automatic_booking = True
-        if "name" in updates and not explicit_examples:
-            item.intent_examples = list(generate_service_intent_examples(updates["name"]))
+        if "name" in updates:
+            installation = "instala" in normalize_service_text(updates["name"])
+            if not explicit_examples:
+                item.intent_examples = list(generate_service_intent_examples(updates["name"]))
+            if installation and item.included_tubing_meters is None:
+                item.asks_tubing_length = True
+                item.included_tubing_meters = 3
         for field, value in updates.items():
             setattr(item, field, value)
         await self.session.commit()
