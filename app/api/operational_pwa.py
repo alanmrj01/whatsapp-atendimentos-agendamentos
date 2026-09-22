@@ -17,12 +17,20 @@ from app.operations.schemas import (
     AppointmentList,
     AppointmentUpdate,
     AppointmentView,
+    AssistantExclusionCreate,
+    AssistantExclusionView,
     AutomationSettingsUpdate,
     AutomationSettingsView,
     BusinessUpdate,
     BusinessView,
+    CatalogItemCreate,
+    CatalogItemList,
+    CatalogItemUpdate,
+    CatalogItemView,
     ConversationDetail,
     ConversationAutomationUpdate,
+    ConversationPinnedUpdate,
+    ConversationReadUpdate,
     ConversationList,
     CustomerCreate,
     CustomerNameUpdate,
@@ -41,6 +49,8 @@ from app.operations.schemas import (
     ServiceOption,
     ServiceUpdate,
     SetupStatus,
+    OnboardingFinalizeResponse,
+    OnboardingStepComplete,
     WorkingHoursCreate,
     WorkingHoursList,
     WorkingHoursUpdate,
@@ -198,6 +208,55 @@ async def get_conversation(conversation_id: UUID, principal: Identity, service: 
 
 
 @router.patch(
+    "/conversations/{conversation_id}/pinned",
+    response_model=ConversationDetail,
+    dependencies=[Depends(require_origin)],
+)
+async def update_conversation_pinned(
+    conversation_id: UUID,
+    payload: ConversationPinnedUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.update_conversation_pinned(
+        membership.business_id, conversation_id, payload
+    )
+
+
+@router.patch(
+    "/conversations/{conversation_id}/read",
+    response_model=ConversationDetail,
+    dependencies=[Depends(require_origin)],
+)
+async def update_conversation_read(
+    conversation_id: UUID,
+    payload: ConversationReadUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.update_conversation_read(
+        membership.business_id, conversation_id, payload
+    )
+
+
+@router.delete(
+    "/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def archive_conversation(
+    conversation_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    await service.archive_conversation(membership.business_id, conversation_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch(
     "/conversations/{conversation_id}/customer",
     response_model=ConversationDetail,
     dependencies=[Depends(require_origin)],
@@ -325,6 +384,42 @@ async def get_automation(principal: Identity, service: ServiceDep):
     return await service.get_automation(membership.business_id)
 
 
+@router.get("/automation/exclusions", response_model=list[AssistantExclusionView])
+async def list_assistant_exclusions(principal: Identity, service: ServiceDep):
+    membership = _membership(principal)
+    return await service.list_assistant_exclusions(membership.business_id)
+
+
+@router.post(
+    "/automation/exclusions",
+    response_model=AssistantExclusionView,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_origin)],
+)
+async def add_assistant_exclusion(
+    payload: AssistantExclusionCreate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.add_assistant_exclusion(membership.business_id, payload)
+
+
+@router.delete(
+    "/automation/exclusions/{exclusion_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def delete_assistant_exclusion(
+    exclusion_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    await service.delete_assistant_exclusion(membership.business_id, exclusion_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.patch(
     "/automation",
     response_model=AutomationSettingsView,
@@ -429,6 +524,86 @@ async def update_service(
 ):
     membership = _authorize(principal, CONFIG_ROLES)
     return await service.update_service(membership.business_id, service_id, payload)
+
+
+@router.get("/catalog-items", response_model=CatalogItemList)
+async def list_catalog_items(principal: Identity, service: ServiceDep):
+    membership = _membership(principal)
+    return CatalogItemList(items=await service.list_catalog_items(membership.business_id))
+
+
+@router.post(
+    "/catalog-items",
+    response_model=CatalogItemView,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_origin)],
+)
+async def create_catalog_item(
+    payload: CatalogItemCreate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.create_catalog_item(membership.business_id, payload)
+
+
+@router.patch(
+    "/catalog-items/{item_id}",
+    response_model=CatalogItemView,
+    dependencies=[Depends(require_origin)],
+)
+async def update_catalog_item(
+    item_id: UUID,
+    payload: CatalogItemUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.update_catalog_item(membership.business_id, item_id, payload)
+
+
+@router.delete(
+    "/catalog-items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def delete_catalog_item(
+    item_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    await service.delete_catalog_item(membership.business_id, item_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/onboarding/steps/complete",
+    response_model=SetupStatus,
+    dependencies=[Depends(require_origin)],
+)
+async def complete_onboarding_step(
+    payload: OnboardingStepComplete,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.complete_onboarding_step(
+        membership.business_id, payload.step
+    )
+
+
+@router.post(
+    "/onboarding/finalize",
+    response_model=OnboardingFinalizeResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def finalize_onboarding(
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.finalize_onboarding(membership.business_id)
 
 
 @router.get("/setup/status", response_model=SetupStatus)

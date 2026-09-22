@@ -6,7 +6,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -18,6 +18,8 @@ from app.automation.service import (
 from app.models import (
     Appointment,
     Business,
+    BusinessAutomationExclusion,
+    BusinessCatalogItem,
     BusinessWhatsAppConnection,
     Conversation,
     Customer,
@@ -31,12 +33,19 @@ from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
     AppointmentView,
+    AssistantExclusionCreate,
+    AssistantExclusionView,
     AutomationSettingsUpdate,
     AutomationSettingsView,
     BusinessUpdate,
     BusinessView,
+    CatalogItemCreate,
+    CatalogItemUpdate,
+    CatalogItemView,
     ConversationDetail,
     ConversationAutomationUpdate,
+    ConversationPinnedUpdate,
+    ConversationReadUpdate,
     ConversationView,
     CustomerNameUpdate,
     CustomerCreate,
@@ -53,6 +62,7 @@ from app.operations.schemas import (
     ServiceCreate,
     ServiceUpdate,
     SetupStatus,
+    OnboardingFinalizeResponse,
     WorkingHoursCreate,
     WorkingHoursUpdate,
     WorkingHoursView,
@@ -244,6 +254,67 @@ class OperationalService:
             free_form_window_expires_at=window_expires_at,
         )
 
+
+    async def update_conversation_pinned(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: ConversationPinnedUpdate,
+    ) -> ConversationDetail:
+        conversation = await self.session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.archived_at.is_(None),
+            ).with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        conversation.pinned_at = datetime.now(UTC) if values.pinned else None
+        await self.session.commit()
+        return await self.get_conversation(business_id, conversation_id)
+
+    async def update_conversation_read(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        values: ConversationReadUpdate,
+    ) -> ConversationDetail:
+        conversation = await self.session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.archived_at.is_(None),
+            ).with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        if values.unread:
+            conversation.force_unread = True
+        else:
+            conversation.read_through_at = datetime.now(UTC)
+            conversation.force_unread = False
+        await self.session.commit()
+        return await self.get_conversation(business_id, conversation_id)
+
+    async def archive_conversation(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+    ) -> None:
+        conversation = await self.session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.archived_at.is_(None),
+            ).with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "Conversation not found")
+        conversation.archived_at = datetime.now(UTC)
+        conversation.pinned_at = None
+        await self.session.commit()
+
     async def update_customer_name(
         self,
         business_id: UUID,
@@ -405,8 +476,13 @@ class OperationalService:
 
     async def update_business(self, business_id: UUID, values: BusinessUpdate) -> BusinessView:
         business = await self._business(business_id, for_update=True)
-        for field, value in values.model_dump(exclude_unset=True).items():
+        updates = values.model_dump(exclude_unset=True)
+        for field, value in updates.items():
             setattr(business, field, value)
+        if "service_origin_address" in updates:
+            business.service_origin_configured = bool(
+                values.service_origin_address and values.service_origin_address.strip()
+            )
         await self.session.commit()
         return _business_view(business)
 
@@ -485,6 +561,106 @@ class OperationalService:
             raise HTTPException(404, "Business not found")
         await self.session.commit()
         return await self.get_automation(business_id)
+
+    async def list_assistant_exclusions(
+        self,
+        business_id: UUID,
+    ) -> list[AssistantExclusionView]:
+        rows = await self.session.execute(
+            select(BusinessAutomationExclusion, Customer)
+            .outerjoin(
+                Customer,
+                and_(
+                    Customer.business_id == BusinessAutomationExclusion.business_id,
+                    Customer.whatsapp_id == BusinessAutomationExclusion.whatsapp_id,
+                ),
+            )
+            .where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.mode == "human_only",
+                BusinessAutomationExclusion.active.is_(True),
+            )
+            .order_by(BusinessAutomationExclusion.created_at)
+        )
+        return [
+            AssistantExclusionView(
+                id=exclusion.id,
+                customer_id=customer.id if customer is not None else None,
+                customer_name=(
+                    _customer_display_name(customer)
+                    if customer is not None
+                    else exclusion.label or exclusion.whatsapp_id
+                ),
+                customer_phone=customer.phone_e164 if customer is not None else None,
+                reason=exclusion.reason,
+                active=exclusion.active,
+            )
+            for exclusion, customer in rows.all()
+        ]
+
+    async def add_assistant_exclusion(
+        self,
+        business_id: UUID,
+        values: AssistantExclusionCreate,
+    ) -> AssistantExclusionView:
+        customer = await self.session.scalar(
+            select(Customer).where(
+                Customer.business_id == business_id,
+                Customer.id == values.customer_id,
+            )
+        )
+        if customer is None:
+            raise HTTPException(404, "Customer not found")
+        existing = await self.session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id == customer.whatsapp_id,
+            ).with_for_update()
+        )
+        if existing is None:
+            existing = BusinessAutomationExclusion(
+                business_id=business_id,
+                whatsapp_id=customer.whatsapp_id,
+                mode="human_only",
+                label=_customer_display_name(customer),
+                reason=values.reason,
+                active=True,
+            )
+            self.session.add(existing)
+        else:
+            existing.mode = "human_only"
+            existing.label = _customer_display_name(customer)
+            existing.reason = values.reason
+            existing.active = True
+        await AutomationRepository(self.session).cancel_pending_for_contact(
+            business_id, customer.whatsapp_id
+        )
+        await self.session.commit()
+        return AssistantExclusionView(
+            id=existing.id,
+            customer_id=customer.id,
+            customer_name=_customer_display_name(customer),
+            customer_phone=customer.phone_e164,
+            reason=existing.reason,
+            active=True,
+        )
+
+    async def delete_assistant_exclusion(
+        self,
+        business_id: UUID,
+        exclusion_id: UUID,
+    ) -> None:
+        exclusion = await self.session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.id == exclusion_id,
+                BusinessAutomationExclusion.mode == "human_only",
+            ).with_for_update()
+        )
+        if exclusion is None:
+            raise HTTPException(404, "Assistant exclusion not found")
+        await self.session.delete(exclusion)
+        await self.session.commit()
 
     async def list_employees(self, business_id: UUID) -> list[EmployeeView]:
         items = (await self.session.scalars(
@@ -583,7 +759,7 @@ class OperationalService:
         items = (await self.session.scalars(
             select(Service).where(Service.business_id == business_id).order_by(Service.active.desc(), Service.name)
         )).all()
-        return [ServiceOption(id=item.id, name=item.name, duration_minutes=item.duration_minutes, active=item.active) for item in items]
+        return [_service_view(item) for item in items]
 
     async def create_service(self, business_id: UUID, values: ServiceCreate) -> ServiceOption:
         await self._business(business_id)
@@ -591,9 +767,11 @@ class OperationalService:
             business_id=business_id,
             name=values.name,
             duration_minutes=values.duration_minutes,
-            base_price=None,
-            pricing_type="human_quote",
-            automatic_booking=False,
+            base_price=values.price,
+            pricing_type="fixed",
+            automatic_booking=True,
+            interpretation_examples=_generate_service_examples(values.name),
+            requires_address=True,
             active=True,
         )
         self.session.add(item)
@@ -608,39 +786,173 @@ class OperationalService:
         ).with_for_update())
         if item is None:
             raise HTTPException(404, "Service not found")
-        for field, value in values.model_dump(exclude_unset=True).items():
+        updates = values.model_dump(exclude_unset=True)
+        if "price" in updates:
+            item.base_price = updates.pop("price")
+            item.pricing_type = "fixed"
+            item.automatic_booking = True
+        if "name" in updates and "interpretation_examples" not in updates:
+            item.interpretation_examples = _generate_service_examples(updates["name"])
+        for field, value in updates.items():
             setattr(item, field, value)
         await self.session.commit()
         return _service_view(item)
 
+    async def list_catalog_items(self, business_id: UUID) -> list[CatalogItemView]:
+        items = (await self.session.scalars(
+            select(BusinessCatalogItem)
+            .where(BusinessCatalogItem.business_id == business_id)
+            .order_by(BusinessCatalogItem.active.desc(), BusinessCatalogItem.name)
+        )).all()
+        return [_catalog_item_view(item) for item in items]
+
+    async def create_catalog_item(
+        self, business_id: UUID, values: CatalogItemCreate
+    ) -> CatalogItemView:
+        await self._business(business_id)
+        item = BusinessCatalogItem(
+            business_id=business_id,
+            name=values.name,
+            description=values.description,
+            price=values.price,
+            unit=values.unit,
+            active=values.active,
+        )
+        self.session.add(item)
+        await self.session.commit()
+        return _catalog_item_view(item)
+
+    async def update_catalog_item(
+        self,
+        business_id: UUID,
+        item_id: UUID,
+        values: CatalogItemUpdate,
+    ) -> CatalogItemView:
+        item = await self.session.scalar(
+            select(BusinessCatalogItem).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.id == item_id,
+            ).with_for_update()
+        )
+        if item is None:
+            raise HTTPException(404, "Catalog item not found")
+        updates = values.model_dump(exclude_unset=True)
+        activating = updates.get("active", item.active)
+        effective_price = updates.get("price", item.price)
+        if activating and effective_price is None:
+            raise HTTPException(422, "Active catalog items require a price")
+        for field, value in updates.items():
+            setattr(item, field, value)
+        await self.session.commit()
+        return _catalog_item_view(item)
+
+    async def delete_catalog_item(self, business_id: UUID, item_id: UUID) -> None:
+        item = await self.session.scalar(
+            select(BusinessCatalogItem).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.id == item_id,
+            ).with_for_update()
+        )
+        if item is None:
+            raise HTTPException(404, "Catalog item not found")
+        await self.session.delete(item)
+        await self.session.commit()
+
+    async def complete_onboarding_step(self, business_id: UUID, step: str) -> SetupStatus:
+        business = await self._business(business_id, for_update=True)
+        if step == "materials":
+            invalid_active = await self.session.scalar(
+                select(func.count()).select_from(BusinessCatalogItem).where(
+                    BusinessCatalogItem.business_id == business_id,
+                    BusinessCatalogItem.active.is_(True),
+                    BusinessCatalogItem.price.is_(None),
+                )
+            )
+            if invalid_active:
+                raise HTTPException(
+                    422,
+                    "Defina o preço dos materiais ativos ou desative os itens que não utiliza",
+                )
+            business.materials_catalog_reviewed_at = datetime.now(UTC)
+        elif step == "agenda":
+            business.agenda_settings_reviewed_at = datetime.now(UTC)
+        else:
+            raise HTTPException(422, "Unsupported onboarding step")
+        await self.session.commit()
+        return await self.setup_status(business_id)
+
+    async def finalize_onboarding(self, business_id: UUID) -> OnboardingFinalizeResponse:
+        status = await self.setup_status(business_id)
+        if status.completed != status.total:
+            raise HTTPException(409, f"Onboarding incomplete: next step is {status.next_step}")
+        business = await self._business(business_id, for_update=True)
+        if business.onboarding_completed_at is None:
+            business.onboarding_completed_at = datetime.now(UTC)
+            await self.session.commit()
+        return OnboardingFinalizeResponse(
+            completed=True,
+            completed_at=business.onboarding_completed_at,
+        )
+
     async def setup_status(self, business_id: UUID) -> SetupStatus:
         business = await self._business(business_id)
+        active_team = bool(await self.session.scalar(
+            select(func.count()).select_from(Employee).where(
+                Employee.business_id == business_id,
+                Employee.active.is_(True),
+            )
+        ))
         hours = bool(await self.session.scalar(
             select(func.count()).select_from(WorkingHours).join(
-                Employee, and_(Employee.business_id == WorkingHours.business_id, Employee.id == WorkingHours.employee_id)
-            ).where(WorkingHours.business_id == business_id, Employee.active.is_(True))
+                Employee, and_(
+                    Employee.business_id == WorkingHours.business_id,
+                    Employee.id == WorkingHours.employee_id,
+                )
+            ).where(
+                WorkingHours.business_id == business_id,
+                Employee.active.is_(True),
+            )
         ))
-        agenda = bool(await self.session.scalar(
-            select(func.count()).select_from(EmployeeService)
-            .join(Employee, and_(Employee.business_id == EmployeeService.business_id, Employee.id == EmployeeService.employee_id))
-            .join(Service, and_(Service.business_id == EmployeeService.business_id, Service.id == EmployeeService.service_id))
-            .join(WorkingHours, and_(WorkingHours.business_id == EmployeeService.business_id, WorkingHours.employee_id == EmployeeService.employee_id))
-            .where(EmployeeService.business_id == business_id, Employee.active.is_(True), Service.active.is_(True))
-        )) and hours and business.slot_interval_minutes > 0
-        whatsapp = bool(await self.session.scalar(select(func.count()).select_from(BusinessWhatsAppConnection).where(
-            BusinessWhatsAppConnection.business_id == business_id,
-            BusinessWhatsAppConnection.status == "connected",
-        )))
-        values = {
-            "company": bool(business.name.strip()),
+        configured_services = bool(await self.session.scalar(
+            select(func.count()).select_from(Service).where(
+                Service.business_id == business_id,
+                Service.active.is_(True),
+                Service.base_price.is_not(None),
+                Service.base_price > 0,
+                Service.duration_minutes > 0,
+            )
+        ))
+        whatsapp = bool(await self.session.scalar(
+            select(func.count()).select_from(BusinessWhatsAppConnection).where(
+                BusinessWhatsAppConnection.business_id == business_id,
+                BusinessWhatsAppConnection.status == "connected",
+            )
+        ))
+        readiness = {
+            "company": bool(
+                business.name.strip()
+                and business.responsible_name
+                and business.responsible_name.strip()
+                and business.service_origin_configured
+                and business.service_origin_address.strip()
+            ),
+            "team": active_team,
             "business_hours": hours,
-            "automation": business.human_control_window_minutes in {5,10,20,30,60,120,240,360,720,1440,2160},
-            "agenda": agenda,
+            "services": configured_services,
+            "materials": business.materials_catalog_reviewed_at is not None,
+            "agenda": business.agenda_settings_reviewed_at is not None,
             "whatsapp": whatsapp,
         }
-        completed = sum(values.values())
-        next_step = next((key for key, ready in values.items() if not ready), "complete")
-        return SetupStatus(**values, completed=completed, next_step=next_step)
+        completed = sum(readiness.values())
+        next_step = next((key for key, ready in readiness.items() if not ready), "complete")
+        return SetupStatus(
+            **readiness,
+            automation=business.assistant_enabled,
+            completed=completed,
+            next_step=next_step,
+            onboarding_completed=business.onboarding_completed_at is not None,
+            onboarding_completed_at=business.onboarding_completed_at,
+        )
 
     async def _business(self, business_id: UUID, *, for_update: bool = False) -> Business:
         query = select(Business).where(Business.id == business_id, Business.active.is_(True))
@@ -669,13 +981,6 @@ class OperationalService:
         employee = await self.session.scalar(select(Employee).where(Employee.business_id == business_id, Employee.id == employee_id, Employee.active.is_(True)))
         if customer is None or service is None or employee is None:
             raise HTTPException(404, "Appointment reference not found")
-        eligible = await self.session.scalar(select(EmployeeService.employee_id).where(
-            EmployeeService.business_id == business_id,
-            EmployeeService.employee_id == employee_id,
-            EmployeeService.service_id == service_id,
-        ))
-        if eligible is None:
-            raise HTTPException(422, "Employee is not assigned to service")
         return business, customer, service, employee
 
     async def _commit_appointment(self) -> None:
@@ -723,19 +1028,36 @@ class OperationalService:
             outbound_message.conversation_id == Conversation.id,
             outbound_message.direction == "outbound",
         ).correlate(Conversation).scalar_subquery()
-        unread = select(func.count()).select_from(unread_message).where(
+        read_boundary = case(
+            (last_outbound.is_(None), Conversation.read_through_at),
+            (Conversation.read_through_at.is_(None), last_outbound),
+            (last_outbound >= Conversation.read_through_at, last_outbound),
+            else_=Conversation.read_through_at,
+        )
+        natural_unread = select(func.count()).select_from(unread_message).where(
             unread_message.business_id == Conversation.business_id,
             unread_message.conversation_id == Conversation.id,
             unread_message.direction == "inbound",
-            or_(last_outbound.is_(None), unread_message.created_at > last_outbound),
+            or_(
+                read_boundary.is_(None),
+                unread_message.created_at > read_boundary,
+            ),
         ).correlate(Conversation).scalar_subquery()
+        unread = case(
+            (
+                Conversation.force_unread.is_(True),
+                case((natural_unread < 1, 1), else_=natural_unread),
+            ),
+            else_=natural_unread,
+        )
         query = select(
             Conversation, Customer.name, Customer.whatsapp_profile_name,
             Customer.phone_e164, Customer.whatsapp_id,
             latest_body.label("last_content"), latest_time.label("last_message_at"),
             latest_direction.label("last_direction"), unread.label("unread_count"),
         ).join(Customer, and_(Customer.business_id == Conversation.business_id, Customer.id == Conversation.customer_id)).where(
-            Conversation.business_id == business_id
+            Conversation.business_id == business_id,
+            Conversation.archived_at.is_(None),
         )
         if conversation_id is not None:
             query = query.where(Conversation.id == conversation_id)
@@ -766,7 +1088,10 @@ class OperationalService:
             select(func.count()).select_from(query.order_by(None).subquery())
         ) or 0)
         query = query.order_by(
-            unread.desc(), latest_time.desc().nullslast(), Conversation.id
+            Conversation.pinned_at.desc().nullslast(),
+            unread.desc(),
+            latest_time.desc().nullslast(),
+            Conversation.id,
         )
         if offset is not None:
             query = query.offset(offset)
@@ -816,12 +1141,31 @@ def _conversation_view(row: Any) -> ConversationView:
         ),
         customer_phone=customer_phone, last_content=last_content, last_message_at=last_message_at,
         status=status, unread_count=unread_value,
-        priority=unread_value > 0 or item.handoff_status == "waiting", assignee_name=None,
+        priority=unread_value > 0 or item.handoff_status == "waiting",
+        pinned=item.pinned_at is not None,
+        assignee_name=None,
     )
 
 
 def _business_view(item: Business) -> BusinessView:
-    return BusinessView(id=item.id, name=item.name, timezone=item.timezone, slot_interval_minutes=item.slot_interval_minutes)
+    return BusinessView(
+        id=item.id,
+        name=item.name,
+        responsible_name=item.responsible_name,
+        service_origin_address=item.service_origin_address,
+        service_origin_configured=item.service_origin_configured,
+        timezone=item.timezone,
+        slot_interval_minutes=item.slot_interval_minutes,
+        default_travel_minutes=item.default_travel_minutes,
+        travel_fallback_allowed=item.travel_fallback_allowed,
+        travel_before_buffer_minutes=item.travel_before_buffer_minutes,
+        travel_after_buffer_minutes=item.travel_after_buffer_minutes,
+        default_service_gap_minutes=item.default_service_gap_minutes,
+        default_preparation_minutes=item.default_preparation_minutes,
+        default_completion_minutes=item.default_completion_minutes,
+        minimum_booking_notice_minutes=item.minimum_booking_notice_minutes,
+        onboarding_completed_at=item.onboarding_completed_at,
+    )
 
 
 def _hours_view(row: Any) -> WorkingHoursView:
@@ -876,5 +1220,76 @@ def _service_view(item: Service) -> ServiceOption:
         id=item.id,
         name=item.name,
         duration_minutes=item.duration_minutes,
+        price=item.base_price,
+        active=item.active,
+        interpretation_examples=list(item.interpretation_examples or []),
+        service_gap_minutes=item.service_gap_minutes,
+        preparation_minutes=item.preparation_minutes,
+        completion_minutes=item.completion_minutes,
+        minimum_booking_notice_minutes=item.minimum_booking_notice_minutes,
+    )
+
+
+def _catalog_item_view(item: BusinessCatalogItem) -> CatalogItemView:
+    return CatalogItemView(
+        id=item.id,
+        name=item.name,
+        description=item.description,
+        price=item.price,
+        unit=item.unit,
+        preset_key=item.preset_key,
         active=item.active,
     )
+
+
+def _generate_service_examples(name: str) -> list[str]:
+    service = " ".join(name.split())
+    base = [
+        f"quero {service}",
+        f"preciso de {service}",
+        f"vocês fazem {service}",
+        f"quanto custa {service}",
+        f"quero agendar {service}",
+        f"gostaria de fazer {service}",
+        f"preciso marcar {service}",
+        f"tem horário para {service}",
+        f"quero orçamento de {service}",
+        f"preciso realizar {service}",
+        f"quero saber o preço de {service}",
+        f"quando vocês conseguem fazer {service}",
+    ]
+    normalized = service.casefold()
+    domain_examples: list[str] = []
+    if any(term in normalized for term in ("limpeza", "higien", "lavagem")):
+        domain_examples = [
+            "quero limpar meu ar condicionado",
+            "preciso higienizar o ar",
+            "meu split está sujo",
+            "quanto custa uma limpeza do ar condicionado",
+            "vocês fazem lavagem de ar condicionado",
+            "quero fazer uma higienização no split",
+        ]
+    elif any(term in normalized for term in ("instala", "instalar")):
+        domain_examples = [
+            "quero instalar um ar condicionado",
+            "preciso colocar um split",
+            "quanto custa instalar o ar",
+            "tenho um aparelho para instalar",
+            "preciso instalar mais de um ar condicionado",
+        ]
+    elif any(term in normalized for term in ("manuten", "diagn", "corretiva")):
+        domain_examples = [
+            "meu ar não está gelando",
+            "o ar está pingando",
+            "meu ar está fazendo barulho",
+            "preciso de manutenção no ar condicionado",
+            "o split parou de funcionar",
+        ]
+    elif any(term in normalized for term in ("gás", "gas", "recarga", "vazamento")):
+        domain_examples = [
+            "acho que meu ar está sem gás",
+            "preciso colocar gás no ar condicionado",
+            "quero fazer recarga de gás",
+            "acho que tem vazamento no ar",
+        ]
+    return list(dict.fromkeys(base + domain_examples))

@@ -17,6 +17,7 @@ from app.booking.domain import (
 class BookingOption:
     id: str
     label: str
+    examples: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

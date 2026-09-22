@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -105,6 +106,7 @@ class ConversationView(StrictModel):
     status: ConversationStatus
     unread_count: int
     priority: bool
+    pinned: bool = False
     assignee_name: str | None = None
 
 
@@ -155,17 +157,61 @@ class ConversationAutomationUpdate(StrictModel):
     enabled: bool
 
 
+class ConversationPinnedUpdate(StrictModel):
+    pinned: bool
+
+
+class ConversationReadUpdate(StrictModel):
+    unread: bool
+
+
+class AssistantExclusionView(StrictModel):
+    id: UUID
+    customer_id: UUID | None
+    customer_name: str
+    customer_phone: str | None
+    reason: str | None
+    active: bool
+
+
+class AssistantExclusionCreate(StrictModel):
+    customer_id: UUID
+    reason: str | None = Field(default=None, max_length=2000)
+
+
 class BusinessView(StrictModel):
     id: UUID
     name: str
+    responsible_name: str | None
+    service_origin_address: str
+    service_origin_configured: bool
     timezone: str
     slot_interval_minutes: int
+    default_travel_minutes: int | None = None
+    travel_fallback_allowed: bool = False
+    travel_before_buffer_minutes: int = 0
+    travel_after_buffer_minutes: int = 0
+    default_service_gap_minutes: int | None = None
+    default_preparation_minutes: int | None = None
+    default_completion_minutes: int | None = None
+    minimum_booking_notice_minutes: int | None = None
+    onboarding_completed_at: datetime | None = None
 
 
 class BusinessUpdate(StrictModel):
     name: str | None = Field(default=None, min_length=2, max_length=255)
+    responsible_name: str | None = Field(default=None, min_length=2, max_length=255)
+    service_origin_address: str | None = Field(default=None, min_length=5, max_length=500)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     slot_interval_minutes: int | None = Field(default=None, ge=5, le=480)
+    default_travel_minutes: int | None = Field(default=None, ge=0, le=480)
+    travel_fallback_allowed: bool | None = None
+    travel_before_buffer_minutes: int | None = Field(default=None, ge=0, le=240)
+    travel_after_buffer_minutes: int | None = Field(default=None, ge=0, le=240)
+    default_service_gap_minutes: int | None = Field(default=None, ge=0, le=50)
+    default_preparation_minutes: int | None = Field(default=None, ge=0, le=50)
+    default_completion_minutes: int | None = Field(default=None, ge=0, le=50)
+    minimum_booking_notice_minutes: int | None = Field(default=None, ge=0, le=10080)
 
     @field_validator("name")
     @classmethod
@@ -176,6 +222,13 @@ class BusinessUpdate(StrictModel):
         if len(normalized) < 2:
             raise ValueError("Business name is required")
         return normalized
+
+    @field_validator("responsible_name", "service_origin_address")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return " ".join(value.split())
 
     @field_validator("timezone")
     @classmethod
@@ -360,7 +413,13 @@ class ServiceOption(StrictModel):
     id: UUID
     name: str
     duration_minutes: int
+    price: Decimal | None
     active: bool
+    interpretation_examples: list[str] = Field(default_factory=list)
+    service_gap_minutes: int | None = None
+    preparation_minutes: int | None = None
+    completion_minutes: int | None = None
+    minimum_booking_notice_minutes: int | None = None
 
 
 class ServiceList(StrictModel):
@@ -370,6 +429,7 @@ class ServiceList(StrictModel):
 class ServiceCreate(StrictModel):
     name: str = Field(min_length=2, max_length=255)
     duration_minutes: int = Field(ge=1, le=1440)
+    price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
 
     @field_validator("name")
     @classmethod
@@ -383,7 +443,13 @@ class ServiceCreate(StrictModel):
 class ServiceUpdate(StrictModel):
     name: str | None = Field(default=None, min_length=2, max_length=255)
     duration_minutes: int | None = Field(default=None, ge=1, le=1440)
+    price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     active: bool | None = None
+    interpretation_examples: list[str] | None = Field(default=None, min_length=1, max_length=40)
+    service_gap_minutes: int | None = Field(default=None, ge=0, le=50)
+    preparation_minutes: int | None = Field(default=None, ge=0, le=50)
+    completion_minutes: int | None = Field(default=None, ge=0, le=50)
+    minimum_booking_notice_minutes: int | None = Field(default=None, ge=0, le=10080)
 
     @field_validator("name")
     @classmethod
@@ -395,6 +461,16 @@ class ServiceUpdate(StrictModel):
             raise ValueError("Service name is required")
         return normalized
 
+    @field_validator("interpretation_examples")
+    @classmethod
+    def normalize_examples(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized = [" ".join(item.split()) for item in value if " ".join(item.split())]
+        if not normalized:
+            raise ValueError("At least one interpretation example is required")
+        return list(dict.fromkeys(normalized))[:40]
+
     @model_validator(mode="after")
     def require_change(self) -> "ServiceUpdate":
         if not self.model_fields_set:
@@ -402,14 +478,76 @@ class ServiceUpdate(StrictModel):
         return self
 
 
+class CatalogItemView(StrictModel):
+    id: UUID
+    name: str
+    description: str | None
+    price: Decimal | None
+    unit: Literal["unit", "meter"]
+    preset_key: str | None
+    active: bool
+
+
+class CatalogItemList(StrictModel):
+    items: list[CatalogItemView]
+
+
+class CatalogItemCreate(StrictModel):
+    name: str = Field(min_length=2, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    unit: Literal["unit", "meter"] = "unit"
+    active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def normalize_catalog_name(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
+class CatalogItemUpdate(StrictModel):
+    name: str | None = Field(default=None, min_length=2, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    unit: Literal["unit", "meter"] | None = None
+    active: bool | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "CatalogItemUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one field is required")
+        return self
+
+
 class SetupStatus(StrictModel):
     company: bool
+    team: bool
     business_hours: bool
-    automation: bool
+    services: bool
+    materials: bool
     agenda: bool
     whatsapp: bool
+    automation: bool
     completed: int
-    total: Literal[5] = 5
+    total: Literal[7] = 7
     next_step: Literal[
-        "company", "business_hours", "automation", "agenda", "whatsapp", "complete"
+        "company",
+        "team",
+        "business_hours",
+        "services",
+        "materials",
+        "agenda",
+        "whatsapp",
+        "complete",
     ]
+    onboarding_completed: bool = False
+    onboarding_completed_at: datetime | None = None
+
+
+class OnboardingStepComplete(StrictModel):
+    step: Literal["materials", "agenda"]
+
+
+class OnboardingFinalizeResponse(StrictModel):
+    completed: bool
+    completed_at: datetime
