@@ -28,6 +28,7 @@ from app.operations.schemas import (
     CatalogItemUpdate,
     CatalogItemView,
     ConversationDetail,
+    ConversationActionUpdate,
     ConversationAutomationUpdate,
     ConversationList,
     CustomerCreate,
@@ -234,6 +235,23 @@ async def update_conversation_assistant(
 ):
     membership = _authorize(principal, AGENDA_ROLES)
     return await service.update_conversation_automation(
+        membership.business_id, conversation_id, payload
+    )
+
+
+@router.patch(
+    "/conversations/{conversation_id}/actions",
+    response_model=ConversationDetail,
+    dependencies=[Depends(require_origin)],
+)
+async def update_conversation_actions(
+    conversation_id: UUID,
+    payload: ConversationActionUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.update_conversation_actions(
         membership.business_id, conversation_id, payload
     )
 
