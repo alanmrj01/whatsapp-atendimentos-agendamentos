@@ -23,6 +23,15 @@ def upgrade() -> None:
         "services",
         sa.Column("included_tubing_meters", sa.Numeric(8, 2), nullable=True),
     )
+    op.add_column(
+        "appointments",
+        sa.Column("tubing_meters", sa.Numeric(8, 2), nullable=True),
+    )
+    op.create_check_constraint(
+        op.f("ck_appointments_tubing_meters_positive"),
+        "appointments",
+        "tubing_meters IS NULL OR tubing_meters > 0",
+    )
     op.create_check_constraint(
         op.f("ck_services_included_tubing_meters_nonnegative"),
         "services",
@@ -39,6 +48,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_constraint(op.f("ck_appointments_tubing_meters_positive"), "appointments", type_="check")
+    op.drop_column("appointments", "tubing_meters")
     op.drop_constraint(
         op.f("ck_services_included_tubing_meters_nonnegative"),
         "services",
