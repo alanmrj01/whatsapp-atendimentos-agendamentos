@@ -14,10 +14,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.booking.domain import (
+    AccessCondition,
     BookingPlan,
     BookingRequirements,
     PricingType,
     ServiceConfiguration,
+    ServiceAddress,
     ServiceEstimate,
     ServiceIntake,
     TravelCalculationMethod,
@@ -34,6 +36,7 @@ from app.booking.travel import (
 from app.conversations.service_semantics import generate_service_intent_examples
 from app.conversations.ports import (
     BookingConfirmation,
+    ExistingBooking,
     BookingNotFound,
     BookingOption,
     BookingRequiresHandoff,
@@ -298,6 +301,65 @@ class PostgresBookingAvailabilityPort:
                 raise
             return _confirmation(appointment)
         raise SlotUnavailable("Selected slot is unavailable")
+
+    async def list_customer_bookings(
+        self,
+        business_id: uuid.UUID,
+        customer_id: uuid.UUID,
+    ) -> Sequence[ExistingBooking]:
+        business = await self.session.scalar(
+            select(Business).where(
+                Business.id == business_id,
+                Business.active.is_(True),
+            )
+        )
+        if business is None:
+            return ()
+        rows = await self.session.execute(
+            select(Appointment, Service.name)
+            .join(
+                Service,
+                and_(
+                    Service.business_id == Appointment.business_id,
+                    Service.id == Appointment.service_id,
+                ),
+            )
+            .where(
+                Appointment.business_id == business_id,
+                Appointment.customer_id == customer_id,
+                Appointment.status == "confirmed",
+                Appointment.starts_at > self.now_provider(),
+            )
+            .order_by(Appointment.starts_at)
+            .limit(10)
+        )
+        timezone_info = _timezone(business.timezone)
+        bookings: list[ExistingBooking] = []
+        for appointment, service_name in rows.all():
+            try:
+                access = AccessCondition(appointment.access_condition or "normal")
+            except ValueError:
+                access = AccessCondition.UNKNOWN
+            address = ServiceAddress.from_snapshot(appointment.service_address)
+            requirements = BookingRequirements(
+                quantity=appointment.quantity or 1,
+                access_condition=access,
+                address=address,
+                site_allowed_end=appointment.site_allowed_end,
+            )
+            local_start = appointment.starts_at.astimezone(timezone_info)
+            label = (
+                f"{service_name} · {local_start.strftime('%d/%m às %H:%M')}"
+            )
+            bookings.append(
+                ExistingBooking(
+                    appointment_id=appointment.id,
+                    service_id=appointment.service_id,
+                    label=label,
+                    requirements=requirements,
+                )
+            )
+        return tuple(bookings)
 
     async def cancel_booking(
         self,
