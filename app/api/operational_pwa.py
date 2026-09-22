@@ -256,6 +256,21 @@ async def update_conversation_actions(
     )
 
 
+@router.delete(
+    "/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def delete_conversation(
+    conversation_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    await service.delete_conversation(membership.business_id, conversation_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/conversations/{conversation_id}/messages",
     response_model=MessageView,
