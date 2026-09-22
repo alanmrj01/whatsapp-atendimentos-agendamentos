@@ -96,6 +96,7 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    responsible_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     timezone: Mapped[str] = mapped_column(
         String(64),
         default="America/Sao_Paulo",
@@ -109,11 +110,9 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     slot_interval_minutes: Mapped[int] = mapped_column(
         Integer, default=30, server_default="30", nullable=False
     )
-    service_origin_address: Mapped[str] = mapped_column(
+    service_origin_address: Mapped[str | None] = mapped_column(
         String(500),
-        default="Zona Leste de São José dos Campos - SP",
-        server_default="Zona Leste de São José dos Campos - SP",
-        nullable=False,
+        nullable=True,
     )
     service_origin_latitude: Mapped[Decimal | None] = mapped_column(
         Numeric(9, 6), nullable=True
@@ -150,6 +149,22 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=list,
         server_default=text("'[]'::jsonb"),
         nullable=False,
+    )
+    interval_between_services_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    preparation_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finishing_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    minimum_booking_notice_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    materials_catalog_reviewed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    agenda_preferences_reviewed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    onboarding_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
     )
     human_control_window_minutes: Mapped[int] = mapped_column(
         Integer, default=2160, server_default="2160", nullable=False
@@ -473,8 +488,40 @@ class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     asks_site_time_limit: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    intent_examples: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+        nullable=False,
+    )
     active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true", nullable=False
+    )
+
+
+class BusinessCatalogItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "business_catalog_items"
+    __table_args__ = (
+        CheckConstraint("kind IN ('material', 'equipment')", name="kind_allowed"),
+        CheckConstraint("price IS NULL OR price >= 0", name="price_nonnegative"),
+        UniqueConstraint(
+            "business_id", "preset_key", name="uq_business_catalog_items_business_preset"
+        ),
+        Index("ix_business_catalog_items_business_id", "business_id"),
+        Index("ix_business_catalog_items_active", "active"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    unit_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    preset_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
     )
 
 
