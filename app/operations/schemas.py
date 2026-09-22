@@ -161,7 +161,6 @@ class ConversationAutomationUpdate(StrictModel):
 class ConversationActionUpdate(StrictModel):
     pinned: bool | None = None
     read: bool | None = None
-    deleted: bool | None = None
 
     @model_validator(mode="after")
     def require_change(self) -> "ConversationActionUpdate":
