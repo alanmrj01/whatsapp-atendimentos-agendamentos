@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, text
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -40,9 +40,12 @@ async def diagnostic_db():
     engine = create_async_engine(_async_url(TEST_DATABASE_URL), pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session, session.begin():
-        for model in (Message, ProcessedWebhook, Conversation, Customer,
-                      BusinessAutomationExclusion, BusinessWhatsAppConnection, Business):
-            await session.execute(delete(model))
+        # This suite shares the disposable PostgreSQL service with other physical
+        # tests. Clear the tenant root with CASCADE so rows created by booking,
+        # notifications, memberships, or future dependent tables cannot leak into
+        # diagnostics setup and violate foreign keys. Alembic metadata is separate.
+        await session.execute(text("TRUNCATE TABLE businesses CASCADE"))
+        await session.execute(text("TRUNCATE TABLE processed_webhooks"))
     try:
         yield engine, factory
     finally:
