@@ -111,11 +111,11 @@ def test_rls_migration_is_reversible_and_hardens_function_search_path() -> None:
     upgrade = " ".join(render_migration_sql("upgrade", RLS_MIGRATION_PATH).lower().split())
     downgrade = " ".join(render_migration_sql("downgrade", RLS_MIGRATION_PATH).lower().split())
 
-    assert "alter table public.businesses enable row level security" in upgrade
-    assert "alter table public.business_notifications enable row level security" in upgrade
+    assert 'alter table public."businesses" enable row level security' in upgrade
+    assert 'alter table public."business_notifications" enable row level security' in upgrade
     assert "alter function public.booking_add_minutes_immutable" in upgrade
     assert "set search_path = pg_catalog, public" in upgrade
-    assert "alter table public.businesses disable row level security" in downgrade
+    assert 'alter table public."businesses" disable row level security' in downgrade
     assert "reset search_path" in downgrade
 
 
