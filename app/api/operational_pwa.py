@@ -12,6 +12,7 @@ from app.auth.schemas import MembershipResponse, MembershipRole
 from app.auth.service import Principal
 from app.core.database import get_db
 from app.core.config import CloudTasksConfigurationError, Settings, get_settings
+from app.operations.address_lookup import PostalAddressLookupError, lookup_postal_address
 from app.operations.schemas import (
     AppointmentCreate,
     AppointmentList,
@@ -25,6 +26,7 @@ from app.operations.schemas import (
     BusinessHoursView,
     BusinessUpdate,
     BusinessView,
+    PostalAddressView,
     CatalogItemCreate,
     CatalogItemList,
     CatalogItemUpdate,
@@ -339,6 +341,22 @@ async def send_conversation_message(
     return message
 
 
+@router.get("/address/cep/{postal_code}", response_model=PostalAddressView)
+async def lookup_company_postal_code(postal_code: str, principal: Identity):
+    _membership(principal)
+    try:
+        address = await lookup_postal_address(postal_code)
+    except PostalAddressLookupError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+    return PostalAddressView(
+        postal_code=address.postal_code,
+        street=address.street,
+        neighborhood=address.neighborhood,
+        city=address.city,
+        state=address.state,
+    )
+
+
 @router.get("/business", response_model=BusinessView)
 async def get_business(principal: Identity, service: ServiceDep):
     membership = _membership(principal)
@@ -517,6 +535,19 @@ async def update_employee(
 ):
     membership = _authorize(principal, CONFIG_ROLES)
     return await service.update_employee(membership.business_id, employee_id, payload)
+
+
+@router.delete(
+    "/employees/{employee_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def delete_employee(
+    employee_id: UUID, principal: Identity, service: ServiceDep
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    await service.delete_employee(membership.business_id, employee_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put(
