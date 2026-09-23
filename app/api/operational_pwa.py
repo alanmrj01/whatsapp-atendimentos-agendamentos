@@ -21,6 +21,8 @@ from app.operations.schemas import (
     AutomationExclusionView,
     AutomationSettingsUpdate,
     AutomationSettingsView,
+    BusinessHoursUpdate,
+    BusinessHoursView,
     BusinessUpdate,
     BusinessView,
     CatalogItemCreate,
@@ -353,6 +355,26 @@ async def update_business(payload: BusinessUpdate, principal: Identity, service:
     return await service.update_business(membership.business_id, payload)
 
 
+@router.get("/business-hours", response_model=BusinessHoursView)
+async def get_business_hours(principal: Identity, service: ServiceDep):
+    membership = _membership(principal)
+    return await service.get_business_hours(membership.business_id)
+
+
+@router.put(
+    "/business-hours",
+    response_model=BusinessHoursView,
+    dependencies=[Depends(require_origin)],
+)
+async def update_business_hours(
+    payload: BusinessHoursUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    return await service.update_business_hours(membership.business_id, payload)
+
+
 @router.get("/working-hours", response_model=WorkingHoursList)
 async def list_working_hours(principal: Identity, service: ServiceDep):
     membership = _membership(principal)
@@ -558,6 +580,21 @@ async def update_service(
 ):
     membership = _authorize(principal, CONFIG_ROLES)
     return await service.update_service(membership.business_id, service_id, payload)
+
+
+@router.delete(
+    "/services/{service_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def delete_service(
+    service_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    await service.delete_service(membership.business_id, service_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/setup/status", response_model=SetupStatus)
