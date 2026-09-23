@@ -42,8 +42,24 @@ _TABLES = (
 def upgrade() -> None:
     for table in _TABLES:
         op.execute(f'ALTER TABLE public."{table}" ENABLE ROW LEVEL SECURITY')
+    op.execute(
+        """
+        ALTER FUNCTION public.booking_add_minutes_immutable(
+            timestamp with time zone,
+            integer
+        ) SET search_path = pg_catalog, public
+        """
+    )
 
 
 def downgrade() -> None:
+    op.execute(
+        """
+        ALTER FUNCTION public.booking_add_minutes_immutable(
+            timestamp with time zone,
+            integer
+        ) RESET search_path
+        """
+    )
     for table in reversed(_TABLES):
         op.execute(f'ALTER TABLE public."{table}" DISABLE ROW LEVEL SECURITY')
