@@ -184,12 +184,27 @@ class ConversationActionUpdate(StrictModel):
         return self
 
 
+class PostalAddressView(StrictModel):
+    postal_code: str
+    street: str
+    neighborhood: str
+    city: str
+    state: str
+
+
 class BusinessView(StrictModel):
     id: UUID
     name: str
     responsible_name: str | None
     timezone: str
     service_origin_address: str | None
+    service_origin_postal_code: str | None
+    service_origin_street: str | None
+    service_origin_neighborhood: str | None
+    service_origin_number: str | None
+    service_origin_city: str | None
+    service_origin_state: str | None
+    service_origin_validated_at: datetime | None
     slot_interval_minutes: int
     interval_between_services_minutes: int | None
     preparation_minutes: int | None
@@ -206,6 +221,12 @@ class BusinessUpdate(StrictModel):
     responsible_name: str | None = Field(default=None, max_length=255)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     service_origin_address: str | None = Field(default=None, max_length=500)
+    service_origin_postal_code: str | None = Field(default=None, pattern=r"^[0-9]{8}$")
+    service_origin_street: str | None = Field(default=None, min_length=2, max_length=255)
+    service_origin_neighborhood: str | None = Field(default=None, min_length=2, max_length=255)
+    service_origin_number: str | None = Field(default=None, min_length=1, max_length=32)
+    service_origin_city: str | None = Field(default=None, min_length=2, max_length=255)
+    service_origin_state: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     slot_interval_minutes: int | None = Field(default=None, ge=5, le=480)
     interval_between_services_minutes: int | None = Field(default=None, ge=0, le=240)
     preparation_minutes: int | None = Field(default=None, ge=0, le=240)
@@ -214,7 +235,15 @@ class BusinessUpdate(StrictModel):
     materials_catalog_reviewed: bool | None = None
     agenda_preferences_reviewed: bool | None = None
 
-    @field_validator("name", "responsible_name", "service_origin_address")
+    @field_validator(
+        "name",
+        "responsible_name",
+        "service_origin_address",
+        "service_origin_street",
+        "service_origin_neighborhood",
+        "service_origin_number",
+        "service_origin_city",
+    )
     @classmethod
     def normalize_text(cls, value: str | None, info) -> str | None:
         if value is None:
@@ -239,6 +268,23 @@ class BusinessUpdate(StrictModel):
     def require_change(self) -> "BusinessUpdate":
         if not self.model_fields_set:
             raise ValueError("At least one field is required")
+        address_fields = {
+            "service_origin_postal_code",
+            "service_origin_street",
+            "service_origin_neighborhood",
+            "service_origin_number",
+            "service_origin_city",
+            "service_origin_state",
+        }
+        if self.model_fields_set & address_fields:
+            missing = [
+                field_name
+                for field_name in address_fields
+                if field_name not in self.model_fields_set
+                or not getattr(self, field_name)
+            ]
+            if missing:
+                raise ValueError("Complete structured company address is required")
         return self
 
 
