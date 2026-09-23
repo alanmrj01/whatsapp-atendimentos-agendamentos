@@ -29,6 +29,12 @@ from app.models import (
     Service,
     WorkingHours,
 )
+from app.operations.address_lookup import (
+    PostalAddressLookupError,
+    format_company_address,
+    lookup_postal_address,
+    validate_address_matches_lookup,
+)
 from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
@@ -520,9 +526,54 @@ class OperationalService:
         return _business_view(await self._business(business_id))
 
     async def update_business(self, business_id: UUID, values: BusinessUpdate) -> BusinessView:
+        updates = values.model_dump(exclude_unset=True)
+        address_fields = {
+            "service_origin_postal_code",
+            "service_origin_street",
+            "service_origin_neighborhood",
+            "service_origin_number",
+            "service_origin_city",
+            "service_origin_state",
+        }
+        structured_address = bool(address_fields & updates.keys())
+        if structured_address:
+            try:
+                lookup = await lookup_postal_address(updates["service_origin_postal_code"])
+                validate_address_matches_lookup(
+                    lookup=lookup,
+                    street=updates["service_origin_street"],
+                    neighborhood=updates["service_origin_neighborhood"],
+                    city=updates["service_origin_city"],
+                    state=updates["service_origin_state"],
+                )
+            except PostalAddressLookupError as exc:
+                raise HTTPException(422, str(exc)) from None
+            updates["service_origin_postal_code"] = lookup.postal_code
+            if lookup.street:
+                updates["service_origin_street"] = lookup.street
+            if lookup.neighborhood:
+                updates["service_origin_neighborhood"] = lookup.neighborhood
+            updates["service_origin_city"] = lookup.city
+            updates["service_origin_state"] = lookup.state
+            updates["service_origin_address"] = format_company_address(
+                street=updates["service_origin_street"],
+                number=updates["service_origin_number"],
+                neighborhood=updates["service_origin_neighborhood"],
+                city=updates["service_origin_city"],
+                state=updates["service_origin_state"],
+                postal_code=updates["service_origin_postal_code"],
+            )
+
         business = await self._business(business_id, for_update=True)
-        for field, value in values.model_dump(exclude_unset=True).items():
+        for field, value in updates.items():
             setattr(business, field, value)
+        if structured_address:
+            business.service_origin_validated_at = datetime.now(UTC)
+            # Any previously geocoded coordinates belong to the previous address.
+            # They must be recalculated by the route provider before being trusted.
+            business.service_origin_latitude = None
+            business.service_origin_longitude = None
+            business.service_origin_is_precise = False
         await self.session.commit()
         return _business_view(business)
 
@@ -722,6 +773,19 @@ class OperationalService:
             )
         )).all())
         return _employee_view(item, service_ids)
+
+    async def delete_employee(self, business_id: UUID, employee_id: UUID) -> None:
+        item = await self._employee(business_id, employee_id, for_update=True)
+        item.active = False
+        await self.session.execute(delete(EmployeeService).where(
+            EmployeeService.business_id == business_id,
+            EmployeeService.employee_id == employee_id,
+        ))
+        await self.session.execute(delete(WorkingHours).where(
+            WorkingHours.business_id == business_id,
+            WorkingHours.employee_id == employee_id,
+        ))
+        await self.session.commit()
 
     async def update_employee_services(
         self, business_id: UUID, employee_id: UUID, values: EmployeeServicesUpdate
@@ -954,10 +1018,23 @@ class OperationalService:
         ))
         whatsapp = connected_whatsapp or bool(business.meta_phone_number_id)
 
+        structured_address_ready = all((
+            (business.service_origin_postal_code or "").strip(),
+            (business.service_origin_street or "").strip(),
+            (business.service_origin_neighborhood or "").strip(),
+            (business.service_origin_number or "").strip(),
+            (business.service_origin_city or "").strip(),
+            (business.service_origin_state or "").strip(),
+            business.service_origin_validated_at,
+        ))
+        address_ready = bool(structured_address_ready) or bool(
+            business.onboarding_completed_at
+            and (business.service_origin_address or "").strip()
+        )
         company = bool(
             business.name.strip()
             and (business.responsible_name or "").strip()
-            and (business.service_origin_address or "").strip()
+            and address_ready
         )
         team = active_technicians > 0
         services = bool(active_services) and all(item.base_price is not None for item in active_services)
@@ -1317,6 +1394,13 @@ def _business_view(item: Business) -> BusinessView:
         responsible_name=item.responsible_name,
         timezone=item.timezone,
         service_origin_address=item.service_origin_address,
+        service_origin_postal_code=item.service_origin_postal_code,
+        service_origin_street=item.service_origin_street,
+        service_origin_neighborhood=item.service_origin_neighborhood,
+        service_origin_number=item.service_origin_number,
+        service_origin_city=item.service_origin_city,
+        service_origin_state=item.service_origin_state,
+        service_origin_validated_at=item.service_origin_validated_at,
         slot_interval_minutes=item.slot_interval_minutes,
         interval_between_services_minutes=item.interval_between_services_minutes,
         preparation_minutes=item.preparation_minutes,
