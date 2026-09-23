@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
 from app.diagnostics import repository as diagnostic_repository
-from app.diagnostics.models import AutomationStatus, DiagnosticCode as Code, DiagnosticStatus as Status
+from app.diagnostics.models import (
+    AutomationStatus,
+    DiagnosticCode as Code,
+    DiagnosticStatus as Status,
+    EXPECTED_SCHEMA_REVISION,
+)
 from app.diagnostics.repository import DiagnosticsRepository
 from app.diagnostics.service import DiagnosticsService, observe
 from app.models import (
@@ -120,7 +125,7 @@ async def test_physical_reports_are_scoped_sanitized_and_read_only(diagnostic_db
     async with engine.connect() as connection:
         # Diagnostics did not mutate messages, schema or human-control state.
         assert await connection.scalar(text("SELECT count(*) FROM messages")) == 7
-        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260921_0011"
+        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == EXPECTED_SCHEMA_REVISION
         assert await connection.scalar(text("SELECT count(*) FROM conversations WHERE automation_suppressed_until IS NOT NULL")) == 1
 
     # Expiry is observed without changing the business's human-control policy.
