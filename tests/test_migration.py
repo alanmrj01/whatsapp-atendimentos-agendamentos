@@ -52,6 +52,12 @@ RLS_MIGRATION_PATH = (
     / "versions"
     / "20260923_0016_enable_rls.py"
 )
+COMPANY_HOURS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260923_0017_company_operating_hours.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -84,7 +90,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260923_0016"]
+    assert script.get_heads() == ["20260923_0017"]
 
 
 def test_automatic_booking_notifications_migration_is_additive_and_reversible() -> None:
@@ -117,6 +123,25 @@ def test_rls_migration_is_reversible_and_hardens_function_search_path() -> None:
     assert "set search_path = pg_catalog, public" in upgrade
     assert 'alter table public."businesses" disable row level security' in downgrade
     assert "reset search_path" in downgrade
+
+
+def test_company_hours_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", COMPANY_HOURS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", COMPANY_HOURS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "add column operating_weekdays" in upgrade
+    assert "add column weekday_start_time" in upgrade
+    assert "add column weekend_holiday_enabled" in upgrade
+    assert "update business_catalog_items" in upgrade
+    assert "drop column operating_weekdays" in downgrade
 
 
 def test_previous_migrations_remain_byte_identical() -> None:
