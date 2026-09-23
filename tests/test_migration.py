@@ -58,6 +58,12 @@ COMPANY_HOURS_MIGRATION_PATH = (
     / "versions"
     / "20260923_0017_company_operating_hours.py"
 )
+STRUCTURED_ADDRESS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260923_0018_structured_company_address.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -90,7 +96,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260923_0017"]
+    assert script.get_heads() == ["20260923_0018"]
 
 
 def test_automatic_booking_notifications_migration_is_additive_and_reversible() -> None:
