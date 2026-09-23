@@ -44,7 +44,7 @@ NOTIFICATIONS_MIGRATION_PATH = (
     PROJECT_ROOT
     / "alembic"
     / "versions"
-    / "20260922_0015_automatic_booking_notifications.py"
+    / "20260923_0016_automatic_booking_notifications.py"
 )
 
 
@@ -78,7 +78,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260922_0015"]
+    assert script.get_heads() == ["20260923_0016"]
 
 
 def test_automatic_booking_notifications_migration_is_additive_and_reversible() -> None:
