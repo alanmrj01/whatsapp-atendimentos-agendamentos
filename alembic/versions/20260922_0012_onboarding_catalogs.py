@@ -110,11 +110,30 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Before 0012 this column was NOT NULL with a legacy default. During the
+    # onboarding rollout it becomes nullable so businesses must provide a real
+    # base address. A downgrade must therefore restore a valid legacy value for
+    # rows that were created/cleared while 0012+ was active before reapplying
+    # the historical NOT NULL constraint.
+    op.execute(
+        """
+        UPDATE businesses
+        SET service_origin_address = 'Zona Leste de São José dos Campos - SP'
+        WHERE service_origin_address IS NULL
+        """
+    )
+
     op.drop_index(op.f("ix_business_catalog_items_active"), table_name="business_catalog_items")
     op.drop_index(op.f("ix_business_catalog_items_business_id"), table_name="business_catalog_items")
     op.drop_table("business_catalog_items")
     op.drop_column("services", "intent_examples")
-    op.alter_column("businesses", "service_origin_address", existing_type=sa.String(length=500), nullable=False)
+    op.alter_column(
+        "businesses",
+        "service_origin_address",
+        existing_type=sa.String(length=500),
+        nullable=False,
+        server_default="Zona Leste de São José dos Campos - SP",
+    )
     op.drop_constraint(op.f("ck_businesses_minimum_booking_notice_nonnegative"), "businesses", type_="check")
     op.drop_constraint(op.f("ck_businesses_finishing_minutes_nonnegative"), "businesses", type_="check")
     op.drop_constraint(op.f("ck_businesses_preparation_minutes_nonnegative"), "businesses", type_="check")
