@@ -167,7 +167,10 @@ async def test_physical_schema_mismatch_is_not_ready_without_running_migration(d
             assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260902_0004"
     finally:
         async with engine.begin() as connection:
-            await connection.execute(text("UPDATE alembic_version SET version_num = '20260921_0011'"))
+            await connection.execute(
+                text("UPDATE alembic_version SET version_num = :revision"),
+                {"revision": EXPECTED_SCHEMA_REVISION},
+            )
 
 
 async def test_physical_activity_limits_are_explicit(diagnostic_db, monkeypatch):
