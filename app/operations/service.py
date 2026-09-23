@@ -36,6 +36,8 @@ from app.operations.schemas import (
     AutomationExclusionView,
     AutomationSettingsUpdate,
     AutomationSettingsView,
+    BusinessHoursUpdate,
+    BusinessHoursView,
     BusinessUpdate,
     BusinessView,
     CatalogItemCreate,
@@ -524,6 +526,38 @@ class OperationalService:
         await self.session.commit()
         return _business_view(business)
 
+    async def get_business_hours(self, business_id: UUID) -> BusinessHoursView:
+        business = await self._business(business_id)
+        return BusinessHoursView(
+            weekdays=[int(day) for day in (business.operating_weekdays or [])],
+            weekday_start_time=business.weekday_start_time,
+            weekday_end_time=business.weekday_end_time,
+            weekend_holiday_enabled=business.weekend_holiday_enabled,
+            weekend_holiday_start_time=business.weekend_holiday_start_time,
+            weekend_holiday_end_time=business.weekend_holiday_end_time,
+        )
+
+    async def update_business_hours(
+        self, business_id: UUID, values: BusinessHoursUpdate
+    ) -> BusinessHoursView:
+        business = await self._business(business_id, for_update=True)
+        business.operating_weekdays = list(values.weekdays)
+        business.weekday_start_time = values.weekday_start_time
+        business.weekday_end_time = values.weekday_end_time
+        business.weekend_holiday_enabled = values.weekend_holiday_enabled
+        business.weekend_holiday_start_time = (
+            values.weekend_holiday_start_time
+            if values.weekend_holiday_enabled
+            else None
+        )
+        business.weekend_holiday_end_time = (
+            values.weekend_holiday_end_time
+            if values.weekend_holiday_enabled
+            else None
+        )
+        await self.session.commit()
+        return await self.get_business_hours(business_id)
+
     async def list_working_hours(self, business_id: UUID) -> list[WorkingHoursView]:
         rows = await self.session.execute(
             select(WorkingHours, Employee.name)
@@ -796,6 +830,18 @@ class OperationalService:
         await self.session.commit()
         return _service_view(item)
 
+    async def delete_service(self, business_id: UUID, service_id: UUID) -> None:
+        item = await self.session.scalar(
+            select(Service).where(
+                Service.business_id == business_id,
+                Service.id == service_id,
+            ).with_for_update()
+        )
+        if item is None:
+            raise HTTPException(404, "Service not found")
+        item.active = False
+        await self.session.commit()
+
     async def list_catalog_items(self, business_id: UUID) -> list[CatalogItemView]:
         await self._business(business_id)
         await self._ensure_catalog_presets(business_id)
@@ -870,7 +916,7 @@ class OperationalService:
                 Employee.operational_role == "technician",
             )
         ) or 0)
-        hours = bool(await self.session.scalar(
+        legacy_hours = bool(await self.session.scalar(
             select(func.count()).select_from(WorkingHours).join(
                 Employee, and_(
                     Employee.business_id == WorkingHours.business_id,
@@ -882,6 +928,12 @@ class OperationalService:
                 Employee.operational_role == "technician",
             )
         ))
+        company_hours = bool(
+            business.operating_weekdays
+            and business.weekday_start_time is not None
+            and business.weekday_end_time is not None
+        )
+        hours = company_hours or legacy_hours
         active_services = (await self.session.scalars(
             select(Service).where(
                 Service.business_id == business_id,
@@ -993,7 +1045,7 @@ class OperationalService:
                 name=name,
                 description=description,
                 unit_label=unit_label,
-                active=False,
+                active=True,
             )
             for key, kind, name, description, unit_label in missing
         ])
