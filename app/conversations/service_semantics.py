@@ -20,14 +20,56 @@ _GENERIC_TEMPLATES = (
 )
 
 _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
-    "limpeza": ("higienização", "higienizar", "limpar", "lavagem", "lavar"),
+    "limpeza": (
+        "higienização",
+        "higienizar",
+        "limpar",
+        "lavagem",
+        "lavar",
+        "sujo",
+        "suja",
+    ),
     "higienizacao": ("limpeza", "higienizar", "limpar", "lavagem"),
-    "instalacao": ("instalar", "colocar", "montagem"),
-    "manutencao": ("revisão", "revisar", "conserto", "arrumar"),
+    "instalacao": ("instalar", "colocar", "montagem", "montar"),
+    "manutencao": (
+        "revisão",
+        "revisar",
+        "conserto",
+        "arrumar",
+        "não gela",
+        "não está gelando",
+        "parou",
+        "pingando",
+        "barulho",
+    ),
     "diagnostico": ("avaliar", "verificar", "descobrir o problema"),
     "gas": ("recarga de gás", "colocar gás", "completar gás"),
     "vazamento": ("teste de vazamento", "procurar vazamento"),
     "split": ("ar condicionado", "ar-condicionado", "aparelho", "ar"),
+}
+
+_SEMANTIC_STOPWORDS = {
+    "a",
+    "ao",
+    "ar",
+    "condicionado",
+    "aparelho",
+    "de",
+    "do",
+    "e",
+    "em",
+    "esta",
+    "fazer",
+    "meu",
+    "no",
+    "o",
+    "para",
+    "preciso",
+    "quero",
+    "split",
+    "um",
+    "uma",
+    "voces",
 }
 
 
@@ -42,13 +84,24 @@ def normalize_service_text(value: str) -> str:
 def generate_service_intent_examples(name: str) -> tuple[str, ...]:
     service = " ".join(name.split())
     normalized = normalize_service_text(service)
-    variants = {service}
+    variants: list[str] = []
+    variant_keys: set[str] = set()
+
+    def add_variant(value: str) -> None:
+        key = normalize_service_text(value)
+        if key and key not in variant_keys:
+            variant_keys.add(key)
+            variants.append(value)
+
+    add_variant(service)
     tokens = set(normalized.split())
     for token, expansions in _DOMAIN_EXPANSIONS.items():
         if token in tokens:
-            variants.update(expansions)
+            for expansion in expansions:
+                add_variant(expansion)
     if "ar" in tokens or "condicionado" in tokens or "split" in tokens:
-        variants.update(("ar condicionado", "ar-condicionado", "split", "aparelho"))
+        for expansion in ("ar condicionado", "ar-condicionado", "split", "aparelho"):
+            add_variant(expansion)
 
     examples: list[str] = []
     seen: set[str] = set()
@@ -77,8 +130,8 @@ def semantic_service_score(
 
 
 def _semantic_similarity(query: str, candidate: str) -> float:
-    left = _expanded_tokens(query)
-    right = _expanded_tokens(normalize_service_text(candidate))
+    left = _expanded_tokens(query) - _SEMANTIC_STOPWORDS
+    right = _expanded_tokens(normalize_service_text(candidate)) - _SEMANTIC_STOPWORDS
     if not left or not right:
         return 0.0
     intersection = len(left & right)
@@ -90,11 +143,21 @@ def _semantic_similarity(query: str, candidate: str) -> float:
 
 
 def _expanded_tokens(value: str) -> set[str]:
-    tokens = set(normalize_service_text(value).split())
+    normalized = normalize_service_text(value)
+    tokens = set(normalized.split())
     expanded = set(tokens)
     for token, synonyms in _DOMAIN_EXPANSIONS.items():
-        if token in tokens or any(normalize_service_text(item) in value for item in synonyms):
+        if token in tokens or any(
+            _contains_phrase(normalized, normalize_service_text(item))
+            for item in synonyms
+        ):
             expanded.add(token)
             for synonym in synonyms:
                 expanded.update(normalize_service_text(synonym).split())
     return expanded
+
+
+def _contains_phrase(value: str, phrase: str) -> bool:
+    if not phrase:
+        return False
+    return f" {phrase} " in f" {value} "

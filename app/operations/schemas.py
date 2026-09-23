@@ -504,10 +504,10 @@ class CatalogItemList(StrictModel):
 
 class SetupStatus(StrictModel):
     company: bool
-    team: bool
+    team: bool = False
     business_hours: bool
-    services: bool
-    materials: bool
+    services: bool = False
+    materials: bool = False
     agenda: bool
     whatsapp: bool
     completed: int
@@ -515,7 +515,8 @@ class SetupStatus(StrictModel):
     next_step: Literal[
         "company", "team", "business_hours", "services", "materials", "agenda", "whatsapp", "complete"
     ]
-    onboarding_completed: bool
-    onboarding_completed_at: datetime | None
-    onboarding_version: int
+    onboarding_completed: bool = False
+    onboarding_completed_at: datetime | None = None
+    onboarding_version: int = 0
+    automation: bool | None = None
     blocking_reasons: list[str] = Field(default_factory=list)

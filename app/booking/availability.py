@@ -103,20 +103,14 @@ class PostgresBookingAvailabilityPort:
         self.estimator = estimator or ServiceEstimator()
         self.travel_time_port = travel_time_port
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
+        self._candidate_plans: dict[
+            tuple[uuid.UUID, datetime], BookingPlan
+        ] = {}
 
     async def list_services(
         self,
         business_id: uuid.UUID,
     ) -> Sequence[BookingOption]:
-        active_technician = await self.session.scalar(
-            select(func.count()).select_from(Employee).where(
-                Employee.business_id == business_id,
-                Employee.active.is_(True),
-                Employee.operational_role == "technician",
-            )
-        )
-        if not active_technician:
-            return ()
         rows = await self.session.execute(
             select(Service.id, Service.name, Service.intent_examples)
             .join(Business, Business.id == Service.business_id)
@@ -268,10 +262,14 @@ class PostgresBookingAvailabilityPort:
             parsed_date,
             parsed_time,
         )
-        ends_at = starts_at + timedelta(
-            minutes=plan.service.estimated_duration_minutes
-        )
         for employee_id in employee_ids:
+            employee_plan = self._candidate_plans.get(
+                (employee_id, starts_at),
+                plan,
+            )
+            ends_at = starts_at + timedelta(
+                minutes=employee_plan.service.estimated_duration_minutes
+            )
             appointment = Appointment(
                 business_id=business_id,
                 customer_id=customer_id,
@@ -281,7 +279,7 @@ class PostgresBookingAvailabilityPort:
                 ends_at=ends_at,
                 status="confirmed",
             )
-            self._apply_snapshot(appointment, requirements, plan)
+            self._apply_snapshot(appointment, requirements, employee_plan)
             try:
                 async with self.session.begin_nested():
                     self.session.add(appointment)
@@ -723,6 +721,7 @@ class PostgresBookingAvailabilityPort:
         earliest_allowed_start = local_now + timedelta(minutes=notice_minutes)
 
         starts: dict[datetime, set[uuid.UUID]] = defaultdict(set)
+        self._candidate_plans = {}
         day = first_date
         while day <= last_date:
             for working_range in capacity.working_hours:
@@ -751,14 +750,24 @@ class PostgresBookingAvailabilityPort:
                     service_end = candidate + timedelta(
                         minutes=plan.service.estimated_duration_minutes
                     )
+                    candidate_plan = await self._schedule_aware_plan(
+                        business,
+                        requirements,
+                        plan,
+                        working_range.employee_id,
+                        candidate,
+                        service_end,
+                        capacity.appointments,
+                    )
                     occupied_start = candidate - timedelta(
-                        minutes=plan.travel_before_minutes
+                        minutes=candidate_plan.travel_before_minutes
                     )
                     occupied_end = service_end + timedelta(
-                        minutes=plan.travel_after_minutes
+                        minutes=candidate_plan.travel_after_minutes
                     )
                     if (
                         candidate > earliest_allowed_start
+                        and not candidate_plan.requires_handoff
                         and self._within_site_limit(
                             day, service_end, requirements.site_allowed_end
                         )
@@ -770,12 +779,192 @@ class PostgresBookingAvailabilityPort:
                         )
                     ):
                         starts[candidate].add(working_range.employee_id)
+                        self._candidate_plans[
+                            (
+                                working_range.employee_id,
+                                candidate.astimezone(timezone.utc),
+                            )
+                        ] = candidate_plan
                     candidate += timedelta(minutes=business.slot_interval_minutes)
             day += timedelta(days=1)
         return {
-            start: tuple(sorted(employee_ids, key=str))
+            start: tuple(
+                sorted(
+                    employee_ids,
+                    key=lambda employee_id: (
+                        self._candidate_plans[
+                            (employee_id, start.astimezone(timezone.utc))
+                        ].travel_before_minutes
+                        + self._candidate_plans[
+                            (employee_id, start.astimezone(timezone.utc))
+                        ].travel_after_minutes,
+                        str(employee_id),
+                    ),
+                )
+            )
             for start, employee_ids in starts.items()
         }
+
+    async def _schedule_aware_plan(
+        self,
+        business: Business,
+        requirements: BookingRequirements,
+        plan: BookingPlan,
+        employee_id: uuid.UUID,
+        starts_at: datetime,
+        ends_at: datetime,
+        appointments: tuple[Appointment, ...],
+    ) -> BookingPlan:
+        """Reserve travel from the technician's real adjacent commitments.
+
+        The first service of the local day starts from the configured business
+        origin. Later services start at the previous customer's address. When
+        another service follows, the candidate also has to leave enough time
+        to reach that next address. Missing route inputs fail closed.
+        """
+
+        destination = requirements.address
+        if destination is None:
+            return plan
+
+        timezone_info = _timezone(business.timezone)
+        local_day = starts_at.astimezone(timezone_info).date()
+        employee_appointments = tuple(
+            item
+            for item in appointments
+            if item.employee_id == employee_id
+            and item.status == "confirmed"
+            and item.starts_at.astimezone(timezone_info).date() == local_day
+        )
+        previous = max(
+            (item for item in employee_appointments if item.ends_at <= starts_at),
+            key=lambda item: item.ends_at,
+            default=None,
+        )
+        following = min(
+            (item for item in employee_appointments if item.starts_at >= ends_at),
+            key=lambda item: item.starts_at,
+            default=None,
+        )
+
+        if previous is None:
+            before = plan.travel
+        else:
+            previous_address = ServiceAddress.from_snapshot(
+                previous.service_address
+            )
+            if previous_address is None:
+                before = unavailable_travel_estimate(
+                    TravelOrigin(
+                        address="Previous service location unavailable",
+                        is_precise=False,
+                    )
+                )
+            else:
+                before = await self._estimate_travel_leg(
+                    business,
+                    TravelOrigin(
+                        address=previous_address.searchable_text,
+                        is_precise=False,
+                    ),
+                    destination,
+                )
+
+        if following is None:
+            after = _zero_travel_estimate()
+        else:
+            following_address = ServiceAddress.from_snapshot(
+                following.service_address
+            )
+            if following_address is None:
+                after = unavailable_travel_estimate(
+                    TravelOrigin(
+                        address=destination.searchable_text,
+                        is_precise=False,
+                    )
+                )
+            else:
+                after = await self._estimate_travel_leg(
+                    business,
+                    TravelOrigin(
+                        address=destination.searchable_text,
+                        is_precise=False,
+                    ),
+                    following_address,
+                )
+
+        preparation, finishing, interval = _operational_buffers(
+            business,
+            requirements,
+            plan.service,
+        )
+        interval_before = interval // 2
+        interval_after = interval - interval_before
+        available = before.available and after.available
+        within_service_area = (
+            before.within_service_area and after.within_service_area
+        )
+        combined = TravelEstimate(
+            travel_minutes=max(before.travel_minutes, after.travel_minutes),
+            distance_km=None,
+            source=f"{before.source}|{after.source}",
+            method=f"{before.method}|{after.method}",
+            estimated=before.estimated or after.estimated,
+            within_service_area=within_service_area,
+            available=available,
+            origin_is_precise=before.origin_is_precise,
+        )
+        reason = plan.handoff_reason
+        if not available:
+            reason = "travel_estimate_unavailable"
+        elif not within_service_area:
+            reason = "address_outside_service_area"
+        return BookingPlan(
+            service=plan.service,
+            travel=combined,
+            travel_before_minutes=(
+                before.travel_minutes
+                + business.travel_before_buffer_minutes
+                + preparation
+                + interval_before
+            ),
+            travel_after_minutes=(
+                after.travel_minutes
+                + business.travel_after_buffer_minutes
+                + finishing
+                + interval_after
+            ),
+            requires_handoff=(
+                plan.service.requires_human_quote
+                or not available
+                or not within_service_area
+            ),
+            handoff_reason=reason,
+        )
+
+    async def _estimate_travel_leg(
+        self,
+        business: Business,
+        origin: TravelOrigin,
+        destination: ServiceAddress,
+    ) -> TravelEstimate:
+        configured_port = ConfiguredTravelTimePort(
+            fallback_minutes=business.default_travel_minutes,
+            fallback_allowed=business.travel_fallback_allowed,
+            region_rules=business.travel_region_rules,
+        )
+        try:
+            method = TravelCalculationMethod(business.travel_calculation_method)
+        except ValueError:
+            return unavailable_travel_estimate(origin)
+        if method is TravelCalculationMethod.ROUTE and self.travel_time_port:
+            estimate = await self.travel_time_port.estimate(origin, destination)
+            return replace(
+                estimate,
+                estimated=estimate.estimated or not origin.is_precise,
+                origin_is_precise=origin.is_precise,
+            )
+        return await configured_port.estimate(origin, destination)
 
     async def _load_capacity(
         self,

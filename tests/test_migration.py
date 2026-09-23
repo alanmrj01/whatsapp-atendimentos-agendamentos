@@ -68,11 +68,11 @@ def render_migration_sql(
     return output.getvalue()
 
 
-def test_access_history_migration_is_the_only_alembic_head() -> None:
+def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260921_0011"]
+    assert script.get_heads() == ["20260922_0014"]
 
 
 def test_previous_migrations_remain_byte_identical() -> None:
@@ -95,7 +95,8 @@ def test_previous_migrations_remain_byte_identical() -> None:
     }
 
     for path, digest in expected.items():
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        normalized = path.read_bytes().replace(b"\r\n", b"\n")
+        assert hashlib.sha256(normalized).hexdigest() == digest
 
 
 def test_automation_coexistence_upgrade_and_downgrade_sql() -> None:

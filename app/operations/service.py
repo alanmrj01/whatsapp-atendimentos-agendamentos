@@ -758,7 +758,7 @@ class OperationalService:
     async def create_catalog_item(
         self, business_id: UUID, values: CatalogItemCreate
     ) -> CatalogItemView:
-        await self._business(business_id)
+        business = await self._business(business_id, for_update=True)
         item = BusinessCatalogItem(
             business_id=business_id,
             kind=values.kind,
@@ -768,6 +768,7 @@ class OperationalService:
             unit_label=values.unit_label,
             active=True,
         )
+        business.materials_catalog_reviewed = True
         self.session.add(item)
         await self.session.commit()
         return _catalog_item_view(item)
@@ -785,6 +786,9 @@ class OperationalService:
             raise HTTPException(404, "Catalog item not found")
         for field, value in values.model_dump(exclude_unset=True).items():
             setattr(item, field, value)
+        if item.active:
+            business = await self._business(business_id, for_update=True)
+            business.materials_catalog_reviewed = True
         await self.session.commit()
         return _catalog_item_view(item)
 
@@ -839,12 +843,13 @@ class OperationalService:
                 BusinessCatalogItem.active.is_(True),
             )
         )).all()
-        whatsapp = bool(await self.session.scalar(
+        connected_whatsapp = bool(await self.session.scalar(
             select(func.count()).select_from(BusinessWhatsAppConnection).where(
                 BusinessWhatsAppConnection.business_id == business_id,
                 BusinessWhatsAppConnection.status == "connected",
             )
         ))
+        whatsapp = connected_whatsapp or bool(business.meta_phone_number_id)
 
         company = bool(
             business.name.strip()
@@ -853,7 +858,9 @@ class OperationalService:
         )
         team = active_technicians > 0
         services = bool(active_services) and all(item.base_price is not None for item in active_services)
-        materials = bool(active_materials) and all(item.price is not None for item in active_materials)
+        materials = bool(business.materials_catalog_reviewed) and all(
+            item.price is not None for item in active_materials
+        )
         agenda = bool(business.agenda_preferences_reviewed)
 
         values = {
@@ -877,7 +884,9 @@ class OperationalService:
         if not services:
             reasons.append("Mantenha pelo menos um serviço ativo com preço definido.")
         if not materials:
-            reasons.append("Ative pelo menos um material ou equipamento com preço definido.")
+            reasons.append(
+                "Revise os materiais cobrados à parte ou informe que sua empresa não os cobra separadamente."
+            )
         if not agenda:
             reasons.append("Revise as preferências de agenda e disponibilidade.")
         if not whatsapp:
@@ -887,6 +896,7 @@ class OperationalService:
             **values,
             completed=completed,
             next_step=next_step,
+            automation=business.assistant_enabled,
             onboarding_completed=business.onboarding_completed_at is not None,
             onboarding_completed_at=business.onboarding_completed_at,
             onboarding_version=business.onboarding_version,

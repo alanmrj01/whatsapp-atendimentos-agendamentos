@@ -21,7 +21,6 @@ class BookingOption:
 
 
 @dataclass(frozen=True, slots=True)
-@dataclass(frozen=True, slots=True)
 class ExistingBooking:
     appointment_id: uuid.UUID
     service_id: uuid.UUID
@@ -29,6 +28,7 @@ class ExistingBooking:
     requirements: BookingRequirements
 
 
+@dataclass(frozen=True, slots=True)
 class BookingConfirmation:
     appointment_id: uuid.UUID
     starts_at: datetime

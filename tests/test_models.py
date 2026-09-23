@@ -10,6 +10,7 @@ EXPECTED_TABLES = {
     "users",
     "business_user_memberships",
     "business_access",
+    "business_catalog_items",
     "auth_sessions",
     "appointments",
     "businesses",
@@ -259,20 +260,24 @@ def test_required_server_defaults_are_registered() -> None:
         ("businesses", "assistant_handoff_message"): (
             "Seu atendimento foi encaminhado para uma pessoa da equipe."
         ),
-        ("businesses", "service_origin_address"): (
-            "Zona Leste de São José dos Campos - SP"
-        ),
         ("businesses", "service_origin_is_precise"): "false",
         ("businesses", "travel_calculation_method"): "configured_estimate",
         ("businesses", "travel_fallback_allowed"): "false",
         ("businesses", "travel_before_buffer_minutes"): "0",
         ("businesses", "travel_after_buffer_minutes"): "0",
+        ("businesses", "materials_catalog_reviewed"): "false",
+        ("businesses", "agenda_preferences_reviewed"): "false",
+        ("businesses", "onboarding_version"): "0",
         ("businesses", "active"): "true",
         ("services", "pricing_type"): "estimated",
         ("services", "automatic_booking"): "true",
         ("services", "included_quantity"): "1",
+        ("services", "intent_examples"): "'[]'::jsonb",
+        ("services", "asks_tubing_length"): "false",
         ("conversations", "automation_enabled"): "true",
         ("conversations", "handoff_status"): "none",
+        ("conversations", "manual_unread"): "false",
+        ("business_catalog_items", "active"): "false",
         ("processed_webhooks", "attempts"): "0",
         ("employees", "operational_role"): "technician",
     }

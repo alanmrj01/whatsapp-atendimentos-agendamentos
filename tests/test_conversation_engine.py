@@ -30,6 +30,7 @@ from app.conversations.engine import (
 from app.conversations.ports import (
     BookingConfirmation,
     BookingOption,
+    ExistingBooking,
     SlotUnavailable,
 )
 from app.conversations.types import (
@@ -197,6 +198,14 @@ class FakeBookingPort:
             employee_id=EMPLOYEE_ID,
         )
         self.slot_unavailable = False
+        self.existing_bookings = [
+            ExistingBooking(
+                appointment_id=APPOINTMENT_ID,
+                service_id=SERVICE_ID,
+                label="Serviço em 02/09/2026 às 09:00",
+                requirements=BookingRequirements(),
+            )
+        ]
 
     async def list_services(self, _: uuid.UUID) -> tuple[BookingOption, ...]:
         self.calls.append("services")
@@ -263,6 +272,37 @@ class FakeBookingPort:
         self.confirmation_requirements.append(_)
         if self.slot_unavailable:
             raise SlotUnavailable("slot is no longer available")
+        return self.confirmation
+
+    async def list_customer_bookings(
+        self,
+        _: uuid.UUID,
+        __: uuid.UUID,
+    ) -> tuple[ExistingBooking, ...]:
+        self.calls.append("existing_bookings")
+        return tuple(self.existing_bookings)
+
+    async def cancel_booking(
+        self,
+        _: uuid.UUID,
+        __: uuid.UUID,
+        ___: uuid.UUID,
+    ) -> BookingConfirmation:
+        self.calls.append("cancel_booking")
+        assert self.confirmation is not None
+        return self.confirmation
+
+    async def reschedule_booking_atomic(
+        self,
+        _: uuid.UUID,
+        __: uuid.UUID,
+        ___: uuid.UUID,
+        ____: str,
+        _____: str,
+        ______: BookingRequirements,
+    ) -> BookingConfirmation:
+        self.calls.append("reschedule_booking")
+        assert self.confirmation is not None
         return self.confirmation
 
 
