@@ -87,6 +87,21 @@ class DashboardToday(StrictModel):
     upcoming_appointments: list[AppointmentView]
 
 
+class NotificationView(StrictModel):
+    id: UUID
+    appointment_id: UUID
+    event_type: Literal["automatic_booking_confirmed"]
+    title: str
+    body: str
+    target_path: str
+    read: bool
+    created_at: datetime
+
+
+class NotificationList(StrictModel):
+    items: list[NotificationView]
+
+
 class MessageView(StrictModel):
     id: UUID
     direction: Literal["inbound", "outbound"]

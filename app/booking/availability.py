@@ -46,6 +46,7 @@ from app.models import (
     Appointment,
     Business,
     BusinessCatalogItem,
+    BusinessNotification,
     Employee,
     ScheduleBlock,
     Service,
@@ -283,6 +284,14 @@ class PostgresBookingAvailabilityPort:
             try:
                 async with self.session.begin_nested():
                     self.session.add(appointment)
+                    await self.session.flush()
+                    self.session.add(
+                        BusinessNotification(
+                            business_id=business_id,
+                            appointment_id=appointment.id,
+                            event_type="automatic_booking_confirmed",
+                        )
+                    )
                     await self.session.flush()
             except IntegrityError as exc:
                 if _has_constraint(exc, APPOINTMENT_EXCLUSION_CONSTRAINT):

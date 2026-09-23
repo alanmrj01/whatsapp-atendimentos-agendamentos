@@ -359,6 +359,23 @@ async def test_natural_service_request_advances_without_permission_question() ->
 
 
 @mark.asyncio
+async def test_book_request_while_choosing_service_does_not_loop_menu_copy() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="quero agendar")
+    )
+
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "Qual serviço você quer agendar?" in body
+    assert "Ver opções" not in body
+
+
+@mark.asyncio
 async def test_probable_diagnostic_asks_only_for_required_address() -> None:
     repository = FakeConversationRepository()
     booking_port = FakeBookingPort()

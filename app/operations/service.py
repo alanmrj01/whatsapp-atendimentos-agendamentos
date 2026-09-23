@@ -19,6 +19,7 @@ from app.models import (
     Appointment,
     Business,
     BusinessCatalogItem,
+    BusinessNotification,
     BusinessWhatsAppConnection,
     Conversation,
     Customer,
@@ -55,6 +56,7 @@ from app.operations.schemas import (
     EmployeeView,
     MessageView,
     ManualMessageCreate,
+    NotificationView,
     ServiceOption,
     ServiceCreate,
     ServiceUpdate,
@@ -106,6 +108,55 @@ class OperationalService:
             ),
             upcoming_appointments=upcoming,
         )
+
+    async def list_notifications(
+        self,
+        business_id: UUID,
+        *,
+        unread_only: bool = False,
+    ) -> list[NotificationView]:
+        business = await self._business(business_id)
+        query = self._notification_query(business_id)
+        if unread_only:
+            query = query.where(BusinessNotification.read_at.is_(None))
+        rows = await self.session.execute(
+            query.order_by(
+                BusinessNotification.created_at.desc(),
+                BusinessNotification.id.desc(),
+            ).limit(50)
+        )
+        return [
+            _notification_view(row, business.timezone)
+            for row in rows.all()
+        ]
+
+    async def mark_notification_read(
+        self,
+        business_id: UUID,
+        notification_id: UUID,
+    ) -> NotificationView:
+        item = await self.session.scalar(
+            select(BusinessNotification)
+            .where(
+                BusinessNotification.business_id == business_id,
+                BusinessNotification.id == notification_id,
+            )
+            .with_for_update()
+        )
+        if item is None:
+            raise HTTPException(404, "Notification not found")
+        if item.read_at is None:
+            item.read_at = datetime.now(UTC)
+            await self.session.commit()
+        business = await self._business(business_id)
+        row = (
+            await self.session.execute(
+                self._notification_query(business_id).where(
+                    BusinessNotification.id == notification_id
+                )
+            )
+        ).one()
+        return _notification_view(row, business.timezone)
 
     async def list_appointments(
         self,
@@ -993,6 +1044,47 @@ class OperationalService:
             .where(Appointment.business_id == business_id)
         )
 
+    def _notification_query(self, business_id: UUID):
+        return (
+            select(
+                BusinessNotification,
+                Appointment.starts_at,
+                Customer.name,
+                Customer.whatsapp_profile_name,
+                Service.name,
+                Employee.name,
+            )
+            .join(
+                Appointment,
+                and_(
+                    Appointment.business_id == BusinessNotification.business_id,
+                    Appointment.id == BusinessNotification.appointment_id,
+                ),
+            )
+            .join(
+                Customer,
+                and_(
+                    Customer.business_id == Appointment.business_id,
+                    Customer.id == Appointment.customer_id,
+                ),
+            )
+            .join(
+                Service,
+                and_(
+                    Service.business_id == Appointment.business_id,
+                    Service.id == Appointment.service_id,
+                ),
+            )
+            .join(
+                Employee,
+                and_(
+                    Employee.business_id == Appointment.business_id,
+                    Employee.id == Appointment.employee_id,
+                ),
+            )
+            .where(BusinessNotification.business_id == business_id)
+        )
+
     async def _conversation_rows(
         self,
         business_id: UUID,
@@ -1097,6 +1189,36 @@ def _appointment_view(row: Any) -> AppointmentView:
         customer_phone=customer_phone, service_id=item.service_id, service_name=service_name,
         employee_id=item.employee_id, employee_name=employee_name, starts_at=item.starts_at,
         ends_at=item.ends_at, status=item.status, notes=item.notes,
+    )
+
+
+def _notification_view(row: Any, timezone_name: str) -> NotificationView:
+    (
+        item,
+        starts_at,
+        customer_name,
+        whatsapp_profile_name,
+        service_name,
+        employee_name,
+    ) = row
+    local_start = starts_at.astimezone(ZoneInfo(timezone_name))
+    display_customer = customer_name or whatsapp_profile_name or "Cliente"
+    return NotificationView(
+        id=item.id,
+        appointment_id=item.appointment_id,
+        event_type=item.event_type,
+        title="Novo agendamento automático",
+        body=(
+            f"{service_name} · {display_customer} · "
+            f"{local_start.strftime('%d/%m às %H:%M')} · "
+            f"Técnico: {employee_name}"
+        ),
+        target_path=(
+            f"/app/agenda?date={local_start.date().isoformat()}"
+            f"&appointment={item.appointment_id}"
+        ),
+        read=item.read_at is not None,
+        created_at=item.created_at,
     )
 
 

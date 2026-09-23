@@ -681,6 +681,9 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             ["employees.business_id", "employees.id"],
             name="fk_appointments_business_employee_employees",
         ),
+        UniqueConstraint(
+            "business_id", "id", name="uq_appointments_business_id_id"
+        ),
         ExcludeConstraint(
             ("employee_id", "="),
             (
@@ -756,6 +759,58 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     site_allowed_end: Mapped[time | None] = mapped_column(Time, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(
         String(255), nullable=True
+    )
+
+
+class BusinessNotification(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "business_notifications"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type = 'automatic_booking_confirmed'",
+            name="event_type_allowed",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "appointment_id"],
+            ["appointments.business_id", "appointments.id"],
+            name=(
+                "fk_business_notifications_business_appointment_appointments"
+            ),
+        ),
+        UniqueConstraint(
+            "business_id",
+            "appointment_id",
+            "event_type",
+            name="uq_business_notifications_appointment_event",
+        ),
+        Index(
+            "ix_business_notifications_business_created_at",
+            "business_id",
+            "created_at",
+        ),
+        Index(
+            "ix_business_notifications_business_read_at",
+            "business_id",
+            "read_at",
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    appointment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(
+        String(64),
+        default="automatic_booking_confirmed",
+        server_default="automatic_booking_confirmed",
+        nullable=False,
+    )
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

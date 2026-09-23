@@ -33,6 +33,7 @@ from app.conversations.ports import (
 from app.models import (
     Appointment,
     Business,
+    BusinessNotification,
     ScheduleBlock,
     Service,
     WorkingHours,
@@ -535,14 +536,14 @@ async def test_multiple_employees_prioritize_best_schedule_and_travel_fit() -> N
 
 class MutationSession:
     def __init__(self) -> None:
-        self.added: list[Appointment] = []
+        self.added: list[Appointment | BusinessNotification] = []
         self.flushes = 0
 
     @asynccontextmanager
     async def begin_nested(self):  # type: ignore[no-untyped-def]
         yield
 
-    def add(self, value: Appointment) -> None:
+    def add(self, value: Appointment | BusinessNotification) -> None:
         if value.id is None:
             value.id = APPOINTMENT_ID
         self.added.append(value)
@@ -610,6 +611,7 @@ async def test_confirmation_freezes_duration_travel_price_and_address() -> None:
     )
 
     stored = session.added[0]
+    assert isinstance(stored, Appointment)
     assert confirmation.appointment_id == APPOINTMENT_ID
     assert stored.estimated_duration_minutes == 90
     assert stored.travel_before_minutes == 20
@@ -617,6 +619,12 @@ async def test_confirmation_freezes_duration_travel_price_and_address() -> None:
     assert stored.estimated_price == Decimal("100.00")
     assert stored.service_address == {"address_line": "Rua Congelada, 123"}
     assert stored.idempotency_key == "booking:test"
+    notification = session.added[1]
+    assert isinstance(notification, BusinessNotification)
+    assert notification.business_id == BUSINESS_ID
+    assert notification.appointment_id == APPOINTMENT_ID
+    assert notification.event_type == "automatic_booking_confirmed"
+    assert session.flushes == 2
 
 
 @pytest.mark.asyncio

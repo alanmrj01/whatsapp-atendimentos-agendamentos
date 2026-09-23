@@ -30,7 +30,15 @@ _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
         "suja",
     ),
     "higienizacao": ("limpeza", "higienizar", "limpar", "lavagem"),
-    "instalacao": ("instalar", "colocar", "montagem", "montar"),
+    "instalacao": (
+        "instalar",
+        "colocar",
+        "montagem",
+        "montar",
+        "condensadora",
+        "fica alta",
+        "altura",
+    ),
     "manutencao": (
         "revisão",
         "revisar",

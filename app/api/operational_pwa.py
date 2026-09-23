@@ -43,6 +43,8 @@ from app.operations.schemas import (
     EmployeeView,
     ManualMessageCreate,
     MessageView,
+    NotificationList,
+    NotificationView,
     ServiceList,
     ServiceCreate,
     ServiceOption,
@@ -104,6 +106,38 @@ Config = Annotated[Settings, Depends(get_settings)]
 async def dashboard_today(principal: Identity, service: ServiceDep):
     membership = _membership(principal)
     return await service.dashboard_today(membership.business_id)
+
+
+@router.get("/notifications", response_model=NotificationList)
+async def list_notifications(
+    principal: Identity,
+    service: ServiceDep,
+    unread_only: bool = False,
+):
+    membership = _membership(principal)
+    return NotificationList(
+        items=await service.list_notifications(
+            membership.business_id,
+            unread_only=unread_only,
+        )
+    )
+
+
+@router.patch(
+    "/notifications/{notification_id}/read",
+    response_model=NotificationView,
+    dependencies=[Depends(require_origin)],
+)
+async def mark_notification_read(
+    notification_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.mark_notification_read(
+        membership.business_id,
+        notification_id,
+    )
 
 
 @router.get("/appointments", response_model=AppointmentList)

@@ -31,6 +31,7 @@ from app.operations.schemas import (
     DashboardToday,
     CustomerNameUpdate,
     MessageView,
+    NotificationView,
     EmployeeUpdate,
     SetupStatus,
     AutomationSettingsUpdate,
@@ -89,6 +90,20 @@ class FakeOperationalService:
         )
         self.update_customer_name = AsyncMock()
         self.update_conversation_automation = AsyncMock()
+        notification = NotificationView(
+            id=uuid4(),
+            appointment_id=uuid4(),
+            event_type="automatic_booking_confirmed",
+            title="Novo agendamento automático",
+            body="Limpeza · Cliente · 22/09 às 14:00 · Técnico: Carlos",
+            target_path="/app/agenda?date=2026-09-22",
+            read=False,
+            created_at=datetime.now(UTC),
+        )
+        self.list_notifications = AsyncMock(return_value=[notification])
+        self.mark_notification_read = AsyncMock(
+            return_value=notification.model_copy(update={"read": True})
+        )
 
     async def _dashboard(self, business_id):
         self.dashboard_business_id = business_id
@@ -120,6 +135,54 @@ async def test_dashboard_uses_active_membership_business_not_client_input(client
     assert response.status_code == 200
     assert response.json()["metrics"]["waiting_count"] == 2
     assert fake.dashboard_business_id == BUSINESS_A
+
+
+@pytest.mark.asyncio
+async def test_notifications_are_tenant_scoped_and_mark_read_requires_mutation_role(
+    client: AsyncClient,
+) -> None:
+    fake = FakeOperationalService()
+    notification_id = fake.list_notifications.return_value[0].id
+    app.dependency_overrides[require_principal] = lambda: principal(BUSINESS_A)
+    app.dependency_overrides[require_origin] = lambda: None
+    app.dependency_overrides[get_operational_service] = lambda: fake
+    try:
+        listed = await client.get("/api/v1/notifications?unread_only=true")
+        marked = await client.patch(
+            f"/api/v1/notifications/{notification_id}/read",
+            json={},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["event_type"] == (
+        "automatic_booking_confirmed"
+    )
+    assert marked.status_code == 200
+    assert marked.json()["read"] is True
+    fake.list_notifications.assert_awaited_once_with(
+        BUSINESS_A, unread_only=True
+    )
+    fake.mark_notification_read.assert_awaited_once_with(
+        BUSINESS_A, notification_id
+    )
+
+    app.dependency_overrides[require_principal] = lambda: principal(
+        BUSINESS_A, role=MembershipRole.VIEWER
+    )
+    app.dependency_overrides[require_origin] = lambda: None
+    app.dependency_overrides[get_operational_service] = lambda: fake
+    try:
+        forbidden = await client.patch(
+            f"/api/v1/notifications/{notification_id}/read",
+            json={},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert forbidden.status_code == 403
+    assert fake.mark_notification_read.await_count == 1
 
 
 @pytest.mark.asyncio

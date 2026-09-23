@@ -28,6 +28,7 @@ from app.core.config import get_settings
 from app.models import (
     Appointment,
     Business,
+    BusinessNotification,
     Customer,
     Employee,
     EmployeeService,
@@ -108,6 +109,7 @@ async def sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     async with factory() as session:
         async with session.begin():
             for model in (
+                BusinessNotification,
                 Appointment,
                 ScheduleBlock,
                 WorkingHours,
@@ -131,6 +133,7 @@ async def seed_capacity(
     working_start: time = time(7),
     working_end: time = time(19),
     customer_count: int = 2,
+    link_employee_services: bool = True,
 ) -> tuple[uuid.UUID, uuid.UUID, list[uuid.UUID], list[uuid.UUID], str]:
     business_id = uuid.uuid4()
     service_id = uuid.uuid4()
@@ -204,13 +207,14 @@ async def seed_capacity(
                 )
             await session.flush()
             for employee_id in employee_ids:
-                session.add(
-                    EmployeeService(
-                        business_id=business_id,
-                        employee_id=employee_id,
-                        service_id=service_id,
+                if link_employee_services:
+                    session.add(
+                        EmployeeService(
+                            business_id=business_id,
+                            employee_id=employee_id,
+                            service_id=service_id,
+                        )
                     )
-                )
                 session.add(
                     WorkingHours(
                         business_id=business_id,
@@ -227,6 +231,39 @@ async def seed_capacity(
         customer_ids,
         local_date.isoformat(),
     )
+
+
+async def test_active_technician_without_employee_service_can_book(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id, service_id, _, customers, selected_date = await seed_capacity(
+        sessions,
+        link_employee_services=False,
+        working_start=time(9),
+        working_end=time(11),
+    )
+
+    result = await confirm_in_new_transaction(
+        sessions,
+        business_id,
+        customers[0],
+        service_id,
+        selected_date,
+        "09:00",
+        "physical:no-employee-service",
+    )
+
+    assert result.appointment_id is not None
+    async with sessions() as session:
+        notification_count = await session.scalar(
+            select(func.count())
+            .select_from(BusinessNotification)
+            .where(
+                BusinessNotification.business_id == business_id,
+                BusinessNotification.appointment_id == result.appointment_id,
+            )
+        )
+    assert notification_count == 1
 
 
 def requirements(key: str, *, site_end: time | None = None) -> BookingRequirements:
