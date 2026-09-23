@@ -154,6 +154,16 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     preparation_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     finishing_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     minimum_booking_notice_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    operating_weekdays: Mapped[list[int]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    weekday_start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    weekday_end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    weekend_holiday_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    weekend_holiday_start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    weekend_holiday_end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     materials_catalog_reviewed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
