@@ -126,6 +126,27 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(500),
         nullable=True,
     )
+    service_origin_postal_code: Mapped[str | None] = mapped_column(
+        String(8), nullable=True
+    )
+    service_origin_street: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    service_origin_neighborhood: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    service_origin_number: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    service_origin_city: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    service_origin_state: Mapped[str | None] = mapped_column(
+        String(2), nullable=True
+    )
+    service_origin_validated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     service_origin_latitude: Mapped[Decimal | None] = mapped_column(
         Numeric(9, 6), nullable=True
     )
