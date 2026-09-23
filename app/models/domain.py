@@ -92,6 +92,18 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "(5, 10, 20, 30, 60, 120, 240, 360, 720, 1440, 2160)",
             name="human_control_window_minutes_allowed",
         ),
+        CheckConstraint(
+            "weekday_start_time IS NULL OR weekday_end_time IS NULL "
+            "OR weekday_end_time > weekday_start_time",
+            name="weekday_hours_valid",
+        ),
+        CheckConstraint(
+            "NOT weekend_holiday_enabled OR "
+            "(weekend_holiday_start_time IS NOT NULL "
+            "AND weekend_holiday_end_time IS NOT NULL "
+            "AND weekend_holiday_end_time > weekend_holiday_start_time)",
+            name="weekend_holiday_hours_valid",
+        ),
         Index("ix_businesses_active", "active"),
     )
 
