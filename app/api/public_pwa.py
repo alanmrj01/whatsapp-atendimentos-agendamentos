@@ -34,7 +34,7 @@ from app.core.config import (
     Settings,
 )
 from app.core.database import get_db
-from app.models import AuthSession, User
+from app.models import AuthSession, Business, User
 from app.schemas.whatsapp_onboarding import WhatsAppOnboardingPlanResponse, onboarding_plan_response
 from app.whatsapp.administration import (
     WhatsAppConnectionAdministrationError,
@@ -166,6 +166,39 @@ async def whatsapp_connection(principal: Identity, db: Db):
             connection.masked_display_phone_number if connection else None
         ),
     )
+
+
+@router.post(
+    "/whatsapp/disconnect",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def disconnect_whatsapp(
+    principal: Identity,
+    db: Db,
+):
+    membership = _require_paid_whatsapp_administrator(principal)
+    administration = WhatsAppConnectionAdministrationService(db)
+    current = await administration.get_connection(
+        membership.business_id,
+        for_update=True,
+    )
+    if current is not None and current.status.value != "disconnected":
+        view = await administration.mark_disconnected(membership.business_id)
+        await db.commit()
+        return PublicConnectionResponse(
+            status=view.status.value,
+            mode=view.mode.value,
+        )
+
+    # Legacy/pilot connections predate the versioned connection table.
+    business = await db.get(Business, membership.business_id)
+    if business is not None:
+        business.meta_phone_number_id = None
+        business.meta_waba_id = None
+        await db.commit()
+    return PublicConnectionResponse(status="disconnected")
 
 
 @router.post(
