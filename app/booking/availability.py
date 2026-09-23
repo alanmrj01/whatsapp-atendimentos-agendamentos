@@ -82,6 +82,18 @@ PORTUGUESE_MONTHS = (
     "dezembro",
 )
 
+BRAZIL_NATIONAL_FIXED_HOLIDAYS = {
+    (1, 1),   # Confraternização Universal
+    (4, 21),  # Tiradentes
+    (5, 1),   # Dia do Trabalho
+    (9, 7),   # Independência
+    (10, 12), # Nossa Senhora Aparecida
+    (11, 2),  # Finados
+    (11, 15), # Proclamação da República
+    (11, 20), # Consciência Negra
+    (12, 25), # Natal
+}
+
 
 @dataclass(frozen=True, slots=True)
 class _CapacityData:
@@ -733,15 +745,11 @@ class PostgresBookingAvailabilityPort:
         self._candidate_plans = {}
         day = first_date
         while day <= last_date:
-            for working_range in capacity.working_hours:
-                if working_range.weekday != day.weekday():
-                    continue
-                operational_start = datetime.combine(
-                    day, working_range.start_time, timezone_info
-                )
-                operational_end = datetime.combine(
-                    day, working_range.end_time, timezone_info
-                )
+            for employee_id, range_start, range_end in self._operating_ranges_for_day(
+                business, day, capacity
+            ):
+                operational_start = datetime.combine(day, range_start, timezone_info)
+                operational_end = datetime.combine(day, range_end, timezone_info)
                 earliest_service_start = operational_start + timedelta(
                     minutes=plan.travel_before_minutes
                 )
@@ -763,7 +771,7 @@ class PostgresBookingAvailabilityPort:
                         business,
                         requirements,
                         plan,
-                        working_range.employee_id,
+                        employee_id,
                         candidate,
                         service_end,
                         capacity.appointments,
@@ -781,16 +789,16 @@ class PostgresBookingAvailabilityPort:
                             day, service_end, requirements.site_allowed_end
                         )
                         and not self._has_conflict(
-                            working_range.employee_id,
+                            employee_id,
                             occupied_start.astimezone(timezone.utc),
                             occupied_end.astimezone(timezone.utc),
                             capacity,
                         )
                     ):
-                        starts[candidate].add(working_range.employee_id)
+                        starts[candidate].add(employee_id)
                         self._candidate_plans[
                             (
-                                working_range.employee_id,
+                                employee_id,
                                 candidate.astimezone(timezone.utc),
                             )
                         ] = candidate_plan
@@ -813,6 +821,53 @@ class PostgresBookingAvailabilityPort:
             )
             for start, employee_ids in starts.items()
         }
+
+    @staticmethod
+    def _operating_ranges_for_day(
+        business: Business,
+        selected_date: date,
+        capacity: _CapacityData,
+    ) -> tuple[tuple[uuid.UUID, time, time], ...]:
+        configured_weekdays = {
+            int(value)
+            for value in (business.operating_weekdays or [])
+            if isinstance(value, int) and 0 <= value <= 4
+        }
+        company_hours_configured = bool(
+            configured_weekdays
+            and business.weekday_start_time is not None
+            and business.weekday_end_time is not None
+        )
+        if not company_hours_configured:
+            return tuple(
+                (item.employee_id, item.start_time, item.end_time)
+                for item in capacity.working_hours
+                if item.weekday == selected_date.weekday()
+            )
+
+        weekend_or_holiday = (
+            selected_date.weekday() >= 5
+            or _is_brazil_national_holiday(selected_date)
+        )
+        if weekend_or_holiday:
+            if (
+                not business.weekend_holiday_enabled
+                or business.weekend_holiday_start_time is None
+                or business.weekend_holiday_end_time is None
+            ):
+                return ()
+            start_time = business.weekend_holiday_start_time
+            end_time = business.weekend_holiday_end_time
+        else:
+            if selected_date.weekday() not in configured_weekdays:
+                return ()
+            start_time = business.weekday_start_time
+            end_time = business.weekday_end_time
+
+        return tuple(
+            (employee_id, start_time, end_time)
+            for employee_id in capacity.employee_ids
+        )
 
     async def _schedule_aware_plan(
         self,
@@ -1179,6 +1234,10 @@ class PostgresBookingAvailabilityPort:
             raise BookingRequiresHandoff(
                 plan.handoff_reason or "Booking requires human assistance"
             )
+
+
+def _is_brazil_national_holiday(value: date) -> bool:
+    return (value.month, value.day) in BRAZIL_NATIONAL_FIXED_HOLIDAYS
 
 
 def _parse_date(value: str) -> date:
