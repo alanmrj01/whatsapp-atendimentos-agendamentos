@@ -242,6 +242,45 @@ class BusinessUpdate(StrictModel):
         return self
 
 
+class BusinessHoursView(StrictModel):
+    weekdays: list[int] = Field(default_factory=list)
+    weekday_start_time: time | None = None
+    weekday_end_time: time | None = None
+    weekend_holiday_enabled: bool = False
+    weekend_holiday_start_time: time | None = None
+    weekend_holiday_end_time: time | None = None
+
+
+class BusinessHoursUpdate(StrictModel):
+    weekdays: list[int] = Field(min_length=1, max_length=5)
+    weekday_start_time: time
+    weekday_end_time: time
+    weekend_holiday_enabled: bool = False
+    weekend_holiday_start_time: time | None = None
+    weekend_holiday_end_time: time | None = None
+
+    @field_validator("weekdays")
+    @classmethod
+    def validate_weekdays(cls, value: list[int]) -> list[int]:
+        normalized = sorted(set(value))
+        if not normalized or any(day < 0 or day > 4 for day in normalized):
+            raise ValueError("Weekdays must be between Monday and Friday")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> "BusinessHoursUpdate":
+        if self.weekday_end_time <= self.weekday_start_time:
+            raise ValueError("Weekday end time must be after start time")
+        if self.weekend_holiday_enabled:
+            if (
+                self.weekend_holiday_start_time is None
+                or self.weekend_holiday_end_time is None
+                or self.weekend_holiday_end_time <= self.weekend_holiday_start_time
+            ):
+                raise ValueError("Weekend/holiday hours are invalid")
+        return self
+
+
 class WorkingHoursView(StrictModel):
     id: UUID
     employee_id: UUID
