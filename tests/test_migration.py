@@ -44,7 +44,13 @@ NOTIFICATIONS_MIGRATION_PATH = (
     PROJECT_ROOT
     / "alembic"
     / "versions"
-    / "20260923_0016_automatic_booking_notifications.py"
+    / "20260922_0015_automatic_booking_notifications.py"
+)
+RLS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260923_0016_enable_rls.py"
 )
 
 
@@ -99,6 +105,18 @@ def test_automatic_booking_notifications_migration_is_additive_and_reversible() 
     assert "fk_business_notifications_business_appointment_appointments" in upgrade
     assert "drop table business_notifications" in downgrade
     assert "drop constraint uq_appointments_business_id_id" in downgrade
+
+
+def test_rls_migration_is_reversible_and_hardens_function_search_path() -> None:
+    upgrade = " ".join(render_migration_sql("upgrade", RLS_MIGRATION_PATH).lower().split())
+    downgrade = " ".join(render_migration_sql("downgrade", RLS_MIGRATION_PATH).lower().split())
+
+    assert "alter table public.businesses enable row level security" in upgrade
+    assert "alter table public.business_notifications enable row level security" in upgrade
+    assert "alter function public.booking_add_minutes_immutable" in upgrade
+    assert "set search_path = pg_catalog, public" in upgrade
+    assert "alter table public.businesses disable row level security" in downgrade
+    assert "reset search_path" in downgrade
 
 
 def test_previous_migrations_remain_byte_identical() -> None:
