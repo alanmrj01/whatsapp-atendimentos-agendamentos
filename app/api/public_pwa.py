@@ -184,21 +184,23 @@ async def disconnect_whatsapp(
         membership.business_id,
         for_update=True,
     )
+    view = None
     if current is not None and current.status.value != "disconnected":
         view = await administration.mark_disconnected(membership.business_id)
-        await db.commit()
-        return PublicConnectionResponse(
-            status=view.status.value,
-            mode=view.mode.value,
-        )
 
-    # Legacy/pilot connections predate the versioned connection table.
+    # Always clear legacy/pilot markers too. A tenant may have migrated from the
+    # legacy fields to the versioned connection table and must not remain
+    # logically connected after the versioned record is disconnected.
     business = await db.get(Business, membership.business_id)
     if business is not None:
         business.meta_phone_number_id = None
         business.meta_waba_id = None
-        await db.commit()
-    return PublicConnectionResponse(status="disconnected")
+
+    await db.commit()
+    return PublicConnectionResponse(
+        status="disconnected",
+        mode=view.mode.value if view is not None else None,
+    )
 
 
 @router.post(
