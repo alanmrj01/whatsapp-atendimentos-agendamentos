@@ -79,6 +79,17 @@ jobs:
           tests/integration/test_diagnostics_postgresql.py
           -q -p no:cacheprovider
 
+      - name: Export head schema SQL
+        run: python -m alembic upgrade head --sql > alovia-schema-20260922-0015.sql
+
+      - name: Upload head schema SQL
+        uses: actions/upload-artifact@v4
+        with:
+          name: alovia-schema-20260922-0015
+          path: alovia-schema-20260922-0015.sql
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Compile application
         run: python -m compileall app
 
