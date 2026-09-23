@@ -7,14 +7,17 @@ on:
       - 'app/api/operational_pwa.py'
       - 'app/auth/**'
       - 'app/models/**'
+      - 'app/diagnostics/**'
       - 'app/platform_admin/**'
       - 'tests/integration/test_migration_0008_postgresql.py'
+      - 'tests/integration/test_diagnostics_postgresql.py'
       - 'tests/integration/test_operational_pwa_postgresql.py'
       - 'tests/test_operational_migration_0008.py'
       - 'tests/test_operational_pwa.py'
       - 'tests/test_access_history.py'
       - 'tests/test_business_access_migration.py'
       - 'tests/test_migration.py'
+      - 'tests/test_diagnostics.py'
       - 'requirements*.txt'
       - '.github/workflows/migration-0008-postgresql.yml'
   workflow_dispatch:
@@ -72,6 +75,8 @@ jobs:
           tests/test_migration.py
           tests/test_operational_migration_0008.py
           tests/test_operational_pwa.py
+          tests/test_diagnostics.py
+          tests/integration/test_diagnostics_postgresql.py
           -q -p no:cacheprovider
 
       - name: Compile application
