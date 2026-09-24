@@ -3,6 +3,7 @@ import pytest
 from app.conversations.interpreter import (
     ConversationIntent,
     DeterministicConversationInterpreter,
+    extract_customer_name,
     normalize_portuguese,
 )
 
@@ -46,3 +47,58 @@ def test_aliases_use_word_boundaries_instead_of_substring_guessing() -> None:
     )
 
     assert result.intent is ConversationIntent.UNKNOWN
+
+
+def test_compound_greeting_is_understood_without_exact_match() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Olá, bom dia! Tudo bem?"
+    )
+
+    assert result.intent is ConversationIntent.GREETING
+    assert result.has(ConversationIntent.GREETING)
+
+
+def test_greeting_and_service_request_are_both_preserved_as_signals() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Bom dia, preciso fazer uma limpeza no meu ar condicionado"
+    )
+
+    assert result.intent is ConversationIntent.SERVICE_INTENT
+    assert result.has(ConversationIntent.GREETING)
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+    assert result.service_key == "cleaning"
+
+
+def test_interpreter_extracts_explicit_customer_name_without_consuming_request() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Meu nome é Alan e preciso fazer uma limpeza"
+    )
+
+    assert result.customer_name == "Alan"
+    assert result.intent is ConversationIntent.SERVICE_INTENT
+
+
+@pytest.mark.parametrize(
+    ("body", "intent"),
+    [
+        ("Quanto custa a limpeza?", ConversationIntent.PRICE_QUESTION),
+        ("Quanto tempo demora?", ConversationIntent.DURATION_QUESTION),
+        ("O que inclui a limpeza?", ConversationIntent.SERVICE_INTENT),
+    ],
+)
+def test_interpreter_preserves_service_questions_as_secondary_signals(
+    body: str,
+    intent: ConversationIntent,
+) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(intent)
+    if "inclui" in normalize_portuguese(body):
+        assert result.has(ConversationIntent.SERVICE_QUESTION)
+
+
+def test_bare_name_extraction_is_restricted_to_name_like_text() -> None:
+    assert extract_customer_name("Alan de Magalhães", allow_bare=True) == (
+        "Alan de Magalhães"
+    )
+    assert extract_customer_name("preciso de uma limpeza", allow_bare=True) is None

@@ -21,6 +21,13 @@ class BookingOption:
 
 
 @dataclass(frozen=True, slots=True)
+class ServiceDetails:
+    id: uuid.UUID
+    name: str
+    description: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ExistingBooking:
     appointment_id: uuid.UUID
     service_id: uuid.UUID
@@ -61,6 +68,12 @@ class BookingAvailabilityPort(Protocol):
         self,
         business_id: uuid.UUID,
     ) -> Sequence[BookingOption]: ...
+
+    async def get_service_details(
+        self,
+        business_id: uuid.UUID,
+        service_id: uuid.UUID,
+    ) -> ServiceDetails: ...
 
     async def get_service_intake(
         self,

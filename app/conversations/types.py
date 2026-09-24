@@ -37,6 +37,9 @@ class ConversationSnapshot:
     handoff_message: str = (
         "Seu atendimento foi encaminhado para uma pessoa da equipe."
     )
+    customer_name: str | None = None
+    whatsapp_profile_name: str | None = None
+    business_timezone: str = "America/Sao_Paulo"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,3 +49,4 @@ class ConversationTransition:
     automation_enabled: bool
     handoff_status: str
     outbound: OutboundMessage
+    customer_name: str | None = None

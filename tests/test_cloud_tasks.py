@@ -128,6 +128,7 @@ async def test_enqueue_uses_deterministic_name_minimal_payload_and_oidc() -> Non
     )
     assert task.http_request.oidc_token.service_account_email == INVOKER_EMAIL
     assert "provider-cloud-task" not in task.name
+    assert task.schedule_time is not None
 
 
 @pytest.mark.asyncio
@@ -306,6 +307,24 @@ async def test_worker_executes_engine_once_and_marks_processed() -> None:
     assert first is True
     assert second is False
     engine.process.assert_awaited_once_with(repository.inbound)
+    assert repository.completed == [(EVENT_KEY, "processed")]
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_superseded_fragment_and_only_latest_turn_responds() -> None:
+    repository = FakeTaskRepository(stored_event())
+    repository.load_inbound_turn = AsyncMock(return_value=None)  # type: ignore[attr-defined]
+    engine = AsyncMock()
+
+    processed = await process_cloud_task_event(
+        FakeTaskSession(),
+        EVENT_KEY,
+        repository,
+        engine,
+    )
+
+    assert processed is False
+    engine.process.assert_not_awaited()
     assert repository.completed == [(EVENT_KEY, "processed")]
 
 

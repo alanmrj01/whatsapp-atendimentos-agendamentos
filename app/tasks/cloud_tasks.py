@@ -4,12 +4,17 @@ import hashlib
 import inspect
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from google.api_core.exceptions import AlreadyExists
 from google.cloud import tasks_v2
+from google.protobuf import timestamp_pb2
 
 from app.core.config import CloudTasksConfiguration
+
+
+EVENT_TURN_DEBOUNCE_SECONDS = 3.0
 
 
 class CloudTasksEnqueueError(RuntimeError):
@@ -55,6 +60,7 @@ class CloudTasksEventEnqueuer:
             task_id=deterministic_task_id(event_key),
             payload={"event_key": event_key},
             error_message="WhatsApp event could not be enqueued",
+            delay_seconds=EVENT_TURN_DEBOUNCE_SECONDS,
         )
 
 
@@ -110,11 +116,18 @@ async def _create_task(
     task_id: str,
     payload: dict[str, str],
     error_message: str,
+    delay_seconds: float = 0,
 ) -> None:
     parent = (
         f"projects/{configuration.project_id}/locations/"
         f"{configuration.region}/queues/{configuration.queue}"
     )
+    schedule_time = None
+    if delay_seconds > 0:
+        schedule_time = timestamp_pb2.Timestamp()
+        schedule_time.FromDatetime(
+            datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+        )
     task = tasks_v2.Task(
         name=f"{parent}/tasks/{task_id}",
         http_request=tasks_v2.HttpRequest(
@@ -132,6 +145,8 @@ async def _create_task(
             ).encode("utf-8"),
         ),
     )
+    if schedule_time is not None:
+        task.schedule_time = schedule_time
     try:
         await client.create_task(
             request=tasks_v2.CreateTaskRequest(parent=parent, task=task)

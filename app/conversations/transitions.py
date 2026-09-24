@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 import hashlib
+import re
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import date, time
@@ -52,6 +53,7 @@ from app.conversations.outbound import (
     existing_booking_selection_message,
     handoff_message,
     main_menu_message,
+    name_request_message,
     no_services_message,
     quantity_selection_message,
     reschedule_completed_message,
@@ -62,12 +64,23 @@ from app.conversations.outbound import (
     slot_unavailable_message,
     tubing_length_message,
     time_selection_message,
+    weekday_selection_message,
 )
 from app.conversations.interpreter import (
     ConversationIntent,
     DeterministicConversationInterpreter,
     Interpretation,
+    extract_customer_name,
     normalize_portuguese,
+)
+from app.conversations.dialogue import (
+    customer_lead,
+    date_short_label,
+    dates_for_weekday,
+    daypart_greeting,
+    weekday_from_text,
+    weekday_options,
+    weekday_plural,
 )
 from app.conversations.service_semantics import semantic_service_score
 from app.conversations.ports import (
@@ -97,24 +110,161 @@ async def determine_transition(
     state = _canonical_state(conversation.state)
     context = _clean_context(conversation.context)
     action = inbound.interactive_id
-    interpretation = DeterministicConversationInterpreter().interpret(inbound.body)
+    interpreter = DeterministicConversationInterpreter()
+    interpretation = interpreter.interpret(inbound.body)
 
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
         return _handoff_transition(conversation.handoff_message)
 
-    if state in {
+    if state is ConversationState.CUSTOMER_NAME:
+        return await _handle_customer_name(
+            conversation,
+            inbound,
+            context,
+            interpretation,
+            booking_port,
+        )
+
+    captured_name: str | None = None
+    if conversation.customer_name is None:
+        if interpretation.customer_name is not None:
+            captured_name = interpretation.customer_name
+            conversation = replace(conversation, customer_name=captured_name)
+        else:
+            pending: dict[str, Any] = {}
+            if inbound.body and interpretation.intent is not ConversationIntent.GREETING:
+                pending["pending_customer_message"] = inbound.body
+            if action is not None:
+                pending["pending_interactive_id"] = action
+            return _name_request_transition(
+                conversation,
+                pending,
+                interpretation,
+            )
+
+    transition = await _route_named_conversation(
+        conversation,
+        inbound,
+        context,
+        interpretation,
+        booking_port,
+    )
+    if transition is not None and captured_name is not None:
+        transition = replace(transition, customer_name=captured_name)
+    return transition
+
+
+async def _route_named_conversation(
+    conversation: ConversationSnapshot,
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition | None:
+    state = _canonical_state(conversation.state)
+    action = inbound.interactive_id
+    customer_name = conversation.customer_name
+
+    if interpretation.intent is ConversationIntent.RESCHEDULE and state is not ConversationState.RESCHEDULE:
+        return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
+    if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
+        return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
+
+    question_answer = await _service_question_answer(
+        inbound,
+        context,
+        interpretation,
+        booking_port,
+    )
+    if (
+        question_answer is not None
+        and state in {
+            ConversationState.START,
+            ConversationState.MENU,
+            ConversationState.COMPLETED,
+            ConversationState.HUMAN_HANDOFF,
+        }
+        and not interpretation.has(ConversationIntent.BOOK)
+        and not interpretation.has(ConversationIntent.AVAILABILITY)
+    ):
+        follow_up = (
+            f"{question_answer}\n\n"
+            f"Se quiser, {customer_lead(customer_name)}posso continuar com o agendamento."
+        )
+        return _transition(
+            ConversationState.MENU,
+            {},
+            _text_message(follow_up),
+        )
+
+    booking_states = {
+        ConversationState.BOOKING_QUANTITY,
+        ConversationState.BOOKING_ACCESS,
+        ConversationState.BOOKING_ADDRESS,
+        ConversationState.BOOKING_TUBING,
+        ConversationState.BOOKING_SITE_LIMIT,
+        ConversationState.BOOKING_WEEKDAY,
+        ConversationState.BOOKING_DATE,
+        ConversationState.BOOKING_TIME,
+        ConversationState.BOOKING_CONFIRM,
+    }
+    if (
+        state in booking_states
+        and interpretation.intent is ConversationIntent.SERVICE_INTENT
+        and not _has_service_question(interpretation)
+    ):
+        try:
+            port = _require_booking_port(booking_port)
+            services = _snapshot_options(await port.list_services(inbound.business_id))
+            matched = _service_for_interpretation(services, interpretation)
+        except BookingPortUnavailable:
+            matched = None
+            services = ()
+        current_id = _context_service_id(context)
+        if (
+            matched is not None
+            and (current_id is None or matched.id != str(current_id))
+        ):
+            return await _handle_service(
+                inbound,
+                {},
+                f"service:{matched.id}",
+                booking_port,
+                interpretation=interpretation,
+                fallback_message=conversation.fallback_message,
+                customer_name=customer_name,
+            )
+
+    greeting_prefix: str | None = None
+    if (
+        interpretation.has(ConversationIntent.GREETING)
+        and state not in {ConversationState.START, ConversationState.MENU}
+    ):
+        greeting_prefix = _conversation_greeting(conversation)
+
+    if (
+        state is ConversationState.BOOKING_ADDRESS
+        and question_answer is not None
+        and not _looks_like_address(inbound.body)
+    ):
+        transition = _transition(
+            ConversationState.BOOKING_ADDRESS,
+            context,
+            address_request_message(),
+        )
+    elif state in {
         ConversationState.START,
         ConversationState.COMPLETED,
         ConversationState.HUMAN_HANDOFF,
     }:
-        return await _handle_natural_start(
+        transition = await _handle_natural_start(
             conversation,
             inbound,
             interpretation,
             booking_port,
         )
-    if state is ConversationState.MENU:
-        return await _handle_menu(
+    elif state is ConversationState.MENU:
+        transition = await _handle_menu(
             inbound,
             action,
             booking_port,
@@ -122,37 +272,353 @@ async def determine_transition(
             greeting_message=conversation.greeting_message,
             fallback_message=conversation.fallback_message,
             handoff_message=conversation.handoff_message,
+            customer_name=customer_name,
+            business_timezone=conversation.business_timezone,
         )
-    if state is ConversationState.BOOKING_SERVICE:
-        return await _handle_service(
+    elif state is ConversationState.BOOKING_SERVICE:
+        transition = await _handle_service(
             inbound,
             context,
             action,
             booking_port,
             interpretation=interpretation,
             fallback_message=conversation.fallback_message,
+            customer_name=customer_name,
         )
-    if state is ConversationState.BOOKING_QUANTITY:
-        return await _handle_quantity(inbound, context, action, booking_port)
-    if state is ConversationState.BOOKING_ACCESS:
-        return await _handle_access(inbound, context, action, booking_port)
-    if state is ConversationState.BOOKING_ADDRESS:
-        return await _handle_address(inbound, context, booking_port)
-    if state is ConversationState.BOOKING_TUBING:
-        return await _handle_tubing(inbound, context, booking_port)
-    if state is ConversationState.BOOKING_SITE_LIMIT:
-        return await _handle_site_limit(inbound, context, action, booking_port)
-    if state is ConversationState.BOOKING_DATE:
-        return await _handle_date(inbound, context, action, booking_port)
-    if state is ConversationState.BOOKING_TIME:
-        return await _handle_time(inbound, context, action, booking_port)
-    if state is ConversationState.BOOKING_CONFIRM:
-        return await _handle_confirmation(inbound, context, action, booking_port)
-    if state is ConversationState.RESCHEDULE:
-        return await _handle_reschedule(inbound, context, action, booking_port)
-    if state is ConversationState.CANCEL:
-        return await _handle_cancel(inbound, context, action, booking_port)
-    return _transition(ConversationState.MENU, {}, main_menu_message())
+    elif state is ConversationState.BOOKING_QUANTITY:
+        transition = await _handle_quantity(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_ACCESS:
+        transition = await _handle_access(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_ADDRESS:
+        transition = await _handle_address(
+            inbound, context, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_TUBING:
+        transition = await _handle_tubing(
+            inbound, context, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_SITE_LIMIT:
+        transition = await _handle_site_limit(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_WEEKDAY:
+        transition = await _handle_weekday(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_DATE:
+        transition = await _handle_date(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_TIME:
+        transition = await _handle_time(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_CONFIRM:
+        transition = await _handle_confirmation(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.RESCHEDULE:
+        transition = await _handle_reschedule(inbound, context, action, booking_port)
+    elif state is ConversationState.CANCEL:
+        transition = await _handle_cancel(inbound, context, action, booking_port)
+    else:
+        transition = _transition(ConversationState.MENU, {}, main_menu_message())
+
+    if question_answer is not None:
+        transition = _prepend_transition_body(transition, question_answer)
+    if greeting_prefix is not None:
+        transition = _prepend_transition_body(transition, greeting_prefix)
+    return transition
+
+
+async def _handle_customer_name(
+    conversation: ConversationSnapshot,
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition:
+    if conversation.customer_name is not None:
+        resumed = replace(
+            conversation,
+            state=ConversationState.START.value,
+            context={},
+        )
+        return await _handle_natural_start(
+            resumed,
+            inbound,
+            interpretation,
+            booking_port,
+        )
+
+    customer_name = (
+        interpretation.customer_name
+        or extract_customer_name(inbound.body, allow_bare=True)
+    )
+    if customer_name is None:
+        updated = dict(context)
+        if (
+            inbound.body
+            and interpretation.intent
+            not in {ConversationIntent.UNKNOWN, ConversationIntent.GREETING}
+        ):
+            previous = _context_string(updated, "pending_customer_message")
+            updated["pending_customer_message"] = (
+                f"{previous}\n{inbound.body}" if previous else inbound.body
+            )
+        if inbound.interactive_id is not None:
+            updated["pending_interactive_id"] = inbound.interactive_id
+        return _transition(
+            ConversationState.CUSTOMER_NAME,
+            updated,
+            name_request_message(
+                "Para eu continuar o atendimento e falar com você de forma mais pessoal, "
+                "qual é o seu nome?"
+            ),
+        )
+
+    pending_body = _context_string(context, "pending_customer_message")
+    pending_action = _context_string(context, "pending_interactive_id")
+    if pending_body is not None or pending_action is not None:
+        replay = replace(
+            inbound,
+            body=pending_body,
+            interactive_id=pending_action,
+            message_type="interactive" if pending_action else "text",
+        )
+        replay_interpretation = DeterministicConversationInterpreter().interpret(
+            pending_body
+        )
+        resumed = replace(
+            conversation,
+            state=(
+                ConversationState.MENU.value
+                if pending_action is not None and pending_action.startswith("menu.")
+                else ConversationState.START.value
+            ),
+            context={},
+            customer_name=customer_name,
+        )
+        transition = await _route_named_conversation(
+            resumed,
+            replay,
+            {},
+            replay_interpretation,
+            booking_port,
+        )
+        if transition is None:
+            transition = _transition(
+                ConversationState.MENU,
+                {},
+                _text_message(f"Prazer, {customer_name}. Como posso ajudá-lo?"),
+            )
+    else:
+        transition = _transition(
+            ConversationState.MENU,
+            {},
+            _text_message(f"Prazer, {customer_name}. Como posso ajudá-lo?"),
+        )
+    return replace(transition, customer_name=customer_name)
+
+
+def _name_request_transition(
+    conversation: ConversationSnapshot,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+) -> ConversationTransition:
+    greeting = daypart_greeting(conversation.business_timezone)
+    if interpretation.has(ConversationIntent.GREETING):
+        body = (
+            f"{greeting}! Como posso ajudá-lo? "
+            "Antes de continuarmos, qual é o seu nome?"
+        )
+    else:
+        body = (
+            f"{greeting}! Claro, posso ajudar. "
+            "Antes de continuarmos, qual é o seu nome?"
+        )
+    return _transition(
+        ConversationState.CUSTOMER_NAME,
+        context,
+        name_request_message(body),
+    )
+
+
+def _conversation_greeting(conversation: ConversationSnapshot) -> str:
+    greeting = daypart_greeting(conversation.business_timezone)
+    if conversation.customer_name:
+        return f"{greeting}, {conversation.customer_name}!"
+    return f"{greeting}!"
+
+
+def _has_service_question(interpretation: Interpretation) -> bool:
+    return any(
+        interpretation.has(intent)
+        for intent in (
+            ConversationIntent.PRICE_QUESTION,
+            ConversationIntent.DURATION_QUESTION,
+            ConversationIntent.SERVICE_QUESTION,
+        )
+    )
+
+
+async def _service_question_answer(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+) -> str | None:
+    if not _has_service_question(interpretation):
+        return None
+    try:
+        port = _require_booking_port(booking_port)
+        services = _snapshot_options(await port.list_services(inbound.business_id))
+    except BookingPortUnavailable:
+        return None
+
+    matched = _service_for_interpretation(services, interpretation)
+    current_id = _context_service_id(context)
+    target = matched
+    if target is None and current_id is not None:
+        target = next(
+            (service for service in services if service.id == str(current_id)),
+            None,
+        )
+    if target is None:
+        return None
+
+    try:
+        target_id = uuid.UUID(target.id)
+    except ValueError:
+        return None
+    requirements = (
+        _requirements_from_context(context)
+        if current_id == target_id
+        else BookingRequirements()
+    )
+    parts: list[str] = []
+    plan: BookingPlan | None = None
+    if (
+        interpretation.has(ConversationIntent.PRICE_QUESTION)
+        or interpretation.has(ConversationIntent.DURATION_QUESTION)
+    ):
+        try:
+            plan = await port.estimate(
+                inbound.business_id,
+                target_id,
+                requirements,
+            )
+        except BookingRequiresHandoff:
+            plan = None
+
+    if interpretation.has(ConversationIntent.PRICE_QUESTION):
+        if plan is None or plan.service.estimated_price is None:
+            parts.append(
+                f"O valor de {target.label} depende de uma avaliação da equipe."
+            )
+        else:
+            qualifier = (
+                "é"
+                if plan.service.pricing_type is PricingType.FIXED
+                else "está estimado em"
+            )
+            parts.append(
+                f"O valor de {target.label} {qualifier} "
+                f"{_format_brl(plan.service.estimated_price)}."
+            )
+
+    if interpretation.has(ConversationIntent.DURATION_QUESTION):
+        if plan is None:
+            parts.append(
+                f"A duração de {target.label} depende de uma avaliação da equipe."
+            )
+        else:
+            parts.append(
+                f"A duração estimada de {target.label} é de "
+                f"{_format_duration(plan.service.estimated_duration_minutes)}."
+            )
+
+    if interpretation.has(ConversationIntent.SERVICE_QUESTION):
+        details_loader = getattr(port, "get_service_details", None)
+        details = None
+        if callable(details_loader):
+            try:
+                details = await details_loader(inbound.business_id, target_id)
+            except BookingRequiresHandoff:
+                details = None
+        description = getattr(details, "description", None)
+        if isinstance(description, str) and description.strip():
+            parts.append(description.strip())
+        else:
+            parts.append(
+                "Esse detalhe específico não está descrito no catálogo do serviço. "
+                "Para não te passar uma informação incorreta, prefiro confirmar "
+                "somente o que está cadastrado."
+            )
+
+    return " ".join(parts) if parts else None
+
+
+def _prepend_transition_body(
+    transition: ConversationTransition,
+    prefix: str,
+) -> ConversationTransition:
+    body = transition.outbound.body
+    combined = prefix if not body else f"{prefix}\n\n{body}"
+    return replace(
+        transition,
+        outbound=replace(transition.outbound, body=combined[:1024]),
+    )
+
+
+def _friendly_fallback(configured: str) -> str:
+    normalized = normalize_portuguese(configured)
+    if normalized.startswith("nao entendi"):
+        return (
+            "Posso ajudar com limpeza, instalação, manutenção, recarga de gás, "
+            "agendamento, reagendamento ou cancelamento. "
+            "Me conte em poucas palavras o que você precisa."
+        )
+    return configured
+
+
+def _looks_like_address(value: str | None) -> bool:
+    normalized = normalize_portuguese(value or "")
+    if not normalized:
+        return False
+    address_words = (
+        "rua",
+        "avenida",
+        "av",
+        "travessa",
+        "alameda",
+        "estrada",
+        "rodovia",
+        "praca",
+        "bairro",
+        "numero",
+    )
+    has_number = bool(re.search(r"\b\d{1,6}\b", normalized))
+    has_address_word = any(
+        f" {word} " in f" {normalized} "
+        for word in address_words
+    )
+    has_postal_code = bool(re.search(r"\b\d{5}\s?\d{3}\b", normalized))
+    return has_postal_code or (has_number and has_address_word)
+
+
+def _format_duration(minutes: int) -> str:
+    if minutes < 60:
+        return f"{minutes} minutos"
+    hours, remainder = divmod(minutes, 60)
+    if remainder == 0:
+        return f"{hours} hora" if hours == 1 else f"{hours} horas"
+    hour_label = "hora" if hours == 1 else "horas"
+    return f"{hours} {hour_label} e {remainder} minutos"
 
 
 async def _handle_natural_start(
@@ -165,7 +631,9 @@ async def _handle_natural_start(
         return _transition(
             ConversationState.MENU,
             {},
-            _text_message(conversation.greeting_message),
+            _text_message(
+                f"{_conversation_greeting(conversation)} Como posso ajudá-lo?"
+            ),
         )
     if interpretation.intent is ConversationIntent.RESCHEDULE:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
@@ -198,6 +666,7 @@ async def _handle_natural_start(
                 port,
                 interpretation=interpretation,
                 fallback_message=conversation.fallback_message,
+                customer_name=conversation.customer_name,
             )
         return _transition(
             ConversationState.BOOKING_SERVICE,
@@ -209,9 +678,8 @@ async def _handle_natural_start(
     return _transition(
         ConversationState.MENU,
         {},
-        _text_message(conversation.fallback_message),
+        _text_message(_friendly_fallback(conversation.fallback_message)),
     )
-
 
 async def _handle_menu(
     inbound: ConversationInput,
@@ -222,6 +690,8 @@ async def _handle_menu(
     greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?",
     fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
     handoff_message: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
+    customer_name: str | None = None,
+    business_timezone: str = "America/Sao_Paulo",
 ) -> ConversationTransition:
     interpretation = interpretation or DeterministicConversationInterpreter().interpret(
         inbound.body
@@ -269,12 +739,13 @@ async def _handle_menu(
             greeting_message=greeting_message,
             fallback_message=fallback_message,
             handoff_message=handoff_message,
+            customer_name=customer_name,
+            business_timezone=business_timezone,
         )
         return await _handle_natural_start(
             snapshot, inbound, interpretation, booking_port
         )
     return _transition(ConversationState.MENU, {}, main_menu_message())
-
 
 async def _handle_service(
     inbound: ConversationInput,
@@ -284,6 +755,7 @@ async def _handle_service(
     *,
     interpretation: Interpretation | None = None,
     fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -344,6 +816,7 @@ async def _handle_service(
         intake,
         {"service_id": str(service_id)},
         services=services,
+        customer_name=customer_name,
     )
 
 
@@ -352,6 +825,8 @@ async def _handle_quantity(
     context: dict[str, Any],
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -376,6 +851,7 @@ async def _handle_quantity(
         port,
         intake,
         {**context, "service_id": str(service_id), "quantity": quantity},
+        customer_name=customer_name,
     )
 
 
@@ -384,6 +860,8 @@ async def _handle_access(
     context: dict[str, Any],
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -416,6 +894,7 @@ async def _handle_access(
             "service_id": str(service_id),
             "access_condition": access.value,
         },
+        customer_name=customer_name,
     )
 
 
@@ -423,6 +902,8 @@ async def _handle_address(
     inbound: ConversationInput,
     context: dict[str, Any],
     booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -438,7 +919,11 @@ async def _handle_address(
     value = (inbound.body or "").strip()
     if value.casefold() in {"não sei", "nao sei"}:
         return _handoff_transition()
-    if len(value) < 5 or len(value) > 500:
+    if (
+        len(value) < 5
+        or len(value) > 500
+        or not _looks_like_address(value)
+    ):
         return _transition(
             ConversationState.BOOKING_ADDRESS,
             context,
@@ -454,6 +939,7 @@ async def _handle_address(
             "service_id": str(service_id),
             "service_address": address.to_snapshot(),
         },
+        customer_name=customer_name,
     )
 
 
@@ -461,6 +947,8 @@ async def _handle_tubing(
     inbound: ConversationInput,
     context: dict[str, Any],
     booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -482,7 +970,13 @@ async def _handle_tubing(
     }
     if normalized in {"nao sei", "não sei", "nao tenho certeza", "não tenho certeza"}:
         updated.pop("tubing_meters", None)
-        return await _advance_intake(inbound, port, intake, updated)
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            customer_name=customer_name,
+        )
 
     meters = _decimal_from_text(inbound.body)
     if meters is None or meters <= 0 or meters > Decimal("100"):
@@ -492,7 +986,13 @@ async def _handle_tubing(
             tubing_length_message(),
         )
     updated["tubing_meters"] = str(meters)
-    return await _advance_intake(inbound, port, intake, updated)
+    return await _advance_intake(
+        inbound,
+        port,
+        intake,
+        updated,
+        customer_name=customer_name,
+    )
 
 
 async def _handle_site_limit(
@@ -500,6 +1000,8 @@ async def _handle_site_limit(
     context: dict[str, Any],
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -528,7 +1030,110 @@ async def _handle_site_limit(
         updated["site_allowed_end"] = site_limit.strftime("%H:%M")
     else:
         updated.pop("site_allowed_end", None)
-    return await _advance_intake(inbound, port, intake, updated)
+    return await _advance_intake(
+        inbound,
+        port,
+        intake,
+        updated,
+        customer_name=customer_name,
+    )
+
+
+async def _handle_weekday(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            context,
+            booking_unavailable_message(),
+        )
+    service_id = _context_service_id(context)
+    if service_id is None:
+        return await _restart_service_selection(inbound, port)
+    requirements = _requirements_from_context(context)
+    try:
+        dates = _snapshot_options(
+            await port.list_dates(inbound.business_id, service_id, requirements)
+        )
+    except BookingRequiresHandoff:
+        return _handoff_transition()
+    if not dates:
+        return await _restart_service_selection(
+            inbound,
+            port,
+            body="Não encontrei datas disponíveis para esse serviço.",
+        )
+
+    exact_date = _date_from_text(inbound.body, dates)
+    if exact_date is not None:
+        return await _offer_times_for_date(
+            inbound,
+            port,
+            context,
+            service_id,
+            exact_date,
+            requirements,
+            customer_name=customer_name,
+        )
+
+    weekday = _selected_weekday(action)
+    if weekday is None:
+        weekday = weekday_from_text(inbound.body)
+    if weekday is None:
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            _intake_context(context),
+            weekday_selection_message(
+                weekday_options(dates),
+                body=(
+                    f"{customer_lead(customer_name)}Tenho disponibilidade em vários dias. "
+                    "Qual dia da semana fica melhor para o seu atendimento?"
+                ),
+            ),
+        )
+
+    matches = dates_for_weekday(dates, weekday)
+    if not matches:
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            _intake_context(context),
+            weekday_selection_message(
+                weekday_options(dates),
+                body=(
+                    f"Não encontrei horário disponível em {weekday_plural(weekday)}. "
+                    "Qual outro dia da semana fica melhor?"
+                ),
+            ),
+        )
+    if len(matches) == 1:
+        return await _offer_times_for_date(
+            inbound,
+            port,
+            context,
+            service_id,
+            matches[0].id,
+            requirements,
+            customer_name=customer_name,
+        )
+    return _transition(
+        ConversationState.BOOKING_DATE,
+        _intake_context(context),
+        date_selection_message(
+            matches,
+            body=(
+                f"{customer_lead(customer_name)}Tenho estas {weekday_plural(weekday)} "
+                "disponíveis. Qual data fica melhor para o seu atendimento?"
+            ),
+        ),
+    )
 
 
 async def _handle_date(
@@ -536,6 +1141,8 @@ async def _handle_date(
     context: dict[str, Any],
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -566,53 +1173,53 @@ async def _handle_date(
         )
 
     selected_date = _selected_date(action) or _date_from_text(inbound.body, dates)
-    if selected_date is None or not _option_exists(dates, selected_date):
-        return _transition(
-            ConversationState.BOOKING_DATE,
-            context,
-            date_selection_message(dates),
-        )
-
-    try:
-        times = _snapshot_options(
-            await port.list_times(
-                inbound.business_id,
-                service_id,
-                selected_date,
-                requirements,
+    if selected_date is None:
+        weekday = weekday_from_text(inbound.body)
+        if weekday is not None and len(dates_for_weekday(dates, weekday)) > 1:
+            return await _handle_weekday(
+                inbound,
+                context,
+                f"weekday:{weekday}",
+                port,
+                customer_name=customer_name,
             )
-        )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
-    if not times:
+        if len(dates) > 10:
+            return _transition(
+                ConversationState.BOOKING_WEEKDAY,
+                _intake_context(context),
+                weekday_selection_message(
+                    weekday_options(dates),
+                    body=(
+                        f"{customer_lead(customer_name)}Tenho disponibilidade em vários dias. "
+                        "Qual dia da semana fica melhor para o seu atendimento?"
+                    ),
+                ),
+            )
         return _transition(
             ConversationState.BOOKING_DATE,
             context,
             date_selection_message(
                 dates,
-                body="Não há horários nessa data. Escolha outra data.",
+                body=(
+                    f"{customer_lead(customer_name)}Qual dia fica melhor "
+                    "para o seu atendimento?"
+                ),
             ),
         )
-    selected_time = _time_from_text(inbound.body, times)
-    if selected_time is not None:
-        candidate = {
-            "service_id": str(service_id),
-            "selected_date": selected_date,
-            "selected_time": selected_time,
-        }
+    if not _option_exists(dates, selected_date):
         return _transition(
-            ConversationState.BOOKING_CONFIRM,
-            {
-                **_intake_context(context),
-                **candidate,
-                "candidate_booking": candidate,
-            },
-            booking_confirmation_message(),
+            ConversationState.BOOKING_DATE,
+            context,
+            date_selection_message(dates),
         )
-    return _transition(
-        ConversationState.BOOKING_TIME,
-        {**_intake_context(context), "selected_date": selected_date},
-        time_selection_message(times),
+    return await _offer_times_for_date(
+        inbound,
+        port,
+        context,
+        service_id,
+        selected_date,
+        requirements,
+        customer_name=customer_name,
     )
 
 
@@ -621,6 +1228,8 @@ async def _handle_time(
     context: dict[str, Any],
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -654,6 +1263,7 @@ async def _handle_time(
             service_id,
             context,
             requirements,
+            customer_name=customer_name,
         )
 
     selected_time = _selected_time(action) or _time_from_text(inbound.body, times)
@@ -661,18 +1271,20 @@ async def _handle_time(
         return _transition(
             ConversationState.BOOKING_TIME,
             context,
-            time_selection_message(times),
+            time_selection_message(
+                times,
+                body=_time_prompt(selected_date, times, customer_name),
+            ),
         )
-
-    candidate = {
-        "service_id": str(service_id),
-        "selected_date": selected_date,
-        "selected_time": selected_time,
-    }
-    return _transition(
-        ConversationState.BOOKING_CONFIRM,
-        {**_intake_context(context), **candidate, "candidate_booking": candidate},
-        booking_confirmation_message(),
+    return await _booking_confirm_transition(
+        inbound,
+        port,
+        context,
+        service_id,
+        selected_date,
+        selected_time,
+        requirements,
+        customer_name=customer_name,
     )
 
 
@@ -681,6 +1293,8 @@ async def _handle_confirmation(
     context: dict[str, Any],
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     if action is None:
         normalized = normalize_portuguese(inbound.body or "")
@@ -696,12 +1310,6 @@ async def _handle_confirmation(
             {},
             booking_cancelled_message(),
         )
-    if action not in {BOOKING_CONFIRM, BOOKING_BACK}:
-        return _transition(
-            ConversationState.BOOKING_CONFIRM,
-            context,
-            booking_confirmation_message(),
-        )
     try:
         port = _require_booking_port(booking_port)
     except BookingPortUnavailable:
@@ -716,6 +1324,24 @@ async def _handle_confirmation(
         return await _restart_service_selection(inbound, port)
     service_id, selected_date, selected_time = booking_data
     requirements = _requirements_from_context(context)
+
+    if action not in {BOOKING_CONFIRM, BOOKING_BACK}:
+        return _transition(
+            ConversationState.BOOKING_CONFIRM,
+            context,
+            booking_confirmation_message(
+                await _confirmation_body(
+                    inbound,
+                    port,
+                    context,
+                    service_id,
+                    selected_date,
+                    selected_time,
+                    requirements,
+                    customer_name=customer_name,
+                )
+            ),
+        )
 
     if action == BOOKING_BACK:
         try:
@@ -738,7 +1364,10 @@ async def _handle_confirmation(
         return _transition(
             ConversationState.BOOKING_TIME,
             _booking_time_context(context),
-            time_selection_message(times),
+            time_selection_message(
+                times,
+                body=_time_prompt(selected_date, times, customer_name),
+            ),
         )
 
     try:
@@ -770,9 +1399,11 @@ async def _handle_confirmation(
     return _transition(
         ConversationState.COMPLETED,
         {},
-        booking_completed_message(),
+        booking_completed_message(
+            f"Agendamento confirmado para {date_short_label(selected_date)} "
+            f"às {selected_time}."
+        ),
     )
-
 
 async def _begin_existing_booking_flow(
     inbound: ConversationInput,
@@ -1064,6 +1695,7 @@ async def _advance_intake(
     context: dict[str, Any],
     *,
     services: Sequence[BookingOption] | None = None,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     if intake.requires_quantity and not isinstance(context.get("quantity"), int):
         return _transition(
@@ -1101,7 +1733,13 @@ async def _advance_intake(
             context,
             site_limit_message(),
         )
-    return await _offer_dates(inbound, port, context, services=services)
+    return await _offer_dates(
+        inbound,
+        port,
+        context,
+        services=services,
+        customer_name=customer_name,
+    )
 
 
 async def _offer_dates(
@@ -1110,6 +1748,7 @@ async def _offer_dates(
     context: dict[str, Any],
     *,
     services: Sequence[BookingOption] | None = None,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     service_id = _context_service_id(context)
     if service_id is None:
@@ -1144,37 +1783,197 @@ async def _offer_dates(
                 body="Não encontrei uma data disponível. Escolha outro serviço.",
             ),
         )
-    available_dates: list[BookingOption] = []
-    availability_lines: list[str] = []
-    for option in dates:
+
+    estimate = _estimate_message(plan)
+    if len(dates) > 10:
+        body = (
+            f"{estimate}\n\nTenho disponibilidade em vários dias. "
+            f"{customer_lead(customer_name)}qual dia da semana fica melhor "
+            "para o seu atendimento?"
+        )
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            _intake_context(context),
+            weekday_selection_message(
+                weekday_options(dates),
+                body=body,
+            ),
+        )
+
+    body = (
+        f"{estimate}\n\nTenho disponibilidade nestas datas. "
+        f"{customer_lead(customer_name)}qual dia fica melhor "
+        "para o seu atendimento?"
+    )
+    return _transition(
+        ConversationState.BOOKING_DATE,
+        _intake_context(context),
+        date_selection_message(dates, body=body),
+    )
+
+
+async def _offer_times_for_date(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    context: dict[str, Any],
+    service_id: uuid.UUID,
+    selected_date: str,
+    requirements: BookingRequirements,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
         times = _snapshot_options(
             await port.list_times(
                 inbound.business_id,
                 service_id,
-                option.id,
+                selected_date,
                 requirements,
             )
         )
-        if not times:
-            continue
-        available_dates.append(option)
-        labels = ", ".join(item.label for item in times[:3])
-        availability_lines.append(f"{option.label} — {labels}")
-        if len(available_dates) == 3:
-            break
-    if not available_dates:
-        return await _restart_service_selection(
+    except BookingRequiresHandoff:
+        return _handoff_transition()
+    if not times:
+        return await _return_to_dates(
             inbound,
             port,
-            body="Não encontrei horários compatíveis. Escolha outro serviço.",
+            service_id,
+            context,
+            requirements,
+            customer_name=customer_name,
         )
-    body = _estimate_message(plan) + "\n\nTenho disponibilidade:\n"
-    body += "\n".join(availability_lines)
-    body += "\n\nQual fica melhor?"
+
+    selected_time = _time_from_text(inbound.body, times)
+    if selected_time is not None:
+        return await _booking_confirm_transition(
+            inbound,
+            port,
+            context,
+            service_id,
+            selected_date,
+            selected_time,
+            requirements,
+            customer_name=customer_name,
+        )
     return _transition(
-        ConversationState.BOOKING_DATE,
-        _intake_context(context),
-        date_selection_message(tuple(available_dates), body=body),
+        ConversationState.BOOKING_TIME,
+        {**_intake_context(context), "selected_date": selected_date},
+        time_selection_message(
+            times,
+            body=_time_prompt(selected_date, times, customer_name),
+        ),
+    )
+
+
+async def _booking_confirm_transition(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    context: dict[str, Any],
+    service_id: uuid.UUID,
+    selected_date: str,
+    selected_time: str,
+    requirements: BookingRequirements,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    candidate = {
+        "service_id": str(service_id),
+        "selected_date": selected_date,
+        "selected_time": selected_time,
+    }
+    updated = {
+        **_intake_context(context),
+        **candidate,
+        "candidate_booking": candidate,
+    }
+    body = await _confirmation_body(
+        inbound,
+        port,
+        updated,
+        service_id,
+        selected_date,
+        selected_time,
+        requirements,
+        customer_name=customer_name,
+    )
+    return _transition(
+        ConversationState.BOOKING_CONFIRM,
+        updated,
+        booking_confirmation_message(body),
+    )
+
+
+async def _confirmation_body(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    context: dict[str, Any],
+    service_id: uuid.UUID,
+    selected_date: str,
+    selected_time: str,
+    requirements: BookingRequirements,
+    *,
+    customer_name: str | None = None,
+) -> str:
+    services = _snapshot_options(await port.list_services(inbound.business_id))
+    service = next(
+        (item for item in services if item.id == str(service_id)),
+        None,
+    )
+    service_label = service.label if service is not None else "Serviço selecionado"
+    lines = [
+        (
+            f"Perfeito, {customer_name}. Só para confirmar:"
+            if customer_name
+            else "Perfeito. Só para confirmar:"
+        ),
+        f"Serviço: {service_label}",
+    ]
+    if requirements.quantity > 1:
+        lines.append(f"Quantidade: {requirements.quantity}")
+    lines.extend(
+        (
+            f"Data: {date_short_label(selected_date)}",
+            f"Horário: {selected_time}",
+        )
+    )
+    address = ServiceAddress.from_snapshot(context.get("service_address"))
+    if address is not None:
+        lines.append(f"Endereço: {address.address_line}")
+    try:
+        plan = await port.estimate(
+            inbound.business_id,
+            service_id,
+            requirements,
+        )
+    except BookingRequiresHandoff:
+        plan = None
+    if plan is not None:
+        if plan.service.estimated_price is not None:
+            prefix = "Valor" if plan.service.pricing_type is PricingType.FIXED else "Valor estimado"
+            lines.append(f"{prefix}: {_format_brl(plan.service.estimated_price)}")
+        lines.append(
+            "Duração estimada: "
+            f"{_format_duration(plan.service.estimated_duration_minutes)}"
+        )
+    lines.append("Posso confirmar?")
+    return "\n".join(lines)[:1024]
+
+
+def _time_prompt(
+    selected_date: str,
+    times: Sequence[BookingOption],
+    customer_name: str | None,
+) -> str:
+    lead = customer_lead(customer_name)
+    if len(times) <= 10:
+        labels = ", ".join(item.label for item in times)
+        return (
+            f"{lead}para {date_short_label(selected_date)}, tenho os horários "
+            f"{labels}. Qual fica melhor para o seu atendimento?"
+        )
+    return (
+        f"{lead}para {date_short_label(selected_date)}, tenho vários horários "
+        "disponíveis. Qual fica melhor para o seu atendimento?"
     )
 
 
@@ -1212,18 +2011,36 @@ async def _return_to_dates(
     service_id: uuid.UUID,
     context: dict[str, Any],
     requirements: BookingRequirements,
+    *,
+    customer_name: str | None = None,
 ) -> ConversationTransition:
     dates = _snapshot_options(
         await port.list_dates(inbound.business_id, service_id, requirements)
     )
     if not dates:
         return await _restart_service_selection(inbound, port)
+    if len(dates) > 10:
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            _intake_context(context),
+            weekday_selection_message(
+                weekday_options(dates),
+                body=(
+                    "Não há horários disponíveis na data escolhida. "
+                    f"{customer_lead(customer_name)}qual outro dia da semana "
+                    "fica melhor?"
+                ),
+            ),
+        )
     return _transition(
         ConversationState.BOOKING_DATE,
         _intake_context(context),
         date_selection_message(
             dates,
-            body="Não há horários disponíveis. Escolha outra data.",
+            body=(
+                "Não há horários disponíveis na data escolhida. "
+                f"{customer_lead(customer_name)}qual outra data fica melhor?"
+            ),
         ),
     )
 
@@ -1299,13 +2116,50 @@ def _date_from_text(
     normalized = normalize_portuguese(body or "")
     if not normalized:
         return None
+    padded = f" {normalized} "
+
+    exact_matches: list[str] = []
     for option in dates:
+        parsed = date.fromisoformat(option.id)
         label = normalize_portuguese(option.label)
-        day_month = date.fromisoformat(option.id).strftime("%d/%m")
-        weekday = label.split(" ", 1)[0]
-        if label in normalized or day_month in normalized or weekday in normalized:
-            return option.id
-    return None
+        day_month = normalize_portuguese(parsed.strftime("%d/%m"))
+        day_number = str(parsed.day)
+        if (
+            f" {label} " in padded
+            or f" {day_month} " in padded
+            or re.search(rf"\bdia\s+0?{parsed.day}\b", normalized)
+        ):
+            exact_matches.append(option.id)
+            continue
+        if re.search(rf"\b0?{parsed.day}\b", normalized):
+            exact_matches.append(option.id)
+    if len(set(exact_matches)) == 1:
+        return exact_matches[0]
+
+    relative_days = {
+        "amanha": 1,
+        "depois de amanha": 2,
+    }
+    today = date.today()
+    for phrase, offset in relative_days.items():
+        if f" {phrase} " in padded:
+            target = today.toordinal() + offset
+            match = next(
+                (
+                    option.id
+                    for option in dates
+                    if date.fromisoformat(option.id).toordinal() == target
+                ),
+                None,
+            )
+            if match is not None:
+                return match
+
+    weekday = weekday_from_text(body)
+    if weekday is None:
+        return None
+    weekday_matches = dates_for_weekday(dates, weekday)
+    return weekday_matches[0].id if len(weekday_matches) == 1 else None
 
 
 def _time_from_text(
@@ -1315,13 +2169,57 @@ def _time_from_text(
     normalized = normalize_portuguese(body or "")
     if not normalized:
         return None
-    tokens = set(normalized.split())
+    padded = f" {normalized} "
+    hour_words = {
+        0: ("meia noite",),
+        1: ("uma",),
+        2: ("duas",),
+        3: ("tres",),
+        4: ("quatro",),
+        5: ("cinco",),
+        6: ("seis",),
+        7: ("sete",),
+        8: ("oito",),
+        9: ("nove",),
+        10: ("dez",),
+        11: ("onze",),
+        12: ("doze", "meio dia"),
+        13: ("treze", "uma da tarde"),
+        14: ("quatorze", "duas da tarde"),
+        15: ("quinze", "tres da tarde"),
+        16: ("dezesseis", "quatro da tarde"),
+        17: ("dezessete", "cinco da tarde"),
+        18: ("dezoito", "seis da tarde"),
+        19: ("dezenove", "sete da noite"),
+        20: ("vinte", "oito da noite"),
+        21: ("vinte e uma", "nove da noite"),
+        22: ("vinte e duas", "dez da noite"),
+        23: ("vinte e tres", "onze da noite"),
+    }
     for option in times:
-        hour, minute = option.label.split(":", 1)
-        candidates = {option.label, str(int(hour)), f"{int(hour)}h"}
-        if minute != "00":
-            candidates.add(f"{int(hour)} {minute}")
-        if any(candidate in normalized or candidate in tokens for candidate in candidates):
+        try:
+            hour_text, minute_text = option.label.split(":", 1)
+            hour = int(hour_text)
+            minute = int(minute_text)
+        except (ValueError, AttributeError):
+            continue
+        label_phrase = normalize_portuguese(option.label)
+        candidates = {
+            label_phrase,
+            str(hour),
+            f"{hour}h",
+        }
+        if minute:
+            candidates.update(
+                {
+                    f"{hour} {minute:02d}",
+                    f"{hour}h{minute:02d}",
+                    f"{hour} e {minute}",
+                }
+            )
+        elif hour in hour_words:
+            candidates.update(hour_words[hour])
+        if any(f" {normalize_portuguese(candidate)} " in padded for candidate in candidates):
             return option.id
     return None
 
@@ -1403,6 +2301,17 @@ def _selected_date(action: str | None) -> str | None:
     except ValueError:
         return None
     return raw_date if parsed_date.isoformat() == raw_date else None
+
+
+def _selected_weekday(action: str | None) -> int | None:
+    if action is None or not action.startswith("weekday:"):
+        return None
+    raw = action.removeprefix("weekday:")
+    try:
+        weekday = int(raw)
+    except ValueError:
+        return None
+    return weekday if 0 <= weekday <= 6 else None
 
 
 def _selected_time(action: str | None) -> str | None:
@@ -1523,13 +2432,35 @@ def _quantity(action: str | None, body: str | None) -> int | None:
     raw_value = ""
     if action and action.startswith("quantity:"):
         raw_value = action.removeprefix("quantity:")
-    elif body:
-        raw_value = body.strip()
-    try:
-        value = int(raw_value)
-    except ValueError:
-        return None
-    return value if 1 <= value <= 999 else None
+        try:
+            value = int(raw_value)
+        except ValueError:
+            return None
+        return value if 1 <= value <= 999 else None
+
+    normalized = normalize_portuguese(body or "")
+    match = re.search(r"\b([1-9]\d{0,2})\b", normalized)
+    if match:
+        value = int(match.group(1))
+        return value if 1 <= value <= 999 else None
+    words = {
+        "um": 1,
+        "uma": 1,
+        "dois": 2,
+        "duas": 2,
+        "tres": 3,
+        "quatro": 4,
+        "cinco": 5,
+        "seis": 6,
+        "sete": 7,
+        "oito": 8,
+        "nove": 9,
+        "dez": 10,
+    }
+    for token, value in words.items():
+        if f" {token} " in f" {normalized} ":
+            return value
+    return None
 
 
 def _site_limit(
@@ -1552,14 +2483,13 @@ def _site_limit(
 def _estimate_message(plan: BookingPlan) -> str:
     price = plan.service.estimated_price
     if price is None:
-        return "Escolha uma data para o atendimento."
+        return "Já tenho as informações necessárias para consultar a agenda."
     formatted = _format_brl(price)
     if plan.service.pricing_type is PricingType.FIXED:
-        return f"O valor do serviço é {formatted}. Escolha uma data."
+        return f"O valor do serviço é {formatted}."
     return (
         f"Pelas informações que você passou, o valor estimado é {formatted}. "
-        "Ele pode mudar se houver uma condição diferente no local. "
-        "Escolha uma data."
+        "Ele pode mudar se houver uma condição diferente no local."
     )
 
 

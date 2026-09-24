@@ -3,6 +3,7 @@ from enum import StrEnum
 
 class ConversationState(StrEnum):
     START = "START"
+    CUSTOMER_NAME = "CUSTOMER_NAME"
     MENU = "MENU"
     BOOKING_SERVICE = "BOOKING_SERVICE"
     BOOKING_QUANTITY = "BOOKING_QUANTITY"
@@ -10,6 +11,7 @@ class ConversationState(StrEnum):
     BOOKING_ADDRESS = "BOOKING_ADDRESS"
     BOOKING_TUBING = "BOOKING_TUBING"
     BOOKING_SITE_LIMIT = "BOOKING_SITE_LIMIT"
+    BOOKING_WEEKDAY = "BOOKING_WEEKDAY"
     BOOKING_DATE = "BOOKING_DATE"
     BOOKING_TIME = "BOOKING_TIME"
     BOOKING_CONFIRM = "BOOKING_CONFIRM"
@@ -55,5 +57,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "tubing_length_answered",
         "site_allowed_end",
         "site_limit_answered",
+        "pending_customer_message",
+        "pending_interactive_id",
     }
 )

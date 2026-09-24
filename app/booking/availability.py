@@ -41,6 +41,7 @@ from app.conversations.ports import (
     BookingNotFound,
     BookingOption,
     BookingRequiresHandoff,
+    ServiceDetails,
     SlotUnavailable,
 )
 from app.models import (
@@ -151,6 +152,20 @@ class PostgresBookingAvailabilityPort:
                 ),
             )
             for service_id, name, intent_examples in rows.all()
+        )
+
+    async def get_service_details(
+        self,
+        business_id: uuid.UUID,
+        service_id: uuid.UUID,
+    ) -> ServiceDetails:
+        _, service = await self._load_business_service(
+            business_id, service_id
+        )
+        return ServiceDetails(
+            id=service.id,
+            name=service.name,
+            description=service.description,
         )
 
     async def get_service_intake(
