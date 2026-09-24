@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql.dml import Insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
+from app.conversations.constants import ConversationState
 from app.conversations.types import (
     ConversationSnapshot,
     ConversationTransition,
@@ -45,6 +46,10 @@ def build_outbound_insert_statement(
     idempotency_key: str,
 ) -> Insert:
     outbound = transition.outbound
+    outbound_payload = deepcopy(outbound.outbound_payload)
+    if transition.state is ConversationState.HUMAN_HANDOFF:
+        outbound_payload = outbound_payload or {}
+        outbound_payload["_alovia_transition"] = "handoff"
     return (
         postgresql_insert(Message)
         .values(
@@ -56,7 +61,7 @@ def build_outbound_insert_statement(
             message_type=outbound.message_type,
             body=outbound.body,
             interactive_id=outbound.interactive_id,
-            outbound_payload=deepcopy(outbound.outbound_payload),
+            outbound_payload=outbound_payload,
             status="pending",
             idempotency_key=idempotency_key,
         )
