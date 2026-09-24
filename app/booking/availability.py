@@ -31,6 +31,7 @@ from app.booking.estimator import ServiceEstimator
 from app.booking.travel import (
     ConfiguredTravelTimePort,
     TravelTimePort,
+    same_address_travel_estimate,
     unavailable_travel_estimate,
 )
 from app.conversations.service_semantics import generate_service_intent_examples
@@ -588,7 +589,13 @@ class PostgresBookingAvailabilityPort:
                 )
                 travel = unavailable_travel_estimate(origin)
             else:
-                if (
+                same_address = same_address_travel_estimate(
+                    origin,
+                    requirements.address,
+                )
+                if same_address is not None:
+                    travel = same_address
+                elif (
                     calculation_method is TravelCalculationMethod.ROUTE
                     and self.travel_time_port is not None
                 ):
@@ -1012,6 +1019,9 @@ class PostgresBookingAvailabilityPort:
         origin: TravelOrigin,
         destination: ServiceAddress,
     ) -> TravelEstimate:
+        same_address = same_address_travel_estimate(origin, destination)
+        if same_address is not None:
+            return same_address
         configured_port = ConfiguredTravelTimePort(
             fallback_minutes=business.default_travel_minutes,
             fallback_allowed=business.travel_fallback_allowed,
