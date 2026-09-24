@@ -102,15 +102,17 @@ async def determine_transition(
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
         return _handoff_transition(conversation.handoff_message)
 
-    if state in {ConversationState.START, ConversationState.COMPLETED}:
+    if state in {
+        ConversationState.START,
+        ConversationState.COMPLETED,
+        ConversationState.HUMAN_HANDOFF,
+    }:
         return await _handle_natural_start(
             conversation,
             inbound,
             interpretation,
             booking_port,
         )
-    if state is ConversationState.HUMAN_HANDOFF:
-        return None
     if state is ConversationState.MENU:
         return await _handle_menu(
             inbound,
