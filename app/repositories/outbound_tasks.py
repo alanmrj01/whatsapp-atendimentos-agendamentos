@@ -31,6 +31,28 @@ class StoredOutboundMessage:
     automation_blocked: bool = False
 
 
+def _automation_blocked_for_message(
+    *,
+    idempotency_key: str | None,
+    outbound_payload: dict[str, Any] | None,
+    active_ignore: bool,
+    standard_automation_blocked: bool,
+) -> bool:
+    if active_ignore:
+        return True
+
+    is_manual = bool(
+        idempotency_key and idempotency_key.startswith("manual:outbound:")
+    )
+    is_handoff_notification = bool(
+        outbound_payload
+        and outbound_payload.get("_alovia_transition") == "handoff"
+    )
+    if is_manual or is_handoff_notification:
+        return False
+    return standard_automation_blocked
+
+
 class OutboundTaskRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -53,23 +75,18 @@ class OutboundTaskRepository:
                 BusinessAutomationExclusion.mode == "ignore",
             )
         )
-        is_manual = Message.idempotency_key.like("manual:outbound:%")
+        standard_automation_blocked = or_(
+            Conversation.automation_enabled.is_(False),
+            Business.assistant_enabled.is_(False),
+            Conversation.automation_suppressed_until > func.now(),
+            active_exclusion,
+        )
         result = await self.session.execute(
             select(
                 Message,
                 Customer.whatsapp_id,
-                or_(
-                    active_ignore,
-                    and_(
-                        ~is_manual,
-                        or_(
-                            Conversation.automation_enabled.is_(False),
-                            Business.assistant_enabled.is_(False),
-                            Conversation.automation_suppressed_until > func.now(),
-                            active_exclusion,
-                        ),
-                    ),
-                ).label("automation_blocked"),
+                active_ignore.label("active_ignore"),
+                standard_automation_blocked.label("standard_automation_blocked"),
             )
             .join(
                 Conversation,
@@ -95,7 +112,13 @@ class OutboundTaskRepository:
         row = result.one_or_none()
         if row is None:
             return None
-        message, recipient, automation_blocked = row
+        message, recipient, active_ignore_value, standard_blocked_value = row
+        automation_blocked = _automation_blocked_for_message(
+            idempotency_key=message.idempotency_key,
+            outbound_payload=message.outbound_payload,
+            active_ignore=bool(active_ignore_value),
+            standard_automation_blocked=bool(standard_blocked_value),
+        )
         return StoredOutboundMessage(
             message_id=message.id,
             business_id=message.business_id,
