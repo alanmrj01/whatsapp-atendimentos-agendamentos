@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from types import SimpleNamespace
@@ -70,7 +71,14 @@ def company(**changes: Any) -> Business:
         name="Empresa",
         responsible_name="Responsável",
         timezone="America/Sao_Paulo",
-        service_origin_address="Base operacional",
+        service_origin_address="Rua Itumbiara, 160 - Parque Industrial, São José dos Campos - SP, CEP 12235-740",
+        service_origin_postal_code="12235740",
+        service_origin_street="Rua Itumbiara",
+        service_origin_neighborhood="Parque Industrial",
+        service_origin_number="160",
+        service_origin_city="São José dos Campos",
+        service_origin_state="SP",
+        service_origin_validated_at=datetime(2026, 9, 23, tzinfo=UTC),
         materials_catalog_reviewed=True,
         agenda_preferences_reviewed=True,
         onboarding_version=0,
