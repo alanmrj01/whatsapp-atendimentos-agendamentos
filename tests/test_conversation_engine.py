@@ -14,9 +14,12 @@ from unittest.mock import AsyncMock
 from pytest import MonkeyPatch, mark, raises
 
 from app.booking.domain import (
+    AddressResolution,
+    AddressResolutionStatus,
     BookingPlan,
     BookingRequirements,
     PricingType,
+    ServiceAddress,
     ServiceEstimate,
     ServiceIntake,
     TravelEstimate,
@@ -218,6 +221,16 @@ class FakeBookingPort:
     ) -> ServiceIntake:
         assert service_id == SERVICE_ID
         return self.intake
+
+    async def resolve_service_address(
+        self,
+        _: uuid.UUID,
+        raw_address: str,
+    ) -> AddressResolution:
+        return AddressResolution(
+            AddressResolutionStatus.ACCEPTED,
+            address=ServiceAddress(address_line=raw_address),
+        )
 
     async def estimate(
         self,
