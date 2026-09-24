@@ -31,6 +31,14 @@ def same_address_travel_estimate(
     if not origin_tokens or not destination_tokens:
         return None
 
+    shared_numbers = {
+        token for token in origin_tokens if token.isdigit()
+    } & {
+        token for token in destination_tokens if token.isdigit()
+    }
+    if not shared_numbers:
+        return None
+
     if origin_tokens == destination_tokens:
         equivalent = True
     else:
@@ -39,11 +47,6 @@ def same_address_travel_estimate(
             if len(origin_tokens) <= len(destination_tokens)
             else (destination_tokens, origin_tokens)
         )
-        shared_numbers = {
-            token for token in smaller if token.isdigit()
-        } & {
-            token for token in larger if token.isdigit()
-        }
         descriptive_tokens = [
             token
             for token in smaller
@@ -52,7 +55,6 @@ def same_address_travel_estimate(
         equivalent = (
             len(smaller) >= 5
             and smaller.issubset(larger)
-            and bool(shared_numbers)
             and len(descriptive_tokens) >= 2
         )
 
