@@ -33,6 +33,7 @@ from app.conversations.engine import (
 from app.conversations.ports import (
     BookingConfirmation,
     BookingOption,
+    BookingRecoveryRequired,
     ExistingBooking,
     SlotUnavailable,
 )
@@ -1292,5 +1293,35 @@ async def test_route_failure_recovers_without_handoff() -> None:
     assert repository.handoff_status == "none"
     assert repository.context["address_confirmation_pending"] is True
     assert "deslocamento" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+
+@mark.asyncio
+async def test_recoverable_service_configuration_never_forces_handoff() -> None:
+    class RecoveringBookingPort(FakeBookingPort):
+        async def get_service_intake(
+            self,
+            _: uuid.UUID,
+            service_id: uuid.UUID,
+        ) -> ServiceIntake:
+            assert service_id == SERVICE_ID
+            raise BookingRecoveryRequired("service_configuration_invalid")
+
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+    )
+
+    await ConversationEngine(
+        repository,
+        RecoveringBookingPort(),
+    ).process(
+        inbound(1, action=f"service:{SERVICE_ID}")
+    )
+
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert "serviço" in (
         repository.outbounds[-1].transition.outbound.body or ""
     ).casefold()
