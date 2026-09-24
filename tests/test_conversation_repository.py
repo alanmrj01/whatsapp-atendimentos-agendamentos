@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
 
 from app.conversations.constants import ConversationState
-from app.conversations.outbound import main_menu_message
+from app.conversations.outbound import handoff_message, main_menu_message
 from app.conversations.types import (
     ConversationSnapshot,
     ConversationTransition,
@@ -85,4 +85,27 @@ def test_outbox_insert_is_pending_sanitized_and_idempotent() -> None:
                 ],
             }
         ],
+    }
+
+
+def test_handoff_outbox_is_marked_for_single_delivery_after_automation_stops() -> None:
+    idempotency_key = "conversation:outbound:handoff-key"
+    handoff = ConversationTransition(
+        state=ConversationState.HUMAN_HANDOFF,
+        context={},
+        automation_enabled=False,
+        handoff_status="waiting",
+        outbound=handoff_message(),
+    )
+
+    statement = build_outbound_insert_statement(
+        snapshot(),
+        handoff,
+        idempotency_key,
+    )
+    compiled = statement.compile(dialect=postgresql_dialect())
+
+    assert compiled.params["status"] == "pending"
+    assert compiled.params["outbound_payload"] == {
+        "_alovia_transition": "handoff"
     }
