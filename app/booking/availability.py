@@ -639,11 +639,6 @@ class PostgresBookingAvailabilityPort:
                         origin,
                         requirements.address,
                     )
-                    travel = replace(
-                        travel,
-                        estimated=travel.estimated or not origin.is_precise,
-                        origin_is_precise=origin.is_precise,
-                    )
                 else:
                     travel = await configured_port.estimate(
                         origin,
@@ -1071,11 +1066,9 @@ class PostgresBookingAvailabilityPort:
             method is TravelCalculationMethod.ROUTE
             or not business.travel_fallback_allowed
         ):
-            estimate = await self.travel_time_port.estimate(origin, destination)
-            return replace(
-                estimate,
-                estimated=estimate.estimated or not origin.is_precise,
-                origin_is_precise=origin.is_precise,
+            return await self.travel_time_port.estimate(
+                origin,
+                destination,
             )
         return await configured_port.estimate(origin, destination)
 
