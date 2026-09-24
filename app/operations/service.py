@@ -1070,7 +1070,7 @@ class OperationalService:
         if not agenda:
             reasons.append("Revise as preferências de agenda e disponibilidade.")
         if not whatsapp:
-            reasons.append("Conecte o WhatsApp Business.")
+            reasons.append("Conexão com o WhatsApp Business pendente.")
 
         return SetupStatus(
             **values,
@@ -1085,7 +1085,15 @@ class OperationalService:
 
     async def complete_onboarding(self, business_id: UUID) -> SetupStatus:
         status = await self.setup_status(business_id)
-        if status.completed != status.total:
+        required_steps_ready = all((
+            status.company,
+            status.team,
+            status.business_hours,
+            status.services,
+            status.materials,
+            status.agenda,
+        ))
+        if not required_steps_ready:
             raise HTTPException(
                 409,
                 {"message": "Onboarding is incomplete", "blocking_reasons": status.blocking_reasons},
