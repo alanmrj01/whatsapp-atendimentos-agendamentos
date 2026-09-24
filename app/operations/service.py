@@ -73,6 +73,7 @@ from app.operations.schemas import (
     WorkingHoursUpdate,
     WorkingHoursView,
 )
+from app.conversations.constants import ConversationState
 from app.conversations.service_semantics import (
     generate_service_intent_examples,
     normalize_service_text,
@@ -365,6 +366,9 @@ class OperationalService:
             conversation.handoff_status = "none"
             conversation.automation_suppressed_until = None
             conversation.suppression_reason = None
+            if conversation.state == ConversationState.HUMAN_HANDOFF.value:
+                conversation.state = ConversationState.START.value
+                conversation.context = {}
         else:
             conversation.handoff_status = "waiting"
             await AutomationRepository(self.session).cancel_pending_outbounds(
@@ -1244,6 +1248,12 @@ class OperationalService:
             Message.business_id == Conversation.business_id,
             Message.conversation_id == Conversation.id,
         ).order_by(Message.created_at.desc(), Message.id.desc()).limit(1).correlate(Conversation).scalar_subquery()
+        latest_transition = select(
+            Message.outbound_payload.op("->>")("_alovia_transition")
+        ).where(
+            Message.business_id == Conversation.business_id,
+            Message.conversation_id == Conversation.id,
+        ).order_by(Message.created_at.desc(), Message.id.desc()).limit(1).correlate(Conversation).scalar_subquery()
         outbound_message = aliased(Message)
         unread_message = aliased(Message)
         last_outbound = select(func.max(outbound_message.created_at)).where(
@@ -1265,7 +1275,9 @@ class OperationalService:
             Conversation, Customer.name, Customer.whatsapp_profile_name,
             Customer.phone_e164, Customer.whatsapp_id,
             latest_body.label("last_content"), latest_time.label("last_message_at"),
-            latest_direction.label("last_direction"), unread.label("unread_count"),
+            latest_direction.label("last_direction"),
+            latest_transition.label("last_transition"),
+            unread.label("unread_count"),
         ).join(Customer, and_(Customer.business_id == Conversation.business_id, Customer.id == Conversation.customer_id)).where(
             Conversation.business_id == business_id,
             Conversation.deleted_at.is_(None),
@@ -1284,11 +1296,23 @@ class OperationalService:
                 )
             )
         if status == "waiting":
-            query = query.where(latest_direction == "inbound")
+            query = query.where(
+                or_(
+                    latest_direction == "inbound",
+                    and_(
+                        Conversation.handoff_status == "waiting",
+                        latest_transition == "handoff",
+                    ),
+                )
+            )
         elif status == "in_progress":
             query = query.where(
                 or_(latest_direction.is_(None), latest_direction != "inbound"),
                 Conversation.handoff_status != "none",
+                ~and_(
+                    Conversation.handoff_status == "waiting",
+                    latest_transition == "handoff",
+                ),
             )
         elif status == "answered":
             query = query.where(
@@ -1369,10 +1393,21 @@ def _conversation_view(row: Any) -> ConversationView:
         last_content,
         last_message_at,
         last_direction,
+        last_transition,
         unread_count,
     ) = row
-    status = "waiting" if last_direction == "inbound" else (
-        "in_progress" if item.handoff_status != "none" else "answered"
+    status = (
+        "waiting"
+        if (
+            last_direction == "inbound"
+            or (
+                item.handoff_status == "waiting"
+                and last_transition == "handoff"
+            )
+        )
+        else "in_progress"
+        if item.handoff_status != "none"
+        else "answered"
     )
     unread_value = int(unread_count or 0)
     if item.manual_unread and unread_value == 0:
