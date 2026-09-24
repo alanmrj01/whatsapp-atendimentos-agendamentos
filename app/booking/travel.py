@@ -133,15 +133,22 @@ class ConfiguredTravelTimePort:
         )
 
 
-def unavailable_travel_estimate(origin: TravelOrigin) -> TravelEstimate:
+def unavailable_travel_estimate(
+    origin: TravelOrigin,
+    *,
+    reason: str = "travel_estimate_unavailable",
+    source: str = "configuration_unavailable",
+    method: str = "unavailable",
+) -> TravelEstimate:
     return TravelEstimate(
         travel_minutes=0,
         distance_km=None,
-        source="configuration_unavailable",
-        method="unavailable",
+        source=source,
+        method=method,
         estimated=True,
         available=False,
         origin_is_precise=origin.is_precise,
+        failure_reason=reason,
     )
 
 
