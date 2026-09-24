@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from contextlib import AbstractAsyncContextManager
@@ -23,6 +24,7 @@ from app.repositories.automation import (
     ConversationAutomationControl,
 )
 from app.repositories.whatsapp_webhook import WhatsAppWebhookRepository
+from app.tasks.cloud_tasks import EVENT_TURN_DEBOUNCE_SECONDS
 from app.whatsapp.webhook import (
     BusinessMessageEchoEvent,
     InboundMessageEvent,
@@ -144,6 +146,19 @@ async def process_webhook_events(
     booking_port: BookingAvailabilityPort | None = None,
     automation_repository: AutomationPolicyRepository | None = None,
 ) -> None:
+    if (
+        repository is None
+        and conversation_engine is None
+        and isinstance(session, AsyncSession)
+    ):
+        await _process_persisted_turns_without_cloud_tasks(
+            session,
+            events,
+            booking_port=booking_port,
+            automation_repository=automation_repository,
+        )
+        return
+
     event_repository = repository or WhatsAppWebhookRepository(
         cast(AsyncSession, session)
     )
@@ -204,6 +219,11 @@ async def process_webhook_events(
                     await event_repository.persist_inbound_message(
                         business_id, conversation_id, event
                     )
+                    if not _assistant_processable_inbound(event):
+                        await event_repository.complete_event(
+                            event.event_key, "ignored"
+                        )
+                        continue
                     decision = await policy.evaluate_customer_inbound(
                         business_id,
                         conversation_id,
@@ -349,6 +369,12 @@ async def persist_webhook_events_for_tasks(
                                 conversation_id,
                                 event,
                             )
+                            if not _assistant_processable_inbound(event):
+                                await event_repository.complete_event(
+                                    event.event_key,
+                                    "ignored",
+                                )
+                                continue
                             decision = await policy.evaluate_customer_inbound(
                                 business_id,
                                 conversation_id,
@@ -417,6 +443,56 @@ async def persist_webhook_events_for_tasks(
             event_keys.append(event.event_key)
 
     return event_keys
+
+
+async def _process_persisted_turns_without_cloud_tasks(
+    session: AsyncSession,
+    events: list[NormalizedWebhookEvent],
+    *,
+    booking_port: BookingAvailabilityPort | None,
+    automation_repository: AutomationPolicyRepository | None,
+) -> None:
+    """Use the same persisted turn aggregation even when Cloud Tasks is disabled.
+
+    Text messages get a short debounce window so nearby fragments are interpreted
+    as one customer turn. Interactive replies stay immediate.
+    """
+
+    event_keys = await persist_webhook_events_for_tasks(
+        session,
+        events,
+        automation_repository=automation_repository,
+    )
+    if not event_keys:
+        return
+
+    has_text_turn = any(
+        isinstance(event, InboundMessageEvent)
+        and event.message_type == "text"
+        and isinstance(event.body, str)
+        and bool(event.body.strip())
+        for event in events
+    )
+    if has_text_turn:
+        await asyncio.sleep(EVENT_TURN_DEBOUNCE_SECONDS)
+
+    # Local import avoids a module cycle: the task worker imports this module
+    # to build the conversation engine.
+    from app.tasks.worker import process_cloud_task_event
+
+    for event_key in event_keys:
+        await process_cloud_task_event(
+            session,
+            event_key,
+            booking_port=booking_port,
+            automation_repository=automation_repository,
+        )
+
+
+def _assistant_processable_inbound(event: InboundMessageEvent) -> bool:
+    if event.interactive_id is not None:
+        return True
+    return isinstance(event.body, str) and bool(event.body.strip())
 
 
 def is_duplicate_event_error(exc: IntegrityError) -> bool:

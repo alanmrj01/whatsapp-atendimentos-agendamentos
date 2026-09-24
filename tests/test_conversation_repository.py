@@ -5,12 +5,13 @@ import uuid
 from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
 
 from app.conversations.constants import ConversationState
-from app.conversations.outbound import handoff_message, main_menu_message
+from app.conversations.outbound import OutboundMessage, handoff_message, main_menu_message
 from app.conversations.types import (
     ConversationSnapshot,
     ConversationTransition,
 )
 from app.repositories.conversations import (
+    build_follow_up_insert_statement,
     build_lock_conversation_statement,
     build_outbound_insert_statement,
 )
@@ -109,3 +110,46 @@ def test_handoff_outbox_is_marked_for_single_delivery_after_automation_stops() -
     assert compiled.params["outbound_payload"] == {
         "_alovia_transition": "handoff"
     }
+
+
+
+def test_follow_up_outbox_messages_are_ordered_and_idempotent() -> None:
+    idempotency_key = "conversation:outbound:sequence-key"
+    sequenced = ConversationTransition(
+        state=ConversationState.BOOKING_TUBING,
+        context={"service_id": "40000000-0000-0000-0000-000000000004"},
+        automation_enabled=True,
+        handoff_status="none",
+        outbound=OutboundMessage(
+            message_type="text",
+            body="Você sabe aproximadamente quantos metros serão necessários?",
+        ),
+        follow_ups=(
+            OutboundMessage(
+                message_type="text",
+                body="A instalação padrão considera até 3 metros.",
+            ),
+        ),
+    )
+
+    first = build_outbound_insert_statement(
+        snapshot(),
+        sequenced,
+        idempotency_key,
+    ).compile(dialect=postgresql_dialect())
+    second = build_follow_up_insert_statement(
+        snapshot(),
+        sequenced,
+        idempotency_key,
+        1,
+    ).compile(dialect=postgresql_dialect())
+
+    first_payload = first.params["outbound_payload"]
+    second_payload = second.params["outbound_payload"]
+    assert first.params["idempotency_key"] == idempotency_key
+    assert second.params["idempotency_key"] == f"{idempotency_key}:followup:1"
+    assert first_payload["_alovia_sequence_group"] == second_payload["_alovia_sequence_group"]
+    assert first_payload["_alovia_sequence_index"] == 0
+    assert second_payload["_alovia_sequence_index"] == 1
+    assert first_payload["_alovia_sequence_count"] == 2
+    assert second_payload["_alovia_sequence_count"] == 2

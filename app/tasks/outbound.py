@@ -58,6 +58,10 @@ class PendingOutboundRepository(Protocol):
         self, event_key: str
     ) -> list[uuid.UUID]: ...
 
+    async def next_sequence_message_id(
+        self, message_id: uuid.UUID
+    ) -> uuid.UUID | None: ...
+
 
 class TransactionSession(Protocol):
     def begin(self) -> AbstractAsyncContextManager[Any]: ...
@@ -146,6 +150,24 @@ async def enqueue_outbound_message_ids(
 ) -> None:
     for message_id in dict.fromkeys(message_ids):
         await enqueuer.enqueue(message_id)
+
+
+async def enqueue_next_sequence_outbound(
+    session: AsyncSession | TransactionSession,
+    message_id: uuid.UUID,
+    enqueuer: OutboundTaskEnqueuer,
+    repository: PendingOutboundRepository | None = None,
+) -> uuid.UUID | None:
+    pending_repository = repository or OutboundTaskRepository(
+        cast(AsyncSession, session)
+    )
+    async with session.begin():
+        next_message_id = await pending_repository.next_sequence_message_id(
+            message_id
+        )
+    if next_message_id is not None:
+        await enqueuer.enqueue(next_message_id)
+    return next_message_id
 
 
 async def process_outbound_message(

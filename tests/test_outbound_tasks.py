@@ -31,6 +31,7 @@ from app.tasks.cloud_tasks import (
 )
 from app.tasks.outbound import (
     OutboundTaskTransientError,
+    enqueue_next_sequence_outbound,
     enqueue_pending_outbounds_for_events,
     process_outbound_message,
 )
@@ -465,9 +466,16 @@ async def test_excluded_or_human_controlled_recipient_is_not_sent() -> None:
 
 
 class FakePendingRepository:
-    def __init__(self, message_ids: list[uuid.UUID]) -> None:
+    def __init__(
+        self,
+        message_ids: list[uuid.UUID],
+        *,
+        next_message_id: uuid.UUID | None = None,
+    ) -> None:
         self.message_ids = message_ids
         self.provider_message_ids: list[str] = []
+        self.next_message_id = next_message_id
+        self.sequence_lookups: list[uuid.UUID] = []
 
     async def list_pending_for_provider_message_ids(
         self, provider_message_ids: list[str]
@@ -477,6 +485,12 @@ class FakePendingRepository:
 
     async def list_pending_for_event_key(self, _: str) -> list[uuid.UUID]:
         return self.message_ids
+
+    async def next_sequence_message_id(
+        self, message_id: uuid.UUID
+    ) -> uuid.UUID | None:
+        self.sequence_lookups.append(message_id)
+        return self.next_message_id
 
 
 class FakeOutboundEnqueuer:
@@ -613,3 +627,38 @@ def test_outbound_payload_forbids_pii_and_raw_content() -> None:
                 "body": "private message body",
             }
         )
+
+
+
+@pytest.mark.asyncio
+async def test_sequenced_outbound_enqueues_only_next_message_after_current() -> None:
+    next_id = uuid.UUID("70000000-0000-0000-0000-000000000008")
+    repository = FakePendingRepository([], next_message_id=next_id)
+    enqueuer = FakeOutboundEnqueuer()
+
+    result = await enqueue_next_sequence_outbound(
+        FakeSession(),
+        MESSAGE_ID,
+        enqueuer,
+        repository,
+    )
+
+    assert result == next_id
+    assert repository.sequence_lookups == [MESSAGE_ID]
+    assert enqueuer.message_ids == [next_id]
+
+
+@pytest.mark.asyncio
+async def test_sequenced_outbound_stops_when_there_is_no_follow_up() -> None:
+    repository = FakePendingRepository([], next_message_id=None)
+    enqueuer = FakeOutboundEnqueuer()
+
+    result = await enqueue_next_sequence_outbound(
+        FakeSession(),
+        MESSAGE_ID,
+        enqueuer,
+        repository,
+    )
+
+    assert result is None
+    assert enqueuer.message_ids == []

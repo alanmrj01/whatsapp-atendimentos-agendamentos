@@ -154,6 +154,16 @@ class OutboundTaskRepository:
                 inbound.provider_message_id.in_(provider_message_ids),
                 outbound.direction == "outbound",
                 outbound.status == "pending",
+                or_(
+                    outbound.outbound_payload.is_(None),
+                    outbound.outbound_payload.op("->>")(
+                        "_alovia_sequence_index"
+                    ).is_(None),
+                    outbound.outbound_payload.op("->>")(
+                        "_alovia_sequence_index"
+                    )
+                    == "0",
+                ),
             )
             .distinct()
         )
@@ -175,6 +185,60 @@ class OutboundTaskRepository:
         return await self.list_pending_for_provider_message_ids(
             [provider_message_id]
         )
+
+    async def next_sequence_message_id(
+        self,
+        message_id: uuid.UUID,
+    ) -> uuid.UUID | None:
+        row = (
+            await self.session.execute(
+                select(
+                    Message.business_id,
+                    Message.conversation_id,
+                    Message.status,
+                    Message.outbound_payload,
+                ).where(
+                    Message.id == message_id,
+                    Message.direction == "outbound",
+                )
+            )
+        ).one_or_none()
+        if row is None or row.status not in {"sent", "delivered", "read"}:
+            return None
+        payload = row.outbound_payload
+        if not isinstance(payload, dict):
+            return None
+        group = payload.get("_alovia_sequence_group")
+        index = payload.get("_alovia_sequence_index")
+        count = payload.get("_alovia_sequence_count")
+        if (
+            not isinstance(group, str)
+            or not isinstance(index, int)
+            or not isinstance(count, int)
+            or index < 0
+            or count <= index + 1
+        ):
+            return None
+
+        next_id = await self.session.scalar(
+            select(Message.id)
+            .where(
+                Message.business_id == row.business_id,
+                Message.conversation_id == row.conversation_id,
+                Message.direction == "outbound",
+                Message.status == "pending",
+                Message.outbound_payload.op("->>")(
+                    "_alovia_sequence_group"
+                )
+                == group,
+                Message.outbound_payload.op("->>")(
+                    "_alovia_sequence_index"
+                )
+                == str(index + 1),
+            )
+            .limit(1)
+        )
+        return next_id
 
     async def mark_sent(
         self,

@@ -162,10 +162,27 @@ class PostgresBookingAvailabilityPort:
         _, service = await self._load_business_service(
             business_id, service_id
         )
+        extra_tubing_price: Decimal | None = None
+        if service.asks_tubing_length:
+            item = await self.session.scalar(
+                select(BusinessCatalogItem).where(
+                    BusinessCatalogItem.business_id == business_id,
+                    BusinessCatalogItem.preset_key == "extra-tubing-meter",
+                    BusinessCatalogItem.active.is_(True),
+                )
+            )
+            if item is not None and item.price is not None:
+                extra_tubing_price = Decimal(item.price)
         return ServiceDetails(
             id=service.id,
             name=service.name,
             description=service.description,
+            included_tubing_meters=(
+                Decimal(service.included_tubing_meters)
+                if service.included_tubing_meters is not None
+                else None
+            ),
+            extra_tubing_price=extra_tubing_price,
         )
 
     async def get_service_intake(
@@ -414,6 +431,15 @@ class PostgresBookingAvailabilityPort:
         )
         if appointment.status == "confirmed":
             appointment.status = "cancelled"
+            notification = await self.session.scalar(
+                select(BusinessNotification).where(
+                    BusinessNotification.business_id == business_id,
+                    BusinessNotification.appointment_id == appointment.id,
+                    BusinessNotification.event_type == "automatic_booking_confirmed",
+                )
+            )
+            if notification is not None and notification.read_at is None:
+                notification.read_at = self.now_provider()
             await self.session.flush()
         elif appointment.status != "cancelled":
             raise BookingNotFound("Appointment cannot be cancelled")
@@ -674,12 +700,23 @@ class PostgresBookingAvailabilityPort:
         requirements: BookingRequirements,
         estimate: ServiceEstimate,
     ) -> ServiceEstimate:
-        if (
-            not service.asks_tubing_length
-            or requirements.tubing_meters is None
-            or service.included_tubing_meters is None
-        ):
+        if not service.asks_tubing_length or service.included_tubing_meters is None:
             return estimate
+
+        if requirements.tubing_meters is None:
+            if estimate.requires_human_quote:
+                return estimate
+            return replace(
+                estimate,
+                estimated_price=None,
+                pricing_type=PricingType.ESTIMATED,
+                requires_human_quote=False,
+                qualifier="Metragem de tubulação será conferida no local.",
+                applied_rules=(
+                    *estimate.applied_rules,
+                    "tubing_length_unknown",
+                ),
+            )
 
         extra_meters = requirements.tubing_meters - Decimal(service.included_tubing_meters)
         if extra_meters <= 0:
@@ -693,13 +730,18 @@ class PostgresBookingAvailabilityPort:
             )
         )
         if item is None or item.price is None:
+            if estimate.requires_human_quote:
+                return estimate
             return replace(
                 estimate,
-                requires_human_quote=True,
-                qualifier="Preço da tubulação adicional não configurado.",
+                estimated_price=None,
+                pricing_type=PricingType.ESTIMATED,
+                requires_human_quote=False,
+                qualifier="Material adicional será conferido no local.",
                 applied_rules=(
                     *estimate.applied_rules,
-                    "extra_tubing_requires_human_quote",
+                    f"extra_tubing_meters:{extra_meters}",
+                    "extra_tubing_price_unconfigured",
                 ),
             )
 
@@ -718,6 +760,8 @@ class PostgresBookingAvailabilityPort:
         return replace(
             estimate,
             estimated_price=base_price + additional_price,
+            pricing_type=PricingType.ESTIMATED,
+            qualifier="estimated_with_extra_tubing",
             applied_rules=(
                 *estimate.applied_rules,
                 f"extra_tubing_meters:{extra_meters}",

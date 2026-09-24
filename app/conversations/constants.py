@@ -29,6 +29,8 @@ MENU_HUMAN = "menu.human"
 BOOKING_CONFIRM = "booking.confirm"
 BOOKING_BACK = "booking.back"
 BOOKING_CANCEL = "booking.cancel"
+TUBING_CONFIRM = "tubing.confirm"
+TUBING_UNKNOWN = "tubing.unknown"
 RESCHEDULE_CONFIRM = "reschedule.confirm"
 CANCEL_CONFIRM = "cancel.confirm"
 CANCEL_ABORT = "cancel.abort"
@@ -54,6 +56,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "access_condition",
         "service_address",
         "tubing_meters",
+        "pending_tubing_meters",
         "tubing_length_answered",
         "site_allowed_end",
         "site_limit_answered",

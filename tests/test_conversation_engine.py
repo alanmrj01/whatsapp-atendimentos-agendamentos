@@ -217,6 +217,8 @@ class FakeBookingPort:
                 requirements=BookingRequirements(),
             )
         ]
+        self.included_tubing_meters = Decimal("3")
+        self.extra_tubing_price: Decimal | None = None
 
     async def list_services(self, _: uuid.UUID) -> tuple[BookingOption, ...]:
         self.calls.append("services")
@@ -236,6 +238,8 @@ class FakeBookingPort:
             id=service_id,
             name=service.label,
             description="Serviço configurado para teste.",
+            included_tubing_meters=self.included_tubing_meters,
+            extra_tubing_price=self.extra_tubing_price,
         )
 
     async def get_service_intake(
@@ -1297,3 +1301,201 @@ async def test_transaction_rollback_keeps_state_and_outbox_consistent() -> None:
     assert conversation_repository.state == ConversationState.START
     assert conversation_repository.outbounds == []
     assert conversation_repository.idempotency_keys == set()
+
+
+
+@mark.asyncio
+async def test_stale_booking_button_is_never_saved_as_customer_name() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.CUSTOMER_NAME,
+        customer_name=None,
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(101, action="booking.back", body="Voltar")
+    )
+
+    assert repository.customer_name is None
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "etapa anterior" in body
+    assert "nome" in body
+    assert "prazer, voltar" not in body
+
+
+@mark.asyncio
+async def test_explicit_name_can_correct_previous_bad_capture_and_keep_request() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.MENU,
+        customer_name="Voltar",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            102,
+            body="Me chamo Alan, preciso de uma instalação de ar condicionado",
+        )
+    )
+
+    assert repository.customer_name == "Alan"
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert "endereço" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+
+@mark.asyncio
+async def test_tubing_prompt_is_split_into_two_real_outbox_messages() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+        asks_tubing_length=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            103,
+            body="Rua Maurício Cardoso, 201 - Jardim Sul, São José dos Campos",
+        )
+    )
+
+    transition = repository.outbounds[-1].transition
+    assert repository.state == ConversationState.BOOKING_TUBING
+    assert "quantos metros" in (transition.outbound.body or "").casefold()
+    assert "responda" not in (transition.outbound.body or "").casefold()
+    assert len(transition.follow_ups) == 1
+    guidance = (transition.follow_ups[0].body or "").casefold()
+    assert "3 metros" in guidance
+    assert "técnico" in guidance
+    assert "valor pode variar" in guidance
+
+
+@mark.asyncio
+async def test_uncertain_tubing_value_is_confirmed_before_advancing() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TUBING,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        asks_tubing_length=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(104, body="Acredito ue 3 metros sejam difícil")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TUBING
+    assert repository.context["pending_tubing_meters"] == "3"
+    assert repository.automation_enabled is True
+    confirmation = repository.outbounds[-1].transition.outbound
+    assert confirmation.message_type == "interactive_button"
+    assert "3 metros" in (confirmation.body or "").casefold()
+
+    await engine.process(
+        inbound(105, action="tubing.confirm", body="Sim")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["tubing_meters"] == "3"
+    assert repository.context["tubing_length_answered"] is True
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_unknown_tubing_keeps_automatic_flow_without_inventing_measurement() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TUBING,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        asks_tubing_length=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(106, body="Não tenho certeza")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["tubing_length_answered"] is True
+    assert "tubing_meters" not in repository.context
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+
+
+
+@mark.asyncio
+async def test_bodyless_unsupported_inbound_is_persisted_but_not_answered() -> None:
+    event_repository = FakeWebhookRepository()
+    conversation_repository = FakeConversationRepository(customer_name=None)
+    session = FakeTransactionSession(event_repository, conversation_repository)
+    engine = AsyncMock()
+    provider_message_id = "provider-unsupported"
+    event = InboundMessageEvent(
+        event_key=build_event_key("inbound", provider_message_id),
+        event_type="message.inbound.image",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id=provider_message_id,
+        whatsapp_id="5511999990009",
+        message_type="image",
+        body=None,
+        interactive_id=None,
+    )
+
+    await process_webhook_events(
+        session,
+        [event],
+        event_repository,
+        engine,
+    )
+
+    assert event_repository.inbounds == [event]
+    assert event_repository.completed == [(event.event_key, "ignored")]
+    engine.process.assert_not_awaited()
+
+
+
+@mark.asyncio
+async def test_travel_handoff_explains_reason_instead_of_abrupt_generic_message() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.plan = replace(
+        booking_port.plan,
+        requires_handoff=True,
+        handoff_reason="travel_estimate_unavailable",
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(107, action=f"service:{SERVICE_ID}")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "deslocamento" in body
+    assert "endereço" in body
+    assert "confirmar" in body

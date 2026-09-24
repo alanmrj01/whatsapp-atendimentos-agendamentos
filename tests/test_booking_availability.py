@@ -538,6 +538,10 @@ class MutationSession:
     def __init__(self) -> None:
         self.added: list[Appointment | BusinessNotification] = []
         self.flushes = 0
+        self.notification: BusinessNotification | None = None
+
+    async def scalar(self, _statement: object):  # type: ignore[no-untyped-def]
+        return self.notification
 
     @asynccontextmanager
     async def begin_nested(self):  # type: ignore[no-untyped-def]
@@ -657,12 +661,18 @@ async def test_cancel_is_scoped_and_idempotent_without_deleting_history() -> Non
         status="confirmed",
     )
     session = MutationSession()
+    session.notification = BusinessNotification(
+        business_id=BUSINESS_ID,
+        appointment_id=existing.id,
+        event_type="automatic_booking_confirmed",
+    )
     port = MutationPort(session, existing)
 
     await port.cancel_booking(BUSINESS_ID, CUSTOMER_ID, existing.id)
     await port.cancel_booking(BUSINESS_ID, CUSTOMER_ID, existing.id)
 
     assert existing.status == "cancelled"
+    assert session.notification.read_at is not None
     assert session.flushes == 1
 
 
@@ -974,3 +984,50 @@ async def test_cancel_query_is_scoped_by_business_customer_and_appointment() -> 
     assert "appointments.business_id =" in sql
     assert "appointments.customer_id =" in sql
     assert "for update" in sql
+
+
+
+@pytest.mark.asyncio
+async def test_unknown_tubing_keeps_booking_automatic_without_inventing_price() -> None:
+    configured = service()
+    configured.asks_tubing_length = True
+    configured.included_tubing_meters = Decimal("3")
+    estimate = plan().service
+    port = PostgresBookingAvailabilityPort(object())  # type: ignore[arg-type]
+
+    result = await port._apply_catalog_additions(  # type: ignore[attr-defined]
+        BUSINESS_ID,
+        configured,
+        BookingRequirements(tubing_meters=None),
+        estimate,
+    )
+
+    assert result.requires_human_quote is False
+    assert result.estimated_price is None
+    assert result.pricing_type is PricingType.ESTIMATED
+    assert "tubing_length_unknown" in result.applied_rules
+
+
+@pytest.mark.asyncio
+async def test_unpriced_extra_tubing_keeps_booking_without_fabricating_amount() -> None:
+    class CatalogSession:
+        async def scalar(self, _statement: object):  # type: ignore[no-untyped-def]
+            return None
+
+    configured = service()
+    configured.asks_tubing_length = True
+    configured.included_tubing_meters = Decimal("3")
+    estimate = plan().service
+    port = PostgresBookingAvailabilityPort(CatalogSession())  # type: ignore[arg-type]
+
+    result = await port._apply_catalog_additions(  # type: ignore[attr-defined]
+        BUSINESS_ID,
+        configured,
+        BookingRequirements(tubing_meters=Decimal("5")),
+        estimate,
+    )
+
+    assert result.requires_human_quote is False
+    assert result.estimated_price is None
+    assert result.pricing_type is PricingType.ESTIMATED
+    assert "extra_tubing_price_unconfigured" in result.applied_rules

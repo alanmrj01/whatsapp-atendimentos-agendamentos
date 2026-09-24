@@ -21,6 +21,7 @@ from app.tasks.auth import (
 )
 from app.tasks.outbound import (
     build_outbound_task_enqueuer,
+    enqueue_next_sequence_outbound,
     enqueue_pending_outbounds_for_event,
     process_outbound_message,
 )
@@ -89,6 +90,11 @@ async def process_whatsapp_outbound_task(
                 WhatsAppConnectionRepository(session),
                 settings,
             ),
+        )
+        await enqueue_next_sequence_outbound(
+            session,
+            payload.message_id,
+            build_outbound_task_enqueuer(settings),
         )
     except Exception as exc:
         logger.warning(

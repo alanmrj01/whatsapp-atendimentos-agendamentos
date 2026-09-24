@@ -6,7 +6,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -125,7 +125,9 @@ class OperationalService:
         unread_only: bool = False,
     ) -> list[NotificationView]:
         business = await self._business(business_id)
-        query = self._notification_query(business_id)
+        query = self._notification_query(business_id).where(
+            Appointment.status != "cancelled"
+        )
         if unread_only:
             query = query.where(BusinessNotification.read_at.is_(None))
         rows = await self.session.execute(
@@ -245,6 +247,16 @@ class OperationalService:
         updates = values.model_dump(exclude_unset=True)
         for field, value in updates.items():
             setattr(appointment, field, value)
+        if appointment.status == "cancelled":
+            await self.session.execute(
+                update(BusinessNotification)
+                .where(
+                    BusinessNotification.business_id == business_id,
+                    BusinessNotification.appointment_id == appointment.id,
+                    BusinessNotification.read_at.is_(None),
+                )
+                .values(read_at=datetime.now(UTC))
+            )
         if appointment.ends_at <= appointment.starts_at:
             await self.session.rollback()
             raise HTTPException(422, "Appointment end must be after start")

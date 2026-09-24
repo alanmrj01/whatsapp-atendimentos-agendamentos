@@ -50,3 +50,4 @@ class ConversationTransition:
     handoff_status: str
     outbound: OutboundMessage
     customer_name: str | None = None
+    follow_ups: tuple[OutboundMessage, ...] = ()

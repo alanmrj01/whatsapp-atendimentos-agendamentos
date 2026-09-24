@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from app.conversations.constants import (
@@ -22,6 +23,8 @@ from app.conversations.constants import (
     SITE_LIMIT_17,
     SITE_LIMIT_18,
     SITE_LIMIT_NONE,
+    TUBING_CONFIRM,
+    TUBING_UNKNOWN,
 )
 from app.conversations.ports import BookingOption
 
@@ -128,20 +131,58 @@ def access_selection_message() -> OutboundMessage:
     )
 
 
-def address_request_message() -> OutboundMessage:
-    return OutboundMessage(
-        message_type="text",
-        body="Qual é o endereço completo do serviço, incluindo a cidade?",
-    )
+def address_request_message(
+    body: str = "Qual é o endereço completo do serviço, incluindo a cidade?",
+) -> OutboundMessage:
+    return OutboundMessage(message_type="text", body=body)
 
 
 def tubing_length_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="text",
         body=(
-            "A instalação vai usar aproximadamente quantos metros de tubulação "
-            "entre as unidades? A instalação padrão considera até 3 metros. "
-            "Se não souber, responda “não sei”."
+            "Você sabe aproximadamente quantos metros de tubulação serão "
+            "necessários entre as unidades?"
+        ),
+    )
+
+
+def tubing_guidance_message(
+    included_meters: Decimal | None,
+    extra_meter_price: Decimal | None,
+) -> OutboundMessage:
+    included = included_meters if included_meters is not None else Decimal("3")
+    if included == included.to_integral():
+        included_label = str(int(included))
+    else:
+        included_label = str(included).replace(".", ",")
+
+    body = (
+        f"A instalação padrão considera até {included_label} metros. "
+        "Se você não souber a medida exata, sem problema: o técnico pode "
+        "conferir no local."
+    )
+    if extra_meter_price is not None and extra_meter_price > 0:
+        body += (
+            " Se precisar de tubulação adicional, o valor cadastrado é "
+            f"{_format_brl(extra_meter_price)} por metro."
+        )
+    else:
+        body += " Se precisar de material adicional, o valor pode variar."
+    return OutboundMessage(message_type="text", body=body)
+
+
+def tubing_confirmation_message(meters: Decimal) -> OutboundMessage:
+    value = str(meters.normalize()).replace(".", ",")
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=f"Entendi. Você estima cerca de {value} metros, certo?",
+        interactive_id="booking.tubing_confirmation",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(TUBING_CONFIRM, "Sim"),
+                BookingOption(TUBING_UNKNOWN, "Não tenho certeza"),
+            )
         ),
     )
 
@@ -372,3 +413,8 @@ def _button_payload(options: Sequence[BookingOption]) -> dict[str, Any]:
             for option in options
         ]
     }
+
+
+def _format_brl(value: Decimal) -> str:
+    normalized = f"{value:,.2f}"
+    return f"R$ {normalized.replace(',', '#').replace('.', ',').replace('#', '.')}"

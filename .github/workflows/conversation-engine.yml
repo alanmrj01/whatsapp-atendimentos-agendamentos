@@ -1,17 +1,27 @@
 name: Conversation engine validation
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - 'app/conversations/**'
       - 'app/booking/**'
       - 'app/repositories/conversations.py'
       - 'app/repositories/cloud_tasks.py'
+      - 'app/repositories/outbound_tasks.py'
+      - 'app/operations/service.py'
       - 'app/tasks/cloud_tasks.py'
+      - 'app/tasks/outbound.py'
       - 'app/tasks/worker.py'
+      - 'app/whatsapp/processor.py'
       - 'tests/test_conversation_*.py'
       - 'tests/test_cloud_tasks.py'
       - 'tests/test_dialogue.py'
+      - 'tests/test_booking_availability.py'
+      - 'tests/test_outbound_tasks.py'
+      - 'tests/test_operational_pwa.py'
+      - 'tests/test_whatsapp_webhook.py'
       - '.github/workflows/conversation-engine.yml'
   workflow_dispatch:
 
@@ -51,6 +61,10 @@ jobs:
           tests/test_handoff_reactivation.py
           tests/test_cloud_tasks.py
           tests/test_dialogue.py
+          tests/test_booking_availability.py
+          tests/test_outbound_tasks.py
+          tests/test_operational_pwa.py
+          tests/test_whatsapp_webhook.py
           -q -p no:cacheprovider
 
       - name: Check dependencies

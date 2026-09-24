@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Protocol
 
 from app.booking.domain import (
@@ -25,6 +26,8 @@ class ServiceDetails:
     id: uuid.UUID
     name: str
     description: str | None
+    included_tubing_meters: Decimal | None = None
+    extra_tubing_price: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)

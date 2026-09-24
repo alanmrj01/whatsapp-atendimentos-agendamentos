@@ -36,6 +36,8 @@ from app.conversations.constants import (
     SITE_LIMIT_17,
     SITE_LIMIT_18,
     SITE_LIMIT_NONE,
+    TUBING_CONFIRM,
+    TUBING_UNKNOWN,
     ConversationState,
 )
 from app.conversations.outbound import (
@@ -62,6 +64,8 @@ from app.conversations.outbound import (
     service_selection_message,
     site_limit_message,
     slot_unavailable_message,
+    tubing_confirmation_message,
+    tubing_guidance_message,
     tubing_length_message,
     time_selection_message,
     weekday_selection_message,
@@ -116,21 +120,33 @@ async def determine_transition(
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
         return _handoff_transition(conversation.handoff_message)
 
+    stale_action = _stale_interactive_transition(
+        state,
+        action,
+        context,
+        customer_name=conversation.customer_name,
+    )
+    if stale_action is not None:
+        return stale_action
+
+    captured_name: str | None = interpretation.customer_name
+    if captured_name is not None:
+        conversation = replace(conversation, customer_name=captured_name)
+
     if state is ConversationState.CUSTOMER_NAME:
-        return await _handle_customer_name(
+        transition = await _handle_customer_name(
             conversation,
             inbound,
             context,
             interpretation,
             booking_port,
         )
+        if captured_name is not None:
+            transition = replace(transition, customer_name=captured_name)
+        return transition
 
-    captured_name: str | None = None
     if conversation.customer_name is None:
-        if interpretation.customer_name is not None:
-            captured_name = interpretation.customer_name
-            conversation = replace(conversation, customer_name=captured_name)
-        else:
+        if captured_name is None:
             pending: dict[str, Any] = {}
             if inbound.body and interpretation.intent is not ConversationIntent.GREETING:
                 pending["pending_customer_message"] = inbound.body
@@ -575,6 +591,111 @@ def _prepend_transition_body(
     )
 
 
+def _stale_interactive_transition(
+    state: ConversationState,
+    action: str | None,
+    context: dict[str, Any],
+    *,
+    customer_name: str | None,
+) -> ConversationTransition | None:
+    if action is None:
+        return None
+
+    if state is ConversationState.CUSTOMER_NAME:
+        return _transition(
+            state,
+            context,
+            name_request_message(
+                "Essa opção era de uma etapa anterior. Sem problema. "
+                "Para continuarmos, qual é o seu nome?"
+            ),
+        )
+    if state is ConversationState.BOOKING_ADDRESS:
+        return _transition(
+            state,
+            context,
+            address_request_message(
+                "Essa opção era de uma etapa anterior. "
+                "Pode me enviar o endereço do atendimento, com rua, número e cidade?"
+            ),
+        )
+    if (
+        state is ConversationState.BOOKING_TUBING
+        and action not in {TUBING_CONFIRM, TUBING_UNKNOWN}
+    ):
+        return _transition(
+            state,
+            context,
+            tubing_length_message(),
+        )
+    return None
+
+
+async def _tubing_prompt_transition(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    context: dict[str, Any],
+    service_id: uuid.UUID,
+    *,
+    body: str | None = None,
+) -> ConversationTransition:
+    included_meters: Decimal | None = None
+    extra_meter_price: Decimal | None = None
+    try:
+        details = await port.get_service_details(
+            inbound.business_id,
+            service_id,
+        )
+        included_meters = details.included_tubing_meters
+        extra_meter_price = details.extra_tubing_price
+    except BookingRequiresHandoff:
+        pass
+
+    question = (
+        _text_message(body)
+        if body is not None
+        else tubing_length_message()
+    )
+    guidance = tubing_guidance_message(
+        included_meters,
+        extra_meter_price,
+    )
+    return _transition(
+        ConversationState.BOOKING_TUBING,
+        context,
+        question,
+        follow_ups=(guidance,),
+    )
+
+
+def _tubing_unknown_text(normalized: str) -> bool:
+    phrases = (
+        "nao sei",
+        "nao tenho certeza",
+        "nao faco ideia",
+        "sem ideia",
+        "dificil dizer",
+        "nao consigo estimar",
+    )
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _tubing_needs_confirmation(normalized: str) -> bool:
+    uncertainty = (
+        "acho",
+        "acredito",
+        "talvez",
+        "creio",
+        "imagino",
+        "nao tenho certeza",
+        "dificil",
+    )
+    return any(
+        f" {phrase} " in f" {normalized} "
+        for phrase in uncertainty
+    )
+
+
 def _friendly_fallback(configured: str) -> str:
     normalized = normalize_portuguese(configured)
     if normalized.startswith("nao entendi"):
@@ -914,11 +1035,20 @@ async def _handle_address(
             context,
             booking_unavailable_message(),
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
     value = (inbound.body or "").strip()
-    if value.casefold() in {"não sei", "nao sei"}:
-        return _handoff_transition()
+    normalized = normalize_portuguese(value)
+    if normalized in {"nao sei", "nao tenho certeza"}:
+        return _transition(
+            ConversationState.BOOKING_ADDRESS,
+            context,
+            address_request_message(
+                "Sem problema. Para consultar a agenda eu preciso do endereço do "
+                "atendimento. Pode me enviar rua, número e cidade?"
+            ),
+        )
     if (
         len(value) < 5
         or len(value) > 500
@@ -927,8 +1057,12 @@ async def _handle_address(
         return _transition(
             ConversationState.BOOKING_ADDRESS,
             context,
-            address_request_message(),
+            address_request_message(
+                "Não consegui identificar o endereço com segurança. "
+                "Pode me enviar rua, número e cidade?"
+            ),
         )
+
     address = ServiceAddress(address_line=value)
     return await _advance_intake(
         inbound,
@@ -959,8 +1093,40 @@ async def _handle_tubing(
             context,
             booking_unavailable_message(),
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    pending_meters = _context_string(context, "pending_tubing_meters")
+    if inbound.interactive_id == TUBING_CONFIRM and pending_meters is not None:
+        updated = {
+            **context,
+            "service_id": str(service_id),
+            "tubing_length_answered": True,
+            "tubing_meters": pending_meters,
+        }
+        updated.pop("pending_tubing_meters", None)
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            customer_name=customer_name,
+        )
+    if inbound.interactive_id == TUBING_UNKNOWN:
+        updated = {
+            **context,
+            "service_id": str(service_id),
+            "tubing_length_answered": True,
+        }
+        updated.pop("pending_tubing_meters", None)
+        updated.pop("tubing_meters", None)
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            customer_name=customer_name,
+        )
 
     normalized = normalize_portuguese(inbound.body or "")
     updated = {
@@ -968,7 +1134,8 @@ async def _handle_tubing(
         "service_id": str(service_id),
         "tubing_length_answered": True,
     }
-    if normalized in {"nao sei", "não sei", "nao tenho certeza", "não tenho certeza"}:
+    if _tubing_unknown_text(normalized):
+        updated.pop("pending_tubing_meters", None)
         updated.pop("tubing_meters", None)
         return await _advance_intake(
             inbound,
@@ -980,11 +1147,31 @@ async def _handle_tubing(
 
     meters = _decimal_from_text(inbound.body)
     if meters is None or meters <= 0 or meters > Decimal("100"):
+        return await _tubing_prompt_transition(
+            inbound,
+            port,
+            context,
+            service_id,
+            body=(
+                "Não consegui entender a metragem com segurança. "
+                "Você consegue estimar quantos metros serão necessários?"
+            ),
+        )
+
+    if _tubing_needs_confirmation(normalized):
+        pending = {
+            **context,
+            "service_id": str(service_id),
+            "pending_tubing_meters": str(meters),
+        }
+        pending.pop("tubing_length_answered", None)
         return _transition(
             ConversationState.BOOKING_TUBING,
-            context,
-            tubing_length_message(),
+            pending,
+            tubing_confirmation_message(meters),
         )
+
+    updated.pop("pending_tubing_meters", None)
     updated["tubing_meters"] = str(meters)
     return await _advance_intake(
         inbound,
@@ -1063,8 +1250,8 @@ async def _handle_weekday(
         dates = _snapshot_options(
             await port.list_dates(inbound.business_id, service_id, requirements)
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     if not dates:
         return await _restart_service_selection(
             inbound,
@@ -1722,10 +1909,14 @@ async def _advance_intake(
             address_request_message(),
         )
     if intake.asks_tubing_length and context.get("tubing_length_answered") is not True:
-        return _transition(
-            ConversationState.BOOKING_TUBING,
+        service_id = _context_service_id(context)
+        if service_id is None:
+            return await _restart_service_selection(inbound, port)
+        return await _tubing_prompt_transition(
+            inbound,
+            port,
             context,
-            tubing_length_message(),
+            service_id,
         )
     if intake.asks_site_time_limit and context.get("site_limit_answered") is not True:
         return _transition(
@@ -1761,7 +1952,7 @@ async def _offer_dates(
             requirements,
         )
         if plan.requires_handoff:
-            return _handoff_transition()
+            return _handoff_for_reason(plan.handoff_reason)
         dates = _snapshot_options(
             await port.list_dates(
                 inbound.business_id,
@@ -2052,6 +2243,7 @@ def _transition(
     *,
     automation_enabled: bool = True,
     handoff_status: str = "none",
+    follow_ups: tuple[OutboundMessage, ...] = (),
 ) -> ConversationTransition:
     return ConversationTransition(
         state=state,
@@ -2059,6 +2251,7 @@ def _transition(
         automation_enabled=automation_enabled,
         handoff_status=handoff_status,
         outbound=outbound,
+        follow_ups=follow_ups,
     )
 
 
@@ -2507,6 +2700,32 @@ def _booking_idempotency_key(inbound: ConversationInput) -> str:
         )
     )
     return f"booking:confirm:{hashlib.sha256(stable.encode()).hexdigest()}"
+
+
+def _handoff_for_reason(reason: str | None) -> ConversationTransition:
+    normalized = normalize_portuguese(reason or "")
+    if "travel estimate unavailable" in normalized or "travel_estimate_unavailable" in normalized:
+        body = (
+            "Consegui avançar com os dados do atendimento, mas preciso confirmar "
+            "o deslocamento até esse endereço antes de fechar o horário. "
+            "Vou chamar uma pessoa da equipe para continuar com você."
+        )
+    elif "outside service area" in normalized or "address_outside_service_area" in normalized:
+        body = (
+            "O endereço precisa de uma confirmação da equipe antes de eu conseguir "
+            "fechar o agendamento. Vou encaminhar o atendimento para continuarem com você."
+        )
+    elif "quote" in normalized or "orcamento" in normalized:
+        body = (
+            "Para não te passar um valor incorreto, essa etapa precisa de uma "
+            "conferência da equipe. Vou encaminhar o atendimento para continuarem com você."
+        )
+    else:
+        body = (
+            "Cheguei a uma etapa que precisa de uma conferência da equipe para "
+            "seguir com segurança. Vou encaminhar o atendimento para continuarem com você."
+        )
+    return _handoff_transition(body)
 
 
 def _handoff_transition(
