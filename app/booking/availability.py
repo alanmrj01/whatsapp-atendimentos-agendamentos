@@ -629,8 +629,11 @@ class PostgresBookingAvailabilityPort:
                 if same_address is not None:
                     travel = same_address
                 elif (
-                    calculation_method is TravelCalculationMethod.ROUTE
-                    and self.travel_time_port is not None
+                    self.travel_time_port is not None
+                    and (
+                        calculation_method is TravelCalculationMethod.ROUTE
+                        or not business.travel_fallback_allowed
+                    )
                 ):
                     travel = await self.travel_time_port.estimate(
                         origin,
@@ -1064,7 +1067,10 @@ class PostgresBookingAvailabilityPort:
             method = TravelCalculationMethod(business.travel_calculation_method)
         except ValueError:
             return unavailable_travel_estimate(origin)
-        if method is TravelCalculationMethod.ROUTE and self.travel_time_port:
+        if self.travel_time_port and (
+            method is TravelCalculationMethod.ROUTE
+            or not business.travel_fallback_allowed
+        ):
             estimate = await self.travel_time_port.estimate(origin, destination)
             return replace(
                 estimate,
