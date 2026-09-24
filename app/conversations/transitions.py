@@ -1253,7 +1253,13 @@ async def _offer_dates(
                 "origin_configuration_unavailable",
                 "address_outside_service_area",
             }:
-                raise BookingRecoveryRequired(reason)
+                return await recover_booking_issue(
+                    inbound,
+                    port,
+                    ConversationState.BOOKING_ADDRESS,
+                    context,
+                    BookingRecoveryRequired(reason),
+                )
             return _handoff_transition()
         dates = _snapshot_options(
             await port.list_dates(
