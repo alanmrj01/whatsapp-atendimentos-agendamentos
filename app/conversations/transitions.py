@@ -436,7 +436,7 @@ async def _handle_address(
             booking_unavailable_message(),
         )
     except BookingRecoveryRequired as exc:
-        return await _recover_booking_issue(
+        return await recover_booking_issue(
             inbound,
             port,
             ConversationState.BOOKING_ADDRESS,
@@ -1360,7 +1360,7 @@ async def _return_to_dates(
     )
 
 
-async def _recover_booking_issue(
+async def recover_booking_issue(
     inbound: ConversationInput,
     port: BookingAvailabilityPort,
     state: ConversationState,
