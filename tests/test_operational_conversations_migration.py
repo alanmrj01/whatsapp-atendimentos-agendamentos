@@ -16,7 +16,11 @@ MIGRATION_PATH = (
 def test_operational_conversations_migration_precedes_onboarding_chain() -> None:
     script = ScriptDirectory.from_config(Config(str(PROJECT_ROOT / "alembic.ini")))
 
-    assert script.get_heads() == ["20260922_0015"]
+    assert script.get_heads() == ["20260923_0018"]
+    assert script.get_revision("20260923_0018").down_revision == "20260923_0017"
+    assert script.get_revision("20260923_0017").down_revision == "20260923_0016"
+    assert script.get_revision("20260923_0016").down_revision == "20260922_0015"
+    assert script.get_revision("20260922_0015").down_revision == "20260922_0014"
     assert script.get_revision("20260922_0012").down_revision == "20260921_0011"
     assert script.get_revision("20260921_0011").down_revision == "20260915_0010"
     assert script.get_revision("20260915_0010").down_revision == "20260915_0009"
