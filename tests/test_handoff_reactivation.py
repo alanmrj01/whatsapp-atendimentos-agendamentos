@@ -23,6 +23,8 @@ def snapshot(*, automation_enabled: bool) -> ConversationSnapshot:
         context={},
         automation_enabled=automation_enabled,
         handoff_status="none" if automation_enabled else "waiting",
+        customer_name="Cliente",
+        business_timezone="America/Sao_Paulo",
     )
 
 
@@ -51,7 +53,9 @@ async def test_reenabled_handoff_conversation_resumes_on_next_inbound() -> None:
     assert transition.state is ConversationState.MENU
     assert transition.automation_enabled is True
     assert transition.handoff_status == "none"
-    assert transition.outbound.body == "Olá! Como posso ajudar com seu ar-condicionado?"
+    assert transition.outbound.body is not None
+    assert "Cliente" in transition.outbound.body
+    assert transition.outbound.body.endswith("Como posso ajudá-lo?")
 
 
 @pytest.mark.asyncio

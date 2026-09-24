@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from copy import deepcopy
 from contextlib import asynccontextmanager
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.postgresql.dml import Insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,7 @@ from app.conversations.types import (
     ConversationSnapshot,
     ConversationTransition,
 )
-from app.models import Business, Conversation, Message
+from app.models import Business, Conversation, Customer, Message
 
 
 def build_lock_conversation_statement(
@@ -30,8 +30,18 @@ def build_lock_conversation_statement(
             Business.assistant_greeting_message,
             Business.assistant_fallback_message,
             Business.assistant_handoff_message,
+            Business.timezone.label("business_timezone"),
+            Customer.name.label("customer_name"),
+            Customer.whatsapp_profile_name.label("whatsapp_profile_name"),
         )
         .join(Business, Business.id == Conversation.business_id)
+        .join(
+            Customer,
+            and_(
+                Customer.business_id == Conversation.business_id,
+                Customer.id == Conversation.customer_id,
+            ),
+        )
         .where(
             Conversation.business_id == business_id,
             Conversation.id == conversation_id,
@@ -100,6 +110,9 @@ class ConversationRepository:
             greeting_message=row.assistant_greeting_message,
             fallback_message=row.assistant_fallback_message,
             handoff_message=row.assistant_handoff_message,
+            customer_name=row.customer_name,
+            whatsapp_profile_name=row.whatsapp_profile_name,
+            business_timezone=row.business_timezone,
         )
 
     async def outbound_exists(self, idempotency_key: str) -> bool:
@@ -137,4 +150,13 @@ class ConversationRepository:
                 handoff_status=transition.handoff_status,
             )
         )
+        if transition.customer_name is not None:
+            await self.session.execute(
+                update(Customer)
+                .where(
+                    Customer.business_id == snapshot.business_id,
+                    Customer.id == snapshot.customer_id,
+                )
+                .values(name=transition.customer_name)
+            )
         return True

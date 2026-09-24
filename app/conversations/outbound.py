@@ -26,6 +26,7 @@ from app.conversations.constants import (
 from app.conversations.ports import BookingOption
 
 LIST_BUTTON_TEXT = "Ver opções"
+MAX_LIST_ROWS = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,10 @@ def main_menu_message() -> OutboundMessage:
     )
 
 
+def name_request_message(body: str) -> OutboundMessage:
+    return OutboundMessage(message_type="text", body=body)
+
+
 def service_selection_message(
     options: Sequence[BookingOption],
     *,
@@ -66,14 +71,28 @@ def service_selection_message(
     )
 
 
+def weekday_selection_message(
+    options: Sequence[BookingOption],
+    *,
+    body: str,
+) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_list",
+        body=body,
+        interactive_id="booking.weekdays",
+        outbound_payload=_list_payload("Dias da semana", options, prefix="weekday:"),
+    )
+
+
 def date_selection_message(
     options: Sequence[BookingOption],
     *,
     body: str = "Escolha uma data para o atendimento.",
 ) -> OutboundMessage:
+    safe_body = _append_hidden_options_hint(body, options, "data")
     return OutboundMessage(
         message_type="interactive_list",
-        body=body,
+        body=safe_body,
         interactive_id="booking.dates",
         outbound_payload=_list_payload("Datas", options, prefix="date:"),
     )
@@ -147,18 +166,21 @@ def time_selection_message(
     *,
     body: str = "Escolha um horário disponível.",
 ) -> OutboundMessage:
+    safe_body = _append_hidden_options_hint(body, options, "horário")
     return OutboundMessage(
         message_type="interactive_list",
-        body=body,
+        body=safe_body,
         interactive_id="booking.times",
         outbound_payload=_list_payload("Horários", options, prefix="time:"),
     )
 
 
-def booking_confirmation_message() -> OutboundMessage:
+def booking_confirmation_message(
+    body: str = "Confirme os dados do agendamento.",
+) -> OutboundMessage:
     return OutboundMessage(
         message_type="interactive_button",
-        body="Confirme os dados do agendamento.",
+        body=body,
         interactive_id="booking.confirmation",
         outbound_payload=_button_payload(
             (
@@ -170,10 +192,12 @@ def booking_confirmation_message() -> OutboundMessage:
     )
 
 
-def booking_completed_message() -> OutboundMessage:
+def booking_completed_message(
+    body: str = "Agendamento confirmado com sucesso.",
+) -> OutboundMessage:
     return OutboundMessage(
         message_type="text",
-        body="Solicitação de agendamento concluída.",
+        body=body,
     )
 
 
@@ -310,6 +334,7 @@ def _list_payload(
     *,
     prefix: str = "",
 ) -> dict[str, Any]:
+    visible = tuple(options[:MAX_LIST_ROWS])
     return {
         "button": LIST_BUTTON_TEXT,
         "sections": [
@@ -317,11 +342,27 @@ def _list_payload(
                 "title": section_title,
                 "rows": [
                     {"id": f"{prefix}{option.id}", "title": option.label}
-                    for option in options
+                    for option in visible
                 ],
             }
         ],
     }
+
+
+def _append_hidden_options_hint(
+    body: str,
+    options: Sequence[BookingOption],
+    noun: str,
+) -> str:
+    if len(options) <= MAX_LIST_ROWS:
+        return body
+    labels = ", ".join(option.label for option in options)
+    expanded = (
+        f"{body.rstrip()}\n\nOpções disponíveis: {labels}. "
+        f"Se o {noun} que você prefere não aparecer em “Ver opções”, "
+        f"responda digitando o {noun}."
+    )
+    return expanded[:1024]
 
 
 def _button_payload(options: Sequence[BookingOption]) -> dict[str, Any]:

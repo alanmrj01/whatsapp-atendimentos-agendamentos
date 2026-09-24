@@ -82,6 +82,13 @@ async def process_cloud_task_event(
             )
             if inbound is None:
                 raise TaskEventDataUnavailable("Task event data is unavailable")
+            turn_loader = getattr(event_repository, "load_inbound_turn", None)
+            if callable(turn_loader):
+                aggregated = await turn_loader(event.provider_message_id)
+                if aggregated is None:
+                    await event_repository.complete_event(event_key, "processed")
+                    return False
+                inbound = aggregated
             if inbound.whatsapp_id is None and isinstance(session, AsyncSession):
                 await event_repository.complete_event(event_key, "ignored")
                 return False

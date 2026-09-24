@@ -1,0 +1,60 @@
+name: Conversation engine validation
+
+on:
+  pull_request:
+    paths:
+      - 'app/conversations/**'
+      - 'app/booking/**'
+      - 'app/repositories/conversations.py'
+      - 'app/repositories/cloud_tasks.py'
+      - 'app/tasks/cloud_tasks.py'
+      - 'app/tasks/worker.py'
+      - 'tests/test_conversation_*.py'
+      - 'tests/test_cloud_tasks.py'
+      - 'tests/test_dialogue.py'
+      - '.github/workflows/conversation-engine.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conversation-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      ENVIRONMENT: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Compile application and tests
+        run: python -m compileall app tests
+
+      - name: Conversation tests
+        run: >-
+          pytest
+          tests/test_conversation_interpreter.py
+          tests/test_conversation_engine.py
+          tests/test_conversation_repository.py
+          tests/test_handoff_reactivation.py
+          tests/test_cloud_tasks.py
+          tests/test_dialogue.py
+          -q -p no:cacheprovider
+
+      - name: Check dependencies
+        run: python -m pip check
+
+      - name: Diff check
+        run: git diff --check
