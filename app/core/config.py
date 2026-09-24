@@ -120,6 +120,16 @@ class Settings(BaseSettings):
         default=None, validation_alias="GCP_PROJECT_ID"
     )
     gcp_region: str | None = Field(default=None, validation_alias="GCP_REGION")
+    google_maps_routing_enabled: bool = Field(
+        default=False,
+        validation_alias="GOOGLE_MAPS_ROUTING_ENABLED",
+    )
+    google_maps_request_timeout_seconds: float = Field(
+        default=5.0,
+        ge=1.0,
+        le=20.0,
+        validation_alias="GOOGLE_MAPS_REQUEST_TIMEOUT_SECONDS",
+    )
     cloud_tasks_events_queue: str | None = Field(
         default=None, validation_alias="CLOUD_TASKS_EVENTS_QUEUE"
     )

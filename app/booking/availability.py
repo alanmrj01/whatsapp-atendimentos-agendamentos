@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.booking.domain import (
     AccessCondition,
+    AddressResolution,
+    AddressResolutionStatus,
     BookingPlan,
     BookingRequirements,
     PricingType,
@@ -28,6 +30,7 @@ from app.booking.domain import (
     UnknownAccessPolicy,
 )
 from app.booking.estimator import ServiceEstimator
+from app.booking.google_maps import AddressValidationPort
 from app.booking.travel import (
     ConfiguredTravelTimePort,
     TravelTimePort,
@@ -40,6 +43,7 @@ from app.conversations.ports import (
     ExistingBooking,
     BookingNotFound,
     BookingOption,
+    BookingRecoveryRequired,
     BookingRequiresHandoff,
     SlotUnavailable,
 )
@@ -111,11 +115,13 @@ class PostgresBookingAvailabilityPort:
         *,
         estimator: ServiceEstimator | None = None,
         travel_time_port: TravelTimePort | None = None,
+        address_validation_port: AddressValidationPort | None = None,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self.session = session
         self.estimator = estimator or ServiceEstimator()
         self.travel_time_port = travel_time_port
+        self.address_validation_port = address_validation_port
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         self._candidate_plans: dict[
             tuple[uuid.UUID, datetime], BookingPlan
@@ -165,7 +171,7 @@ class PostgresBookingAvailabilityPort:
         try:
             pricing_type = PricingType(service.pricing_type)
         except ValueError:
-            raise BookingRequiresHandoff("Invalid service configuration") from None
+            raise BookingRecoveryRequired("service_configuration_invalid") from None
         return ServiceIntake(
             requires_quantity=service.requires_quantity,
             requires_address=service.requires_address,
@@ -174,6 +180,30 @@ class PostgresBookingAvailabilityPort:
             asks_tubing_length=service.asks_tubing_length,
             automatic_booking=service.automatic_booking,
             pricing_type=pricing_type,
+        )
+
+    async def resolve_service_address(
+        self,
+        business_id: uuid.UUID,
+        raw_address: str,
+    ) -> AddressResolution:
+        business = await self.session.scalar(
+            select(Business).where(
+                Business.id == business_id,
+                Business.active.is_(True),
+            )
+        )
+        if business is None:
+            raise BookingRecoveryRequired("business_unavailable")
+        if self.address_validation_port is None:
+            return AddressResolution(
+                AddressResolutionStatus.ACCEPTED,
+                address=ServiceAddress(address_line=raw_address),
+            )
+        return await self.address_validation_port.resolve(
+            raw_address,
+            default_city=business.service_origin_city,
+            default_state=business.service_origin_state,
         )
 
     async def estimate(
@@ -476,7 +506,7 @@ class PostgresBookingAvailabilityPort:
             )
         ).one_or_none()
         if row is None:
-            raise BookingRequiresHandoff("Service is unavailable")
+            raise BookingRecoveryRequired("service_unavailable")
         return row[0], row[1]
 
     async def _require_eligible_employees(
@@ -498,7 +528,7 @@ class PostgresBookingAvailabilityPort:
         )
         employee_ids = tuple(rows.all())
         if not employee_ids:
-            raise BookingRequiresHandoff("No active technician")
+            raise BookingRecoveryRequired("no_active_technician")
         return employee_ids
 
     async def _build_plan(
@@ -543,7 +573,7 @@ class PostgresBookingAvailabilityPort:
                 duration_margin_minutes=service.duration_margin_minutes,
             )
         except (TypeError, ValueError):
-            raise BookingRequiresHandoff("Invalid service configuration") from None
+            raise BookingRecoveryRequired("service_configuration_invalid") from None
 
         service_estimate = self.estimator.estimate(configuration, requirements)
         service_estimate = await self._apply_catalog_additions(
@@ -587,7 +617,10 @@ class PostgresBookingAvailabilityPort:
                     address="Operational origin unavailable",
                     is_precise=False,
                 )
-                travel = unavailable_travel_estimate(origin)
+                travel = unavailable_travel_estimate(
+                    origin,
+                    reason="origin_configuration_unavailable",
+                )
             else:
                 same_address = same_address_travel_estimate(
                     origin,
@@ -596,17 +629,15 @@ class PostgresBookingAvailabilityPort:
                 if same_address is not None:
                     travel = same_address
                 elif (
-                    calculation_method is TravelCalculationMethod.ROUTE
-                    and self.travel_time_port is not None
+                    self.travel_time_port is not None
+                    and (
+                        calculation_method is TravelCalculationMethod.ROUTE
+                        or not business.travel_fallback_allowed
+                    )
                 ):
                     travel = await self.travel_time_port.estimate(
                         origin,
                         requirements.address,
-                    )
-                    travel = replace(
-                        travel,
-                        estimated=travel.estimated or not origin.is_precise,
-                        origin_is_precise=origin.is_precise,
                     )
                 else:
                     travel = await configured_port.estimate(
@@ -623,7 +654,7 @@ class PostgresBookingAvailabilityPort:
         if service_estimate.requires_human_quote:
             reason = "service_estimate_requires_human_quote"
         elif not travel.available:
-            reason = "travel_estimate_unavailable"
+            reason = travel.failure_reason or "travel_estimate_unavailable"
         elif not travel.within_service_area:
             reason = "address_outside_service_area"
         preparation, finishing, interval = _operational_buffers(
@@ -1031,12 +1062,13 @@ class PostgresBookingAvailabilityPort:
             method = TravelCalculationMethod(business.travel_calculation_method)
         except ValueError:
             return unavailable_travel_estimate(origin)
-        if method is TravelCalculationMethod.ROUTE and self.travel_time_port:
-            estimate = await self.travel_time_port.estimate(origin, destination)
-            return replace(
-                estimate,
-                estimated=estimate.estimated or not origin.is_precise,
-                origin_is_precise=origin.is_precise,
+        if self.travel_time_port and (
+            method is TravelCalculationMethod.ROUTE
+            or not business.travel_fallback_allowed
+        ):
+            return await self.travel_time_port.estimate(
+                origin,
+                destination,
             )
         return await configured_port.estimate(origin, destination)
 
@@ -1240,10 +1272,21 @@ class PostgresBookingAvailabilityPort:
 
     @staticmethod
     def _require_automatic_plan(plan: BookingPlan) -> None:
-        if plan.requires_handoff:
-            raise BookingRequiresHandoff(
-                plan.handoff_reason or "Booking requires human assistance"
-            )
+        if not plan.requires_handoff:
+            return
+        reason = plan.handoff_reason or "booking_requires_human_assistance"
+        if reason in {
+            "travel_estimate_unavailable",
+            "route_temporarily_unavailable",
+            "route_not_found",
+            "route_invalid_response",
+            "origin_address_unavailable",
+            "destination_address_unavailable",
+            "origin_configuration_unavailable",
+            "address_outside_service_area",
+        }:
+            raise BookingRecoveryRequired(reason)
+        raise BookingRequiresHandoff(reason)
 
 
 def _is_brazil_national_holiday(value: date) -> bool:
@@ -1274,12 +1317,12 @@ def _timezone(value: str) -> ZoneInfo:
     try:
         return ZoneInfo(value)
     except ZoneInfoNotFoundError:
-        raise BookingRequiresHandoff("Invalid business timezone") from None
+        raise BookingRecoveryRequired("schedule_configuration_invalid") from None
 
 
 def _ceil_to_slot(value: datetime, interval_minutes: int) -> datetime:
     if interval_minutes <= 0:
-        raise BookingRequiresHandoff("Invalid slot interval")
+        raise BookingRecoveryRequired("schedule_configuration_invalid")
     midnight = value.replace(hour=0, minute=0, second=0, microsecond=0)
     elapsed_minutes = (value - midnight).total_seconds() / 60
     rounded_minutes = math.ceil(elapsed_minutes / interval_minutes) * interval_minutes

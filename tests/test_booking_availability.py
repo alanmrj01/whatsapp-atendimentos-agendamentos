@@ -27,6 +27,7 @@ from app.booking.domain import (
 )
 from app.conversations.ports import (
     BookingNotFound,
+    BookingRecoveryRequired,
     BookingRequiresHandoff,
     SlotUnavailable,
 )
@@ -694,7 +695,7 @@ async def test_failed_reschedule_keeps_original_appointment_intact() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_eligible_employee_is_fail_closed() -> None:
+async def test_no_eligible_employee_requests_recovery() -> None:
     class EmptyResult:
         def all(self) -> list[uuid.UUID]:
             return []
@@ -705,8 +706,10 @@ async def test_no_eligible_employee_is_fail_closed() -> None:
 
     port = PostgresBookingAvailabilityPort(EmptySession())  # type: ignore[arg-type]
 
-    with pytest.raises(BookingRequiresHandoff):
+    with pytest.raises(BookingRecoveryRequired) as exc_info:
         await port._require_eligible_employees(BUSINESS_ID, SERVICE_ID)
+
+    assert exc_info.value.reason == "no_active_technician"
 
 
 @pytest.mark.asyncio

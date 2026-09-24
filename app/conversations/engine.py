@@ -7,8 +7,14 @@ from dataclasses import replace
 from typing import Protocol
 
 from app.conversations.constants import ConversationState
-from app.conversations.ports import BookingAvailabilityPort
-from app.conversations.transitions import determine_transition
+from app.conversations.ports import (
+    BookingAvailabilityPort,
+    BookingRecoveryRequired,
+)
+from app.conversations.transitions import (
+    determine_transition,
+    recover_booking_issue,
+)
 from app.conversations.types import (
     ConversationInput,
     ConversationSnapshot,
@@ -57,11 +63,26 @@ class ConversationEngine:
             if await self.repository.outbound_exists(idempotency_key):
                 return False
 
-            transition = await determine_transition(
-                conversation,
-                inbound,
-                self.booking_port,
-            )
+            try:
+                transition = await determine_transition(
+                    conversation,
+                    inbound,
+                    self.booking_port,
+                )
+            except BookingRecoveryRequired as exc:
+                if self.booking_port is None:
+                    return False
+                try:
+                    recovery_state = ConversationState(conversation.state)
+                except ValueError:
+                    recovery_state = ConversationState.START
+                transition = await recover_booking_issue(
+                    inbound,
+                    self.booking_port,
+                    recovery_state,
+                    conversation.context,
+                    exc,
+                )
             if transition is None:
                 return False
             if transition.state is ConversationState.HUMAN_HANDOFF:

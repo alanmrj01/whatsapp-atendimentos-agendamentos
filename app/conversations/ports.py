@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.booking.domain import (
+    AddressResolution,
     BookingPlan,
     BookingRequirements,
     ServiceIntake,
@@ -52,6 +53,14 @@ class BookingRequiresHandoff(RuntimeError):
     """O agendamento exige avaliação de uma pessoa da equipe."""
 
 
+class BookingRecoveryRequired(RuntimeError):
+    """O fluxo pode continuar automaticamente após recuperar contexto/dados."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class BookingNotFound(RuntimeError):
     """O agendamento não pertence ao cliente informado."""
 
@@ -67,6 +76,12 @@ class BookingAvailabilityPort(Protocol):
         business_id: uuid.UUID,
         service_id: uuid.UUID,
     ) -> ServiceIntake: ...
+
+    async def resolve_service_address(
+        self,
+        business_id: uuid.UUID,
+        raw_address: str,
+    ) -> AddressResolution: ...
 
     async def estimate(
         self,

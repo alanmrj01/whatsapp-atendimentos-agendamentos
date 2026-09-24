@@ -10,6 +10,7 @@ from typing import Any
 
 from app.booking.domain import (
     AccessCondition,
+    AddressResolutionStatus,
     BookingPlan,
     BookingRequirements,
     PricingType,
@@ -76,6 +77,7 @@ from app.conversations.ports import (
     BookingNotFound,
     BookingOption,
     BookingPortUnavailable,
+    BookingRecoveryRequired,
     BookingRequiresHandoff,
     SlotUnavailable,
 )
@@ -433,27 +435,145 @@ async def _handle_address(
             context,
             booking_unavailable_message(),
         )
+    except BookingRecoveryRequired as exc:
+        return await recover_booking_issue(
+            inbound,
+            port,
+            ConversationState.BOOKING_ADDRESS,
+            context,
+            exc,
+        )
     except BookingRequiresHandoff:
         return _handoff_transition()
+
     value = (inbound.body or "").strip()
-    if value.casefold() in {"não sei", "nao sei"}:
-        return _handoff_transition()
-    if len(value) < 5 or len(value) > 500:
+    normalized = normalize_portuguese(value)
+
+    if context.get("address_confirmation_pending") is True:
+        current_address = ServiceAddress.from_snapshot(
+            context.get("service_address")
+        )
+        if normalized in {"sim", "correto", "isso", "confirmo", "certo"}:
+            if current_address is None:
+                return _transition(
+                    ConversationState.BOOKING_ADDRESS,
+                    _clear_address_recovery_context(context),
+                    address_request_message(),
+                )
+            updated = _clear_address_recovery_context(context)
+            updated["service_id"] = str(service_id)
+            updated["service_address"] = current_address.to_snapshot()
+            return await _advance_intake(
+                inbound,
+                port,
+                intake,
+                updated,
+            )
+        if normalized in {"nao", "não", "errado", "corrigir"}:
+            updated = _clear_address_recovery_context(context)
+            updated.pop("service_address", None)
+            return _transition(
+                ConversationState.BOOKING_ADDRESS,
+                updated,
+                address_request_message(),
+            )
         return _transition(
             ConversationState.BOOKING_ADDRESS,
             context,
-            address_request_message(),
+            _text_message(
+                "O endereço informado está correto? Responda apenas sim ou não."
+            ),
         )
-    address = ServiceAddress(address_line=value)
+
+    missing_component = _context_string(
+        context, "address_missing_component"
+    )
+    draft = context.get("address_draft")
+    draft_raw = (
+        draft.get("raw")
+        if isinstance(draft, dict) and isinstance(draft.get("raw"), str)
+        else None
+    )
+
+    if normalized in {"nao sei", "não sei"}:
+        return _transition(
+            ConversationState.BOOKING_ADDRESS,
+            context,
+            _text_message(
+                "Sem problema. Informe pelo menos a rua e o número do local. "
+                "Se souber, inclua também o bairro."
+            ),
+        )
+
+    raw_address = (
+        _merge_address_followup(draft_raw, missing_component, value)
+        if draft_raw and missing_component
+        else value
+    )
+    if len(raw_address) < 5 or len(raw_address) > 500:
+        return _transition(
+            ConversationState.BOOKING_ADDRESS,
+            context,
+            _address_missing_component_message(missing_component),
+        )
+
+    resolution = await port.resolve_service_address(
+        inbound.business_id,
+        raw_address,
+    )
+    if (
+        resolution.status
+        is AddressResolutionStatus.TEMPORARILY_UNAVAILABLE
+    ):
+        updated = dict(context)
+        updated["address_draft"] = {"raw": raw_address}
+        updated.pop("address_missing_component", None)
+        return _transition(
+            ConversationState.BOOKING_ADDRESS,
+            updated,
+            _text_message(
+                "Não consegui validar o endereço agora. "
+                "Pode reenviar o endereço para eu tentar novamente?"
+            ),
+        )
+
+    if (
+        resolution.status is AddressResolutionStatus.NEEDS_INPUT
+        or resolution.address is None
+    ):
+        component = resolution.missing_component or "generic"
+        updated = dict(context)
+        updated["service_id"] = str(service_id)
+        updated["address_draft"] = {"raw": raw_address}
+        updated["address_missing_component"] = component
+        updated.pop("service_address", None)
+        updated.pop("address_confirmation_pending", None)
+        return _transition(
+            ConversationState.BOOKING_ADDRESS,
+            updated,
+            _address_missing_component_message(component),
+        )
+
+    updated = _clear_address_recovery_context(context)
+    updated["service_id"] = str(service_id)
+    updated["service_address"] = resolution.address.to_snapshot()
+
+    if resolution.status is AddressResolutionStatus.NEEDS_CONFIRMATION:
+        updated["address_confirmation_pending"] = True
+        return _transition(
+            ConversationState.BOOKING_ADDRESS,
+            updated,
+            _text_message(
+                "Só para confirmar: o endereço que você informou está correto? "
+                "Responda sim ou não."
+            ),
+        )
+
     return await _advance_intake(
         inbound,
         port,
         intake,
-        {
-            **context,
-            "service_id": str(service_id),
-            "service_address": address.to_snapshot(),
-        },
+        updated,
     )
 
 
@@ -1122,6 +1242,24 @@ async def _offer_dates(
             requirements,
         )
         if plan.requires_handoff:
+            reason = plan.handoff_reason or "booking_requires_human_assistance"
+            if reason in {
+                "travel_estimate_unavailable",
+                "route_temporarily_unavailable",
+                "route_not_found",
+                "route_invalid_response",
+                "origin_address_unavailable",
+                "destination_address_unavailable",
+                "origin_configuration_unavailable",
+                "address_outside_service_area",
+            }:
+                return await recover_booking_issue(
+                    inbound,
+                    port,
+                    ConversationState.BOOKING_ADDRESS,
+                    context,
+                    BookingRecoveryRequired(reason),
+                )
             return _handoff_transition()
         dates = _snapshot_options(
             await port.list_dates(
@@ -1185,7 +1323,7 @@ async def _context_intake(
 ) -> tuple[uuid.UUID, ServiceIntake]:
     service_id = _context_service_id(context)
     if service_id is None:
-        raise BookingRequiresHandoff("Service context is missing")
+        raise BookingRecoveryRequired("service_context_missing")
     intake = await port.get_service_intake(inbound.business_id, service_id)
     return service_id, intake
 
@@ -1226,6 +1364,112 @@ async def _return_to_dates(
             body="Não há horários disponíveis. Escolha outra data.",
         ),
     )
+
+
+async def recover_booking_issue(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    state: ConversationState,
+    context: dict[str, Any],
+    error: BookingRecoveryRequired,
+) -> ConversationTransition:
+    if error.reason in {
+        "service_context_missing",
+        "service_unavailable",
+        "service_configuration_invalid",
+        "no_active_technician",
+    }:
+        return await _restart_service_selection(
+            inbound,
+            port,
+            body=(
+                "Não consegui continuar com esse serviço automaticamente. "
+                "Escolha o serviço que melhor descreve o que você precisa."
+            ),
+        )
+
+    if error.reason in {
+        "travel_estimate_unavailable",
+        "route_temporarily_unavailable",
+        "route_not_found",
+        "route_invalid_response",
+        "origin_address_unavailable",
+        "destination_address_unavailable",
+        "origin_configuration_unavailable",
+        "address_outside_service_area",
+    }:
+        address = ServiceAddress.from_snapshot(context.get("service_address"))
+        if address is not None:
+            updated = _intake_context(context)
+            updated["service_address"] = address.to_snapshot()
+            updated["address_confirmation_pending"] = True
+            return _transition(
+                ConversationState.BOOKING_ADDRESS,
+                updated,
+                _text_message(
+                    "Não consegui concluir o cálculo do deslocamento. "
+                    "O endereço informado está correto? Responda sim ou não."
+                ),
+            )
+        return _transition(
+            ConversationState.BOOKING_ADDRESS,
+            _intake_context(context),
+            address_request_message(),
+        )
+
+    return _transition(
+        state,
+        context,
+        booking_unavailable_message(),
+    )
+
+
+def _clear_address_recovery_context(
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    updated = dict(context)
+    updated.pop("address_draft", None)
+    updated.pop("address_missing_component", None)
+    updated.pop("address_confirmation_pending", None)
+    return updated
+
+
+def _address_missing_component_message(
+    component: str | None,
+) -> OutboundMessage:
+    messages = {
+        "street_number": "Qual é o número do endereço?",
+        "route": "Qual é o nome da rua ou avenida?",
+        "locality": "Em qual cidade fica o endereço?",
+        "administrative_area": "Em qual estado fica o endereço?",
+        "postal_code": "Qual é o CEP do endereço?",
+    }
+    return _text_message(
+        messages.get(
+            component or "generic",
+            "Preciso de mais um detalhe do endereço. "
+            "Envie rua, número e bairro do local.",
+        )
+    )
+
+
+def _merge_address_followup(
+    draft_raw: str,
+    component: str,
+    reply: str,
+) -> str:
+    clean_reply = reply.strip()
+    if component == "street_number":
+        return f"{draft_raw}, número {clean_reply}"
+    if component == "route":
+        return f"{clean_reply}, {draft_raw}"
+    if component == "locality":
+        return f"{draft_raw}, {clean_reply}"
+    if component == "administrative_area":
+        return f"{draft_raw}, {clean_reply}"
+    if component == "postal_code":
+        return f"{draft_raw}, CEP {clean_reply}"
+    return f"{draft_raw}, {clean_reply}"
 
 
 def _transition(

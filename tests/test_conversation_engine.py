@@ -14,9 +14,12 @@ from unittest.mock import AsyncMock
 from pytest import MonkeyPatch, mark, raises
 
 from app.booking.domain import (
+    AddressResolution,
+    AddressResolutionStatus,
     BookingPlan,
     BookingRequirements,
     PricingType,
+    ServiceAddress,
     ServiceEstimate,
     ServiceIntake,
     TravelEstimate,
@@ -30,6 +33,7 @@ from app.conversations.engine import (
 from app.conversations.ports import (
     BookingConfirmation,
     BookingOption,
+    BookingRecoveryRequired,
     ExistingBooking,
     SlotUnavailable,
 )
@@ -198,6 +202,8 @@ class FakeBookingPort:
             employee_id=EMPLOYEE_ID,
         )
         self.slot_unavailable = False
+        self.address_resolution: AddressResolution | None = None
+        self.resolved_address_inputs: list[str] = []
         self.existing_bookings = [
             ExistingBooking(
                 appointment_id=APPOINTMENT_ID,
@@ -218,6 +224,19 @@ class FakeBookingPort:
     ) -> ServiceIntake:
         assert service_id == SERVICE_ID
         return self.intake
+
+    async def resolve_service_address(
+        self,
+        _: uuid.UUID,
+        raw_address: str,
+    ) -> AddressResolution:
+        self.resolved_address_inputs.append(raw_address)
+        if self.address_resolution is not None:
+            return self.address_resolution
+        return AddressResolution(
+            AddressResolutionStatus.ACCEPTED,
+            address=ServiceAddress(address_line=raw_address),
+        )
 
     async def estimate(
         self,
@@ -1155,3 +1174,154 @@ async def test_transaction_rollback_keeps_state_and_outbox_consistent() -> None:
     assert conversation_repository.state == ConversationState.START
     assert conversation_repository.outbounds == []
     assert conversation_repository.idempotency_keys == set()
+
+
+@mark.asyncio
+async def test_address_validation_asks_only_for_missing_street_number() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.address_resolution = AddressResolution(
+        AddressResolutionStatus.NEEDS_INPUT,
+        missing_component="street_number",
+        reason="address_missing_component",
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="Rua Mauricio Cardoso, Jardim Sul")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.automation_enabled is True
+    assert repository.context["address_missing_component"] == "street_number"
+    assert "número" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+    booking_port.address_resolution = AddressResolution(
+        AddressResolutionStatus.ACCEPTED,
+        address=ServiceAddress(
+            address_line="Rua Mauricio Cardoso, 201 - Jardim Sul",
+            place_id="destination-place-id",
+        ),
+    )
+    await ConversationEngine(repository, booking_port).process(
+        inbound(2, body="201")
+    )
+
+    assert booking_port.resolved_address_inputs[-1].endswith("número 201")
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.automation_enabled is True
+    assert repository.context["service_address"]["place_id"] == (
+        "destination-place-id"
+    )
+
+
+@mark.asyncio
+async def test_address_confirmation_continues_automatic_booking() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.address_resolution = AddressResolution(
+        AddressResolutionStatus.NEEDS_CONFIRMATION,
+        address=ServiceAddress(
+            address_line="Rua Exemplo, 10",
+            place_id="place-to-confirm",
+        ),
+        reason="address_requires_confirmation",
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="Rua Exemplo, 10")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["address_confirmation_pending"] is True
+    assert repository.automation_enabled is True
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(2, body="sim")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+
+
+@mark.asyncio
+async def test_route_failure_recovers_without_handoff() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.address_resolution = AddressResolution(
+        AddressResolutionStatus.ACCEPTED,
+        address=ServiceAddress(
+            address_line="Rua Mauricio Cardoso, 201 - Jardim Sul",
+            place_id="destination-place-id",
+        ),
+    )
+    booking_port.plan = replace(
+        booking_port.plan,
+        requires_handoff=True,
+        handoff_reason="route_temporarily_unavailable",
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="Rua Mauricio Cardoso, 201 - Jardim Sul")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert repository.context["address_confirmation_pending"] is True
+    assert "deslocamento" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+
+@mark.asyncio
+async def test_recoverable_service_configuration_never_forces_handoff() -> None:
+    class RecoveringBookingPort(FakeBookingPort):
+        async def get_service_intake(
+            self,
+            _: uuid.UUID,
+            service_id: uuid.UUID,
+        ) -> ServiceIntake:
+            assert service_id == SERVICE_ID
+            raise BookingRecoveryRequired("service_configuration_invalid")
+
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+    )
+
+    await ConversationEngine(
+        repository,
+        RecoveringBookingPort(),
+    ).process(
+        inbound(1, action=f"service:{SERVICE_ID}")
+    )
+
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert "serviço" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()

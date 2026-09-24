@@ -30,6 +30,13 @@ class TravelCalculationMethod(StrEnum):
     CONFIGURED_ESTIMATE = "configured_estimate"
 
 
+class AddressResolutionStatus(StrEnum):
+    ACCEPTED = "accepted"
+    NEEDS_INPUT = "needs_input"
+    NEEDS_CONFIRMATION = "needs_confirmation"
+    TEMPORARILY_UNAVAILABLE = "temporarily_unavailable"
+
+
 @dataclass(frozen=True, slots=True)
 class ServiceAddress:
     address_line: str
@@ -39,6 +46,7 @@ class ServiceAddress:
     city: str | None = None
     state: str | None = None
     postal_code: str | None = None
+    place_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.address_line.strip():
@@ -71,6 +79,7 @@ class ServiceAddress:
                 "city": self.city,
                 "state": self.state,
                 "postal_code": self.postal_code,
+                "place_id": self.place_id,
             }.items()
             if value is not None and value.strip()
         }
@@ -91,10 +100,19 @@ class ServiceAddress:
                 "city",
                 "state",
                 "postal_code",
+                "place_id",
             )
             if (raw := value.get(key)) is not None
         }
         return cls(address_line=address_line, **optional)
+
+
+@dataclass(frozen=True, slots=True)
+class AddressResolution:
+    status: AddressResolutionStatus
+    address: ServiceAddress | None = None
+    missing_component: str | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +196,7 @@ class TravelEstimate:
     within_service_area: bool = True
     available: bool = True
     origin_is_precise: bool = False
+    failure_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.travel_minutes < 0:
