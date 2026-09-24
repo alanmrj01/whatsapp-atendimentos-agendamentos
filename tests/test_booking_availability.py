@@ -787,6 +787,78 @@ async def test_booking_plan_uses_configurable_origin_and_buffers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_same_business_address_uses_zero_travel_without_fallback() -> None:
+    company = business(
+        service_origin_address=(
+            "Rua Itumbiara, 160 - Parque Industrial, "
+            "São José dos Campos - SP, CEP 12235-740"
+        ),
+        travel_calculation_method="configured_estimate",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+    )
+
+    class PlanPort(PostgresBookingAvailabilityPort):
+        async def _load_business_service(self, *args: Any):  # type: ignore[no-untyped-def]
+            return company, service()
+
+        async def _require_eligible_employees(self, *args: Any):  # type: ignore[no-untyped-def]
+            return (EMPLOYEE_A,)
+
+    booking_plan = await PlanPort(object()).estimate(  # type: ignore[arg-type]
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(
+            address=ServiceAddress(
+                "Rua Itumbiara, parque industrial - 160, "
+                "São José dos Campos"
+            )
+        ),
+    )
+
+    assert booking_plan.requires_handoff is False
+    assert booking_plan.travel.travel_minutes == 0
+    assert booking_plan.travel.available is True
+    assert booking_plan.travel.source == "same_address"
+    assert booking_plan.travel.method == "same_address"
+
+
+@pytest.mark.asyncio
+async def test_similar_but_different_address_does_not_get_zero_travel() -> None:
+    company = business(
+        service_origin_address=(
+            "Rua Itumbiara, 160 - Parque Industrial, "
+            "São José dos Campos - SP, CEP 12235-740"
+        ),
+        travel_calculation_method="configured_estimate",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+    )
+
+    class PlanPort(PostgresBookingAvailabilityPort):
+        async def _load_business_service(self, *args: Any):  # type: ignore[no-untyped-def]
+            return company, service()
+
+        async def _require_eligible_employees(self, *args: Any):  # type: ignore[no-untyped-def]
+            return (EMPLOYEE_A,)
+
+    booking_plan = await PlanPort(object()).estimate(  # type: ignore[arg-type]
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(
+            address=ServiceAddress(
+                "Rua Goiânia, parque industrial - 160, "
+                "São José dos Campos"
+            )
+        ),
+    )
+
+    assert booking_plan.requires_handoff is True
+    assert booking_plan.handoff_reason == "travel_estimate_unavailable"
+    assert booking_plan.travel.available is False
+
+
+@pytest.mark.asyncio
 async def test_route_without_provider_or_allowed_fallback_requires_handoff() -> None:
     company = business(
         travel_calculation_method="route",

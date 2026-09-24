@@ -18,7 +18,10 @@ from pytest import LogCaptureFixture, MonkeyPatch
 from app.api import internal_tasks
 from app.core.config import CloudTasksConfigurationError, Settings
 from app.main import app
-from app.repositories.outbound_tasks import StoredOutboundMessage
+from app.repositories.outbound_tasks import (
+    StoredOutboundMessage,
+    _automation_blocked_for_message,
+)
 from app.schemas.cloud_tasks import WhatsAppOutboundTaskPayload
 from app.tasks import auth as task_auth
 from app.tasks.auth import require_cloud_tasks_oidc, require_outbound_tasks_oidc
@@ -419,6 +422,27 @@ async def test_collective_recipient_is_failed_without_external_call() -> None:
     assert result == "failed"
     factory.assert_not_called()
     assert repository.failed == [MESSAGE_ID]
+
+
+def test_handoff_notice_bypasses_only_standard_automation_block() -> None:
+    assert _automation_blocked_for_message(
+        idempotency_key="conversation:outbound:handoff",
+        outbound_payload={"_alovia_transition": "handoff"},
+        active_ignore=False,
+        standard_automation_blocked=True,
+    ) is False
+    assert _automation_blocked_for_message(
+        idempotency_key="conversation:outbound:handoff",
+        outbound_payload={"_alovia_transition": "handoff"},
+        active_ignore=True,
+        standard_automation_blocked=True,
+    ) is True
+    assert _automation_blocked_for_message(
+        idempotency_key="conversation:outbound:ordinary",
+        outbound_payload=None,
+        active_ignore=False,
+        standard_automation_blocked=True,
+    ) is True
 
 
 @pytest.mark.asyncio
