@@ -137,10 +137,16 @@ class WhatsAppWebhookRepository:
             return created_id
 
         existing = await self.session.execute(
-            select(Conversation.id).where(
+            update(Conversation)
+            .where(
                 Conversation.business_id == business_id,
                 Conversation.customer_id == customer_id,
             )
+            .values(
+                deleted_at=None,
+                last_interaction_at=func.now(),
+            )
+            .returning(Conversation.id)
         )
         return existing.scalar_one()
 

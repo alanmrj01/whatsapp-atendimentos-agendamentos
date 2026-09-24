@@ -25,6 +25,9 @@ from app.conversations.constants import (
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
+    CANCEL_ABORT,
+    CANCEL_CONFIRM,
+    RESCHEDULE_CONFIRM,
     MENU_BOOK,
     MENU_CANCEL,
     MENU_HUMAN,
@@ -42,16 +45,22 @@ from app.conversations.outbound import (
     booking_completed_message,
     booking_confirmation_message,
     booking_unavailable_message,
+    cancel_completed_message,
+    cancel_confirmation_message,
     cancel_message,
     date_selection_message,
+    existing_booking_selection_message,
     handoff_message,
     main_menu_message,
     no_services_message,
     quantity_selection_message,
+    reschedule_completed_message,
+    reschedule_confirmation_message,
     reschedule_message,
     service_selection_message,
     site_limit_message,
     slot_unavailable_message,
+    tubing_length_message,
     time_selection_message,
 )
 from app.conversations.interpreter import (
@@ -60,9 +69,11 @@ from app.conversations.interpreter import (
     Interpretation,
     normalize_portuguese,
 )
+from app.conversations.service_semantics import semantic_service_score
 from app.conversations.ports import (
     BookingAvailabilityPort,
     BookingConfirmation,
+    BookingNotFound,
     BookingOption,
     BookingPortUnavailable,
     BookingRequiresHandoff,
@@ -125,6 +136,8 @@ async def determine_transition(
         return await _handle_access(inbound, context, action, booking_port)
     if state is ConversationState.BOOKING_ADDRESS:
         return await _handle_address(inbound, context, booking_port)
+    if state is ConversationState.BOOKING_TUBING:
+        return await _handle_tubing(inbound, context, booking_port)
     if state is ConversationState.BOOKING_SITE_LIMIT:
         return await _handle_site_limit(inbound, context, action, booking_port)
     if state is ConversationState.BOOKING_DATE:
@@ -134,13 +147,9 @@ async def determine_transition(
     if state is ConversationState.BOOKING_CONFIRM:
         return await _handle_confirmation(inbound, context, action, booking_port)
     if state is ConversationState.RESCHEDULE:
-        if action == BOOKING_BACK:
-            return _transition(ConversationState.MENU, {}, main_menu_message())
-        return _transition(state, {}, reschedule_message())
+        return await _handle_reschedule(inbound, context, action, booking_port)
     if state is ConversationState.CANCEL:
-        if action == BOOKING_BACK:
-            return _transition(ConversationState.MENU, {}, main_menu_message())
-        return _transition(state, {}, cancel_message())
+        return await _handle_cancel(inbound, context, action, booking_port)
     return _transition(ConversationState.MENU, {}, main_menu_message())
 
 
@@ -157,9 +166,9 @@ async def _handle_natural_start(
             _text_message(conversation.greeting_message),
         )
     if interpretation.intent is ConversationIntent.RESCHEDULE:
-        return _transition(ConversationState.RESCHEDULE, {}, reschedule_message())
+        return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
     if interpretation.intent is ConversationIntent.CANCEL:
-        return _transition(ConversationState.CANCEL, {}, cancel_message())
+        return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
         return _handoff_transition(conversation.handoff_message)
     if interpretation.intent in {
@@ -235,13 +244,9 @@ async def _handle_menu(
             service_selection_message(services),
         )
     if action == MENU_RESCHEDULE:
-        return _transition(
-            ConversationState.RESCHEDULE,
-            {},
-            reschedule_message(),
-        )
+        return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
     if action == MENU_CANCEL:
-        return _transition(ConversationState.CANCEL, {}, cancel_message())
+        return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
     if action == MENU_HUMAN:
         return _transition(
             ConversationState.HUMAN_HANDOFF,
@@ -298,6 +303,18 @@ async def _handle_service(
         matched = _service_for_interpretation(services, interpretation)
         service_id = uuid.UUID(matched.id) if matched is not None else None
     if service_id is None or not _option_exists(services, str(service_id)):
+        if interpretation and interpretation.intent in {
+            ConversationIntent.BOOK,
+            ConversationIntent.AVAILABILITY,
+        }:
+            return _transition(
+                ConversationState.BOOKING_SERVICE,
+                context,
+                service_selection_message(
+                    services,
+                    body="Claro. Qual serviço você quer agendar?",
+                ),
+            )
         if inbound.body and inbound.body.strip():
             return _transition(
                 ConversationState.BOOKING_SERVICE,
@@ -436,6 +453,44 @@ async def _handle_address(
             "service_address": address.to_snapshot(),
         },
     )
+
+
+async def _handle_tubing(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_TUBING,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff:
+        return _handoff_transition()
+
+    normalized = normalize_portuguese(inbound.body or "")
+    updated = {
+        **context,
+        "service_id": str(service_id),
+        "tubing_length_answered": True,
+    }
+    if normalized in {"nao sei", "não sei", "nao tenho certeza", "não tenho certeza"}:
+        updated.pop("tubing_meters", None)
+        return await _advance_intake(inbound, port, intake, updated)
+
+    meters = _decimal_from_text(inbound.body)
+    if meters is None or meters <= 0 or meters > Decimal("100"):
+        return _transition(
+            ConversationState.BOOKING_TUBING,
+            context,
+            tubing_length_message(),
+        )
+    updated["tubing_meters"] = str(meters)
+    return await _advance_intake(inbound, port, intake, updated)
 
 
 async def _handle_site_limit(
@@ -717,6 +772,289 @@ async def _handle_confirmation(
     )
 
 
+async def _begin_existing_booking_flow(
+    inbound: ConversationInput,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    purpose: str,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        bookings = await port.list_customer_bookings(
+            inbound.business_id,
+            inbound.customer_id,
+        )
+    except BookingPortUnavailable:
+        return _transition(ConversationState.MENU, {}, booking_unavailable_message())
+
+    if not bookings:
+        return _transition(
+            ConversationState.MENU,
+            {},
+            reschedule_message() if purpose == "reschedule" else cancel_message(),
+        )
+    options = tuple(
+        BookingOption(str(item.appointment_id), item.label)
+        for item in bookings
+    )
+    return _transition(
+        ConversationState.RESCHEDULE if purpose == "reschedule" else ConversationState.CANCEL,
+        {},
+        existing_booking_selection_message(options, purpose=purpose),
+    )
+
+
+async def _handle_reschedule(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+    except BookingPortUnavailable:
+        return _transition(ConversationState.RESCHEDULE, context, booking_unavailable_message())
+
+    if action == BOOKING_CANCEL:
+        return _transition(ConversationState.MENU, {}, booking_cancelled_message())
+
+    appointment_id = _context_uuid(context, "appointment_id")
+    service_id = _context_service_id(context)
+    selected_date = _context_string(context, "selected_date")
+    selected_time = _context_string(context, "selected_time")
+
+    if appointment_id is None:
+        bookings = await port.list_customer_bookings(
+            inbound.business_id,
+            inbound.customer_id,
+        )
+        selected_id = _appointment_id(action)
+        selected = next(
+            (item for item in bookings if item.appointment_id == selected_id),
+            None,
+        )
+        if selected is None:
+            options = tuple(
+                BookingOption(str(item.appointment_id), item.label)
+                for item in bookings
+            )
+            if not options:
+                return _transition(ConversationState.MENU, {}, reschedule_message())
+            return _transition(
+                ConversationState.RESCHEDULE,
+                {},
+                existing_booking_selection_message(options, purpose="reschedule"),
+            )
+        base_context = _context_from_existing_booking(selected)
+        dates = _snapshot_options(
+            await port.list_dates(
+                inbound.business_id,
+                selected.service_id,
+                selected.requirements,
+            )
+        )
+        if not dates:
+            return _transition(
+                ConversationState.RESCHEDULE,
+                base_context,
+                booking_unavailable_message(),
+            )
+        return _transition(
+            ConversationState.RESCHEDULE,
+            base_context,
+            date_selection_message(
+                dates,
+                body="Escolha a nova data do atendimento.",
+            ),
+        )
+
+    requirements = _requirements_from_context(context)
+    if service_id is None:
+        return await _begin_existing_booking_flow(
+            inbound, port, purpose="reschedule"
+        )
+
+    if selected_date is None:
+        dates = _snapshot_options(
+            await port.list_dates(inbound.business_id, service_id, requirements)
+        )
+        selected_date = _selected_date(action) or _date_from_text(inbound.body, dates)
+        if selected_date is None or not _option_exists(dates, selected_date):
+            return _transition(
+                ConversationState.RESCHEDULE,
+                context,
+                date_selection_message(dates, body="Escolha a nova data do atendimento."),
+            )
+        times = _snapshot_options(
+            await port.list_times(
+                inbound.business_id,
+                service_id,
+                selected_date,
+                requirements,
+            )
+        )
+        return _transition(
+            ConversationState.RESCHEDULE,
+            {**context, "selected_date": selected_date},
+            time_selection_message(times, body="Escolha o novo horário."),
+        )
+
+    if selected_time is None:
+        times = _snapshot_options(
+            await port.list_times(
+                inbound.business_id,
+                service_id,
+                selected_date,
+                requirements,
+            )
+        )
+        selected_time = _selected_time(action) or _time_from_text(inbound.body, times)
+        if selected_time is None or not _option_exists(times, selected_time):
+            return _transition(
+                ConversationState.RESCHEDULE,
+                context,
+                time_selection_message(times, body="Escolha o novo horário."),
+            )
+        return _transition(
+            ConversationState.RESCHEDULE,
+            {**context, "selected_time": selected_time},
+            reschedule_confirmation_message(),
+        )
+
+    normalized = normalize_portuguese(inbound.body or "")
+    if action is None and normalized in {"confirmar", "confirmo", "sim", "pode", "pode confirmar"}:
+        action = RESCHEDULE_CONFIRM
+    elif action is None and normalized in {"voltar", "outro horario", "trocar horario"}:
+        action = BOOKING_BACK
+
+    if action == BOOKING_BACK:
+        updated = dict(context)
+        updated.pop("selected_time", None)
+        times = _snapshot_options(
+            await port.list_times(
+                inbound.business_id,
+                service_id,
+                selected_date,
+                requirements,
+            )
+        )
+        return _transition(
+            ConversationState.RESCHEDULE,
+            updated,
+            time_selection_message(times, body="Escolha o novo horário."),
+        )
+    if action != RESCHEDULE_CONFIRM:
+        return _transition(
+            ConversationState.RESCHEDULE,
+            context,
+            reschedule_confirmation_message(),
+        )
+
+    try:
+        result = await port.reschedule_booking_atomic(
+            inbound.business_id,
+            inbound.customer_id,
+            appointment_id,
+            selected_date,
+            selected_time,
+            requirements,
+        )
+    except (BookingNotFound, SlotUnavailable):
+        return await _begin_existing_booking_flow(
+            inbound, port, purpose="reschedule"
+        )
+    except BookingRequiresHandoff:
+        return _handoff_transition()
+    if not isinstance(result, BookingConfirmation):
+        return _transition(
+            ConversationState.RESCHEDULE,
+            context,
+            booking_unavailable_message(),
+        )
+    return _transition(
+        ConversationState.COMPLETED,
+        {},
+        reschedule_completed_message(),
+    )
+
+
+async def _handle_cancel(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+    except BookingPortUnavailable:
+        return _transition(ConversationState.CANCEL, context, booking_unavailable_message())
+
+    appointment_id = _context_uuid(context, "appointment_id")
+    if appointment_id is None:
+        bookings = await port.list_customer_bookings(
+            inbound.business_id,
+            inbound.customer_id,
+        )
+        selected_id = _appointment_id(action)
+        selected = next(
+            (item for item in bookings if item.appointment_id == selected_id),
+            None,
+        )
+        if selected is None:
+            options = tuple(
+                BookingOption(str(item.appointment_id), item.label)
+                for item in bookings
+            )
+            if not options:
+                return _transition(ConversationState.MENU, {}, cancel_message())
+            return _transition(
+                ConversationState.CANCEL,
+                {},
+                existing_booking_selection_message(options, purpose="cancel"),
+            )
+        return _transition(
+            ConversationState.CANCEL,
+            {"appointment_id": str(selected.appointment_id)},
+            cancel_confirmation_message(),
+        )
+
+    normalized = normalize_portuguese(inbound.body or "")
+    if action is None and normalized in {"sim", "confirmar", "cancela", "cancelar"}:
+        action = CANCEL_CONFIRM
+    elif action is None and normalized in {"nao", "não", "manter", "voltar"}:
+        action = CANCEL_ABORT
+
+    if action == CANCEL_ABORT or action == BOOKING_BACK:
+        return _transition(ConversationState.MENU, {}, main_menu_message())
+    if action != CANCEL_CONFIRM:
+        return _transition(
+            ConversationState.CANCEL,
+            context,
+            cancel_confirmation_message(),
+        )
+    try:
+        result = await port.cancel_booking(
+            inbound.business_id,
+            inbound.customer_id,
+            appointment_id,
+        )
+    except BookingNotFound:
+        return await _begin_existing_booking_flow(
+            inbound, port, purpose="cancel"
+        )
+    if not isinstance(result, BookingConfirmation):
+        return _transition(
+            ConversationState.CANCEL,
+            context,
+            booking_unavailable_message(),
+        )
+    return _transition(
+        ConversationState.COMPLETED,
+        {},
+        cancel_completed_message(),
+    )
+
+
 async def _advance_intake(
     inbound: ConversationInput,
     port: BookingAvailabilityPort,
@@ -748,6 +1086,12 @@ async def _advance_intake(
             ConversationState.BOOKING_ADDRESS,
             context,
             address_request_message(),
+        )
+    if intake.asks_tubing_length and context.get("tubing_length_answered") is not True:
+        return _transition(
+            ConversationState.BOOKING_TUBING,
+            context,
+            tubing_length_message(),
         )
     if intake.asks_site_time_limit and context.get("site_limit_answered") is not True:
         return _transition(
@@ -910,7 +1254,10 @@ def _require_booking_port(
 def _snapshot_options(
     options: Sequence[BookingOption],
 ) -> tuple[BookingOption, ...]:
-    return tuple(BookingOption(option.id, option.label) for option in options)
+    return tuple(
+        BookingOption(option.id, option.label, tuple(option.examples))
+        for option in options
+    )
 
 
 def _option_exists(options: Sequence[BookingOption], expected_id: str) -> bool:
@@ -921,20 +1268,26 @@ def _service_for_interpretation(
     services: Sequence[BookingOption],
     interpretation: Interpretation,
 ) -> BookingOption | None:
-    if interpretation.service_key is None:
+    text = interpretation.normalized_text
+    if not text:
         return None
-    markers = {
-        "split-installation": ("instal", "split"),
-        "cleaning": ("limpeza", "higien"),
-        "preventive-maintenance": ("prevent", "revis"),
-        "diagnostics": ("diagnost", "corretiva"),
-        "gas-recharge": ("gas", "vazamento", "recarga"),
-    }[interpretation.service_key]
-    for service in services:
-        label = normalize_portuguese(service.label)
-        if any(marker in label for marker in markers):
-            return service
-    return None
+
+    ranked = sorted(
+        (
+            (
+                semantic_service_score(text, service.label, service.examples),
+                service,
+            )
+            for service in services
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    if not ranked or ranked[0][0] < 0.48:
+        return None
+    if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < 0.08:
+        return None
+    return ranked[0][1]
 
 
 def _date_from_text(
@@ -999,6 +1352,44 @@ def _service_id(action: str | None) -> uuid.UUID | None:
         return uuid.UUID(action.removeprefix("service:"))
     except ValueError:
         return None
+
+
+def _appointment_id(action: str | None) -> uuid.UUID | None:
+    if action is None or not action.startswith("appointment:"):
+        return None
+    try:
+        return uuid.UUID(action.removeprefix("appointment:"))
+    except ValueError:
+        return None
+
+
+def _context_uuid(context: dict[str, Any], key: str) -> uuid.UUID | None:
+    value = _context_string(context, key)
+    if value is None:
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return None
+
+
+def _context_from_existing_booking(booking) -> dict[str, Any]:
+    requirements = booking.requirements
+    context: dict[str, Any] = {
+        "appointment_id": str(booking.appointment_id),
+        "service_id": str(booking.service_id),
+        "quantity": requirements.quantity or 1,
+        "access_condition": requirements.access_condition.value,
+    }
+    if requirements.address is not None:
+        context["service_address"] = requirements.address.to_snapshot()
+    if requirements.tubing_meters is not None:
+        context["tubing_meters"] = str(requirements.tubing_meters)
+        context["tubing_length_answered"] = True
+    if requirements.site_allowed_end is not None:
+        context["site_allowed_end"] = requirements.site_allowed_end.strftime("%H:%M")
+        context["site_limit_answered"] = True
+    return context
 
 
 def _selected_date(action: str | None) -> str | None:
@@ -1070,6 +1461,8 @@ def _intake_context(context: dict[str, Any]) -> dict[str, Any]:
             "quantity",
             "access_condition",
             "service_address",
+            "tubing_meters",
+            "tubing_length_answered",
             "site_allowed_end",
             "site_limit_answered",
         }
@@ -1097,12 +1490,31 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
                 site_limit = parsed
         except ValueError:
             pass
+    tubing_value = _context_string(context, "tubing_meters")
+    tubing: Decimal | None = None
+    if tubing_value is not None:
+        try:
+            tubing = Decimal(tubing_value)
+        except Exception:
+            tubing = None
     return BookingRequirements(
         quantity=quantity,
         access_condition=access,
         address=address,
         site_allowed_end=site_limit,
+        tubing_meters=tubing,
     )
+
+
+def _decimal_from_text(body: str | None) -> Decimal | None:
+    normalized = normalize_portuguese(body or "").replace(",", ".")
+    match = __import__("re").search(r"\b(\d+(?:\.\d{1,2})?)\b", normalized)
+    if match is None:
+        return None
+    try:
+        return Decimal(match.group(1))
+    except Exception:
+        return None
 
 
 def _quantity(action: str | None, body: str | None) -> int | None:

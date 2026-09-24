@@ -10,6 +10,8 @@ EXPECTED_TABLES = {
     "users",
     "business_user_memberships",
     "business_access",
+    "business_catalog_items",
+    "business_notifications",
     "auth_sessions",
     "appointments",
     "businesses",
@@ -52,6 +54,31 @@ def test_foreign_keys_do_not_enable_destructive_cascades() -> None:
 
     assert foreign_keys
     assert all(foreign_key.ondelete is None for foreign_key in foreign_keys)
+
+
+def test_automatic_booking_notifications_are_tenant_scoped_and_idempotent() -> None:
+    notifications = Base.metadata.tables["business_notifications"]
+    foreign_keys = foreign_key_specs("business_notifications")
+    unique_constraints = {
+        constraint.name: tuple(column.name for column in constraint.columns)
+        for constraint in notifications.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+    assert foreign_keys[
+        "fk_business_notifications_business_appointment_appointments"
+    ] == (
+        ("business_id", "appointment_id"),
+        ("appointments.business_id", "appointments.id"),
+    )
+    assert unique_constraints[
+        "uq_business_notifications_appointment_event"
+    ] == ("business_id", "appointment_id", "event_type")
+    assert "uq_appointments_business_id_id" in {
+        constraint.name
+        for constraint in Base.metadata.tables["appointments"].constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
 
 
 def test_business_and_service_positive_duration_constraints() -> None:
@@ -259,20 +286,24 @@ def test_required_server_defaults_are_registered() -> None:
         ("businesses", "assistant_handoff_message"): (
             "Seu atendimento foi encaminhado para uma pessoa da equipe."
         ),
-        ("businesses", "service_origin_address"): (
-            "Zona Leste de São José dos Campos - SP"
-        ),
         ("businesses", "service_origin_is_precise"): "false",
         ("businesses", "travel_calculation_method"): "configured_estimate",
         ("businesses", "travel_fallback_allowed"): "false",
         ("businesses", "travel_before_buffer_minutes"): "0",
         ("businesses", "travel_after_buffer_minutes"): "0",
+        ("businesses", "materials_catalog_reviewed"): "false",
+        ("businesses", "agenda_preferences_reviewed"): "false",
+        ("businesses", "onboarding_version"): "0",
         ("businesses", "active"): "true",
         ("services", "pricing_type"): "estimated",
         ("services", "automatic_booking"): "true",
         ("services", "included_quantity"): "1",
+        ("services", "intent_examples"): "'[]'::jsonb",
+        ("services", "asks_tubing_length"): "false",
         ("conversations", "automation_enabled"): "true",
         ("conversations", "handoff_status"): "none",
+        ("conversations", "manual_unread"): "false",
+        ("business_catalog_items", "active"): "false",
         ("processed_webhooks", "attempts"): "0",
         ("employees", "operational_role"): "technician",
     }

@@ -40,6 +40,30 @@ WHATSAPP_CONNECTIONS_MIGRATION_PATH = (
     / "versions"
     / "20260902_0005_business_whatsapp_connections.py"
 )
+NOTIFICATIONS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260922_0015_automatic_booking_notifications.py"
+)
+RLS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260923_0016_enable_rls.py"
+)
+COMPANY_HOURS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260923_0017_company_operating_hours.py"
+)
+STRUCTURED_ADDRESS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260923_0018_structured_company_address.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -68,11 +92,62 @@ def render_migration_sql(
     return output.getvalue()
 
 
-def test_access_history_migration_is_the_only_alembic_head() -> None:
+def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260921_0011"]
+    assert script.get_heads() == ["20260923_0018"]
+
+
+def test_automatic_booking_notifications_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", NOTIFICATIONS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", NOTIFICATIONS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "create table business_notifications" in upgrade
+    assert "automatic_booking_confirmed" in upgrade
+    assert "uq_business_notifications_appointment_event" in upgrade
+    assert "fk_business_notifications_business_appointment_appointments" in upgrade
+    assert "drop table business_notifications" in downgrade
+    assert "drop constraint uq_appointments_business_id_id" in downgrade
+
+
+def test_rls_migration_is_reversible_and_hardens_function_search_path() -> None:
+    upgrade = " ".join(render_migration_sql("upgrade", RLS_MIGRATION_PATH).lower().split())
+    downgrade = " ".join(render_migration_sql("downgrade", RLS_MIGRATION_PATH).lower().split())
+
+    assert 'alter table public."businesses" enable row level security' in upgrade
+    assert 'alter table public."business_notifications" enable row level security' in upgrade
+    assert "alter function public.booking_add_minutes_immutable" in upgrade
+    assert "set search_path = pg_catalog, public" in upgrade
+    assert 'alter table public."businesses" disable row level security' in downgrade
+    assert "reset search_path" in downgrade
+
+
+def test_company_hours_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", COMPANY_HOURS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", COMPANY_HOURS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "add column operating_weekdays" in upgrade
+    assert "add column weekday_start_time" in upgrade
+    assert "add column weekend_holiday_enabled" in upgrade
+    assert "update business_catalog_items" in upgrade
+    assert "drop column operating_weekdays" in downgrade
 
 
 def test_previous_migrations_remain_byte_identical() -> None:
@@ -95,7 +170,8 @@ def test_previous_migrations_remain_byte_identical() -> None:
     }
 
     for path, digest in expected.items():
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        normalized = path.read_bytes().replace(b"\r\n", b"\n")
+        assert hashlib.sha256(normalized).hexdigest() == digest
 
 
 def test_automation_coexistence_upgrade_and_downgrade_sql() -> None:

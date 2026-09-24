@@ -3,19 +3,15 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import get_settings
-from app.models import Business, Customer, Employee, EmployeeService, Service
-from app.operations.schemas import AppointmentCreate
-from app.operations.service import OperationalService
 from tests.integration.test_booking_postgresql import (
     TEST_DATABASE_URL,
     _assert_disposable_database,
@@ -33,65 +29,85 @@ NOTE = "Nota que precisa sobreviver ao rollback"
 
 async def _seed_pending_appointment() -> UUID:
     engine = create_async_engine(_async_url(TEST_DATABASE_URL), pool_pre_ping=True)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    business_id, customer_id, service_id, employee_id = (
-        uuid4(), uuid4(), uuid4(), uuid4()
-    )
+    business_id = uuid4()
+    customer_id = uuid4()
+    service_id = uuid4()
+    employee_id = uuid4()
+    appointment_id = uuid4()
+    now = datetime.now(UTC) + timedelta(days=1)
     try:
-        async with factory() as session:
-            async with session.begin():
-                session.add_all([
-                    Business(
-                        id=business_id,
-                        name="Roundtrip 0008",
-                        timezone="America/Sao_Paulo",
-                        active=True,
-                    ),
-                    Customer(
-                        id=customer_id,
-                        business_id=business_id,
-                        whatsapp_id=f"roundtrip-{uuid4()}",
-                        phone_e164="+5512999999000",
-                        name="Cliente roundtrip",
-                    ),
-                    Service(
-                        id=service_id,
-                        business_id=business_id,
-                        name="Serviço roundtrip",
-                        duration_minutes=60,
-                        base_price=Decimal("100.00"),
-                        pricing_type="fixed",
-                        active=True,
-                    ),
-                    Employee(
-                        id=employee_id,
-                        business_id=business_id,
-                        name="Técnico roundtrip",
-                        active=True,
-                    ),
-                ])
-            async with session.begin():
-                session.add(
-                    EmployeeService(
-                        business_id=business_id,
-                        employee_id=employee_id,
-                        service_id=service_id,
-                    )
-                )
-            now = datetime.now(UTC) + timedelta(days=1)
-            appointment = await OperationalService(session).create_appointment(
-                business_id,
-                AppointmentCreate(
-                    customer_id=customer_id,
-                    service_id=service_id,
-                    employee_id=employee_id,
-                    starts_at=now,
-                    ends_at=now + timedelta(hours=1),
-                    status="pending",
-                    notes=NOTE,
-                ),
+        async with engine.begin() as connection:
+            # This test intentionally runs against the historical 0008 schema.
+            # Seed only columns available at that revision instead of using the
+            # current ORM models, which include fields introduced after 0008.
+            await connection.execute(
+                text("INSERT INTO businesses (id, name) VALUES (:id, :name)"),
+                {"id": business_id, "name": "Roundtrip 0008"},
             )
-            return appointment.id
+            await connection.execute(
+                text(
+                    "INSERT INTO customers "
+                    "(id, business_id, whatsapp_id, phone_e164, name) "
+                    "VALUES (:id, :business_id, :whatsapp_id, :phone_e164, :name)"
+                ),
+                {
+                    "id": customer_id,
+                    "business_id": business_id,
+                    "whatsapp_id": f"roundtrip-{uuid4()}",
+                    "phone_e164": "+5512999999000",
+                    "name": "Cliente roundtrip",
+                },
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO services "
+                    "(id, business_id, name, duration_minutes, base_price, "
+                    "pricing_type, active) "
+                    "VALUES (:id, :business_id, :name, :duration_minutes, "
+                    ":base_price, :pricing_type, true)"
+                ),
+                {
+                    "id": service_id,
+                    "business_id": business_id,
+                    "name": "Serviço roundtrip",
+                    "duration_minutes": 60,
+                    "base_price": "100.00",
+                    "pricing_type": "fixed",
+                },
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO employees (id, business_id, name, active) "
+                    "VALUES (:id, :business_id, :name, true)"
+                ),
+                {
+                    "id": employee_id,
+                    "business_id": business_id,
+                    "name": "Técnico roundtrip",
+                },
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO appointments "
+                    "(id, business_id, customer_id, service_id, employee_id, "
+                    "starts_at, ends_at, status, estimated_duration_minutes, "
+                    "pricing_type, notes) "
+                    "VALUES (:id, :business_id, :customer_id, :service_id, "
+                    ":employee_id, :starts_at, :ends_at, 'pending', 60, "
+                    "'fixed', :notes)"
+                ),
+                {
+                    "id": appointment_id,
+                    "business_id": business_id,
+                    "customer_id": customer_id,
+                    "service_id": service_id,
+                    "employee_id": employee_id,
+                    "starts_at": now,
+                    "ends_at": now + timedelta(hours=1),
+                    "notes": NOTE,
+                },
+            )
+            return appointment_id
     finally:
         await engine.dispose()
 

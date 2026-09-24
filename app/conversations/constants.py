@@ -8,6 +8,7 @@ class ConversationState(StrEnum):
     BOOKING_QUANTITY = "BOOKING_QUANTITY"
     BOOKING_ACCESS = "BOOKING_ACCESS"
     BOOKING_ADDRESS = "BOOKING_ADDRESS"
+    BOOKING_TUBING = "BOOKING_TUBING"
     BOOKING_SITE_LIMIT = "BOOKING_SITE_LIMIT"
     BOOKING_DATE = "BOOKING_DATE"
     BOOKING_TIME = "BOOKING_TIME"
@@ -26,6 +27,9 @@ MENU_HUMAN = "menu.human"
 BOOKING_CONFIRM = "booking.confirm"
 BOOKING_BACK = "booking.back"
 BOOKING_CANCEL = "booking.cancel"
+RESCHEDULE_CONFIRM = "reschedule.confirm"
+CANCEL_CONFIRM = "cancel.confirm"
+CANCEL_ABORT = "cancel.abort"
 
 ACCESS_NORMAL = "access.normal"
 ACCESS_DIFFICULT = "access.difficult"
@@ -39,6 +43,7 @@ QUANTITY_OPTION_LIMIT = 5
 
 ALLOWED_CONTEXT_KEYS = frozenset(
     {
+        "appointment_id",
         "service_id",
         "selected_date",
         "selected_time",
@@ -46,6 +51,8 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "quantity",
         "access_condition",
         "service_address",
+        "tubing_meters",
+        "tubing_length_answered",
         "site_allowed_end",
         "site_limit_answered",
     }

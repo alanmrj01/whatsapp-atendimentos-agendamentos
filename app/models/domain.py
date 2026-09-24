@@ -92,10 +92,23 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "(5, 10, 20, 30, 60, 120, 240, 360, 720, 1440, 2160)",
             name="human_control_window_minutes_allowed",
         ),
+        CheckConstraint(
+            "weekday_start_time IS NULL OR weekday_end_time IS NULL "
+            "OR weekday_end_time > weekday_start_time",
+            name="weekday_hours_valid",
+        ),
+        CheckConstraint(
+            "NOT weekend_holiday_enabled OR "
+            "(weekend_holiday_start_time IS NOT NULL "
+            "AND weekend_holiday_end_time IS NOT NULL "
+            "AND weekend_holiday_end_time > weekend_holiday_start_time)",
+            name="weekend_holiday_hours_valid",
+        ),
         Index("ix_businesses_active", "active"),
     )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    responsible_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     timezone: Mapped[str] = mapped_column(
         String(64),
         default="America/Sao_Paulo",
@@ -109,11 +122,30 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     slot_interval_minutes: Mapped[int] = mapped_column(
         Integer, default=30, server_default="30", nullable=False
     )
-    service_origin_address: Mapped[str] = mapped_column(
+    service_origin_address: Mapped[str | None] = mapped_column(
         String(500),
-        default="Zona Leste de São José dos Campos - SP",
-        server_default="Zona Leste de São José dos Campos - SP",
-        nullable=False,
+        nullable=True,
+    )
+    service_origin_postal_code: Mapped[str | None] = mapped_column(
+        String(8), nullable=True
+    )
+    service_origin_street: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    service_origin_neighborhood: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    service_origin_number: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    service_origin_city: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    service_origin_state: Mapped[str | None] = mapped_column(
+        String(2), nullable=True
+    )
+    service_origin_validated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     service_origin_latitude: Mapped[Decimal | None] = mapped_column(
         Numeric(9, 6), nullable=True
@@ -150,6 +182,32 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=list,
         server_default=text("'[]'::jsonb"),
         nullable=False,
+    )
+    interval_between_services_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    preparation_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finishing_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    minimum_booking_notice_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    operating_weekdays: Mapped[list[int]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    weekday_start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    weekday_end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    weekend_holiday_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    weekend_holiday_start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    weekend_holiday_end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    materials_catalog_reviewed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    agenda_preferences_reviewed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    onboarding_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
     )
     human_control_window_minutes: Mapped[int] = mapped_column(
         Integer, default=2160, server_default="2160", nullable=False
@@ -345,6 +403,8 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "ix_conversations_automation_suppressed_until",
             "automation_suppressed_until",
         ),
+        Index("ix_conversations_pinned_at", "pinned_at"),
+        Index("ix_conversations_deleted_at", "deleted_at"),
     )
 
     business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -380,6 +440,12 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     conversation_initiated_by: Mapped[str | None] = mapped_column(
         String(16), nullable=True
     )
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    manual_unread: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -473,8 +539,46 @@ class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     asks_site_time_limit: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    asks_tubing_length: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    included_tubing_meters: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 2), nullable=True
+    )
+    intent_examples: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+        nullable=False,
+    )
     active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true", nullable=False
+    )
+
+
+class BusinessCatalogItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "business_catalog_items"
+    __table_args__ = (
+        CheckConstraint("kind IN ('material', 'equipment')", name="kind_allowed"),
+        CheckConstraint("price IS NULL OR price >= 0", name="price_nonnegative"),
+        UniqueConstraint(
+            "business_id", "preset_key", name="uq_business_catalog_items_business_preset"
+        ),
+        Index("ix_business_catalog_items_business_id", "business_id"),
+        Index("ix_business_catalog_items_active", "active"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    unit_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    preset_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
     )
 
 
@@ -620,6 +724,9 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             ["employees.business_id", "employees.id"],
             name="fk_appointments_business_employee_employees",
         ),
+        UniqueConstraint(
+            "business_id", "id", name="uq_appointments_business_id_id"
+        ),
         ExcludeConstraint(
             ("employee_id", "="),
             (
@@ -667,6 +774,9 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     quantity: Mapped[int] = mapped_column(
         Integer, default=1, server_default="1", nullable=False
     )
+    tubing_meters: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 2), nullable=True
+    )
     access_condition: Mapped[str] = mapped_column(
         String(16), default="normal", server_default="normal", nullable=False
     )
@@ -692,6 +802,58 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     site_allowed_end: Mapped[time | None] = mapped_column(Time, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(
         String(255), nullable=True
+    )
+
+
+class BusinessNotification(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "business_notifications"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type = 'automatic_booking_confirmed'",
+            name="event_type_allowed",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "appointment_id"],
+            ["appointments.business_id", "appointments.id"],
+            name=(
+                "fk_business_notifications_business_appointment_appointments"
+            ),
+        ),
+        UniqueConstraint(
+            "business_id",
+            "appointment_id",
+            "event_type",
+            name="uq_business_notifications_appointment_event",
+        ),
+        Index(
+            "ix_business_notifications_business_created_at",
+            "business_id",
+            "created_at",
+        ),
+        Index(
+            "ix_business_notifications_business_read_at",
+            "business_id",
+            "read_at",
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    appointment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(
+        String(64),
+        default="automatic_booking_confirmed",
+        server_default="automatic_booking_confirmed",
+        nullable=False,
+    )
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

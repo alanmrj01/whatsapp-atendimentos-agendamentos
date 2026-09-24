@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
@@ -32,6 +33,7 @@ from app.conversations.ports import (
 from app.models import (
     Appointment,
     Business,
+    BusinessNotification,
     ScheduleBlock,
     Service,
     WorkingHours,
@@ -335,7 +337,8 @@ async def test_past_slots_are_not_returned_in_business_timezone() -> None:
     }
 
     assert "06:00" not in ids
-    assert "07:30" in ids
+    assert "07:30" not in ids
+    assert "09:30" in ids
 
 
 @pytest.mark.asyncio
@@ -351,17 +354,25 @@ async def test_dates_have_portuguese_labels_without_os_locale() -> None:
     assert dates[0].label == "quarta, 2 de setembro"
 
 
-def appointment(*, starts_at: datetime, status: str) -> Appointment:
+def appointment(
+    *,
+    starts_at: datetime,
+    status: str,
+    employee_id: uuid.UUID = EMPLOYEE_A,
+    address: str | None = "Rua Teste",
+) -> Appointment:
     return Appointment(
         id=uuid.uuid4(),
         business_id=BUSINESS_ID,
         customer_id=CUSTOMER_ID,
         service_id=SERVICE_ID,
-        employee_id=EMPLOYEE_A,
+        employee_id=employee_id,
         starts_at=starts_at,
         ends_at=starts_at + timedelta(hours=1),
         status=status,
-        service_address={"address_line": "Rua Teste"},
+        service_address=(
+            {"address_line": address} if address is not None else None
+        ),
         quantity=1,
         access_condition="normal",
         estimated_duration_minutes=60,
@@ -373,16 +384,166 @@ def appointment(*, starts_at: datetime, status: str) -> Appointment:
     )
 
 
+class RecordingRouteTravel:
+    def __init__(self, minutes: dict[tuple[str, str], int]) -> None:
+        self.minutes = minutes
+        self.calls: list[tuple[str, str]] = []
+
+    async def estimate(
+        self, origin: TravelOrigin, destination: ServiceAddress
+    ) -> TravelEstimate:
+        key = (origin.address, destination.searchable_text)
+        self.calls.append(key)
+        return TravelEstimate(
+            travel_minutes=self.minutes[key],
+            distance_km=None,
+            source="route-test",
+            method="route-test",
+            estimated=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_later_service_uses_previous_location_and_checks_following_route() -> None:
+    travel = RecordingRouteTravel(
+        {
+            ("Rua Anterior", "Rua Nova"): 20,
+            ("Rua Nova", "Rua Seguinte"): 15,
+        }
+    )
+    company = business(
+        travel_calculation_method="route",
+        preparation_minutes=0,
+        finishing_minutes=0,
+        interval_between_services_minutes=0,
+    )
+    port = PostgresBookingAvailabilityPort(  # type: ignore[arg-type]
+        object(), travel_time_port=travel
+    )
+    starts_at = datetime(2026, 9, 2, 13, tzinfo=timezone.utc)
+    previous = appointment(
+        starts_at=datetime(2026, 9, 2, 11, tzinfo=timezone.utc),
+        status="confirmed",
+        address="Rua Anterior",
+    )
+    following = appointment(
+        starts_at=datetime(2026, 9, 2, 15, tzinfo=timezone.utc),
+        status="confirmed",
+        address="Rua Seguinte",
+    )
+
+    result = await port._schedule_aware_plan(
+        company,
+        BookingRequirements(address=ServiceAddress("Rua Nova")),
+        plan(),
+        EMPLOYEE_A,
+        starts_at,
+        starts_at + timedelta(hours=1),
+        (previous, following),
+    )
+
+    assert travel.calls == [
+        ("Rua Anterior", "Rua Nova"),
+        ("Rua Nova", "Rua Seguinte"),
+    ]
+    assert result.travel_before_minutes == 20
+    assert result.travel_after_minutes == 15
+    assert result.requires_handoff is False
+
+
+@pytest.mark.asyncio
+async def test_missing_adjacent_service_address_fails_closed() -> None:
+    company = business(
+        preparation_minutes=0,
+        finishing_minutes=0,
+        interval_between_services_minutes=0,
+    )
+    port = PostgresBookingAvailabilityPort(object())  # type: ignore[arg-type]
+    starts_at = datetime(2026, 9, 2, 13, tzinfo=timezone.utc)
+    previous = appointment(
+        starts_at=datetime(2026, 9, 2, 11, tzinfo=timezone.utc),
+        status="confirmed",
+        address=None,
+    )
+
+    result = await port._schedule_aware_plan(
+        company,
+        BookingRequirements(address=ServiceAddress("Rua Nova")),
+        plan(),
+        EMPLOYEE_A,
+        starts_at,
+        starts_at + timedelta(hours=1),
+        (previous,),
+    )
+
+    assert result.requires_handoff is True
+    assert result.handoff_reason == "travel_estimate_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_multiple_employees_prioritize_best_schedule_and_travel_fit() -> None:
+    travel = RecordingRouteTravel(
+        {
+            ("Rua Distante", "Rua Nova"): 30,
+            ("Rua Próxima", "Rua Nova"): 5,
+        }
+    )
+    company = business(
+        travel_calculation_method="route",
+        preparation_minutes=0,
+        finishing_minutes=0,
+        interval_between_services_minutes=0,
+    )
+    port = StubAvailability(
+        capacity=capacity(
+            working(EMPLOYEE_A, time(8), time(14)),
+            working(EMPLOYEE_B, time(8), time(14)),
+            employees=(EMPLOYEE_A, EMPLOYEE_B),
+            appointments=(
+                appointment(
+                    starts_at=datetime(2026, 9, 2, 11, tzinfo=timezone.utc),
+                    status="confirmed",
+                    employee_id=EMPLOYEE_A,
+                    address="Rua Distante",
+                ),
+                appointment(
+                    starts_at=datetime(2026, 9, 2, 11, tzinfo=timezone.utc),
+                    status="confirmed",
+                    employee_id=EMPLOYEE_B,
+                    address="Rua Próxima",
+                ),
+            ),
+        ),
+        booking_plan=plan(),
+        company=company,
+    )
+    port.travel_time_port = travel
+
+    starts = await port._available_starts(
+        company,
+        port.catalog_service,
+        BookingRequirements(address=ServiceAddress("Rua Nova")),
+        port.booking_plan,
+        date(2026, 9, 2),
+        date(2026, 9, 2),
+    )
+    selected = datetime(
+        2026, 9, 2, 10, tzinfo=ZoneInfo("America/Sao_Paulo")
+    )
+
+    assert starts[selected] == (EMPLOYEE_B, EMPLOYEE_A)
+
+
 class MutationSession:
     def __init__(self) -> None:
-        self.added: list[Appointment] = []
+        self.added: list[Appointment | BusinessNotification] = []
         self.flushes = 0
 
     @asynccontextmanager
     async def begin_nested(self):  # type: ignore[no-untyped-def]
         yield
 
-    def add(self, value: Appointment) -> None:
+    def add(self, value: Appointment | BusinessNotification) -> None:
         if value.id is None:
             value.id = APPOINTMENT_ID
         self.added.append(value)
@@ -450,6 +611,7 @@ async def test_confirmation_freezes_duration_travel_price_and_address() -> None:
     )
 
     stored = session.added[0]
+    assert isinstance(stored, Appointment)
     assert confirmation.appointment_id == APPOINTMENT_ID
     assert stored.estimated_duration_minutes == 90
     assert stored.travel_before_minutes == 20
@@ -457,6 +619,12 @@ async def test_confirmation_freezes_duration_travel_price_and_address() -> None:
     assert stored.estimated_price == Decimal("100.00")
     assert stored.service_address == {"address_line": "Rua Congelada, 123"}
     assert stored.idempotency_key == "booking:test"
+    notification = session.added[1]
+    assert isinstance(notification, BusinessNotification)
+    assert notification.business_id == BUSINESS_ID
+    assert notification.appointment_id == APPOINTMENT_ID
+    assert notification.event_type == "automatic_booking_confirmed"
+    assert session.flushes == 2
 
 
 @pytest.mark.asyncio
@@ -545,7 +713,7 @@ async def test_no_eligible_employee_is_fail_closed() -> None:
 async def test_service_query_filters_active_and_automatically_bookable_catalog() -> None:
     class Rows:
         def all(self):  # type: ignore[no-untyped-def]
-            return [(SERVICE_ID, "Serviço ativo")]
+            return [(SERVICE_ID, "Serviço ativo", [])]
 
     class CaptureSession:
         statement: object | None = None
@@ -568,7 +736,7 @@ async def test_service_query_filters_active_and_automatically_bookable_catalog()
     assert options[0].label == "Serviço ativo"
     assert "services.active is true" in sql
     assert "businesses.active is true" in sql
-    assert "employees.active is true" in sql
+    assert "employee_services" not in sql
     assert "services.automatic_booking is true" in sql
     assert "services.pricing_type = 'human_quote'" in sql
 
@@ -613,8 +781,8 @@ async def test_booking_plan_uses_configurable_origin_and_buffers() -> None:
     assert travel.origin is not None
     assert travel.origin.address == "Origem configurada pela empresa"
     assert travel.origin.is_precise is False
-    assert booking_plan.travel_before_minutes == 25
-    assert booking_plan.travel_after_minutes == 30
+    assert booking_plan.travel_before_minutes == 35
+    assert booking_plan.travel_after_minutes == 41
     assert booking_plan.travel.estimated is True
 
 

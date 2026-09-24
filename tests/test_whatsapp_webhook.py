@@ -18,7 +18,10 @@ from sqlalchemy.exc import IntegrityError
 from app.api import whatsapp_webhook as webhook_api
 from app.booking.availability import PostgresBookingAvailabilityPort
 from app.main import app
-from app.repositories.whatsapp_webhook import build_claim_event_statement
+from app.repositories.whatsapp_webhook import (
+    WhatsAppWebhookRepository,
+    build_claim_event_statement,
+)
 from app.tasks.cloud_tasks import CloudTasksEnqueueError
 from app.whatsapp.processor import process_webhook_events
 from app.whatsapp.processor import persist_webhook_events_for_tasks
@@ -1270,6 +1273,52 @@ def test_processed_webhook_claim_uses_postgresql_unique_barrier() -> None:
         in sql
     )
     assert "RETURNING processed_webhooks.id" in sql
+
+
+@mark.asyncio
+async def test_existing_soft_deleted_conversation_is_reopened_on_inbound() -> None:
+    conversation_id = uuid.uuid4()
+
+    class Result:
+        def __init__(self, value: uuid.UUID | None) -> None:
+            self.value = value
+
+        def scalar_one_or_none(self) -> uuid.UUID | None:
+            return self.value
+
+        def scalar_one(self) -> uuid.UUID:
+            assert self.value is not None
+            return self.value
+
+    class Session:
+        statements: list[object]
+
+        def __init__(self) -> None:
+            self.statements = []
+
+        async def execute(self, statement: object) -> Result:
+            self.statements.append(statement)
+            return Result(None if len(self.statements) == 1 else conversation_id)
+
+    session = Session()
+    result = await WhatsAppWebhookRepository(session).get_or_create_conversation_id(  # type: ignore[arg-type]
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    update_sql = str(
+        session.statements[1].compile(
+            dialect=postgresql_dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+
+    assert result == conversation_id
+    assert update_sql.startswith("update conversations set")
+    assert "deleted_at=null" in update_sql
+    assert "last_interaction_at=now()" in update_sql
+    assert "conversations.business_id =" in update_sql
+    assert "conversations.customer_id =" in update_sql
+    assert "returning conversations.id" in update_sql
 
 
 @mark.asyncio

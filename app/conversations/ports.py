@@ -17,6 +17,15 @@ from app.booking.domain import (
 class BookingOption:
     id: str
     label: str
+    examples: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingBooking:
+    appointment_id: uuid.UUID
+    service_id: uuid.UUID
+    label: str
+    requirements: BookingRequirements
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +99,12 @@ class BookingAvailabilityPort(Protocol):
         selected_time: str,
         requirements: BookingRequirements = BookingRequirements(),
     ) -> BookingConfirmation: ...
+
+    async def list_customer_bookings(
+        self,
+        business_id: uuid.UUID,
+        customer_id: uuid.UUID,
+    ) -> Sequence[ExistingBooking]: ...
 
     async def cancel_booking(
         self,

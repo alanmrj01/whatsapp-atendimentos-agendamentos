@@ -7,13 +7,18 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, text
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
 from app.diagnostics import repository as diagnostic_repository
-from app.diagnostics.models import AutomationStatus, DiagnosticCode as Code, DiagnosticStatus as Status
+from app.diagnostics.models import (
+    AutomationStatus,
+    DiagnosticCode as Code,
+    DiagnosticStatus as Status,
+    EXPECTED_SCHEMA_REVISION,
+)
 from app.diagnostics.repository import DiagnosticsRepository
 from app.diagnostics.service import DiagnosticsService, observe
 from app.models import (
@@ -35,9 +40,12 @@ async def diagnostic_db():
     engine = create_async_engine(_async_url(TEST_DATABASE_URL), pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session, session.begin():
-        for model in (Message, ProcessedWebhook, Conversation, Customer,
-                      BusinessAutomationExclusion, BusinessWhatsAppConnection, Business):
-            await session.execute(delete(model))
+        # This suite shares the disposable PostgreSQL service with other physical
+        # tests. Clear the tenant root with CASCADE so rows created by booking,
+        # notifications, memberships, or future dependent tables cannot leak into
+        # diagnostics setup and violate foreign keys. Alembic metadata is separate.
+        await session.execute(text("TRUNCATE TABLE businesses CASCADE"))
+        await session.execute(text("TRUNCATE TABLE processed_webhooks"))
     try:
         yield engine, factory
     finally:
@@ -120,7 +128,7 @@ async def test_physical_reports_are_scoped_sanitized_and_read_only(diagnostic_db
     async with engine.connect() as connection:
         # Diagnostics did not mutate messages, schema or human-control state.
         assert await connection.scalar(text("SELECT count(*) FROM messages")) == 7
-        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260921_0011"
+        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == EXPECTED_SCHEMA_REVISION
         assert await connection.scalar(text("SELECT count(*) FROM conversations WHERE automation_suppressed_until IS NOT NULL")) == 1
 
     # Expiry is observed without changing the business's human-control policy.
@@ -159,7 +167,10 @@ async def test_physical_schema_mismatch_is_not_ready_without_running_migration(d
             assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260902_0004"
     finally:
         async with engine.begin() as connection:
-            await connection.execute(text("UPDATE alembic_version SET version_num = '20260921_0011'"))
+            await connection.execute(
+                text("UPDATE alembic_version SET version_num = :revision"),
+                {"revision": EXPECTED_SCHEMA_REVISION},
+            )
 
 
 async def test_physical_activity_limits_are_explicit(diagnostic_db, monkeypatch):

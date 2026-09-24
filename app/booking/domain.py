@@ -117,11 +117,14 @@ class BookingRequirements:
     access_condition: AccessCondition = AccessCondition.NORMAL
     address: ServiceAddress | None = None
     site_allowed_end: time | None = None
+    tubing_meters: Decimal | None = None
     idempotency_key: str | None = None
 
     def __post_init__(self) -> None:
         if self.quantity is not None and self.quantity <= 0:
             raise ValueError("Quantity must be positive")
+        if self.tubing_meters is not None and self.tubing_meters <= 0:
+            raise ValueError("Tubing length must be positive")
         if self.idempotency_key is not None and not self.idempotency_key.strip():
             raise ValueError("Idempotency key cannot be empty")
 
@@ -152,6 +155,7 @@ class ServiceIntake:
     asks_site_time_limit: bool
     automatic_booking: bool
     pricing_type: PricingType
+    asks_tubing_length: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -161,6 +161,13 @@ class WhatsAppConnectionAdministrationService:
         connection = await self._require_connection(business_id)
         connection.status = WhatsAppConnectionStatus.DISCONNECTED.value
         connection.disconnected_at = datetime.now(timezone.utc)
+        # A disconnected record must no longer be usable for inbound/outbound
+        # traffic and must not prevent the same number from being connected again.
+        connection.meta_waba_id = None
+        connection.meta_phone_number_id = None
+        connection.display_phone_number = None
+        connection.credential_secret_ref = None
+        connection.graph_version = None
         await self._session.flush()
         return _status_view(connection)
 

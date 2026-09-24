@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -86,6 +87,21 @@ class DashboardToday(StrictModel):
     upcoming_appointments: list[AppointmentView]
 
 
+class NotificationView(StrictModel):
+    id: UUID
+    appointment_id: UUID
+    event_type: Literal["automatic_booking_confirmed"]
+    title: str
+    body: str
+    target_path: str
+    read: bool
+    created_at: datetime
+
+
+class NotificationList(StrictModel):
+    items: list[NotificationView]
+
+
 class MessageView(StrictModel):
     id: UUID
     direction: Literal["inbound", "outbound"]
@@ -105,6 +121,8 @@ class ConversationView(StrictModel):
     status: ConversationStatus
     unread_count: int
     priority: bool
+    pinned: bool = False
+    manual_unread: bool = False
     assignee_name: str | None = None
 
 
@@ -155,27 +173,85 @@ class ConversationAutomationUpdate(StrictModel):
     enabled: bool
 
 
+class ConversationActionUpdate(StrictModel):
+    pinned: bool | None = None
+    read: bool | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ConversationActionUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one conversation action is required")
+        return self
+
+
+class PostalAddressView(StrictModel):
+    postal_code: str
+    street: str
+    neighborhood: str
+    city: str
+    state: str
+
+
 class BusinessView(StrictModel):
     id: UUID
     name: str
+    responsible_name: str | None
     timezone: str
+    service_origin_address: str | None
+    service_origin_postal_code: str | None
+    service_origin_street: str | None
+    service_origin_neighborhood: str | None
+    service_origin_number: str | None
+    service_origin_city: str | None
+    service_origin_state: str | None
+    service_origin_validated_at: datetime | None
     slot_interval_minutes: int
+    interval_between_services_minutes: int | None
+    preparation_minutes: int | None
+    finishing_minutes: int | None
+    minimum_booking_notice_minutes: int | None
+    materials_catalog_reviewed: bool
+    agenda_preferences_reviewed: bool
+    onboarding_completed_at: datetime | None
+    onboarding_version: int
 
 
 class BusinessUpdate(StrictModel):
     name: str | None = Field(default=None, min_length=2, max_length=255)
+    responsible_name: str | None = Field(default=None, max_length=255)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    service_origin_address: str | None = Field(default=None, max_length=500)
+    service_origin_postal_code: str | None = Field(default=None, pattern=r"^[0-9]{8}$")
+    service_origin_street: str | None = Field(default=None, min_length=2, max_length=255)
+    service_origin_neighborhood: str | None = Field(default=None, min_length=2, max_length=255)
+    service_origin_number: str | None = Field(default=None, min_length=1, max_length=32)
+    service_origin_city: str | None = Field(default=None, min_length=2, max_length=255)
+    service_origin_state: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     slot_interval_minutes: int | None = Field(default=None, ge=5, le=480)
+    interval_between_services_minutes: int | None = Field(default=None, ge=0, le=240)
+    preparation_minutes: int | None = Field(default=None, ge=0, le=240)
+    finishing_minutes: int | None = Field(default=None, ge=0, le=240)
+    minimum_booking_notice_minutes: int | None = Field(default=None, ge=0, le=10080)
+    materials_catalog_reviewed: bool | None = None
+    agenda_preferences_reviewed: bool | None = None
 
-    @field_validator("name")
+    @field_validator(
+        "name",
+        "responsible_name",
+        "service_origin_address",
+        "service_origin_street",
+        "service_origin_neighborhood",
+        "service_origin_number",
+        "service_origin_city",
+    )
     @classmethod
-    def normalize_name(cls, value: str | None) -> str | None:
+    def normalize_text(cls, value: str | None, info) -> str | None:
         if value is None:
             return None
         normalized = " ".join(value.split())
-        if len(normalized) < 2:
+        if info.field_name == "name" and len(normalized) < 2:
             raise ValueError("Business name is required")
-        return normalized
+        return normalized or None
 
     @field_validator("timezone")
     @classmethod
@@ -192,6 +268,62 @@ class BusinessUpdate(StrictModel):
     def require_change(self) -> "BusinessUpdate":
         if not self.model_fields_set:
             raise ValueError("At least one field is required")
+        address_fields = {
+            "service_origin_postal_code",
+            "service_origin_street",
+            "service_origin_neighborhood",
+            "service_origin_number",
+            "service_origin_city",
+            "service_origin_state",
+        }
+        if self.model_fields_set & address_fields:
+            missing = [
+                field_name
+                for field_name in address_fields
+                if field_name not in self.model_fields_set
+                or not getattr(self, field_name)
+            ]
+            if missing:
+                raise ValueError("Complete structured company address is required")
+        return self
+
+
+class BusinessHoursView(StrictModel):
+    weekdays: list[int] = Field(default_factory=list)
+    weekday_start_time: time | None = None
+    weekday_end_time: time | None = None
+    weekend_holiday_enabled: bool = False
+    weekend_holiday_start_time: time | None = None
+    weekend_holiday_end_time: time | None = None
+
+
+class BusinessHoursUpdate(StrictModel):
+    weekdays: list[int] = Field(min_length=1, max_length=5)
+    weekday_start_time: time
+    weekday_end_time: time
+    weekend_holiday_enabled: bool = False
+    weekend_holiday_start_time: time | None = None
+    weekend_holiday_end_time: time | None = None
+
+    @field_validator("weekdays")
+    @classmethod
+    def validate_weekdays(cls, value: list[int]) -> list[int]:
+        normalized = sorted(set(value))
+        if not normalized or any(day < 0 or day > 4 for day in normalized):
+            raise ValueError("Weekdays must be between Monday and Friday")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> "BusinessHoursUpdate":
+        if self.weekday_end_time <= self.weekday_start_time:
+            raise ValueError("Weekday end time must be after start time")
+        if self.weekend_holiday_enabled:
+            if (
+                self.weekend_holiday_start_time is None
+                or self.weekend_holiday_end_time is None
+                or self.weekend_holiday_end_time <= self.weekend_holiday_start_time
+            ):
+                raise ValueError("Weekend/holiday hours are invalid")
         return self
 
 
@@ -277,6 +409,19 @@ class AutomationSettingsUpdate(StrictModel):
         return self
 
 
+class AutomationExclusionView(StrictModel):
+    id: UUID
+    whatsapp_id: str
+    mode: Literal["ignore", "human_only"]
+    label: str | None
+    reason: str | None
+    active: bool
+
+
+class AutomationExclusionList(StrictModel):
+    items: list[AutomationExclusionView]
+
+
 class EmployeeView(StrictModel):
     id: UUID
     name: str
@@ -360,7 +505,9 @@ class ServiceOption(StrictModel):
     id: UUID
     name: str
     duration_minutes: int
+    price: Decimal | None
     active: bool
+    intent_examples: list[str] = Field(default_factory=list)
 
 
 class ServiceList(StrictModel):
@@ -370,6 +517,7 @@ class ServiceList(StrictModel):
 class ServiceCreate(StrictModel):
     name: str = Field(min_length=2, max_length=255)
     duration_minutes: int = Field(ge=1, le=1440)
+    price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
 
     @field_validator("name")
     @classmethod
@@ -383,7 +531,9 @@ class ServiceCreate(StrictModel):
 class ServiceUpdate(StrictModel):
     name: str | None = Field(default=None, min_length=2, max_length=255)
     duration_minutes: int | None = Field(default=None, ge=1, le=1440)
+    price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     active: bool | None = None
+    intent_examples: list[str] | None = Field(default=None, max_length=64)
 
     @field_validator("name")
     @classmethod
@@ -395,6 +545,18 @@ class ServiceUpdate(StrictModel):
             raise ValueError("Service name is required")
         return normalized
 
+    @field_validator("intent_examples")
+    @classmethod
+    def normalize_examples(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized: list[str] = []
+        for item in value:
+            sentence = " ".join(item.split())
+            if sentence and sentence not in normalized:
+                normalized.append(sentence[:300])
+        return normalized
+
     @model_validator(mode="after")
     def require_change(self) -> "ServiceUpdate":
         if not self.model_fields_set:
@@ -402,14 +564,59 @@ class ServiceUpdate(StrictModel):
         return self
 
 
+class CatalogItemView(StrictModel):
+    id: UUID
+    kind: Literal["material", "equipment"]
+    name: str
+    description: str | None
+    price: Decimal | None
+    unit_label: str | None
+    preset_key: str | None
+    active: bool
+
+
+class CatalogItemCreate(StrictModel):
+    kind: Literal["material", "equipment"] = "material"
+    name: str = Field(min_length=2, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    unit_label: str | None = Field(default=None, max_length=64)
+
+
+class CatalogItemUpdate(StrictModel):
+    kind: Literal["material", "equipment"] | None = None
+    name: str | None = Field(default=None, min_length=2, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    unit_label: str | None = Field(default=None, max_length=64)
+    active: bool | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "CatalogItemUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one field is required")
+        return self
+
+
+class CatalogItemList(StrictModel):
+    items: list[CatalogItemView]
+
+
 class SetupStatus(StrictModel):
     company: bool
+    team: bool = False
     business_hours: bool
-    automation: bool
+    services: bool = False
+    materials: bool = False
     agenda: bool
     whatsapp: bool
     completed: int
-    total: Literal[5] = 5
+    total: Literal[7] = 7
     next_step: Literal[
-        "company", "business_hours", "automation", "agenda", "whatsapp", "complete"
+        "company", "team", "business_hours", "services", "materials", "agenda", "whatsapp", "complete"
     ]
+    onboarding_completed: bool = False
+    onboarding_completed_at: datetime | None = None
+    onboarding_version: int = 0
+    automation: bool | None = None
+    blocking_reasons: list[str] = Field(default_factory=list)

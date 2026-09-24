@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -18,6 +19,7 @@ from app.core.config import DatabaseConfigurationError, get_settings
 
 engine: AsyncEngine | None = None
 AsyncSessionFactory: async_sessionmaker[AsyncSession] | None = None
+logger = logging.getLogger(__name__)
 
 
 def is_transaction_pooler_url(database_url: str) -> bool:
@@ -77,7 +79,21 @@ async def check_database_connection() -> bool:
     try:
         async with get_engine().connect() as connection:
             await connection.execute(text("SELECT 1"))
-    except Exception:
+    except Exception as exc:
+        # Safe observability only: never log exception text, parameters, DSNs,
+        # hostnames, usernames, or credentials. SQLSTATE and exception class are
+        # sufficient to distinguish auth/network/protocol failures.
+        sqlstate = getattr(exc, "sqlstate", None)
+        original = getattr(exc, "orig", None)
+        if sqlstate is None and original is not None:
+            sqlstate = getattr(original, "sqlstate", None)
+        logger.warning(
+            "database_connectivity_failed",
+            extra={
+                "error_type": type(exc).__name__,
+                "sqlstate": sqlstate if isinstance(sqlstate, str) else None,
+            },
+        )
         return False
     return True
 
