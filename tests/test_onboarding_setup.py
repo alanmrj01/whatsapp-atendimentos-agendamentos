@@ -3,10 +3,16 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 from typing import Any
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 
 import pytest
+from fastapi import HTTPException
+
 
 from app.models import Business, BusinessCatalogItem, Service
+from app.operations.schemas import SetupStatus
 from app.operations.service import OperationalService
 
 
@@ -154,3 +160,62 @@ async def test_missing_connection_and_legacy_identifier_keeps_whatsapp_incomplet
 
     assert status.whatsapp is False
     assert status.next_step == "whatsapp"
+
+
+@pytest.mark.asyncio
+async def test_complete_onboarding_allows_whatsapp_as_only_pending_step() -> None:
+    session = SimpleNamespace(commit=AsyncMock())
+    service = OperationalService(session)  # type: ignore[arg-type]
+    business = company()
+    pending = SetupStatus(
+        company=True,
+        team=True,
+        business_hours=True,
+        services=True,
+        materials=True,
+        agenda=True,
+        whatsapp=False,
+        completed=6,
+        next_step="whatsapp",
+        blocking_reasons=["Conexão com o WhatsApp Business pendente."],
+    )
+    completed = pending.model_copy(update={"onboarding_completed": True})
+    service.setup_status = AsyncMock(side_effect=[pending, completed])  # type: ignore[method-assign]
+    service._business = AsyncMock(return_value=business)  # type: ignore[method-assign]
+
+    result = await service.complete_onboarding(BUSINESS_ID)
+
+    assert business.onboarding_completed_at is not None
+    assert business.onboarding_version == 1
+    assert result.onboarding_completed is True
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_complete_onboarding_still_rejects_any_required_step_missing() -> None:
+    session = SimpleNamespace(commit=AsyncMock())
+    service = OperationalService(session)  # type: ignore[arg-type]
+    incomplete = SetupStatus(
+        company=True,
+        team=True,
+        business_hours=True,
+        services=False,
+        materials=True,
+        agenda=True,
+        whatsapp=False,
+        completed=5,
+        next_step="services",
+        blocking_reasons=[
+            "Mantenha pelo menos um serviço ativo com preço definido.",
+            "Conexão com o WhatsApp Business pendente.",
+        ],
+    )
+    service.setup_status = AsyncMock(return_value=incomplete)  # type: ignore[method-assign]
+    service._business = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.complete_onboarding(BUSINESS_ID)
+
+    assert exc_info.value.status_code == 409
+    service._business.assert_not_awaited()
+    session.commit.assert_not_awaited()
