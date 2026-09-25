@@ -6,6 +6,8 @@ from decimal import Decimal
 from typing import Any
 
 from app.conversations.constants import (
+    ADDRESS_CITY_CONFIRM,
+    ADDRESS_CITY_OTHER,
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
@@ -135,6 +137,20 @@ def address_request_message(
     body: str = "Qual é o endereço completo do serviço, incluindo a cidade?",
 ) -> OutboundMessage:
     return OutboundMessage(message_type="text", body=body)
+
+
+def address_city_confirmation_message(city: str) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=f"Só preciso confirmar a cidade. Esse endereço fica em {city}?",
+        interactive_id="booking.address_city",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(ADDRESS_CITY_CONFIRM, "Sim"),
+                BookingOption(ADDRESS_CITY_OTHER, "Outra cidade"),
+            )
+        ),
+    )
 
 
 def tubing_length_message() -> OutboundMessage:

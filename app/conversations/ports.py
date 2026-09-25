@@ -28,6 +28,8 @@ class ServiceDetails:
     description: str | None
     included_tubing_meters: Decimal | None = None
     extra_tubing_price: Decimal | None = None
+    business_city: str | None = None
+    business_state: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

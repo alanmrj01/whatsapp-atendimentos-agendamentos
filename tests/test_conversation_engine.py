@@ -219,6 +219,8 @@ class FakeBookingPort:
         ]
         self.included_tubing_meters = Decimal("3")
         self.extra_tubing_price: Decimal | None = None
+        self.business_city: str | None = None
+        self.business_state: str | None = None
 
     async def list_services(self, _: uuid.UUID) -> tuple[BookingOption, ...]:
         self.calls.append("services")
@@ -240,6 +242,8 @@ class FakeBookingPort:
             description="Serviço configurado para teste.",
             included_tubing_meters=self.included_tubing_meters,
             extra_tubing_price=self.extra_tubing_price,
+            business_city=self.business_city,
+            business_state=self.business_state,
         )
 
     async def get_service_intake(
@@ -1510,3 +1514,87 @@ async def test_travel_handoff_explains_reason_instead_of_abrupt_generic_message(
     assert "deslocamento" in body
     assert "endereço" in body
     assert "confirmar" in body
+
+
+
+@mark.asyncio
+async def test_incomplete_address_confirms_business_city_before_route_planning() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(
+            201,
+            body="Rua Maurício Cardoso, 201\nJardim Sul",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["pending_service_address"].startswith(
+        "Rua Maurício Cardoso"
+    )
+    prompt = repository.outbounds[-1].transition.outbound
+    assert prompt.message_type == "interactive_button"
+    assert "São José dos Campos" in (prompt.body or "")
+
+    await engine.process(
+        inbound(
+            202,
+            action="address.city.confirm",
+            body="Sim",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    address = repository.context["service_address"]["address_line"]
+    assert "São José dos Campos" in address
+    assert "SP" in address
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_customer_can_supply_different_city_after_city_confirmation() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "pending_service_address": "Rua das Flores, 10 - Centro",
+            "pending_address_city_guess": "São José dos Campos - SP",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(
+            203,
+            action="address.city.other",
+            body="Outra cidade",
+        )
+    )
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["awaiting_address_city"] is True
+
+    await engine.process(inbound(204, body="Jacareí - SP"))
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    address = repository.context["service_address"]["address_line"]
+    assert "Jacareí - SP" in address

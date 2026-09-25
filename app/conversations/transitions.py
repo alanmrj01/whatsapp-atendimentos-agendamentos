@@ -23,6 +23,8 @@ from app.conversations.constants import (
     ACCESS_DIFFICULT,
     ACCESS_NORMAL,
     ACCESS_UNKNOWN,
+    ADDRESS_CITY_CONFIRM,
+    ADDRESS_CITY_OTHER,
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
@@ -43,6 +45,7 @@ from app.conversations.constants import (
 from app.conversations.outbound import (
     OutboundMessage,
     access_selection_message,
+    address_city_confirmation_message,
     address_request_message,
     booking_cancelled_message,
     booking_completed_message,
@@ -611,14 +614,19 @@ def _stale_interactive_transition(
             ),
         )
     if state is ConversationState.BOOKING_ADDRESS:
-        return _transition(
-            state,
-            context,
-            address_request_message(
-                "Essa opção era de uma etapa anterior. "
-                "Pode me enviar o endereço do atendimento, com rua, número e cidade?"
-            ),
+        expected_city_action = (
+            _context_string(context, "pending_service_address") is not None
+            and action in {ADDRESS_CITY_CONFIRM, ADDRESS_CITY_OTHER}
         )
+        if not expected_city_action:
+            return _transition(
+                state,
+                context,
+                address_request_message(
+                    "Essa opção era de uma etapa anterior. "
+                    "Pode me enviar o endereço do atendimento, com rua, número e cidade?"
+                ),
+            )
     if (
         state is ConversationState.BOOKING_TUBING
         and action not in {TUBING_CONFIRM, TUBING_UNKNOWN}
@@ -705,6 +713,43 @@ def _friendly_fallback(configured: str) -> str:
             "Me conte em poucas palavras o que você precisa."
         )
     return configured
+
+
+def _looks_like_city(value: str | None) -> bool:
+    normalized = normalize_portuguese(value or "").strip()
+    if len(normalized) < 3 or len(normalized) > 120:
+        return False
+    if any(character.isdigit() for character in normalized):
+        return False
+    words = [word for word in normalized.split() if word]
+    return 1 <= len(words) <= 8
+
+
+def _address_needs_city(
+    value: str,
+    *,
+    business_city: str | None,
+    business_state: str | None,
+) -> bool:
+    normalized = normalize_portuguese(value)
+    compact = re.sub(r"\s+", " ", normalized).strip()
+    if re.search(r"\b\d{5}\s*-?\s*\d{3}\b", compact):
+        return False
+
+    if isinstance(business_city, str) and business_city.strip():
+        normalized_city = normalize_portuguese(business_city)
+        if normalized_city in compact:
+            return False
+
+    if isinstance(business_state, str) and business_state.strip():
+        state = normalize_portuguese(business_state).strip()
+        if re.search(rf"(?:^|[\s,\-/]){re.escape(state)}(?:$|[\s,\-/])", compact):
+            return False
+
+    # Sem CEP, UF ou a cidade conhecida da empresa, o endereço ainda pode
+    # estar ambíguo. Confirmar a cidade é mais seguro do que deixar a API
+    # de rotas geocodificar uma rua homônima em outro município.
+    return True
 
 
 def _looks_like_address(value: str | None) -> bool:
@@ -1040,6 +1085,55 @@ async def _handle_address(
 
     value = (inbound.body or "").strip()
     normalized = normalize_portuguese(value)
+    pending_address = _context_string(context, "pending_service_address")
+    city_guess = _context_string(context, "pending_address_city_guess")
+    awaiting_city = context.get("awaiting_address_city") is True
+
+    if pending_address is not None:
+        if (
+            inbound.interactive_id == ADDRESS_CITY_CONFIRM
+            or normalized in {"sim", "isso", "isso mesmo", "correto"}
+        ):
+            if city_guess is None:
+                return _transition(
+                    ConversationState.BOOKING_ADDRESS,
+                    {**context, "awaiting_address_city": True},
+                    address_request_message(
+                        "Certo. Qual é a cidade desse endereço?"
+                    ),
+                )
+            value = f"{pending_address}, {city_guess}"
+        elif (
+            inbound.interactive_id == ADDRESS_CITY_OTHER
+            or normalized in {"nao", "não"}
+        ):
+            updated = {
+                **context,
+                "awaiting_address_city": True,
+            }
+            updated.pop("pending_address_city_guess", None)
+            return _transition(
+                ConversationState.BOOKING_ADDRESS,
+                updated,
+                address_request_message(
+                    "Certo. Qual é a cidade desse endereço?"
+                ),
+            )
+        elif awaiting_city and _looks_like_city(value):
+            value = f"{pending_address}, {value}"
+        elif not _looks_like_address(value):
+            if _looks_like_city(value):
+                value = f"{pending_address}, {value}"
+            else:
+                return _transition(
+                    ConversationState.BOOKING_ADDRESS,
+                    context,
+                    address_request_message(
+                        "Só preciso confirmar a cidade desse endereço. "
+                        "Qual é a cidade?"
+                    ),
+                )
+
     if normalized in {"nao sei", "nao tenho certeza"}:
         return _transition(
             ConversationState.BOOKING_ADDRESS,
@@ -1063,16 +1157,59 @@ async def _handle_address(
             ),
         )
 
-    address = ServiceAddress(address_line=value)
+    try:
+        details = await port.get_service_details(
+            inbound.business_id,
+            service_id,
+        )
+    except BookingRequiresHandoff:
+        details = None
+
+    business_city = getattr(details, "business_city", None)
+    business_state = getattr(details, "business_state", None)
+    if _address_needs_city(
+        value,
+        business_city=business_city,
+        business_state=business_state,
+    ):
+        updated = {
+            **context,
+            "service_id": str(service_id),
+            "pending_service_address": value,
+        }
+        if isinstance(business_city, str) and business_city.strip():
+            city_label = business_city.strip()
+            if isinstance(business_state, str) and business_state.strip():
+                city_label = f"{city_label} - {business_state.strip()}"
+            updated["pending_address_city_guess"] = city_label
+            updated.pop("awaiting_address_city", None)
+            return _transition(
+                ConversationState.BOOKING_ADDRESS,
+                updated,
+                address_city_confirmation_message(city_label),
+            )
+        updated["awaiting_address_city"] = True
+        return _transition(
+            ConversationState.BOOKING_ADDRESS,
+            updated,
+            address_request_message(
+                "Só preciso confirmar a cidade desse endereço. Qual é a cidade?"
+            ),
+        )
+
+    updated_context = {
+        **context,
+        "service_id": str(service_id),
+        "service_address": ServiceAddress(address_line=value).to_snapshot(),
+    }
+    updated_context.pop("pending_service_address", None)
+    updated_context.pop("pending_address_city_guess", None)
+    updated_context.pop("awaiting_address_city", None)
     return await _advance_intake(
         inbound,
         port,
         intake,
-        {
-            **context,
-            "service_id": str(service_id),
-            "service_address": address.to_snapshot(),
-        },
+        updated_context,
         customer_name=customer_name,
     )
 

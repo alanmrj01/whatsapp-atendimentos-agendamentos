@@ -159,7 +159,7 @@ class PostgresBookingAvailabilityPort:
         business_id: uuid.UUID,
         service_id: uuid.UUID,
     ) -> ServiceDetails:
-        _, service = await self._load_business_service(
+        business, service = await self._load_business_service(
             business_id, service_id
         )
         extra_tubing_price: Decimal | None = None
@@ -183,6 +183,8 @@ class PostgresBookingAvailabilityPort:
                 else None
             ),
             extra_tubing_price=extra_tubing_price,
+            business_city=business.service_origin_city,
+            business_state=business.service_origin_state,
         )
 
     async def get_service_intake(

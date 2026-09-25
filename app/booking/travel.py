@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import math
 import re
+import time
 import unicodedata
+from decimal import Decimal
 from typing import Protocol
 
+import google.auth
+from google.auth.transport.requests import Request as GoogleAuthRequest
+import httpx
+
 from app.booking.domain import ServiceAddress, TravelEstimate, TravelOrigin
+
+logger = logging.getLogger(__name__)
+
+_GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+_GOOGLE_ROUTES_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+_ROUTE_CACHE_TTL_SECONDS = 15 * 60
+_ROUTE_CACHE_LIMIT = 2048
 
 
 class TravelTimePort(Protocol):
@@ -68,6 +84,197 @@ def same_address_travel_estimate(
         estimated=False,
         origin_is_precise=origin.is_precise,
     )
+
+
+class GoogleRoutesTravelTimePort:
+    """Calcula deslocamento real pela Google Routes API usando ADC do Cloud Run.
+
+    Usa TRAFFIC_UNAWARE para manter custo e comportamento previsíveis no
+    planejamento. O cache evita repetir a mesma rota durante a montagem da agenda.
+    """
+
+    def __init__(
+        self,
+        project_id: str,
+        *,
+        request_timeout_seconds: float = 6.0,
+    ) -> None:
+        if not project_id.strip():
+            raise ValueError("Google Routes project id is required")
+        self.project_id = project_id.strip()
+        self.request_timeout_seconds = request_timeout_seconds
+        self._credentials = None
+        self._credential_lock = asyncio.Lock()
+        self._cache_lock = asyncio.Lock()
+        self._cache: dict[
+            tuple[str, str],
+            tuple[float, TravelEstimate],
+        ] = {}
+
+    async def estimate(
+        self,
+        origin: TravelOrigin,
+        destination: ServiceAddress,
+    ) -> TravelEstimate:
+        same_address = same_address_travel_estimate(origin, destination)
+        if same_address is not None:
+            return same_address
+
+        cache_key = (
+            _travel_location_key(origin),
+            _normalize(destination.searchable_text),
+        )
+        cached = await self._cached(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            token = await self._access_token()
+            async with httpx.AsyncClient(
+                timeout=self.request_timeout_seconds
+            ) as client:
+                response = await client.post(
+                    _GOOGLE_ROUTES_URL,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "X-Goog-FieldMask": (
+                            "routes.duration,routes.distanceMeters"
+                        ),
+                        "X-Goog-User-Project": self.project_id,
+                    },
+                    json={
+                        "origin": _origin_waypoint(origin),
+                        "destination": {
+                            "address": destination.searchable_text,
+                        },
+                        "travelMode": "DRIVE",
+                        "routingPreference": "TRAFFIC_UNAWARE",
+                        "languageCode": "pt-BR",
+                        "regionCode": "BR",
+                        "units": "METRIC",
+                    },
+                )
+            response.raise_for_status()
+            payload = response.json()
+            routes = payload.get("routes")
+            if not isinstance(routes, list) or not routes:
+                raise ValueError("Routes API returned no route")
+            first = routes[0]
+            if not isinstance(first, dict):
+                raise ValueError("Routes API returned invalid route")
+            duration_seconds = _duration_seconds(first.get("duration"))
+            distance_meters = first.get("distanceMeters")
+            if (
+                duration_seconds is None
+                or not isinstance(distance_meters, int)
+                or isinstance(distance_meters, bool)
+                or distance_meters < 0
+            ):
+                raise ValueError("Routes API returned incomplete route")
+            estimate = TravelEstimate(
+                travel_minutes=max(1, math.ceil(duration_seconds / 60)),
+                distance_km=(
+                    Decimal(distance_meters) / Decimal("1000")
+                ).quantize(Decimal("0.01")),
+                source="google_routes",
+                method="route",
+                estimated=True,
+                origin_is_precise=origin.is_precise,
+            )
+        except Exception as exc:
+            logger.warning(
+                "google_routes_estimate_failed",
+                extra={"error_type": type(exc).__name__},
+            )
+            return unavailable_travel_estimate(origin)
+
+        await self._store_cache(cache_key, estimate)
+        return estimate
+
+    async def _access_token(self) -> str:
+        async with self._credential_lock:
+            if self._credentials is None:
+                credentials, _ = await asyncio.to_thread(
+                    google.auth.default,
+                    scopes=[_GOOGLE_ROUTES_SCOPE],
+                )
+                self._credentials = credentials
+            credentials = self._credentials
+            if (
+                not getattr(credentials, "valid", False)
+                or getattr(credentials, "expired", True)
+                or not getattr(credentials, "token", None)
+            ):
+                await asyncio.to_thread(
+                    credentials.refresh,
+                    GoogleAuthRequest(),
+                )
+            token = getattr(credentials, "token", None)
+            if not isinstance(token, str) or not token:
+                raise RuntimeError("Google Routes OAuth token unavailable")
+            return token
+
+    async def _cached(
+        self,
+        key: tuple[str, str],
+    ) -> TravelEstimate | None:
+        now = time.monotonic()
+        async with self._cache_lock:
+            item = self._cache.get(key)
+            if item is None:
+                return None
+            expires_at, estimate = item
+            if expires_at <= now:
+                self._cache.pop(key, None)
+                return None
+            return estimate
+
+    async def _store_cache(
+        self,
+        key: tuple[str, str],
+        estimate: TravelEstimate,
+    ) -> None:
+        async with self._cache_lock:
+            if len(self._cache) >= _ROUTE_CACHE_LIMIT:
+                oldest_key = min(
+                    self._cache,
+                    key=lambda cached_key: self._cache[cached_key][0],
+                )
+                self._cache.pop(oldest_key, None)
+            self._cache[key] = (
+                time.monotonic() + _ROUTE_CACHE_TTL_SECONDS,
+                estimate,
+            )
+
+
+def _origin_waypoint(origin: TravelOrigin) -> dict[str, object]:
+    if origin.latitude is not None and origin.longitude is not None:
+        return {
+            "location": {
+                "latLng": {
+                    "latitude": float(origin.latitude),
+                    "longitude": float(origin.longitude),
+                }
+            }
+        }
+    return {"address": origin.address}
+
+
+def _travel_location_key(origin: TravelOrigin) -> str:
+    if origin.latitude is not None and origin.longitude is not None:
+        return f"{origin.latitude}:{origin.longitude}"
+    return _normalize(origin.address)
+
+
+def _duration_seconds(value: object) -> float | None:
+    if not isinstance(value, str) or not value.endswith("s"):
+        return None
+    try:
+        seconds = float(value[:-1])
+    except ValueError:
+        return None
+    return seconds if seconds >= 0 else None
 
 
 class ConfiguredTravelTimePort:

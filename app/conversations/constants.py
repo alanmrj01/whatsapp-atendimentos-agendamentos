@@ -31,6 +31,8 @@ BOOKING_BACK = "booking.back"
 BOOKING_CANCEL = "booking.cancel"
 TUBING_CONFIRM = "tubing.confirm"
 TUBING_UNKNOWN = "tubing.unknown"
+ADDRESS_CITY_CONFIRM = "address.city.confirm"
+ADDRESS_CITY_OTHER = "address.city.other"
 RESCHEDULE_CONFIRM = "reschedule.confirm"
 CANCEL_CONFIRM = "cancel.confirm"
 CANCEL_ABORT = "cancel.abort"
@@ -55,6 +57,9 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "quantity",
         "access_condition",
         "service_address",
+        "pending_service_address",
+        "pending_address_city_guess",
+        "awaiting_address_city",
         "tubing_meters",
         "pending_tubing_meters",
         "tubing_length_answered",
