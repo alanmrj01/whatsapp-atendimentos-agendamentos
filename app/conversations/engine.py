@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import uuid
 from contextlib import AbstractAsyncContextManager
-from dataclasses import replace
 from typing import Protocol
 
 from app.conversations.constants import ConversationState
@@ -64,14 +63,6 @@ class ConversationEngine:
             )
             if transition is None:
                 return False
-            if transition.state is ConversationState.HUMAN_HANDOFF:
-                transition = replace(
-                    transition,
-                    outbound=replace(
-                        transition.outbound,
-                        body=conversation.handoff_message,
-                    ),
-                )
             return await self.repository.persist_transition(
                 conversation,
                 transition,
