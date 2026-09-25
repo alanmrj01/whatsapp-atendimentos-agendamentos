@@ -1085,7 +1085,7 @@ async def test_concurrent_duplicate_is_processed_once() -> None:
         provider_message_id="provider-concurrent-1",
         whatsapp_id="5511999990006",
         message_type="text",
-        body=None,
+        body="concurrent message",
         interactive_id=None,
     )
 

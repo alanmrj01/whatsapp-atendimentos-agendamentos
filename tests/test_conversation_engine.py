@@ -1479,10 +1479,21 @@ async def test_bodyless_unsupported_inbound_is_persisted_but_not_answered() -> N
 @mark.asyncio
 async def test_travel_handoff_explains_reason_instead_of_abrupt_generic_message() -> None:
     repository = FakeConversationRepository(
-        state=ConversationState.BOOKING_SERVICE,
+        state=ConversationState.BOOKING_TUBING,
+        context={
+            "service_id": str(SERVICE_ID),
+            "service_address": {
+                "address_line": "Rua Maurício Cardoso, 201 - Jardim Sul"
+            },
+        },
         customer_name="Alan",
     )
     booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+        asks_tubing_length=True,
+    )
     booking_port.plan = replace(
         booking_port.plan,
         requires_handoff=True,
@@ -1490,7 +1501,7 @@ async def test_travel_handoff_explains_reason_instead_of_abrupt_generic_message(
     )
 
     await ConversationEngine(repository, booking_port).process(
-        inbound(107, action=f"service:{SERVICE_ID}")
+        inbound(107, body="3 metros")
     )
 
     assert repository.state == ConversationState.HUMAN_HANDOFF

@@ -924,13 +924,13 @@ async def _handle_service(
 
     try:
         intake = await port.get_service_intake(inbound.business_id, service_id)
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     if (
         not intake.automatic_booking
         or intake.pricing_type is PricingType.HUMAN_QUOTE
     ):
-        return _handoff_transition()
+        return _handoff_for_reason("human_quote")
     return await _advance_intake(
         inbound,
         port,
@@ -958,8 +958,8 @@ async def _handle_quantity(
             context,
             booking_unavailable_message(),
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     quantity = _quantity(action, inbound.body)
     if quantity is None:
         return _transition(
@@ -993,8 +993,8 @@ async def _handle_access(
             context,
             booking_unavailable_message(),
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     access = {
         ACCESS_NORMAL: AccessCondition.NORMAL,
         ACCESS_DIFFICULT: AccessCondition.DIFFICULT,
@@ -1199,8 +1199,8 @@ async def _handle_site_limit(
             context,
             booking_unavailable_message(),
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     site_limit = _site_limit(action, inbound.body)
     if site_limit is False:
         return _transition(
@@ -1350,8 +1350,8 @@ async def _handle_date(
                 inbound.business_id, service_id, requirements
             )
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     if not dates:
         return await _restart_service_selection(
             inbound,
@@ -1441,8 +1441,8 @@ async def _handle_time(
                 requirements,
             )
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     if not times:
         return await _return_to_dates(
             inbound,
@@ -1575,8 +1575,8 @@ async def _handle_confirmation(
             context,
             slot_unavailable_message(),
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     if not isinstance(confirmation, BookingConfirmation):
         return _transition(
             ConversationState.BOOKING_CONFIRM,
@@ -1783,8 +1783,8 @@ async def _handle_reschedule(
         return await _begin_existing_booking_flow(
             inbound, port, purpose="reschedule"
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     if not isinstance(result, BookingConfirmation):
         return _transition(
             ConversationState.RESCHEDULE,
@@ -1960,8 +1960,8 @@ async def _offer_dates(
                 requirements,
             )
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     if not dates:
         available_services = services or _snapshot_options(
             await port.list_services(inbound.business_id)
@@ -2022,8 +2022,8 @@ async def _offer_times_for_date(
                 requirements,
             )
         )
-    except BookingRequiresHandoff:
-        return _handoff_transition()
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
     if not times:
         return await _return_to_dates(
             inbound,
