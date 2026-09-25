@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 
 from app.booking.domain import ServiceAddress, TravelOrigin
@@ -146,7 +148,7 @@ async def test_google_routes_returns_real_duration_distance_and_reuses_cache(
     second = await port.estimate(origin, destination)
 
     assert first.travel_minutes == 13
-    assert first.distance_km == pytest.approx(8.45)
+    assert first.distance_km == Decimal("8.45")
     assert first.source == "google_routes"
     assert first.method == "route"
     assert first.available is True

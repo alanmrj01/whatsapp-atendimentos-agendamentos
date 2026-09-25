@@ -1024,6 +1024,8 @@ async def test_booking_collects_only_simple_required_information() -> None:
         automatic_booking=True,
         pricing_type=PricingType.ESTIMATED,
     )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
     engine = ConversationEngine(repository, booking_port)
 
     await engine.process(inbound(1, action=f"service:{SERVICE_ID}"))
@@ -1370,6 +1372,8 @@ async def test_tubing_prompt_is_split_into_two_real_outbox_messages() -> None:
         requires_address=True,
         asks_tubing_length=True,
     )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
 
     await ConversationEngine(repository, booking_port).process(
         inbound(
