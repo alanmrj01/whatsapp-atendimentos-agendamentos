@@ -1070,7 +1070,6 @@ def test_automatic_snapshot_writes_operational_notes_for_height_and_contact() ->
         starts_at=datetime(2026, 9, 2, 12, tzinfo=timezone.utc),
         ends_at=datetime(2026, 9, 2, 13, tzinfo=timezone.utc),
         status="confirmed",
-        source="whatsapp",
     )
     requirements = BookingRequirements(
         address=ServiceAddress("Rua A, 10"),

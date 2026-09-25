@@ -1264,11 +1264,13 @@ def _profile_grace_active(context: dict[str, Any]) -> bool:
 def _time_window_from_text(
     value: str | None,
 ) -> tuple[str, str] | None:
-    normalized = normalize_portuguese(value or "")
+    raw = value or ""
     match = re.search(
         r"\b(?:das?\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:h|horas?)?"
-        r"\s*(?:as|ate|a)\s*(\d{1,2})(?::(\d{2}))?\s*(?:h|horas?)?\b",
-        normalized,
+        r"\s*(?:às|as|até|ate|a)\s*(\d{1,2})(?::(\d{2}))?"
+        r"\s*(?:h|horas?)?\b",
+        raw.casefold(),
+        flags=re.IGNORECASE,
     )
     if match is None:
         return None
@@ -1282,10 +1284,9 @@ def _time_window_from_text(
         and 0 <= end_m <= 59
     ):
         return None
-    start = f"{start_h:02d}:{start_m:02d}"
-    end = f"{end_h:02d}:{end_m:02d}"
-    return (start, end) if start < end else None
-
+    start_value = f"{start_h:02d}:{start_m:02d}"
+    end_value = f"{end_h:02d}:{end_m:02d}"
+    return (start_value, end_value) if start_value < end_value else None
 
 def _phone_from_text(value: str | None) -> str | None:
     raw = value or ""
@@ -3780,14 +3781,14 @@ async def _offer_times_for_date(
 
     selected_time = _time_from_text(inbound.body, times)
     if selected_time is not None:
-        return await _booking_confirm_transition(
+        return await _advance_preconfirmation(
             inbound,
             port,
-            context,
-            service_id,
-            selected_date,
-            selected_time,
-            requirements,
+            {
+                **context,
+                "selected_date": selected_date,
+                "selected_time": selected_time,
+            },
             customer_name=customer_name,
         )
     return _transition(

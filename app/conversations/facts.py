@@ -148,7 +148,7 @@ def enrich_context_from_message(
     if property_type is not None:
         updated["property_type"] = property_type
 
-    hours = _hours_window(normalized)
+    hours = _hours_window(raw)
     if hours is not None:
         updated["building_hours_start"], updated["building_hours_end"] = hours
 
@@ -214,11 +214,16 @@ def missing_equipment_profile_fields(context: dict[str, Any]) -> tuple[str, ...]
 
 
 def _equipment_ownership(normalized: str) -> str | None:
+    has_brand = any(
+        re.search(rf"\b{re.escape(brand)}\b", normalized)
+        for brand in _BRANDS
+    )
     has_equipment = (
         "ja tenho o ar" in normalized
         or "ja tenho um ar" in normalized
         or "ja tenho aparelho" in normalized
         or "tenho o aparelho" in normalized
+        or ("ja tenho" in normalized and has_brand)
         or "so instalar" in normalized
         or "somente instalar" in normalized
         or "apenas instalar" in normalized
@@ -360,10 +365,13 @@ def _property_type(normalized: str) -> str | None:
     return None
 
 
-def _hours_window(normalized: str) -> tuple[str, str] | None:
+def _hours_window(value: str) -> tuple[str, str] | None:
     match = re.search(
-        r"\b(?:das?\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:h|horas?)?\s*(?:as|ate|a)\s*(\d{1,2})(?::(\d{2}))?\s*(?:h|horas?)?\b",
-        normalized,
+        r"\b(?:das?\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:h|horas?)?"
+        r"\s*(?:às|as|até|ate|a)\s*(\d{1,2})(?::(\d{2}))?"
+        r"\s*(?:h|horas?)?\b",
+        value.casefold(),
+        flags=re.IGNORECASE,
     )
     if not match:
         return None
@@ -372,12 +380,16 @@ def _hours_window(normalized: str) -> tuple[str, str] | None:
     end_h = int(end_hour)
     start_m = int(start_minute or 0)
     end_m = int(end_minute or 0)
-    if not (0 <= start_h <= 23 and 0 <= end_h <= 23 and 0 <= start_m <= 59 and 0 <= end_m <= 59):
+    if not (
+        0 <= start_h <= 23
+        and 0 <= end_h <= 23
+        and 0 <= start_m <= 59
+        and 0 <= end_m <= 59
+    ):
         return None
-    start = f"{start_h:02d}:{start_m:02d}"
-    end = f"{end_h:02d}:{end_m:02d}"
-    return (start, end) if start < end else None
-
+    start_value = f"{start_h:02d}:{start_m:02d}"
+    end_value = f"{end_h:02d}:{end_m:02d}"
+    return (start_value, end_value) if start_value < end_value else None
 
 def _onsite_contact_name(raw: str) -> str | None:
     patterns = (

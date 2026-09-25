@@ -629,7 +629,7 @@ async def test_customer_can_choose_offered_date_and_time_in_one_text_message() -
         inbound(1, body="quarta às 9")
     )
 
-    assert repository.state == ConversationState.BOOKING_CONFIRM
+    assert repository.state == ConversationState.BOOKING_ATTENDEE
     assert repository.context["selected_date"] == "2026-09-02"
     assert repository.context["selected_time"] == "09:00"
 
@@ -661,20 +661,36 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         "selected_date": "2026-09-02",
     }
 
-    assert await engine.process(inbound(5, action="time:09:00")) is True
-    assert repository.state == ConversationState.BOOKING_CONFIRM
-    assert repository.context == {
-        "service_id": str(SERVICE_ID),
-        "selected_date": "2026-09-02",
-        "selected_time": "09:00",
-        "candidate_booking": {
-            "service_id": str(SERVICE_ID),
-            "selected_date": "2026-09-02",
-            "selected_time": "09:00",
-        },
-    }
+    assert await engine.process(
+        inbound(5, action="time:09:00", whatsapp_id="5512981359722")
+    ) is True
+    assert repository.state == ConversationState.BOOKING_ATTENDEE
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
 
-    assert await engine.process(inbound(6, action="booking.confirm")) is True
+    assert await engine.process(
+        inbound(
+            6,
+            action="attendee.customer",
+            body="Sim",
+            whatsapp_id="5512981359722",
+        )
+    ) is True
+    assert repository.state == ConversationState.BOOKING_PHONE_CONFIRM
+
+    assert await engine.process(
+        inbound(
+            7,
+            action="phone.confirm",
+            body="Sim",
+            whatsapp_id="5512981359722",
+        )
+    ) is True
+    assert repository.state == ConversationState.BOOKING_CONFIRM
+    assert repository.context["contact_phone"] == "+5512981359722"
+    assert repository.context["contact_phone_confirmed"] is True
+
+    assert await engine.process(inbound(8, action="booking.confirm")) is True
     assert repository.state == ConversationState.COMPLETED
     assert repository.context == {}
     assert booking_port.confirmations == [
@@ -695,6 +711,8 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         "interactive_list",
         "interactive_list",
         "interactive_list",
+        "interactive_button",
+        "interactive_button",
         "interactive_button",
         "text",
     ]
