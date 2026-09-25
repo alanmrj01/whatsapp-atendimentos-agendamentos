@@ -3591,7 +3591,23 @@ async def _advance_intake(
                 ),
             )
 
-    if _context_string(context, "property_type") is None:
+    if (
+        service_kind != "installation"
+        and intake.asks_tubing_length
+        and context.get("tubing_length_answered") is not True
+    ):
+        return await _tubing_prompt_transition(
+            inbound,
+            port,
+            context,
+            service_id,
+        )
+
+    needs_property = (
+        service_kind == "installation"
+        or context.get("request_mode") == "quote"
+    )
+    if needs_property and _context_string(context, "property_type") is None:
         return _transition(
             ConversationState.BOOKING_PROPERTY,
             context,
@@ -3599,7 +3615,7 @@ async def _advance_intake(
         )
 
     property_type = _context_string(context, "property_type")
-    if property_type in {"building", "condominium"}:
+    if needs_property and property_type in {"building", "condominium"}:
         if (
             _context_string(context, "building_hours_start") is None
             or _context_string(context, "building_hours_end") is None

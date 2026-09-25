@@ -988,7 +988,7 @@ async def test_cancel_query_is_scoped_by_business_customer_and_appointment() -> 
 
 
 @pytest.mark.asyncio
-async def test_unknown_tubing_keeps_booking_automatic_without_inventing_price() -> None:
+async def test_unknown_tubing_keeps_base_estimate_without_inventing_extra_material() -> None:
     configured = service()
     configured.asks_tubing_length = True
     configured.included_tubing_meters = Decimal("3")
@@ -1003,7 +1003,7 @@ async def test_unknown_tubing_keeps_booking_automatic_without_inventing_price() 
     )
 
     assert result.requires_human_quote is False
-    assert result.estimated_price is None
+    assert result.estimated_price == Decimal("100.00")
     assert result.pricing_type is PricingType.ESTIMATED
     assert "tubing_length_unknown" in result.applied_rules
 
@@ -1031,3 +1031,69 @@ async def test_unpriced_extra_tubing_keeps_booking_without_fabricating_amount() 
     assert result.estimated_price is None
     assert result.pricing_type is PricingType.ESTIMATED
     assert "extra_tubing_price_unconfigured" in result.applied_rules
+
+
+
+def test_site_window_enforces_both_building_opening_and_closing_time() -> None:
+    selected = date(2026, 9, 2)
+    zone = ZoneInfo("America/Sao_Paulo")
+
+    assert PostgresBookingAvailabilityPort._within_site_window(
+        selected,
+        datetime(2026, 9, 2, 9, 0, tzinfo=zone),
+        datetime(2026, 9, 2, 10, 0, tzinfo=zone),
+        time(8, 0),
+        time(17, 0),
+    )
+    assert not PostgresBookingAvailabilityPort._within_site_window(
+        selected,
+        datetime(2026, 9, 2, 7, 30, tzinfo=zone),
+        datetime(2026, 9, 2, 8, 30, tzinfo=zone),
+        time(8, 0),
+        time(17, 0),
+    )
+    assert not PostgresBookingAvailabilityPort._within_site_window(
+        selected,
+        datetime(2026, 9, 2, 16, 30, tzinfo=zone),
+        datetime(2026, 9, 2, 17, 30, tzinfo=zone),
+        time(8, 0),
+        time(17, 0),
+    )
+
+
+def test_automatic_snapshot_writes_operational_notes_for_height_and_contact() -> None:
+    appointment = Appointment(
+        business_id=BUSINESS_ID,
+        customer_id=CUSTOMER_ID,
+        service_id=SERVICE_ID,
+        employee_id=EMPLOYEE_A,
+        starts_at=datetime(2026, 9, 2, 12, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 9, 2, 13, tzinfo=timezone.utc),
+        status="confirmed",
+        source="whatsapp",
+    )
+    requirements = BookingRequirements(
+        address=ServiceAddress("Rua A, 10"),
+        operational_details={
+            "work_at_height": True,
+            "onsite_contact_name": "Marcos",
+            "contact_phone": "+5512981359722",
+            "property_type": "building",
+            "building_hours_start": "08:00",
+            "building_hours_end": "17:00",
+            "gate_instructions": "Bloco B, apto 42",
+        },
+    )
+
+    PostgresBookingAvailabilityPort._apply_snapshot(
+        appointment,
+        requirements,
+        plan(),
+    )
+
+    assert appointment.notes is not None
+    assert "Trabalho em altura" in appointment.notes
+    assert "Marcos" in appointment.notes
+    assert "+5512981359722" in appointment.notes
+    assert "Bloco B" in appointment.notes
+    assert appointment.estimate_details["operational_details"]["work_at_height"] is True
