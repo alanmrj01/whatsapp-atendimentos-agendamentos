@@ -8,6 +8,9 @@ from typing import Any
 from app.conversations.constants import (
     ADDRESS_CITY_CONFIRM,
     ADDRESS_CITY_OTHER,
+    EQUIPMENT_BOTH,
+    EQUIPMENT_INSTALLATION,
+    EQUIPMENT_PURCHASE,
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
@@ -73,6 +76,33 @@ def service_selection_message(
         body=body,
         interactive_id="booking.services",
         outbound_payload=_list_payload("Serviços", options, prefix="service:"),
+    )
+
+
+def equipment_purchase_clarification_message(
+    *,
+    retry: bool = False,
+) -> OutboundMessage:
+    body = (
+        "Só para eu direcionar corretamente: você quer comprar o aparelho, "
+        "contratar a instalação ou os dois?"
+        if not retry
+        else (
+            "Quero confirmar para não te direcionar errado. Você precisa somente "
+            "da instalação, somente comprar o aparelho, ou quer compra e instalação?"
+        )
+    )
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=body,
+        interactive_id="service.purchase_clarification",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_INSTALLATION, "Só instalação"),
+                BookingOption(EQUIPMENT_PURCHASE, "Comprar aparelho"),
+                BookingOption(EQUIPMENT_BOTH, "Compra + instalação"),
+            )
+        ),
     )
 
 
@@ -223,7 +253,12 @@ def time_selection_message(
     *,
     body: str = "Escolha um horário disponível.",
 ) -> OutboundMessage:
-    safe_body = _append_hidden_options_hint(body, options, "horário")
+    safe_body = body
+    if len(options) > MAX_LIST_ROWS:
+        safe_body = (
+            f"{body.rstrip()} "
+            "Toque em “Ver opções” ou me diga o horário que prefere."
+        )[:1024]
     return OutboundMessage(
         message_type="interactive_list",
         body=safe_body,

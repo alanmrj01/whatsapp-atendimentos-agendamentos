@@ -58,6 +58,63 @@ def daypart_greeting(
     return "Boa noite"
 
 
+def conversational_greeting(
+    message: str | None,
+    timezone_name: str,
+    *,
+    customer_name: str | None = None,
+    include_help: bool = True,
+) -> str:
+    """Responde no mesmo registro social usado pelo cliente.
+
+    Saudações explícitas do cliente têm prioridade sobre o relógio. Quando ele
+    usa apenas "oi"/"olá", complementamos com o período local do negócio.
+    """
+
+    normalized = normalize_portuguese(message or "")
+    explicit_daypart = next(
+        (
+            label
+            for phrase, label in (
+                ("bom dia", "Bom dia"),
+                ("boa tarde", "Boa tarde"),
+                ("boa noite", "Boa noite"),
+            )
+            if f" {phrase} " in f" {normalized} "
+        ),
+        None,
+    )
+    has_oi = bool(
+        normalized == "oi"
+        or normalized.startswith("oi ")
+        or " oi " in f" {normalized} "
+    )
+    has_ola = bool(
+        normalized == "ola"
+        or normalized.startswith("ola ")
+        or " ola " in f" {normalized} "
+    )
+
+    period = explicit_daypart or daypart_greeting(timezone_name)
+    if has_oi:
+        opener = f"Oi, {period.casefold()}"
+    elif has_ola:
+        opener = f"Olá, {period.casefold()}"
+    else:
+        opener = period
+
+    if customer_name:
+        opener = f"{opener}, {customer_name}"
+    parts = [f"{opener}!"]
+
+    if "tudo bem" in normalized or "como vai" in normalized:
+        parts.append("Tudo bem, e com você?")
+
+    if include_help:
+        parts.append("Como posso te ajudar?")
+    return " ".join(parts)
+
+
 def weekday_from_text(value: str | None) -> int | None:
     normalized = normalize_portuguese(value or "")
     if not normalized:

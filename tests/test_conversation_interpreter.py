@@ -102,3 +102,24 @@ def test_bare_name_extraction_is_restricted_to_name_like_text() -> None:
         "Alan de Magalhães"
     )
     assert extract_customer_name("preciso de uma limpeza", allow_bare=True) is None
+
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "gostaria de comprar um ar condicionado",
+        "bom dia! gostaria de comprar um ar condiciionado para o meu quarto",
+        "vocês vendem aparelho de ar condicionado?",
+    ],
+)
+def test_equipment_purchase_is_distinguished_from_installation(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.intent is ConversationIntent.EQUIPMENT_PURCHASE
+    assert result.has(ConversationIntent.EQUIPMENT_PURCHASE)
+
+
+def test_social_reply_is_not_accepted_as_bare_customer_name() -> None:
+    assert extract_customer_name("suave", allow_bare=True) is None
+    assert extract_customer_name("beleza", allow_bare=True) is None

@@ -515,7 +515,7 @@ async def test_weekday_choice_narrows_dates_then_selected_date_offers_times() ->
 
 
 @mark.asyncio
-async def test_time_list_never_exceeds_whatsapp_limit_and_keeps_all_times_in_text() -> None:
+async def test_time_list_never_exceeds_whatsapp_limit_and_keeps_body_compact() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_TIME,
         context={
@@ -525,7 +525,10 @@ async def test_time_list_never_exceeds_whatsapp_limit_and_keeps_all_times_in_tex
     )
     booking_port = FakeBookingPort()
     booking_port.times = [
-        BookingOption(f"{8 + index // 2:02d}:{(index % 2) * 30:02d}", f"{8 + index // 2:02d}:{(index % 2) * 30:02d}")
+        BookingOption(
+            f"{8 + index // 2:02d}:{(index % 2) * 30:02d}",
+            f"{8 + index // 2:02d}:{(index % 2) * 30:02d}",
+        )
         for index in range(16)
     ]
 
@@ -535,8 +538,11 @@ async def test_time_list_never_exceeds_whatsapp_limit_and_keeps_all_times_in_tex
 
     outbound = repository.outbounds[-1].transition.outbound
     rows = outbound.outbound_payload["sections"][0]["rows"]
+    body = outbound.body or ""
     assert len(rows) == 10
-    assert booking_port.times[-1].label in (outbound.body or "")
+    assert "entre 08:00 e 15:30" in body
+    assert "08:30, 09:00, 09:30" not in body
+    assert "Ver opções" in body
 
 
 @mark.asyncio
@@ -1561,9 +1567,9 @@ async def test_incomplete_address_confirms_business_city_before_route_planning()
     )
 
     assert repository.state == ConversationState.BOOKING_DATE
-    address = repository.context["service_address"]["address_line"]
-    assert "São José dos Campos" in address
-    assert "SP" in address
+    address = repository.context["service_address"]
+    assert address["city"] == "São José dos Campos"
+    assert address["state"] == "SP"
     assert repository.automation_enabled is True
 
 
@@ -1600,5 +1606,242 @@ async def test_customer_can_supply_different_city_after_city_confirmation() -> N
     await engine.process(inbound(204, body="Jacareí - SP"))
 
     assert repository.state == ConversationState.BOOKING_DATE
-    address = repository.context["service_address"]["address_line"]
-    assert "Jacareí - SP" in address
+    address = repository.context["service_address"]
+    assert address["city"] == "Jacareí - SP"
+
+
+
+@mark.asyncio
+async def test_greeting_with_tudo_bem_mirrors_customer_tone() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        customer_name="Alan",
+    )
+
+    await ConversationEngine(repository, FakeBookingPort()).process(
+        inbound(301, body="bom dia, tudo bem?")
+    )
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert body.startswith("Bom dia, Alan!")
+    assert "Tudo bem, e com você?" in body
+    assert "Como posso te ajudar?" in body
+
+
+@mark.asyncio
+async def test_greeting_plus_request_is_not_lost_while_asking_name() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(
+            302,
+            body="Oi, boa tarde! Tudo bem? Preciso de uma higienização no meu ar condicionado",
+        )
+    )
+
+    first = repository.outbounds[-1].transition.outbound.body or ""
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    assert "Oi, boa tarde!" in first
+    assert "Tudo bem, e com você?" in first
+    assert "qual é o seu nome" in first.casefold()
+    assert "Como posso te ajudar?" not in first
+
+    await engine.process(inbound(303, body="Alan"))
+
+    assert repository.customer_name == "Alan"
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    second = repository.outbounds[-1].transition.outbound.body or ""
+    assert second.startswith("Prazer, Alan.")
+    assert "endereço" in second.casefold()
+    assert "qual serviço" not in second.casefold()
+
+
+@mark.asyncio
+async def test_purchase_request_is_clarified_instead_of_generic_service_list() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(
+            304,
+            body="bom dia! gostaria de comprar um ar condiciionado para o meu quarto",
+        )
+    )
+    assert repository.state == ConversationState.CUSTOMER_NAME
+
+    await engine.process(inbound(305, body="joao"))
+
+    outbound = repository.outbounds[-1].transition.outbound
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert outbound.message_type == "interactive_button"
+    body = (outbound.body or "").casefold()
+    assert "comprar o aparelho" in body
+    assert "instalação" in body
+    assert "como posso" not in body
+    buttons = [button["id"] for button in outbound.outbound_payload["buttons"]]
+    assert buttons == [
+        "equipment.installation",
+        "equipment.purchase",
+        "equipment.both",
+    ]
+
+
+@mark.asyncio
+async def test_purchase_clarification_installation_choice_resumes_booking() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        context={"service_clarification": "equipment_purchase"},
+        customer_name="Joao",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            306,
+            action="equipment.installation",
+            body="Só instalação",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert "service_clarification" not in repository.context
+    assert "endereço" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+
+@mark.asyncio
+async def test_abbreviated_address_with_different_city_does_not_force_business_city() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Joao",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(307, body="rua 28 pq imperial jacarei")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    stored = repository.context["service_address"]["address_line"]
+    assert "Parque imperial jacarei" in stored
+    assert "São José dos Campos" not in stored
+
+
+@mark.asyncio
+async def test_city_reply_after_other_city_is_accepted_without_reasking() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "pending_service_address": "Rua 28, número 47, Parque Imperial",
+            "awaiting_address_city": True,
+            "repair_attempts": {"city": 1},
+        },
+        customer_name="Joao",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(308, body="jacarei")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    address = repository.context["service_address"]
+    assert address["city"] == "jacarei"
+    assert "repair_attempts" not in repository.context
+
+
+@mark.asyncio
+async def test_same_city_question_is_never_asked_more_than_twice() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "pending_service_address": "Rua 28, 47, Parque Imperial",
+            "awaiting_address_city": True,
+            "repair_attempts": {"city": 1},
+        },
+        customer_name="Joao",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(309, body="não faço ideia")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert "duas tentativas" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+
+@mark.asyncio
+async def test_invalid_quantity_is_rephrased_once_then_handoff() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_QUANTITY,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(310, body="não sei"))
+    assert repository.state == ConversationState.BOOKING_QUANTITY
+    assert repository.context["repair_attempts"]["quantity"] == 1
+
+    await engine.process(inbound(311, body="complicado"))
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
