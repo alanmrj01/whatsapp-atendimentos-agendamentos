@@ -5,10 +5,11 @@ import hashlib
 import re
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import date, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
+from app.booking.equipment_recommender import recommend_equipment
 from app.booking.domain import (
     AccessCondition,
     BookingPlan,
@@ -18,6 +19,10 @@ from app.booking.domain import (
     ServiceIntake,
 )
 
+from app.conversations.facts import (
+    enrich_context_from_message,
+    missing_equipment_profile_fields,
+)
 from app.conversations.constants import (
     ALLOWED_CONTEXT_KEYS,
     ACCESS_DIFFICULT,
@@ -25,9 +30,27 @@ from app.conversations.constants import (
     ACCESS_UNKNOWN,
     ADDRESS_CITY_CONFIRM,
     ADDRESS_CITY_OTHER,
+    ATTENDEE_CUSTOMER,
+    ATTENDEE_OTHER,
     EQUIPMENT_BOTH,
+    EQUIPMENT_HAS,
     EQUIPMENT_INSTALLATION,
+    EQUIPMENT_MODEL_KNOWN,
+    EQUIPMENT_MODEL_RECOMMEND,
+    EQUIPMENT_NEEDS,
+    EQUIPMENT_PREF_COST_BENEFIT,
+    EQUIPMENT_PREF_ECONOMY,
+    EQUIPMENT_PREF_MODERN,
     EQUIPMENT_PURCHASE,
+    HEIGHT_AT_MOST_3M,
+    HEIGHT_OVER_3M,
+    PHONE_CONFIRM,
+    PHONE_OTHER,
+    PROPERTY_BUILDING,
+    PROPERTY_CONDOMINIUM,
+    PROPERTY_HOUSE,
+    QUOTE_FINISH,
+    QUOTE_SCHEDULE,
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
@@ -58,13 +81,27 @@ from app.conversations.outbound import (
     cancel_confirmation_message,
     cancel_message,
     date_selection_message,
+    attendee_message,
+    attendee_name_message,
+    building_hours_message,
+    equipment_model_known_message,
+    equipment_model_request_message,
+    equipment_preference_message,
+    equipment_profile_message,
     equipment_purchase_clarification_message,
     existing_booking_selection_message,
+    gate_details_message,
+    installation_equipment_status_message,
+    installation_height_message,
     handoff_message,
     main_menu_message,
     name_request_message,
     no_services_message,
+    phone_confirmation_message,
+    phone_request_message,
+    property_type_message,
     quantity_selection_message,
+    quote_decision_message,
     reschedule_completed_message,
     reschedule_confirmation_message,
     reschedule_message,
@@ -74,6 +111,7 @@ from app.conversations.outbound import (
     tubing_confirmation_message,
     tubing_guidance_message,
     tubing_length_message,
+    tubing_variation_message,
     time_selection_message,
     weekday_selection_message,
 )
@@ -120,7 +158,11 @@ async def determine_transition(
         return None
 
     state = _canonical_state(conversation.state)
-    context = _clean_context(conversation.context)
+    context = enrich_context_from_message(
+        _clean_context(conversation.context),
+        inbound.body,
+        whatsapp_id=inbound.whatsapp_id,
+    )
     action = inbound.interactive_id
     interpreter = DeterministicConversationInterpreter()
     interpretation = interpreter.interpret(inbound.body)
@@ -155,7 +197,7 @@ async def determine_transition(
 
     if conversation.customer_name is None:
         if captured_name is None:
-            pending: dict[str, Any] = {}
+            pending: dict[str, Any] = dict(context)
             if _should_preserve_pending_message(inbound.body, interpretation):
                 pending["pending_customer_message"] = inbound.body
             if action is not None:
@@ -211,6 +253,7 @@ async def _route_named_conversation(
         }
         and not interpretation.has(ConversationIntent.BOOK)
         and not interpretation.has(ConversationIntent.AVAILABILITY)
+        and context.get("request_mode") != "quote"
     ):
         follow_up = (
             f"{question_answer}\n\n"
@@ -226,12 +269,23 @@ async def _route_named_conversation(
         ConversationState.BOOKING_QUANTITY,
         ConversationState.BOOKING_ACCESS,
         ConversationState.BOOKING_ADDRESS,
+        ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
+        ConversationState.BOOKING_EQUIPMENT_MODEL,
+        ConversationState.BOOKING_EQUIPMENT_PROFILE,
+        ConversationState.BOOKING_INSTALLATION_HEIGHT,
+        ConversationState.BOOKING_PROPERTY,
+        ConversationState.BOOKING_BUILDING_HOURS,
+        ConversationState.BOOKING_GATE_DETAILS,
         ConversationState.BOOKING_TUBING,
         ConversationState.BOOKING_SITE_LIMIT,
         ConversationState.BOOKING_WEEKDAY,
         ConversationState.BOOKING_DATE,
         ConversationState.BOOKING_TIME,
+        ConversationState.BOOKING_ATTENDEE,
+        ConversationState.BOOKING_ATTENDEE_NAME,
+        ConversationState.BOOKING_PHONE_CONFIRM,
         ConversationState.BOOKING_CONFIRM,
+        ConversationState.QUOTE_DECISION,
     }
     if (
         state in booking_states
@@ -345,6 +399,34 @@ async def _route_named_conversation(
         transition = await _handle_address(
             inbound, context, booking_port, customer_name=customer_name
         )
+    elif state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
+        transition = await _handle_equipment_ownership(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        transition = await _handle_equipment_model(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
+        transition = await _handle_equipment_profile(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_INSTALLATION_HEIGHT:
+        transition = await _handle_installation_height(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_PROPERTY:
+        transition = await _handle_property_type(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_BUILDING_HOURS:
+        transition = await _handle_building_hours(
+            inbound, context, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_GATE_DETAILS:
+        transition = await _handle_gate_details(
+            inbound, context, booking_port, customer_name=customer_name
+        )
     elif state is ConversationState.BOOKING_TUBING:
         transition = await _handle_tubing(
             inbound, context, booking_port, customer_name=customer_name
@@ -363,6 +445,22 @@ async def _route_named_conversation(
         )
     elif state is ConversationState.BOOKING_TIME:
         transition = await _handle_time(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_ATTENDEE:
+        transition = await _handle_attendee(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_ATTENDEE_NAME:
+        transition = await _handle_attendee_name(
+            inbound, context, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.BOOKING_PHONE_CONFIRM:
+        transition = await _handle_phone_confirmation(
+            inbound, context, action, booking_port, customer_name=customer_name
+        )
+    elif state is ConversationState.QUOTE_DECISION:
+        transition = await _handle_quote_decision(
             inbound, context, action, booking_port, customer_name=customer_name
         )
     elif state is ConversationState.BOOKING_CONFIRM:
@@ -445,6 +543,11 @@ async def _handle_customer_name(
         replay_interpretation = _without_greeting(
             DeterministicConversationInterpreter().interpret(pending_body)
         )
+        resumed_context = {
+            key: value
+            for key, value in context.items()
+            if key not in {"pending_customer_message", "pending_interactive_id"}
+        }
         resumed = replace(
             conversation,
             state=(
@@ -452,13 +555,13 @@ async def _handle_customer_name(
                 if pending_action is not None and pending_action.startswith("menu.")
                 else ConversationState.START.value
             ),
-            context={},
+            context=resumed_context,
             customer_name=customer_name,
         )
         transition = await _route_named_conversation(
             resumed,
             replay,
-            {},
+            resumed_context,
             replay_interpretation,
             booking_port,
         )
@@ -644,6 +747,45 @@ def _stale_interactive_transition(
     if action is None:
         return None
 
+    expected_actions: dict[ConversationState, set[str]] = {
+        ConversationState.BOOKING_EQUIPMENT_OWNERSHIP: {
+            EQUIPMENT_HAS,
+            EQUIPMENT_NEEDS,
+        },
+        ConversationState.BOOKING_EQUIPMENT_MODEL: {
+            EQUIPMENT_MODEL_KNOWN,
+            EQUIPMENT_MODEL_RECOMMEND,
+        },
+        ConversationState.BOOKING_EQUIPMENT_PROFILE: {
+            EQUIPMENT_PREF_MODERN,
+            EQUIPMENT_PREF_COST_BENEFIT,
+            EQUIPMENT_PREF_ECONOMY,
+        },
+        ConversationState.BOOKING_INSTALLATION_HEIGHT: {
+            HEIGHT_AT_MOST_3M,
+            HEIGHT_OVER_3M,
+        },
+        ConversationState.BOOKING_PROPERTY: {
+            PROPERTY_HOUSE,
+            PROPERTY_BUILDING,
+            PROPERTY_CONDOMINIUM,
+        },
+        ConversationState.BOOKING_ATTENDEE: {
+            ATTENDEE_CUSTOMER,
+            ATTENDEE_OTHER,
+        },
+        ConversationState.BOOKING_PHONE_CONFIRM: {
+            PHONE_CONFIRM,
+            PHONE_OTHER,
+        },
+        ConversationState.QUOTE_DECISION: {
+            QUOTE_SCHEDULE,
+            QUOTE_FINISH,
+        },
+    }
+    if action in expected_actions.get(state, set()):
+        return None
+
     if state is ConversationState.CUSTOMER_NAME:
         return _transition(
             state,
@@ -675,6 +817,39 @@ def _stale_interactive_transition(
             state,
             context,
             tubing_length_message(),
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
+        return _transition(state, context, installation_equipment_status_message())
+    if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        return _transition(state, context, equipment_model_known_message())
+    if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
+        return _transition(
+            state,
+            context,
+            equipment_profile_message(missing_equipment_profile_fields(context)),
+        )
+    if state is ConversationState.BOOKING_INSTALLATION_HEIGHT:
+        return _transition(state, context, installation_height_message())
+    if state is ConversationState.BOOKING_PROPERTY:
+        return _transition(state, context, property_type_message())
+    if state is ConversationState.BOOKING_BUILDING_HOURS:
+        return _transition(state, context, building_hours_message())
+    if state is ConversationState.BOOKING_GATE_DETAILS:
+        return _transition(state, context, gate_details_message())
+    if state is ConversationState.BOOKING_ATTENDEE:
+        return _transition(state, context, attendee_message(customer_name))
+    if state is ConversationState.BOOKING_ATTENDEE_NAME:
+        return _transition(state, context, attendee_name_message())
+    if state is ConversationState.BOOKING_PHONE_CONFIRM:
+        phone = _context_string(context, "whatsapp_contact_phone") or "este número"
+        return _transition(state, context, phone_confirmation_message(phone))
+    if state is ConversationState.QUOTE_DECISION:
+        return _transition(
+            state,
+            context,
+            quote_decision_message(
+                "Posso consultar a agenda para esse atendimento?"
+            ),
         )
     return None
 
@@ -984,6 +1159,160 @@ def _address_success_context(
     return updated
 
 
+def _installation_service_option(
+    services: Sequence[BookingOption],
+) -> BookingOption | None:
+    ranked = [
+        item
+        for item in services
+        if "instal" in normalize_portuguese(item.label)
+        and any(
+            token in normalize_portuguese(item.label)
+            for token in ("ar condicionado", "split")
+        )
+    ]
+    if ranked:
+        return ranked[0]
+    return next(
+        (
+            item
+            for item in services
+            if "instal" in normalize_portuguese(item.label)
+        ),
+        None,
+    )
+
+
+def _service_kind(
+    services: Sequence[BookingOption],
+    service_id: uuid.UUID,
+) -> str:
+    selected = next(
+        (item for item in services if item.id == str(service_id)),
+        None,
+    )
+    normalized = normalize_portuguese(selected.label if selected else "")
+    if "instal" in normalized:
+        return "installation"
+    if any(token in normalized for token in ("limpeza", "higien", "lavagem")):
+        return "cleaning"
+    return "other"
+
+
+async def _safe_service_details(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    service_id: uuid.UUID,
+):
+    try:
+        return await port.get_service_details(
+            inbound.business_id,
+            service_id,
+        )
+    except BookingRequiresHandoff:
+        return None
+
+
+def _with_equipment_recommendation(
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    area = context.get("room_area_m2")
+    people = context.get("room_people_max")
+    preference = context.get("equipment_preference")
+    if (
+        not isinstance(area, (int, float))
+        or isinstance(area, bool)
+        or not isinstance(people, int)
+        or isinstance(people, bool)
+        or preference not in {"modern", "cost_benefit", "economy"}
+    ):
+        return dict(context)
+    recommendation = recommend_equipment(
+        float(area),
+        people,
+        preference,
+    )
+    return {
+        **context,
+        "recommended_equipment": {
+            "item_id": recommendation.item_id,
+            "label": recommendation.label,
+            "brand": recommendation.brand,
+            "line": recommendation.line,
+            "capacity_btu": recommendation.capacity_btu,
+            "preference": recommendation.segment,
+            "features": list(recommendation.features),
+            "source_url": recommendation.source_url,
+            "required_btu_reference": recommendation.required_btu,
+        },
+    }
+
+
+def _profile_grace_active(context: dict[str, Any]) -> bool:
+    raw = _context_string(context, "equipment_profile_last_answer_at")
+    if raw is None:
+        return False
+    try:
+        changed_at = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if changed_at.tzinfo is None:
+        return False
+    return datetime.now(UTC) - changed_at < timedelta(minutes=3)
+
+
+def _time_window_from_text(
+    value: str | None,
+) -> tuple[str, str] | None:
+    normalized = normalize_portuguese(value or "")
+    match = re.search(
+        r"\b(?:das?\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:h|horas?)?"
+        r"\s*(?:as|ate|a)\s*(\d{1,2})(?::(\d{2}))?\s*(?:h|horas?)?\b",
+        normalized,
+    )
+    if match is None:
+        return None
+    start_hour, start_minute, end_hour, end_minute = match.groups()
+    start_h, end_h = int(start_hour), int(end_hour)
+    start_m, end_m = int(start_minute or 0), int(end_minute or 0)
+    if not (
+        0 <= start_h <= 23
+        and 0 <= end_h <= 23
+        and 0 <= start_m <= 59
+        and 0 <= end_m <= 59
+    ):
+        return None
+    start = f"{start_h:02d}:{start_m:02d}"
+    end = f"{end_h:02d}:{end_m:02d}"
+    return (start, end) if start < end else None
+
+
+def _phone_from_text(value: str | None) -> str | None:
+    raw = value or ""
+    digits = re.sub(r"\D", "", raw)
+    if digits.startswith("55") and 12 <= len(digits) <= 13:
+        return f"+{digits}"
+    if 10 <= len(digits) <= 11:
+        return f"+55{digits}"
+    return None
+
+
+def _context_time(
+    context: dict[str, Any],
+    key: str,
+) -> time | None:
+    value = _context_string(context, key)
+    if value is None:
+        return None
+    try:
+        parsed = time.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return None
+    return parsed
+
+
 def _friendly_fallback(configured: str) -> str:
     normalized = normalize_portuguese(configured)
     if normalized.startswith("nao entendi"):
@@ -1238,45 +1567,35 @@ async def _handle_service(
 
     normalized = normalize_portuguese(inbound.body or "")
     clarification = _context_string(context, "service_clarification")
-    if action in {EQUIPMENT_PURCHASE, EQUIPMENT_BOTH}:
-        return _handoff_transition(
-            "Entendi. Para compra do aparelho, a equipe precisa confirmar modelos, "
-            "disponibilidade e valores. Vou encaminhar seu atendimento para continuarem com você."
-        )
-    if action == EQUIPMENT_INSTALLATION:
-        interpretation = DeterministicConversationInterpreter().interpret(
-            "instalação de ar condicionado split"
-        )
-        action = None
-    elif clarification == "equipment_purchase":
+    purchase_action = action if action in {
+        EQUIPMENT_PURCHASE,
+        EQUIPMENT_BOTH,
+        EQUIPMENT_INSTALLATION,
+    } else None
+
+    if clarification == "equipment_purchase" and purchase_action is None:
         if normalized in {
             "comprar",
             "comprar aparelho",
             "so comprar",
             "somente comprar",
             "compra",
+        }:
+            purchase_action = EQUIPMENT_PURCHASE
+        elif normalized in {
             "os dois",
             "ambos",
             "compra e instalacao",
             "comprar e instalar",
         }:
-            return _handoff_transition(
-                "Entendi. Como envolve a compra do aparelho, a equipe precisa confirmar "
-                "modelos, disponibilidade e valores. Vou encaminhar seu atendimento "
-                "para continuarem com você."
-            )
-        if "instal" in normalized:
-            interpretation = DeterministicConversationInterpreter().interpret(
-                "instalação de ar condicionado split"
-            )
+            purchase_action = EQUIPMENT_BOTH
+        elif "instal" in normalized:
+            purchase_action = EQUIPMENT_INSTALLATION
         elif (
             interpretation is not None
             and interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
         ):
-            return _handoff_transition(
-                "Entendi. Para compra do aparelho, a equipe precisa confirmar modelos, "
-                "disponibilidade e valores. Vou encaminhar seu atendimento para continuarem com você."
-            )
+            purchase_action = EQUIPMENT_PURCHASE
         else:
             return _retry_or_handoff(
                 ConversationState.BOOKING_SERVICE,
@@ -1288,18 +1607,53 @@ async def _handle_service(
                     "instalação ou os dois. Vou chamar uma pessoa da equipe para continuar."
                 ),
             )
-    elif (
-        interpretation is not None
+
+    if (
+        purchase_action is None
+        and interpretation is not None
         and interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
     ):
         updated = {
             **context,
             "service_clarification": "equipment_purchase",
+            "request_mode": "quote",
         }
         return _transition(
             ConversationState.BOOKING_SERVICE,
             updated,
             equipment_purchase_clarification_message(),
+        )
+
+    if purchase_action is not None:
+        installation = _installation_service_option(services)
+        if installation is None:
+            return _handoff_transition(
+                "Entendi o que você procura, mas não encontrei uma instalação "
+                "residencial configurada para montar a cotação. Vou chamar a equipe."
+            )
+        service_id = uuid.UUID(installation.id)
+        updated_context = {
+            **context,
+            "service_id": str(service_id),
+        }
+        updated_context.pop("service_clarification", None)
+        if purchase_action == EQUIPMENT_INSTALLATION:
+            updated_context["equipment_ownership"] = "has_equipment"
+        else:
+            updated_context["request_mode"] = "quote"
+            updated_context["equipment_ownership"] = "needs_equipment"
+            updated_context["purchase_only"] = purchase_action == EQUIPMENT_PURCHASE
+        try:
+            intake = await port.get_service_intake(inbound.business_id, service_id)
+        except BookingRequiresHandoff as exc:
+            return _handoff_for_reason(str(exc))
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated_context,
+            services=services,
+            customer_name=customer_name,
         )
 
     service_id = _service_id(action)
@@ -1361,11 +1715,16 @@ async def _handle_service(
         or intake.pricing_type is PricingType.HUMAN_QUOTE
     ):
         return _handoff_for_reason("human_quote")
+    updated_context = {
+        **context,
+        "service_id": str(service_id),
+    }
+    updated_context.pop("service_clarification", None)
     return await _advance_intake(
         inbound,
         port,
         intake,
-        {"service_id": str(service_id)},
+        updated_context,
         services=services,
         customer_name=customer_name,
     )
@@ -1402,15 +1761,18 @@ async def _handle_quantity(
                 "Vou chamar uma pessoa da equipe para continuar com você."
             ),
         )
+    updated = {
+        **_clear_repair_attempt(context, "quantity"),
+        "service_id": str(service_id),
+        "quantity": quantity,
+    }
+    if context.get("request_mode") == "quote":
+        updated["equipment_quantity"] = quantity
     return await _advance_intake(
         inbound,
         port,
         intake,
-        {
-            **_clear_repair_attempt(context, "quantity"),
-            "service_id": str(service_id),
-            "quantity": quantity,
-        },
+        updated,
         customer_name=customer_name,
     )
 
@@ -1680,6 +2042,517 @@ async def _handle_address(
         port,
         intake,
         _address_success_context(context, service_id, address),
+        customer_name=customer_name,
+    )
+
+
+async def _handle_equipment_ownership(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    normalized = normalize_portuguese(inbound.body or "")
+    ownership: str | None = None
+    if action == EQUIPMENT_HAS or any(
+        phrase in normalized
+        for phrase in (
+            "ja tenho",
+            "tenho o aparelho",
+            "so instalacao",
+            "somente instalacao",
+            "apenas instalar",
+        )
+    ):
+        ownership = "has_equipment"
+    elif action == EQUIPMENT_NEEDS or any(
+        phrase in normalized
+        for phrase in (
+            "quero cotar",
+            "quero comprar",
+            "preciso comprar",
+            "nao tenho aparelho",
+            "nao tenho o ar",
+        )
+    ):
+        ownership = "needs_equipment"
+
+    if ownership is None:
+        return _retry_or_handoff(
+            ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
+            context,
+            "equipment_ownership",
+            installation_equipment_status_message(),
+            handoff_body=(
+                "Não consegui confirmar se você já tem o aparelho após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+
+    updated = {
+        **_clear_repair_attempt(context, "equipment_ownership"),
+        "service_id": str(service_id),
+        "equipment_ownership": ownership,
+    }
+    if ownership == "has_equipment":
+        updated["equipment_model_known"] = True
+    else:
+        updated.setdefault("request_mode", "quote")
+    return await _advance_intake(
+        inbound,
+        port,
+        intake,
+        updated,
+        customer_name=customer_name,
+    )
+
+
+async def _handle_equipment_model(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    if _context_string(context, "equipment_model") is not None:
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            context,
+            customer_name=customer_name,
+        )
+
+    normalized = normalize_portuguese(inbound.body or "")
+    if action == EQUIPMENT_MODEL_RECOMMEND or normalized in {
+        "nao",
+        "nao tenho",
+        "nao sei",
+        "sem preferencia",
+        "pode recomendar",
+    }:
+        updated = {
+            **_clear_repair_attempt(context, "equipment_model"),
+            "equipment_model_known": False,
+        }
+        updated.pop("equipment_model", None)
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            customer_name=customer_name,
+        )
+
+    if action == EQUIPMENT_MODEL_KNOWN and context.get("equipment_model_known") is not True:
+        return _transition(
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
+            {**context, "equipment_model_known": True},
+            equipment_model_request_message(),
+        )
+
+    raw = " ".join((inbound.body or "").strip().split())
+    if (
+        context.get("equipment_model_known") is True
+        and 2 <= len(raw) <= 180
+        and normalized not in {"sim", "isso", "tenho", "ok", "certo"}
+    ):
+        updated = {
+            **_clear_repair_attempt(context, "equipment_model"),
+            "equipment_model_known": True,
+            "equipment_model": raw,
+        }
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            customer_name=customer_name,
+        )
+
+    if action == EQUIPMENT_MODEL_KNOWN:
+        return _transition(
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
+            {**context, "equipment_model_known": True},
+            equipment_model_request_message(),
+        )
+
+    return _retry_or_handoff(
+        ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context,
+        "equipment_model",
+        (
+            equipment_model_request_message(
+                "Não consegui identificar o modelo. Pode me dizer a marca e o modelo "
+                "ou a capacidade em BTUs?"
+            )
+            if context.get("equipment_model_known") is True
+            else equipment_model_known_message()
+        ),
+        handoff_body=(
+            "Não consegui confirmar o equipamento após duas tentativas. "
+            "Vou chamar uma pessoa da equipe para continuar."
+        ),
+    )
+
+
+async def _handle_equipment_profile(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_EQUIPMENT_PROFILE,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    updated = dict(context)
+    preference_by_action = {
+        EQUIPMENT_PREF_MODERN: "modern",
+        EQUIPMENT_PREF_COST_BENEFIT: "cost_benefit",
+        EQUIPMENT_PREF_ECONOMY: "economy",
+    }
+    if action in preference_by_action:
+        updated["equipment_preference"] = preference_by_action[action]
+
+    missing_before = missing_equipment_profile_fields(updated)
+    raw = normalize_portuguese(inbound.body or "")
+    single_number = re.fullmatch(r"\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*", inbound.body or "")
+    if single_number and len(missing_before) == 1:
+        number = float(single_number.group(1).replace(",", "."))
+        if missing_before[0] == "people" and number.is_integer() and 1 <= number <= 100:
+            updated["room_people_max"] = int(number)
+        elif missing_before[0] == "area" and 1 <= number <= 500:
+            updated["room_area_m2"] = number
+
+    if (
+        "equipment_preference" not in updated
+        and raw in {"moderno", "mais moderno", "tecnologia"}
+    ):
+        updated["equipment_preference"] = "modern"
+    elif (
+        "equipment_preference" not in updated
+        and raw in {"custo beneficio", "custo-beneficio", "equilibrado"}
+    ):
+        updated["equipment_preference"] = "cost_benefit"
+    elif (
+        "equipment_preference" not in updated
+        and raw in {"economia", "mais barato", "maior economia"}
+    ):
+        updated["equipment_preference"] = "economy"
+
+    missing = missing_equipment_profile_fields(updated)
+    if not missing:
+        recommended = _with_equipment_recommendation(updated)
+        recommendation = recommended.get("recommended_equipment")
+        label = (
+            recommendation.get("label")
+            if isinstance(recommendation, dict)
+            else None
+        )
+        transition = await _advance_intake(
+            inbound,
+            port,
+            intake,
+            recommended,
+            customer_name=customer_name,
+        )
+        if isinstance(label, str) and label:
+            transition = _prepend_transition_body(
+                transition,
+                (
+                    f"Pelas informações do ambiente, minha referência é {label}. "
+                    "Essa é uma indicação comercial inicial; condições de insolação, "
+                    "pé-direito e carga térmica podem exigir ajuste."
+                ),
+            )
+        return transition
+
+    if _profile_grace_active(updated):
+        return _transition(
+            ConversationState.BOOKING_EQUIPMENT_PROFILE,
+            updated,
+            _text_message(
+                "Perfeito, anotei. Pode me mandar as outras informações quando puder."
+            ),
+        )
+
+    return _retry_or_handoff(
+        ConversationState.BOOKING_EQUIPMENT_PROFILE,
+        updated,
+        "equipment_profile",
+        equipment_profile_message(missing, retry=True),
+        handoff_body=(
+            "Ainda faltaram dados essenciais para recomendar o equipamento com segurança. "
+            "Vou chamar uma pessoa da equipe para continuar."
+        ),
+    )
+
+
+async def _handle_installation_height(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_INSTALLATION_HEIGHT,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    height: bool | None = None
+    normalized = normalize_portuguese(inbound.body or "")
+    if action == HEIGHT_OVER_3M:
+        height = True
+    elif action == HEIGHT_AT_MOST_3M:
+        height = False
+    elif any(
+        phrase in normalized
+        for phrase in ("mais de 3", "acima de 3", "passa de 3")
+    ):
+        height = True
+    elif any(
+        phrase in normalized
+        for phrase in ("ate 3", "menos de 3", "abaixo de 3", "nao passa de 3")
+    ):
+        height = False
+    else:
+        value = _decimal_from_text(inbound.body)
+        if value is not None:
+            height = value > Decimal("3")
+
+    if height is None:
+        return _retry_or_handoff(
+            ConversationState.BOOKING_INSTALLATION_HEIGHT,
+            context,
+            "installation_height",
+            installation_height_message(),
+            handoff_body=(
+                "Não consegui confirmar a altura da instalação após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+
+    updated = {
+        **_clear_repair_attempt(context, "installation_height"),
+        "service_id": str(service_id),
+        "installation_height_over_3m": height,
+        "work_at_height": height,
+        "tubing_length_answered": True,
+    }
+    return await _advance_intake(
+        inbound,
+        port,
+        intake,
+        updated,
+        customer_name=customer_name,
+    )
+
+
+async def _handle_property_type(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_PROPERTY,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    normalized = normalize_portuguese(inbound.body or "")
+    mapping = {
+        PROPERTY_HOUSE: "house",
+        PROPERTY_BUILDING: "building",
+        PROPERTY_CONDOMINIUM: "condominium",
+    }
+    property_type = mapping.get(action)
+    if property_type is None:
+        if "condominio" in normalized:
+            property_type = "condominium"
+        elif any(token in normalized for token in ("predio", "edificio", "apartamento", "apto")):
+            property_type = "building"
+        elif any(token in normalized for token in ("casa", "residencia")):
+            property_type = "house"
+
+    if property_type is None:
+        return _retry_or_handoff(
+            ConversationState.BOOKING_PROPERTY,
+            context,
+            "property_type",
+            property_type_message(),
+            handoff_body=(
+                "Não consegui confirmar o tipo de local após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+
+    updated = {
+        **_clear_repair_attempt(context, "property_type"),
+        "service_id": str(service_id),
+        "property_type": property_type,
+    }
+    return await _advance_intake(
+        inbound,
+        port,
+        intake,
+        updated,
+        customer_name=customer_name,
+    )
+
+
+async def _handle_building_hours(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_BUILDING_HOURS,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    start = _context_string(context, "building_hours_start")
+    end = _context_string(context, "building_hours_end")
+    if start is None or end is None:
+        window = _time_window_from_text(inbound.body)
+        if window is not None:
+            start, end = window
+
+    if start is None or end is None:
+        return _retry_or_handoff(
+            ConversationState.BOOKING_BUILDING_HOURS,
+            context,
+            "building_hours",
+            building_hours_message(),
+            handoff_body=(
+                "Não consegui confirmar o horário permitido no prédio/condomínio "
+                "após duas tentativas. Vou chamar a equipe para continuar."
+            ),
+        )
+
+    updated = {
+        **_clear_repair_attempt(context, "building_hours"),
+        "service_id": str(service_id),
+        "building_hours_start": start,
+        "building_hours_end": end,
+        "site_allowed_end": end,
+        "site_limit_answered": True,
+    }
+    return await _advance_intake(
+        inbound,
+        port,
+        intake,
+        updated,
+        customer_name=customer_name,
+    )
+
+
+async def _handle_gate_details(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_GATE_DETAILS,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    value = " ".join((inbound.body or "").strip().split())
+    if len(value) < 2 or len(value) > 300:
+        return _retry_or_handoff(
+            ConversationState.BOOKING_GATE_DETAILS,
+            context,
+            "gate_details",
+            gate_details_message(),
+            handoff_body=(
+                "Não consegui confirmar os dados da portaria após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+
+    updated = {
+        **_clear_repair_attempt(context, "gate_details"),
+        "service_id": str(service_id),
+        "gate_instructions": value,
+    }
+    return await _advance_intake(
+        inbound,
+        port,
+        intake,
+        updated,
         customer_name=customer_name,
     )
 
@@ -2140,15 +3013,15 @@ async def _handle_time(
                 "Vou chamar uma pessoa da equipe para continuar com você."
             ),
         )
-    context = _clear_repair_attempt(context, "time")
-    return await _booking_confirm_transition(
+    context = {
+        **_clear_repair_attempt(context, "time"),
+        "selected_date": selected_date,
+        "selected_time": selected_time,
+    }
+    return await _advance_preconfirmation(
         inbound,
         port,
         context,
-        service_id,
-        selected_date,
-        selected_time,
-        requirements,
         customer_name=customer_name,
     )
 
@@ -2568,6 +3441,15 @@ async def _advance_intake(
     services: Sequence[BookingOption] | None = None,
     customer_name: str | None = None,
 ) -> ConversationTransition:
+    service_id = _context_service_id(context)
+    if service_id is None:
+        return await _restart_service_selection(inbound, port)
+
+    available_services = services or _snapshot_options(
+        await port.list_services(inbound.business_id)
+    )
+    service_kind = _service_kind(available_services, service_id)
+
     if intake.requires_quantity and not isinstance(context.get("quantity"), int):
         return _transition(
             ConversationState.BOOKING_QUANTITY,
@@ -2592,27 +3474,184 @@ async def _advance_intake(
             context,
             address_request_message(),
         )
-    if intake.asks_tubing_length and context.get("tubing_length_answered") is not True:
-        service_id = _context_service_id(context)
-        if service_id is None:
-            return await _restart_service_selection(inbound, port)
-        return await _tubing_prompt_transition(
+
+    # Quote-specific service details are collected only when needed. Facts that
+    # the customer volunteered earlier are already present in the shared context.
+    if context.get("request_mode") == "quote" and service_kind == "cleaning":
+        if _context_string(context, "equipment_model") is None:
+            updated = {**context, "equipment_model_known": True}
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_MODEL,
+                updated,
+                equipment_model_request_message(
+                    "Qual é a marca/modelo ou a capacidade em BTUs do ar-condicionado?"
+                ),
+            )
+        if not isinstance(context.get("equipment_quantity"), int):
+            return _transition(
+                ConversationState.BOOKING_QUANTITY,
+                context,
+                quantity_selection_message(),
+            )
+
+    if service_kind == "installation":
+        ownership = _context_string(context, "equipment_ownership")
+        if ownership not in {"has_equipment", "needs_equipment"}:
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
+                context,
+                installation_equipment_status_message(),
+            )
+
+        if ownership == "has_equipment":
+            if _context_string(context, "equipment_model") is None:
+                updated = {**context, "equipment_model_known": True}
+                return _transition(
+                    ConversationState.BOOKING_EQUIPMENT_MODEL,
+                    updated,
+                    equipment_model_request_message(),
+                )
+        else:
+            model_known = context.get("equipment_model_known")
+            if model_known is None and _context_string(context, "equipment_model") is None:
+                return _transition(
+                    ConversationState.BOOKING_EQUIPMENT_MODEL,
+                    context,
+                    equipment_model_known_message(),
+                )
+            if model_known is True and _context_string(context, "equipment_model") is None:
+                return _transition(
+                    ConversationState.BOOKING_EQUIPMENT_MODEL,
+                    context,
+                    equipment_model_request_message(),
+                )
+            if model_known is False and "recommended_equipment" not in context:
+                missing = missing_equipment_profile_fields(context)
+                if missing:
+                    return _transition(
+                        ConversationState.BOOKING_EQUIPMENT_PROFILE,
+                        context,
+                        equipment_profile_message(missing),
+                    )
+                context = _with_equipment_recommendation(context)
+
+        if context.get("purchase_only") is True and "recommended_equipment" in context:
+            recommendation = context.get("recommended_equipment")
+            label = (
+                recommendation.get("label")
+                if isinstance(recommendation, dict)
+                else None
+            )
+            body = (
+                f"Pelas informações do ambiente, minha referência é {label}. "
+                if isinstance(label, str) and label
+                else "Já tenho uma referência de equipamento para o seu ambiente. "
+            )
+            body += (
+                "Como preço e estoque do aparelho mudam com o fornecedor, a equipe "
+                "vai confirmar a disponibilidade e o valor atual com você."
+            )
+            return _handoff_transition(body)
+
+        if context.get("installation_height_over_3m") is None:
+            return _transition(
+                ConversationState.BOOKING_INSTALLATION_HEIGHT,
+                context,
+                installation_height_message(),
+            )
+
+        if context.get("tube_disclaimer_sent") is not True:
+            details = await _safe_service_details(
+                inbound,
+                port,
+                service_id,
+            )
+            updated = {
+                **context,
+                "tube_disclaimer_sent": True,
+                "tubing_length_answered": True,
+            }
+            next_transition = await _advance_intake(
+                inbound,
+                port,
+                intake,
+                updated,
+                services=available_services,
+                customer_name=customer_name,
+            )
+            return replace(
+                next_transition,
+                outbound=tubing_variation_message(
+                    getattr(details, "included_tubing_meters", None),
+                    getattr(details, "extra_tubing_price", None),
+                ),
+                follow_ups=(
+                    next_transition.outbound,
+                    *next_transition.follow_ups,
+                ),
+            )
+
+    if _context_string(context, "property_type") is None:
+        return _transition(
+            ConversationState.BOOKING_PROPERTY,
+            context,
+            property_type_message(),
+        )
+
+    property_type = _context_string(context, "property_type")
+    if property_type in {"building", "condominium"}:
+        if (
+            _context_string(context, "building_hours_start") is None
+            or _context_string(context, "building_hours_end") is None
+        ):
+            return _transition(
+                ConversationState.BOOKING_BUILDING_HOURS,
+                context,
+                building_hours_message(),
+            )
+        if _context_string(context, "gate_instructions") is None:
+            return _transition(
+                ConversationState.BOOKING_GATE_DETAILS,
+                context,
+                gate_details_message(),
+            )
+
+    if intake.asks_site_time_limit and context.get("site_limit_answered") is not True:
+        if property_type in {"building", "condominium"} and _context_string(
+            context, "building_hours_end"
+        ):
+            context = {
+                **context,
+                "site_limit_answered": True,
+                "site_allowed_end": _context_string(
+                    context,
+                    "building_hours_end",
+                ),
+            }
+        else:
+            return _transition(
+                ConversationState.BOOKING_SITE_LIMIT,
+                context,
+                site_limit_message(),
+            )
+
+    if (
+        context.get("request_mode") == "quote"
+        and context.get("quote_presented") is not True
+    ):
+        return await _quote_transition(
             inbound,
             port,
             context,
             service_id,
+            customer_name=customer_name,
         )
-    if intake.asks_site_time_limit and context.get("site_limit_answered") is not True:
-        return _transition(
-            ConversationState.BOOKING_SITE_LIMIT,
-            context,
-            site_limit_message(),
-        )
+
     return await _offer_dates(
         inbound,
         port,
         context,
-        services=services,
+        services=available_services,
         customer_name=customer_name,
     )
 
@@ -2659,10 +3698,15 @@ async def _offer_dates(
             ),
         )
 
-    estimate = _estimate_message(plan)
+    estimate = (
+        ""
+        if context.get("quote_presented") is True
+        else _estimate_message(plan)
+    )
+    prefix = f"{estimate}\n\n" if estimate else ""
     if len(dates) > 10:
         body = (
-            f"{estimate}\n\nTenho disponibilidade em vários dias. "
+            f"{prefix}Tenho disponibilidade em vários dias. "
             f"{customer_lead(customer_name)}qual dia da semana fica melhor "
             "para o seu atendimento?"
         )
@@ -2676,7 +3720,7 @@ async def _offer_dates(
         )
 
     body = (
-        f"{estimate}\n\nTenho disponibilidade nestas datas. "
+        f"{prefix}Tenho disponibilidade nestas datas. "
         f"{customer_lead(customer_name)}qual dia fica melhor "
         "para o seu atendimento?"
     )
@@ -2737,6 +3781,416 @@ async def _offer_times_for_date(
             times,
             body=_time_prompt(selected_date, times, customer_name),
         ),
+    )
+
+
+
+async def _handle_attendee(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_ATTENDEE,
+            context,
+            booking_unavailable_message(),
+        )
+
+    normalized = normalize_portuguese(inbound.body or "")
+    mode = _context_string(context, "onsite_contact_mode")
+    if action == ATTENDEE_CUSTOMER or normalized in {
+        "sim",
+        "sou eu",
+        "eu vou estar",
+        "eu estarei",
+        "eu mesmo",
+        "eu mesma",
+    }:
+        mode = "customer"
+    elif action == ATTENDEE_OTHER or any(
+        phrase in normalized
+        for phrase in ("outra pessoa", "nao", "nao vou estar")
+    ):
+        mode = "other"
+
+    if mode not in {"customer", "other"}:
+        return _retry_or_handoff(
+            ConversationState.BOOKING_ATTENDEE,
+            context,
+            "attendee",
+            attendee_message(customer_name),
+            handoff_body=(
+                "Não consegui confirmar quem estará no local após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+
+    updated = {
+        **_clear_repair_attempt(context, "attendee"),
+        "onsite_contact_mode": mode,
+    }
+    if mode == "customer":
+        if customer_name:
+            updated["onsite_contact_name"] = customer_name
+        return await _advance_preconfirmation(
+            inbound,
+            port,
+            updated,
+            customer_name=customer_name,
+        )
+    if _context_string(updated, "onsite_contact_name") is None:
+        return _transition(
+            ConversationState.BOOKING_ATTENDEE_NAME,
+            updated,
+            attendee_name_message(),
+        )
+    return await _advance_preconfirmation(
+        inbound,
+        port,
+        updated,
+        customer_name=customer_name,
+    )
+
+
+async def _handle_attendee_name(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_ATTENDEE_NAME,
+            context,
+            booking_unavailable_message(),
+        )
+
+    name = extract_customer_name(inbound.body, allow_bare=True)
+    if name is None:
+        return _retry_or_handoff(
+            ConversationState.BOOKING_ATTENDEE_NAME,
+            context,
+            "attendee_name",
+            attendee_name_message(),
+            handoff_body=(
+                "Não consegui confirmar o nome da pessoa que estará no local "
+                "após duas tentativas. Vou chamar a equipe para continuar."
+            ),
+        )
+    updated = {
+        **_clear_repair_attempt(context, "attendee_name"),
+        "onsite_contact_mode": "other",
+        "onsite_contact_name": name,
+    }
+    return await _advance_preconfirmation(
+        inbound,
+        port,
+        updated,
+        customer_name=customer_name,
+    )
+
+
+async def _handle_phone_confirmation(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_PHONE_CONFIRM,
+            context,
+            booking_unavailable_message(),
+        )
+
+    normalized = normalize_portuguese(inbound.body or "")
+    whatsapp_phone = _context_string(context, "whatsapp_contact_phone")
+    if action == PHONE_CONFIRM or normalized in {"sim", "pode", "correto", "isso"}:
+        if whatsapp_phone is None:
+            return _transition(
+                ConversationState.BOOKING_PHONE_CONFIRM,
+                {**context, "awaiting_other_phone": True},
+                phone_request_message(),
+            )
+        updated = {
+            **_clear_repair_attempt(context, "phone"),
+            "contact_phone": whatsapp_phone,
+            "contact_phone_confirmed": True,
+        }
+        updated.pop("awaiting_other_phone", None)
+        return await _resume_final_confirmation(
+            inbound,
+            port,
+            updated,
+            customer_name=customer_name,
+        )
+
+    if action == PHONE_OTHER or normalized in {
+        "outro",
+        "outro numero",
+        "nao",
+    }:
+        return _transition(
+            ConversationState.BOOKING_PHONE_CONFIRM,
+            {**context, "awaiting_other_phone": True},
+            phone_request_message(),
+        )
+
+    if context.get("awaiting_other_phone") is True:
+        phone = _phone_from_text(inbound.body)
+        if phone is not None:
+            updated = {
+                **_clear_repair_attempt(context, "phone"),
+                "contact_phone": phone,
+                "contact_phone_confirmed": True,
+            }
+            updated.pop("awaiting_other_phone", None)
+            return await _resume_final_confirmation(
+                inbound,
+                port,
+                updated,
+                customer_name=customer_name,
+            )
+
+    phone = _context_string(context, "contact_phone")
+    if phone is not None and phone != whatsapp_phone:
+        updated = {
+            **_clear_repair_attempt(context, "phone"),
+            "contact_phone": phone,
+            "contact_phone_confirmed": True,
+        }
+        return await _resume_final_confirmation(
+            inbound,
+            port,
+            updated,
+            customer_name=customer_name,
+        )
+
+    return _retry_or_handoff(
+        ConversationState.BOOKING_PHONE_CONFIRM,
+        context,
+        "phone",
+        (
+            phone_confirmation_message(whatsapp_phone)
+            if whatsapp_phone
+            else phone_request_message()
+        ),
+        handoff_body=(
+            "Não consegui confirmar o telefone de contato após duas tentativas. "
+            "Vou chamar uma pessoa da equipe para continuar."
+        ),
+    )
+
+
+async def _handle_quote_decision(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.QUOTE_DECISION,
+            context,
+            booking_unavailable_message(),
+        )
+    normalized = normalize_portuguese(inbound.body or "")
+    if action is None:
+        if any(
+            phrase in normalized
+            for phrase in ("consultar agenda", "agendar", "quero marcar", "ver horario")
+        ):
+            action = QUOTE_SCHEDULE
+        elif any(
+            phrase in normalized
+            for phrase in ("so cotacao", "so queria cotacao", "obrigado", "era isso")
+        ):
+            action = QUOTE_FINISH
+
+    if action == QUOTE_FINISH:
+        return _transition(
+            ConversationState.COMPLETED,
+            {},
+            _text_message(
+                "Perfeito. A cotação fica registrada nesta conversa. "
+                "Quando quiser avançar, é só me chamar."
+            ),
+        )
+    if action == QUOTE_SCHEDULE:
+        updated = {
+            **context,
+            "quote_presented": True,
+        }
+        return await _offer_dates(
+            inbound,
+            port,
+            updated,
+            customer_name=customer_name,
+        )
+    return _retry_or_handoff(
+        ConversationState.QUOTE_DECISION,
+        context,
+        "quote_decision",
+        quote_decision_message(
+            "Você quer consultar a agenda ou precisava apenas da cotação?"
+        ),
+        handoff_body=(
+            "Não consegui entender se você quer seguir para o agendamento. "
+            "Vou chamar uma pessoa da equipe para continuar."
+        ),
+    )
+
+
+async def _advance_preconfirmation(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    context: dict[str, Any],
+    *,
+    customer_name: str | None,
+) -> ConversationTransition:
+    mode = _context_string(context, "onsite_contact_mode")
+    if mode not in {"customer", "other"}:
+        return _transition(
+            ConversationState.BOOKING_ATTENDEE,
+            context,
+            attendee_message(customer_name),
+        )
+    if mode == "other" and _context_string(context, "onsite_contact_name") is None:
+        return _transition(
+            ConversationState.BOOKING_ATTENDEE_NAME,
+            context,
+            attendee_name_message(),
+        )
+    if context.get("contact_phone_confirmed") is not True:
+        phone = (
+            _context_string(context, "contact_phone")
+            or _context_string(context, "whatsapp_contact_phone")
+        )
+        if phone is None:
+            return _transition(
+                ConversationState.BOOKING_PHONE_CONFIRM,
+                {**context, "awaiting_other_phone": True},
+                phone_request_message(),
+            )
+        return _transition(
+            ConversationState.BOOKING_PHONE_CONFIRM,
+            context,
+            phone_confirmation_message(phone),
+        )
+    return await _resume_final_confirmation(
+        inbound,
+        port,
+        context,
+        customer_name=customer_name,
+    )
+
+
+async def _resume_final_confirmation(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    context: dict[str, Any],
+    *,
+    customer_name: str | None,
+) -> ConversationTransition:
+    booking_data = _booking_data(context)
+    if booking_data is None:
+        return await _restart_service_selection(inbound, port)
+    service_id, selected_date, selected_time = booking_data
+    return await _booking_confirm_transition(
+        inbound,
+        port,
+        context,
+        service_id,
+        selected_date,
+        selected_time,
+        _requirements_from_context(context),
+        customer_name=customer_name,
+    )
+
+
+async def _quote_transition(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    context: dict[str, Any],
+    service_id: uuid.UUID,
+    *,
+    customer_name: str | None,
+) -> ConversationTransition:
+    requirements = _requirements_from_context(context)
+    try:
+        plan = await port.estimate(
+            inbound.business_id,
+            service_id,
+            requirements,
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    services = _snapshot_options(await port.list_services(inbound.business_id))
+    selected = next(
+        (item for item in services if item.id == str(service_id)),
+        None,
+    )
+    service_label = selected.label if selected is not None else "serviço selecionado"
+    lines = [
+        (
+            f"Certo, {customer_name}. Com o que você me passou:"
+            if customer_name
+            else "Certo. Com o que você me passou:"
+        ),
+        f"Serviço: {service_label}",
+    ]
+    recommendation = context.get("recommended_equipment")
+    if isinstance(recommendation, dict):
+        label = recommendation.get("label")
+        if isinstance(label, str) and label:
+            lines.append(f"Equipamento sugerido: {label}")
+            lines.append(
+                "O preço do aparelho depende do estoque e da condição comercial da empresa."
+            )
+    model = _context_string(context, "equipment_model")
+    if model:
+        lines.append(f"Equipamento informado: {model}")
+    if plan.service.estimated_price is not None:
+        price_label = (
+            "Valor"
+            if plan.service.pricing_type is PricingType.FIXED
+            else "Estimativa base"
+        )
+        lines.append(f"{price_label}: {_format_brl(plan.service.estimated_price)}")
+    else:
+        lines.append(
+            "Valor: depende da configuração final e de eventuais materiais adicionais."
+        )
+    if _service_kind(services, service_id) == "installation":
+        lines.append(
+            "Se a tubulação necessária passar da metragem incluída, o valor pode variar."
+        )
+    updated = {
+        **context,
+        "quote_presented": True,
+    }
+    return _transition(
+        ConversationState.QUOTE_DECISION,
+        updated,
+        quote_decision_message("\n".join(lines)[:900]),
     )
 
 
@@ -2813,7 +4267,34 @@ async def _confirmation_body(
     )
     address = ServiceAddress.from_snapshot(context.get("service_address"))
     if address is not None:
-        lines.append(f"Endereço: {address.address_line}")
+        lines.append(f"Endereço: {address.searchable_text}")
+    model = _context_string(context, "equipment_model")
+    if model:
+        lines.append(f"Equipamento: {model}")
+    recommendation = context.get("recommended_equipment")
+    if isinstance(recommendation, dict):
+        label = recommendation.get("label")
+        if isinstance(label, str) and label and not model:
+            lines.append(f"Equipamento sugerido: {label}")
+    if context.get("work_at_height") is True:
+        lines.append("Detalhe: trabalho em altura (acima de 3 m)")
+    property_type = _context_string(context, "property_type")
+    property_labels = {
+        "house": "Casa",
+        "building": "Prédio",
+        "condominium": "Condomínio",
+    }
+    if property_type in property_labels:
+        lines.append(f"Local: {property_labels[property_type]}")
+    onsite_name = _context_string(context, "onsite_contact_name")
+    if onsite_name:
+        lines.append(f"Pessoa no local: {onsite_name}")
+    contact_phone = (
+        _context_string(context, "contact_phone")
+        or _context_string(context, "whatsapp_contact_phone")
+    )
+    if contact_phone:
+        lines.append(f"Contato: {contact_phone}")
     try:
         plan = await port.estimate(
             inbound.business_id,
@@ -3166,9 +4647,15 @@ def _context_from_existing_booking(booking) -> dict[str, Any]:
     if requirements.tubing_meters is not None:
         context["tubing_meters"] = str(requirements.tubing_meters)
         context["tubing_length_answered"] = True
+    if requirements.site_allowed_start is not None:
+        context["building_hours_start"] = requirements.site_allowed_start.strftime("%H:%M")
     if requirements.site_allowed_end is not None:
         context["site_allowed_end"] = requirements.site_allowed_end.strftime("%H:%M")
+        context["building_hours_end"] = requirements.site_allowed_end.strftime("%H:%M")
         context["site_limit_answered"] = True
+    for key, value in requirements.operational_details.items():
+        if key in ALLOWED_CONTEXT_KEYS:
+            context[key] = value
     return context
 
 
@@ -3245,23 +4732,22 @@ def _booking_time_context(context: dict[str, Any]) -> dict[str, Any]:
 def _intake_context(context: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
-        for key, value in context.items()
+        for key, value in _clean_context(context).items()
         if key
-        in {
-            "service_id",
-            "quantity",
-            "access_condition",
-            "service_address",
-            "tubing_meters",
-            "tubing_length_answered",
-            "site_allowed_end",
-            "site_limit_answered",
+        not in {
+            "selected_date",
+            "selected_time",
+            "candidate_booking",
+            "pending_customer_message",
+            "pending_interactive_id",
         }
     }
 
 
 def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
     quantity = context.get("quantity")
+    if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity <= 0:
+        quantity = context.get("equipment_quantity")
     if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity <= 0:
         quantity = 1
     try:
@@ -3272,15 +4758,11 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
     except ValueError:
         access = AccessCondition.UNKNOWN
     address = ServiceAddress.from_snapshot(context.get("service_address"))
-    site_limit_value = _context_string(context, "site_allowed_end")
-    site_limit: time | None = None
-    if site_limit_value is not None:
-        try:
-            parsed = time.fromisoformat(site_limit_value)
-            if parsed.strftime("%H:%M") == site_limit_value:
-                site_limit = parsed
-        except ValueError:
-            pass
+    site_start = _context_time(context, "building_hours_start")
+    site_limit = (
+        _context_time(context, "building_hours_end")
+        or _context_time(context, "site_allowed_end")
+    )
     tubing_value = _context_string(context, "tubing_meters")
     tubing: Decimal | None = None
     if tubing_value is not None:
@@ -3288,12 +4770,42 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
             tubing = Decimal(tubing_value)
         except Exception:
             tubing = None
+
+    operational_keys = (
+        "request_mode",
+        "equipment_ownership",
+        "equipment_model",
+        "equipment_quantity",
+        "room_area_m2",
+        "room_people_max",
+        "equipment_preference",
+        "recommended_equipment",
+        "installation_height_over_3m",
+        "work_at_height",
+        "property_type",
+        "building_hours_start",
+        "building_hours_end",
+        "gate_instructions",
+        "onsite_contact_mode",
+        "onsite_contact_name",
+        "contact_phone",
+        "contact_phone_confirmed",
+    )
+    operational_details = {
+        key: context[key]
+        for key in operational_keys
+        if key in context
+    }
+    if context.get("request_mode") == "quote":
+        operational_details["quote_only"] = True
     return BookingRequirements(
         quantity=quantity,
         access_condition=access,
         address=address,
+        site_allowed_start=site_start,
         site_allowed_end=site_limit,
         tubing_meters=tubing,
+        operational_details=operational_details,
     )
 
 

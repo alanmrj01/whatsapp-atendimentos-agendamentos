@@ -75,6 +75,9 @@ _PRICE_PHRASES = (
     "preco",
     "valor do servico",
     "fica quanto",
+    "cotacao",
+    "orcamento",
+    "pesquisa de preco",
 )
 
 _DURATION_PHRASES = (
