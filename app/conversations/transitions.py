@@ -276,7 +276,12 @@ async def _route_named_conversation(
     greeting_prefix: str | None = None
     if (
         interpretation.has(ConversationIntent.GREETING)
-        and state not in {ConversationState.START, ConversationState.MENU}
+        and state not in {
+            ConversationState.START,
+            ConversationState.MENU,
+            ConversationState.COMPLETED,
+            ConversationState.HUMAN_HANDOFF,
+        }
     ):
         greeting_prefix = conversational_greeting(
             inbound.body,
@@ -996,6 +1001,15 @@ def _looks_like_city(value: str | None) -> bool:
         return False
     if any(character.isdigit() for character in normalized):
         return False
+    if normalized in {
+        "nao sei",
+        "nao faco ideia",
+        "nao tenho certeza",
+        "sei la",
+        "talvez",
+        "nao lembro",
+    }:
+        return False
     words = [word for word in normalized.split() if word]
     return 1 <= len(words) <= 8
 
@@ -1295,6 +1309,19 @@ async def _handle_service(
         )
         matched = _service_for_interpretation(services, interpretation)
         service_id = uuid.UUID(matched.id) if matched is not None else None
+    if (
+        action is not None
+        and action.startswith("service:")
+        and (service_id is None or not _option_exists(services, str(service_id)))
+    ):
+        return _transition(
+            ConversationState.BOOKING_SERVICE,
+            context,
+            service_selection_message(
+                services,
+                body="Essa opção não está mais disponível. Escolha um serviço para continuar.",
+            ),
+        )
     if service_id is None or not _option_exists(services, str(service_id)):
         if interpretation and interpretation.intent in {
             ConversationIntent.BOOK,
@@ -1961,6 +1988,15 @@ async def _handle_date(
         )
 
     selected_date = _selected_date(action) or _date_from_text(inbound.body, dates)
+    if action is not None and action.startswith("date:") and _selected_date(action) is None:
+        return _transition(
+            ConversationState.BOOKING_DATE,
+            context,
+            date_selection_message(
+                dates,
+                body="Essa opção de data não é mais válida. Escolha uma data disponível.",
+            ),
+        )
     if selected_date is None:
         weekday = weekday_from_text(inbound.body)
         if weekday is not None and len(dates_for_weekday(dates, weekday)) > 1:
@@ -2074,6 +2110,22 @@ async def _handle_time(
         )
 
     selected_time = _selected_time(action) or _time_from_text(inbound.body, times)
+    if (
+        action is not None
+        and action.startswith("time:")
+        and (
+            _selected_time(action) is None
+            or not _option_exists(times, _selected_time(action) or "")
+        )
+    ):
+        return _transition(
+            ConversationState.BOOKING_TIME,
+            context,
+            time_selection_message(
+                times,
+                body=_time_prompt(selected_date, times, customer_name),
+            ),
+        )
     if selected_time is None or not _option_exists(times, selected_time):
         return _retry_or_handoff(
             ConversationState.BOOKING_TIME,
