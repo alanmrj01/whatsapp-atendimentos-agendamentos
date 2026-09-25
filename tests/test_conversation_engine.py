@@ -731,11 +731,19 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         {"id": "time:09:00", "title": "09:00"}
     ]
     assert [button["id"] for button in payloads[4]["buttons"]] == [
+        "attendee.customer",
+        "attendee.other",
+    ]
+    assert [button["id"] for button in payloads[5]["buttons"]] == [
+        "phone.confirm",
+        "phone.other",
+    ]
+    assert [button["id"] for button in payloads[6]["buttons"]] == [
         "booking.confirm",
         "booking.back",
         "booking.cancel",
     ]
-    assert payloads[5] is None
+    assert payloads[7] is None
 
 
 @mark.asyncio
