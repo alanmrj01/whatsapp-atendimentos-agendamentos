@@ -75,6 +75,9 @@ _PRICE_PHRASES = (
     "preco",
     "valor do servico",
     "fica quanto",
+    "cotacao",
+    "orcamento",
+    "pesquisa de preco",
 )
 
 _DURATION_PHRASES = (
@@ -147,7 +150,14 @@ class DeterministicConversationInterpreter:
 
         if _contains_any(
             normalized,
-            ("falar com atendente", "falar com alguem", "atendente", "humano", "pessoa"),
+            (
+                "falar com atendente",
+                "falar com alguem",
+                "falar com uma pessoa",
+                "quero um atendente",
+                "atendente humano",
+                "pessoa da equipe",
+            ),
         ):
             intents.add(ConversationIntent.HUMAN_HANDOFF)
         if _contains_any(normalized, ("remarcar", "reagendar", "mudar horario", "trocar horario")):

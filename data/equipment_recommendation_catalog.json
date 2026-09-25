@@ -1,0 +1,461 @@
+{
+  "catalog_version": "2026.09.25.1",
+  "scope": "30 configurações residenciais atuais de referência para recomendação comercial. Não representa ranking nacional auditado de vendas nem substitui dimensionamento térmico.",
+  "sizing_note": "Heurística comercial simples por área e ocupação; validar condições especiais no local.",
+  "items": [
+    {
+      "id": "samsung-windfree-ai-9000",
+      "brand": "Samsung",
+      "line": "WindFree AI",
+      "capacity_btu": 9000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "WindFree"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "active": true
+    },
+    {
+      "id": "samsung-windfree-ai-12000",
+      "brand": "Samsung",
+      "line": "WindFree AI",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "WindFree"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "active": true
+    },
+    {
+      "id": "samsung-windfree-ai-18000",
+      "brand": "Samsung",
+      "line": "WindFree AI",
+      "capacity_btu": 18000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "WindFree"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "active": true
+    },
+    {
+      "id": "samsung-windfree-ai-24000",
+      "brand": "Samsung",
+      "line": "WindFree AI",
+      "capacity_btu": 24000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "WindFree"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "active": true
+    },
+    {
+      "id": "samsung-windfree-connect-9000",
+      "brand": "Samsung",
+      "line": "WindFree Connect",
+      "capacity_btu": 9000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "WindFree"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "active": true
+    },
+    {
+      "id": "samsung-windfree-connect-12000",
+      "brand": "Samsung",
+      "line": "WindFree Connect",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "WindFree"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "active": true
+    },
+    {
+      "id": "samsung-windfree-connect-18000",
+      "brand": "Samsung",
+      "line": "WindFree Connect",
+      "capacity_btu": 18000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "WindFree"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "active": true
+    },
+    {
+      "id": "samsung-windfree-powervolt-ai-9000",
+      "brand": "Samsung",
+      "line": "WindFree PowerVolt AI",
+      "capacity_btu": 9000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "PowerVolt"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "active": true
+    },
+    {
+      "id": "samsung-windfree-powervolt-ai-12000",
+      "brand": "Samsung",
+      "line": "WindFree PowerVolt AI",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "PowerVolt"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "active": true
+    },
+    {
+      "id": "lg-ai-dual-inverter-voice-9000",
+      "brand": "LG",
+      "line": "AI Dual Inverter Voice",
+      "capacity_btu": 9000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Dual Inverter",
+        "controle de energia"
+      ],
+      "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
+      "active": true
+    },
+    {
+      "id": "lg-ai-dual-inverter-voice-12000",
+      "brand": "LG",
+      "line": "AI Dual Inverter Voice",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Dual Inverter",
+        "controle de energia"
+      ],
+      "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
+      "active": true
+    },
+    {
+      "id": "lg-ai-dual-inverter-voice-18000",
+      "brand": "LG",
+      "line": "AI Dual Inverter Voice",
+      "capacity_btu": 18000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Dual Inverter",
+        "controle de energia"
+      ],
+      "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
+      "active": true
+    },
+    {
+      "id": "lg-ai-dual-inverter-voice-24000",
+      "brand": "LG",
+      "line": "AI Dual Inverter Voice",
+      "capacity_btu": 24000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Dual Inverter",
+        "controle de energia"
+      ],
+      "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
+      "active": true
+    },
+    {
+      "id": "gree-g-top-auto-inverter-9000",
+      "brand": "Gree",
+      "line": "G-Top Auto Inverter",
+      "capacity_btu": 9000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "Bluetooth",
+        "Auto Clean"
+      ],
+      "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
+      "active": true
+    },
+    {
+      "id": "gree-g-top-auto-inverter-12000",
+      "brand": "Gree",
+      "line": "G-Top Auto Inverter",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "Bluetooth",
+        "Auto Clean"
+      ],
+      "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
+      "active": true
+    },
+    {
+      "id": "gree-g-top-auto-inverter-18000",
+      "brand": "Gree",
+      "line": "G-Top Auto Inverter",
+      "capacity_btu": 18000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "Bluetooth",
+        "Auto Clean"
+      ],
+      "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
+      "active": true
+    },
+    {
+      "id": "gree-g-top-auto-inverter-24000",
+      "brand": "Gree",
+      "line": "G-Top Auto Inverter",
+      "capacity_btu": 24000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "Bluetooth",
+        "Auto Clean"
+      ],
+      "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
+      "active": true
+    },
+    {
+      "id": "gree-g-top-auto-inverter-30000",
+      "brand": "Gree",
+      "line": "G-Top Auto Inverter",
+      "capacity_btu": 30000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "Bluetooth",
+        "Auto Clean"
+      ],
+      "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
+      "active": true
+    },
+    {
+      "id": "daikin-ecoswing-smart-r-32-9000",
+      "brand": "Daikin",
+      "line": "EcoSwing Smart R-32",
+      "capacity_btu": 9000,
+      "inverter": true,
+      "segment": "economy",
+      "features": [
+        "Wi-Fi",
+        "R-32",
+        "Classe A"
+      ],
+      "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
+      "active": true
+    },
+    {
+      "id": "daikin-ecoswing-smart-r-32-12000",
+      "brand": "Daikin",
+      "line": "EcoSwing Smart R-32",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "economy",
+      "features": [
+        "Wi-Fi",
+        "R-32",
+        "Classe A"
+      ],
+      "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
+      "active": true
+    },
+    {
+      "id": "daikin-ecoswing-smart-r-32-18000",
+      "brand": "Daikin",
+      "line": "EcoSwing Smart R-32",
+      "capacity_btu": 18000,
+      "inverter": true,
+      "segment": "economy",
+      "features": [
+        "Wi-Fi",
+        "R-32",
+        "Classe A"
+      ],
+      "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
+      "active": true
+    },
+    {
+      "id": "daikin-ecoswing-smart-r-32-24000",
+      "brand": "Daikin",
+      "line": "EcoSwing Smart R-32",
+      "capacity_btu": 24000,
+      "inverter": true,
+      "segment": "economy",
+      "features": [
+        "Wi-Fi",
+        "R-32",
+        "Classe A"
+      ],
+      "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
+      "active": true
+    },
+    {
+      "id": "tcl-a2-inverter-quente-frio-9000",
+      "brand": "TCL",
+      "line": "A2 Inverter Quente/Frio",
+      "capacity_btu": 9000,
+      "inverter": true,
+      "segment": "economy",
+      "features": [
+        "Inverter",
+        "modo silêncio",
+        "filtro Silver Ion"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "active": true
+    },
+    {
+      "id": "tcl-a2-inverter-quente-frio-12000",
+      "brand": "TCL",
+      "line": "A2 Inverter Quente/Frio",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "economy",
+      "features": [
+        "Inverter",
+        "modo silêncio",
+        "filtro Silver Ion"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "active": true
+    },
+    {
+      "id": "tcl-a2-inverter-quente-frio-18000",
+      "brand": "TCL",
+      "line": "A2 Inverter Quente/Frio",
+      "capacity_btu": 18000,
+      "inverter": true,
+      "segment": "economy",
+      "features": [
+        "Inverter",
+        "modo silêncio",
+        "filtro Silver Ion"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "active": true
+    },
+    {
+      "id": "tcl-a2-inverter-quente-frio-24000",
+      "brand": "TCL",
+      "line": "A2 Inverter Quente/Frio",
+      "capacity_btu": 24000,
+      "inverter": true,
+      "segment": "economy",
+      "features": [
+        "Inverter",
+        "modo silêncio",
+        "filtro Silver Ion"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "active": true
+    },
+    {
+      "id": "tcl-a2-inverter-quente-frio-32000",
+      "brand": "TCL",
+      "line": "A2 Inverter Quente/Frio",
+      "capacity_btu": 32000,
+      "inverter": true,
+      "segment": "economy",
+      "features": [
+        "Inverter",
+        "modo silêncio",
+        "filtro Silver Ion"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "active": true
+    },
+    {
+      "id": "tcl-t-pro-inverter-12000",
+      "brand": "TCL",
+      "line": "T-Pro Inverter",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "comando de voz",
+        "função brisa",
+        "R-32"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro",
+      "active": true
+    },
+    {
+      "id": "tcl-t-pro-inverter-18000",
+      "brand": "TCL",
+      "line": "T-Pro Inverter",
+      "capacity_btu": 18000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "comando de voz",
+        "função brisa",
+        "R-32"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro",
+      "active": true
+    },
+    {
+      "id": "tcl-t-pro-inverter-24000",
+      "brand": "TCL",
+      "line": "T-Pro Inverter",
+      "capacity_btu": 24000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "comando de voz",
+        "função brisa",
+        "R-32"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro",
+      "active": true
+    }
+  ]
+}

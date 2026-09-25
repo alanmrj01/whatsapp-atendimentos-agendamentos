@@ -20,6 +20,7 @@ on:
       - 'tests/test_dialogue.py'
       - 'tests/test_booking_availability.py'
       - 'tests/test_booking_travel.py'
+      - 'tests/test_equipment_recommendation.py'
       - 'tests/test_outbound_tasks.py'
       - 'tests/test_operational_pwa.py'
       - 'tests/test_whatsapp_webhook.py'
@@ -64,6 +65,7 @@ jobs:
           tests/test_dialogue.py
           tests/test_booking_availability.py
           tests/test_booking_travel.py
+          tests/test_equipment_recommendation.py
           tests/test_outbound_tasks.py
           tests/test_operational_pwa.py
           tests/test_whatsapp_webhook.py

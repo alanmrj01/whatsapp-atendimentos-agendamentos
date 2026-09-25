@@ -397,16 +397,29 @@ class PostgresBookingAvailabilityPort:
             except ValueError:
                 access = AccessCondition.UNKNOWN
             address = ServiceAddress.from_snapshot(appointment.service_address)
+            estimate_details = (
+                appointment.estimate_details
+                if isinstance(appointment.estimate_details, dict)
+                else {}
+            )
+            operational_details = estimate_details.get("operational_details")
+            if not isinstance(operational_details, dict):
+                operational_details = {}
+            site_allowed_start = _time_from_detail(
+                operational_details.get("building_hours_start")
+            )
             requirements = BookingRequirements(
                 quantity=appointment.quantity or 1,
                 access_condition=access,
                 address=address,
+                site_allowed_start=site_allowed_start,
                 site_allowed_end=appointment.site_allowed_end,
                 tubing_meters=(
                     Decimal(appointment.tubing_meters)
                     if appointment.tubing_meters is not None
                     else None
                 ),
+                operational_details=dict(operational_details),
             )
             local_start = appointment.starts_at.astimezone(timezone_info)
             label = (
@@ -710,10 +723,16 @@ class PostgresBookingAvailabilityPort:
                 return estimate
             return replace(
                 estimate,
-                estimated_price=None,
-                pricing_type=PricingType.ESTIMATED,
+                estimated_price=estimate.estimated_price,
+                pricing_type=(
+                    PricingType.ESTIMATED
+                    if estimate.estimated_price is not None
+                    else estimate.pricing_type
+                ),
                 requires_human_quote=False,
-                qualifier="Metragem de tubulação será conferida no local.",
+                qualifier=(
+                    "Valor base; eventual tubulação adicional será conferida no local."
+                ),
                 applied_rules=(
                     *estimate.applied_rules,
                     "tubing_length_unknown",
@@ -853,8 +872,12 @@ class PostgresBookingAvailabilityPort:
                     if (
                         candidate > earliest_allowed_start
                         and not candidate_plan.requires_handoff
-                        and self._within_site_limit(
-                            day, service_end, requirements.site_allowed_end
+                        and self._within_site_window(
+                            day,
+                            candidate,
+                            service_end,
+                            requirements.site_allowed_start,
+                            requirements.site_allowed_end,
                         )
                         and not self._has_conflict(
                             employee_id,
@@ -1193,17 +1216,30 @@ class PostgresBookingAvailabilityPort:
         return employee_ids, local_start.astimezone(timezone.utc)
 
     @staticmethod
-    def _within_site_limit(
+    def _within_site_window(
         selected_date: date,
+        service_start: datetime,
         service_end: datetime,
+        site_allowed_start: time | None,
         site_allowed_end: time | None,
     ) -> bool:
-        if site_allowed_end is None:
-            return True
-        allowed_end = datetime.combine(
-            selected_date, site_allowed_end, service_end.tzinfo
-        )
-        return service_end <= allowed_end
+        if site_allowed_start is not None:
+            allowed_start = datetime.combine(
+                selected_date,
+                site_allowed_start,
+                service_start.tzinfo,
+            )
+            if service_start < allowed_start:
+                return False
+        if site_allowed_end is not None:
+            allowed_end = datetime.combine(
+                selected_date,
+                site_allowed_end,
+                service_end.tzinfo,
+            )
+            if service_end > allowed_end:
+                return False
+        return True
 
     @staticmethod
     def _has_conflict(
@@ -1289,8 +1325,17 @@ class PostgresBookingAvailabilityPort:
         appointment.travel_after_minutes = plan.travel_after_minutes
         appointment.estimated_price = plan.service.estimated_price
         appointment.pricing_type = plan.service.pricing_type.value
-        appointment.estimate_details = plan.snapshot_details()
+        appointment.estimate_details = {
+            **plan.snapshot_details(),
+            "operational_details": dict(requirements.operational_details),
+        }
         appointment.site_allowed_end = requirements.site_allowed_end
+        generated_notes = _operational_notes(requirements.operational_details)
+        if generated_notes and (
+            appointment.notes is None
+            or appointment.notes.startswith("[ALOVIA automático]")
+        ):
+            appointment.notes = generated_notes
         appointment.idempotency_key = requirements.idempotency_key
 
     def _local_now(self, timezone_name: str) -> datetime:
@@ -1305,6 +1350,56 @@ class PostgresBookingAvailabilityPort:
             raise BookingRequiresHandoff(
                 plan.handoff_reason or "Booking requires human assistance"
             )
+
+
+def _time_from_detail(value: object) -> time | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = time.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is None else None
+
+
+def _operational_notes(details: dict[str, object]) -> str | None:
+    if not details:
+        return None
+    lines = ["[ALOVIA automático]"]
+    if details.get("work_at_height") is True:
+        lines.append("⚠ Trabalho em altura: SIM (instalação acima de 3 m).")
+    model = details.get("equipment_model")
+    if isinstance(model, str) and model.strip():
+        lines.append(f"Equipamento/modelo informado: {model.strip()}")
+    recommendation = details.get("recommended_equipment")
+    if isinstance(recommendation, dict):
+        label = recommendation.get("label")
+        if isinstance(label, str) and label.strip():
+            lines.append(f"Equipamento recomendado: {label.strip()}")
+    attendee = details.get("onsite_contact_name")
+    if isinstance(attendee, str) and attendee.strip():
+        lines.append(f"Pessoa no local: {attendee.strip()}")
+    phone = details.get("contact_phone")
+    if isinstance(phone, str) and phone.strip():
+        lines.append(f"Contato do atendimento: {phone.strip()}")
+    property_type = details.get("property_type")
+    property_labels = {
+        "house": "Casa",
+        "building": "Prédio",
+        "condominium": "Condomínio",
+    }
+    if isinstance(property_type, str) and property_type in property_labels:
+        lines.append(f"Tipo de local: {property_labels[property_type]}")
+    start = details.get("building_hours_start")
+    end = details.get("building_hours_end")
+    if isinstance(start, str) and isinstance(end, str):
+        lines.append(f"Horário permitido no local: {start}–{end}")
+    gate = details.get("gate_instructions")
+    if isinstance(gate, str) and gate.strip():
+        lines.append(f"Portaria/acesso: {gate.strip()}")
+    if details.get("quote_only") is True:
+        lines.append("Origem do atendimento: cliente iniciou por cotação.")
+    return "\n".join(lines) if len(lines) > 1 else None
 
 
 def _is_brazil_national_holiday(value: date) -> bool:

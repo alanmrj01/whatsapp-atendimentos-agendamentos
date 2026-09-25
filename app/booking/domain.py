@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import time
 from decimal import Decimal
 from enum import StrEnum
@@ -116,8 +116,10 @@ class BookingRequirements:
     quantity: int | None = 1
     access_condition: AccessCondition = AccessCondition.NORMAL
     address: ServiceAddress | None = None
+    site_allowed_start: time | None = None
     site_allowed_end: time | None = None
     tubing_meters: Decimal | None = None
+    operational_details: dict[str, Any] = field(default_factory=dict)
     idempotency_key: str | None = None
 
     def __post_init__(self) -> None:
@@ -125,6 +127,12 @@ class BookingRequirements:
             raise ValueError("Quantity must be positive")
         if self.tubing_meters is not None and self.tubing_meters <= 0:
             raise ValueError("Tubing length must be positive")
+        if (
+            self.site_allowed_start is not None
+            and self.site_allowed_end is not None
+            and self.site_allowed_end <= self.site_allowed_start
+        ):
+            raise ValueError("Site allowed end must be after start")
         if self.idempotency_key is not None and not self.idempotency_key.strip():
             raise ValueError("Idempotency key cannot be empty")
 

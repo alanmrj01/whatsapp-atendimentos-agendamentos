@@ -9,8 +9,26 @@ from app.conversations.constants import (
     ADDRESS_CITY_CONFIRM,
     ADDRESS_CITY_OTHER,
     EQUIPMENT_BOTH,
+    EQUIPMENT_HAS,
     EQUIPMENT_INSTALLATION,
+    EQUIPMENT_MODEL_KNOWN,
+    EQUIPMENT_MODEL_RECOMMEND,
+    EQUIPMENT_NEEDS,
+    EQUIPMENT_PREF_COST_BENEFIT,
+    EQUIPMENT_PREF_ECONOMY,
+    EQUIPMENT_PREF_MODERN,
     EQUIPMENT_PURCHASE,
+    HEIGHT_AT_MOST_3M,
+    HEIGHT_OVER_3M,
+    PROPERTY_BUILDING,
+    PROPERTY_CONDOMINIUM,
+    PROPERTY_HOUSE,
+    ATTENDEE_CUSTOMER,
+    ATTENDEE_OTHER,
+    PHONE_CONFIRM,
+    PHONE_OTHER,
+    QUOTE_FINISH,
+    QUOTE_SCHEDULE,
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
@@ -101,6 +119,224 @@ def equipment_purchase_clarification_message(
                 BookingOption(EQUIPMENT_INSTALLATION, "Só instalação"),
                 BookingOption(EQUIPMENT_PURCHASE, "Comprar aparelho"),
                 BookingOption(EQUIPMENT_BOTH, "Compra + instalação"),
+            )
+        ),
+    )
+
+
+def installation_equipment_status_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            "Você já tem o ar-condicionado e precisa só da instalação, "
+            "ou também quer cotar o aparelho?"
+        ),
+        interactive_id="booking.equipment_status",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_HAS, "Já tenho"),
+                BookingOption(EQUIPMENT_NEEDS, "Quero cotar aparelho"),
+            )
+        ),
+    )
+
+
+def equipment_model_known_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="Você já tem algum modelo de ar-condicionado em mente?",
+        interactive_id="booking.equipment_model_known",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_MODEL_KNOWN, "Sim"),
+                BookingOption(EQUIPMENT_MODEL_RECOMMEND, "Não"),
+            )
+        ),
+    )
+
+
+def equipment_model_request_message(
+    body: str = "Qual é a marca e o modelo do ar-condicionado?",
+) -> OutboundMessage:
+    return OutboundMessage(message_type="text", body=body)
+
+
+def equipment_profile_message(
+    missing: Sequence[str],
+    *,
+    retry: bool = False,
+) -> OutboundMessage:
+    labels = {
+        "people": "quantas pessoas, no máximo, costumam ficar no ambiente",
+        "area": "qual é o tamanho aproximado do ambiente em m²",
+        "preference": (
+            "se você prefere tecnologia mais moderna, bom custo-benefício "
+            "ou máxima economia na compra"
+        ),
+    }
+    questions = [labels[key] for key in missing if key in labels]
+    if not questions:
+        body = "Perfeito. Já tenho as informações para sugerir um equipamento."
+    elif len(questions) == 1:
+        body = (
+            f"Só falta eu saber {questions[0]}."
+            if not retry
+            else f"Para eu fechar a recomendação, me diga {questions[0]}."
+        )
+    else:
+        numbered = " ".join(
+            f"{index + 1}) {question}?"
+            for index, question in enumerate(questions)
+        )
+        body = f"Para eu sugerir um modelo adequado: {numbered}"
+    return OutboundMessage(message_type="text", body=body)
+
+
+def equipment_preference_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="Qual perfil faz mais sentido para você?",
+        interactive_id="booking.equipment_preference",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_PREF_MODERN, "Mais moderno"),
+                BookingOption(EQUIPMENT_PREF_COST_BENEFIT, "Custo-benefício"),
+                BookingOption(EQUIPMENT_PREF_ECONOMY, "Maior economia"),
+            )
+        ),
+    )
+
+
+def installation_height_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            "A unidade interna ou externa ficará instalada a mais de 3 metros "
+            "de altura do piso?"
+        ),
+        interactive_id="booking.installation_height",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(HEIGHT_AT_MOST_3M, "Até 3 metros"),
+                BookingOption(HEIGHT_OVER_3M, "Mais de 3 metros"),
+            )
+        ),
+    )
+
+
+def tubing_variation_message(
+    included_meters: Decimal | None,
+    extra_meter_price: Decimal | None,
+) -> OutboundMessage:
+    included = included_meters if included_meters is not None else Decimal("3")
+    included_label = (
+        str(int(included))
+        if included == included.to_integral()
+        else str(included).replace(".", ",")
+    )
+    body = (
+        f"Importante: a instalação considera até {included_label} metros de "
+        "tubulação. Se o comprimento necessário for maior, o valor pode variar."
+    )
+    if extra_meter_price is not None and extra_meter_price > 0:
+        body = (
+            f"Importante: a instalação considera até {included_label} metros de "
+            f"tubulação. Acima disso, o valor cadastrado é "
+            f"{_format_brl(extra_meter_price)} por metro adicional."
+        )
+    return OutboundMessage(message_type="text", body=body)
+
+
+def property_type_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="O atendimento será em casa, prédio ou condomínio?",
+        interactive_id="booking.property_type",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(PROPERTY_HOUSE, "Casa"),
+                BookingOption(PROPERTY_BUILDING, "Prédio"),
+                BookingOption(PROPERTY_CONDOMINIUM, "Condomínio"),
+            )
+        ),
+    )
+
+
+def building_hours_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body=(
+            "Qual é o horário permitido para entrada e trabalho de prestadores? "
+            "Exemplo: das 08:00 às 17:00."
+        ),
+    )
+
+
+def gate_details_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body=(
+            "E o que devemos informar na portaria para liberar a entrada? "
+            "Pode ser bloco, apartamento, torre ou nome do responsável."
+        ),
+    )
+
+
+def attendee_message(customer_name: str | None) -> OutboundMessage:
+    name = customer_name or "você"
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=f"No dia do serviço, é {name} quem vai receber o técnico no local?",
+        interactive_id="booking.attendee",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(ATTENDEE_CUSTOMER, "Sim"),
+                BookingOption(ATTENDEE_OTHER, "Outra pessoa"),
+            )
+        ),
+    )
+
+
+def attendee_name_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body="Qual é o nome da pessoa que vai receber o técnico?",
+    )
+
+
+def phone_confirmation_message(phone: str) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            f"Se precisarmos falar sobre o atendimento, podemos ligar ou chamar "
+            f"neste WhatsApp: {phone}?"
+        ),
+        interactive_id="booking.phone_confirmation",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(PHONE_CONFIRM, "Sim"),
+                BookingOption(PHONE_OTHER, "Outro número"),
+            )
+        ),
+    )
+
+
+def phone_request_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body="Qual número devemos usar para contato no dia do atendimento?",
+    )
+
+
+def quote_decision_message(body: str) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=body,
+        interactive_id="quote.decision",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(QUOTE_SCHEDULE, "Consultar agenda"),
+                BookingOption(QUOTE_FINISH, "Só queria a cotação"),
             )
         ),
     )
