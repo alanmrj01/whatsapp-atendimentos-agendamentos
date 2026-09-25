@@ -13,6 +13,7 @@ class ConversationIntent(StrEnum):
     CANCEL = "cancel"
     HUMAN_HANDOFF = "human_handoff"
     SERVICE_INTENT = "service_intent"
+    EQUIPMENT_PURCHASE = "equipment_purchase"
     AVAILABILITY = "availability"
     PRICE_QUESTION = "price_question"
     DURATION_QUESTION = "duration_question"
@@ -119,6 +120,12 @@ _BARE_NAME_REJECT_PREFIXES = (
     "qual",
     "quando",
     "onde",
+    "suave",
+    "beleza",
+    "tranquilo",
+    "tudo bem",
+    "ok",
+    "certo",
 )
 
 
@@ -154,6 +161,9 @@ class DeterministicConversationInterpreter:
                 intents.add(ConversationIntent.SERVICE_INTENT)
                 break
 
+        if _contains_equipment_purchase(normalized):
+            intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
+
         if _contains_any(normalized, ("tem horario", "disponibilidade", "quando pode", "qual horario")):
             intents.add(ConversationIntent.AVAILABILITY)
         if _contains_any(normalized, ("agendar", "marcar", "quero atendimento", "quero uma visita")):
@@ -173,6 +183,7 @@ class DeterministicConversationInterpreter:
             ConversationIntent.HUMAN_HANDOFF,
             ConversationIntent.RESCHEDULE,
             ConversationIntent.CANCEL,
+            ConversationIntent.EQUIPMENT_PURCHASE,
             ConversationIntent.SERVICE_INTENT,
             ConversationIntent.AVAILABILITY,
             ConversationIntent.BOOK,
@@ -255,6 +266,38 @@ def _clean_name(value: str) -> str | None:
     if cleaned.isupper() or cleaned.islower():
         cleaned = cleaned.title()
     return cleaned
+
+
+def _contains_equipment_purchase(value: str) -> bool:
+    purchase_verbs = (
+        "comprar",
+        "compra",
+        "adquirir",
+        "vender",
+        "vendem",
+        "vende",
+    )
+    if not _contains_any(value, purchase_verbs):
+        return False
+
+    tokens = value.split()
+    has_equipment = (
+        _contains_any(
+            value,
+            (
+                "ar condicionado",
+                "ar-condicionado",
+                "split",
+                "aparelho",
+                "equipamento",
+            ),
+        )
+        or any(
+            token.startswith("condici") and token.endswith("onado")
+            for token in tokens
+        )
+    )
+    return has_equipment
 
 
 def _contains_greeting(value: str) -> bool:

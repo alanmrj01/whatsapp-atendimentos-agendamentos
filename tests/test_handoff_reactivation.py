@@ -55,7 +55,7 @@ async def test_reenabled_handoff_conversation_resumes_on_next_inbound() -> None:
     assert transition.handoff_status == "none"
     assert transition.outbound.body is not None
     assert "Cliente" in transition.outbound.body
-    assert transition.outbound.body.endswith("Como posso ajudá-lo?")
+    assert transition.outbound.body.endswith("Como posso te ajudar?")
 
 
 @pytest.mark.asyncio

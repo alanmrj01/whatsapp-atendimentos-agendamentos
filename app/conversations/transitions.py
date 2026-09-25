@@ -25,6 +25,9 @@ from app.conversations.constants import (
     ACCESS_UNKNOWN,
     ADDRESS_CITY_CONFIRM,
     ADDRESS_CITY_OTHER,
+    EQUIPMENT_BOTH,
+    EQUIPMENT_INSTALLATION,
+    EQUIPMENT_PURCHASE,
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
@@ -55,6 +58,7 @@ from app.conversations.outbound import (
     cancel_confirmation_message,
     cancel_message,
     date_selection_message,
+    equipment_purchase_clarification_message,
     existing_booking_selection_message,
     handoff_message,
     main_menu_message,
@@ -85,6 +89,7 @@ from app.conversations.dialogue import (
     date_short_label,
     dates_for_weekday,
     daypart_greeting,
+    conversational_greeting,
     weekday_from_text,
     weekday_options,
     weekday_plural,
@@ -151,7 +156,7 @@ async def determine_transition(
     if conversation.customer_name is None:
         if captured_name is None:
             pending: dict[str, Any] = {}
-            if inbound.body and interpretation.intent is not ConversationIntent.GREETING:
+            if _should_preserve_pending_message(inbound.body, interpretation):
                 pending["pending_customer_message"] = inbound.body
             if action is not None:
                 pending["pending_interactive_id"] = action
@@ -159,6 +164,7 @@ async def determine_transition(
                 conversation,
                 pending,
                 interpretation,
+                inbound.body,
             )
 
     transition = await _route_named_conversation(
@@ -229,9 +235,22 @@ async def _route_named_conversation(
     }
     if (
         state in booking_states
-        and interpretation.intent is ConversationIntent.SERVICE_INTENT
+        and interpretation.intent in {
+            ConversationIntent.SERVICE_INTENT,
+            ConversationIntent.EQUIPMENT_PURCHASE,
+        }
         and not _has_service_question(interpretation)
     ):
+        if interpretation.intent is ConversationIntent.EQUIPMENT_PURCHASE:
+            return await _handle_service(
+                inbound,
+                {},
+                None,
+                booking_port,
+                interpretation=interpretation,
+                fallback_message=conversation.fallback_message,
+                customer_name=customer_name,
+            )
         try:
             port = _require_booking_port(booking_port)
             services = _snapshot_options(await port.list_services(inbound.business_id))
@@ -257,9 +276,19 @@ async def _route_named_conversation(
     greeting_prefix: str | None = None
     if (
         interpretation.has(ConversationIntent.GREETING)
-        and state not in {ConversationState.START, ConversationState.MENU}
+        and state not in {
+            ConversationState.START,
+            ConversationState.MENU,
+            ConversationState.COMPLETED,
+            ConversationState.HUMAN_HANDOFF,
+        }
     ):
-        greeting_prefix = _conversation_greeting(conversation)
+        greeting_prefix = conversational_greeting(
+            inbound.body,
+            conversation.business_timezone,
+            customer_name=conversation.customer_name,
+            include_help=False,
+        )
 
     if (
         state is ConversationState.BOOKING_ADDRESS
@@ -391,12 +420,16 @@ async def _handle_customer_name(
             )
         if inbound.interactive_id is not None:
             updated["pending_interactive_id"] = inbound.interactive_id
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.CUSTOMER_NAME,
             updated,
+            "customer_name",
             name_request_message(
-                "Para eu continuar o atendimento e falar com você de forma mais pessoal, "
-                "qual é o seu nome?"
+                "Não consegui identificar seu nome. Pode me dizer só como gostaria de ser chamado?"
+            ),
+            handoff_body=(
+                "Não consegui confirmar seu nome após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
             ),
         )
 
@@ -409,8 +442,8 @@ async def _handle_customer_name(
             interactive_id=pending_action,
             message_type="interactive" if pending_action else "text",
         )
-        replay_interpretation = DeterministicConversationInterpreter().interpret(
-            pending_body
+        replay_interpretation = _without_greeting(
+            DeterministicConversationInterpreter().interpret(pending_body)
         )
         resumed = replace(
             conversation,
@@ -433,13 +466,18 @@ async def _handle_customer_name(
             transition = _transition(
                 ConversationState.MENU,
                 {},
-                _text_message(f"Prazer, {customer_name}. Como posso ajudá-lo?"),
+                _text_message(f"Prazer, {customer_name}. Como posso te ajudar?"),
+            )
+        else:
+            transition = _prepend_transition_body(
+                transition,
+                f"Prazer, {customer_name}.",
             )
     else:
         transition = _transition(
             ConversationState.MENU,
             {},
-            _text_message(f"Prazer, {customer_name}. Como posso ajudá-lo?"),
+            _text_message(f"Prazer, {customer_name}. Como posso te ajudar?"),
         )
     return replace(transition, customer_name=customer_name)
 
@@ -448,17 +486,19 @@ def _name_request_transition(
     conversation: ConversationSnapshot,
     context: dict[str, Any],
     interpretation: Interpretation,
+    inbound_body: str | None,
 ) -> ConversationTransition:
-    greeting = daypart_greeting(conversation.business_timezone)
     if interpretation.has(ConversationIntent.GREETING):
-        body = (
-            f"{greeting}! Como posso ajudá-lo? "
-            "Antes de continuarmos, qual é o seu nome?"
+        greeting = conversational_greeting(
+            inbound_body,
+            conversation.business_timezone,
+            include_help=False,
         )
+        body = f"{greeting} Antes de continuarmos, qual é o seu nome?"
     else:
+        greeting = daypart_greeting(conversation.business_timezone)
         body = (
-            f"{greeting}! Claro, posso ajudar. "
-            "Antes de continuarmos, qual é o seu nome?"
+            f"{greeting}! Claro. Antes de continuarmos, qual é o seu nome?"
         )
     return _transition(
         ConversationState.CUSTOMER_NAME,
@@ -704,6 +744,246 @@ def _tubing_needs_confirmation(normalized: str) -> bool:
     )
 
 
+def _has_substantive_intent(interpretation: Interpretation) -> bool:
+    return any(
+        interpretation.has(intent)
+        for intent in (
+            ConversationIntent.BOOK,
+            ConversationIntent.RESCHEDULE,
+            ConversationIntent.CANCEL,
+            ConversationIntent.HUMAN_HANDOFF,
+            ConversationIntent.SERVICE_INTENT,
+            ConversationIntent.EQUIPMENT_PURCHASE,
+            ConversationIntent.AVAILABILITY,
+            ConversationIntent.PRICE_QUESTION,
+            ConversationIntent.DURATION_QUESTION,
+            ConversationIntent.SERVICE_QUESTION,
+        )
+    )
+
+
+def _should_preserve_pending_message(
+    body: str | None,
+    interpretation: Interpretation,
+) -> bool:
+    if not body or not body.strip():
+        return False
+    if _has_substantive_intent(interpretation):
+        return True
+    normalized = interpretation.normalized_text
+    social_only = {
+        "oi",
+        "ola",
+        "bom dia",
+        "boa tarde",
+        "boa noite",
+        "tudo bem",
+        "como vai",
+        "bom dia tudo bem",
+        "boa tarde tudo bem",
+        "boa noite tudo bem",
+        "oi tudo bem",
+        "ola tudo bem",
+    }
+    return normalized not in social_only
+
+
+def _without_greeting(interpretation: Interpretation) -> Interpretation:
+    intents = frozenset(
+        intent
+        for intent in interpretation.intents
+        if intent is not ConversationIntent.GREETING
+    )
+    primary = interpretation.intent
+    if primary is ConversationIntent.GREETING:
+        precedence = (
+            ConversationIntent.HUMAN_HANDOFF,
+            ConversationIntent.RESCHEDULE,
+            ConversationIntent.CANCEL,
+            ConversationIntent.EQUIPMENT_PURCHASE,
+            ConversationIntent.SERVICE_INTENT,
+            ConversationIntent.AVAILABILITY,
+            ConversationIntent.BOOK,
+            ConversationIntent.PRICE_QUESTION,
+            ConversationIntent.DURATION_QUESTION,
+            ConversationIntent.SERVICE_QUESTION,
+        )
+        primary = next(
+            (intent for intent in precedence if intent in intents),
+            ConversationIntent.UNKNOWN,
+        )
+    if not intents:
+        intents = frozenset({primary})
+    return replace(
+        interpretation,
+        intent=primary,
+        intents=intents,
+    )
+
+
+def _repair_attempts(context: dict[str, Any]) -> dict[str, int]:
+    raw = context.get("repair_attempts")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(key): value
+        for key, value in raw.items()
+        if isinstance(value, int)
+        and not isinstance(value, bool)
+        and value >= 0
+    }
+
+
+def _retry_or_handoff(
+    state: ConversationState,
+    context: dict[str, Any],
+    slot: str,
+    outbound: OutboundMessage,
+    *,
+    handoff_body: str,
+) -> ConversationTransition:
+    attempts = _repair_attempts(context)
+    next_attempt = attempts.get(slot, 0) + 1
+    if next_attempt >= 2:
+        return _handoff_transition(handoff_body)
+    attempts[slot] = next_attempt
+    return _transition(
+        state,
+        {**context, "repair_attempts": attempts},
+        outbound,
+    )
+
+
+def _clear_repair_attempt(
+    context: dict[str, Any],
+    slot: str,
+) -> dict[str, Any]:
+    updated = dict(context)
+    attempts = _repair_attempts(updated)
+    attempts.pop(slot, None)
+    if attempts:
+        updated["repair_attempts"] = attempts
+    else:
+        updated.pop("repair_attempts", None)
+    return updated
+
+
+_BRAZIL_STATE_NAMES = {
+    "acre", "alagoas", "amapa", "amazonas", "bahia", "ceara",
+    "distrito federal", "espirito santo", "goias", "maranhao",
+    "mato grosso", "mato grosso do sul", "minas gerais", "para",
+    "paraiba", "parana", "pernambuco", "piaui", "rio de janeiro",
+    "rio grande do norte", "rio grande do sul", "rondonia", "roraima",
+    "santa catarina", "sao paulo", "sergipe", "tocantins",
+}
+_BRAZIL_STATE_CODES = {
+    "ac", "al", "ap", "am", "ba", "ce", "df", "es", "go", "ma",
+    "mt", "ms", "mg", "pa", "pb", "pr", "pe", "pi", "rj", "rn",
+    "rs", "ro", "rr", "sc", "sp", "se", "to",
+}
+_NEIGHBORHOOD_MARKERS = {
+    "bairro", "jardim", "jd", "parque", "pq", "vila", "vl",
+    "residencial", "loteamento", "conjunto", "centro",
+}
+
+
+def _expand_address_abbreviations(value: str) -> str:
+    replacements = {
+        "pq": "Parque",
+        "jd": "Jardim",
+        "av": "Avenida",
+        "r": "Rua",
+        "vl": "Vila",
+        "rod": "Rodovia",
+        "trav": "Travessa",
+        "al": "Alameda",
+    }
+    expanded = value.strip()
+    for abbreviation, replacement in replacements.items():
+        expanded = re.sub(
+            rf"\b{re.escape(abbreviation)}\.?\b",
+            replacement,
+            expanded,
+            flags=re.IGNORECASE,
+        )
+    return " ".join(expanded.split())
+
+
+def _address_has_city_or_state(
+    value: str,
+    *,
+    business_city: str | None,
+    business_state: str | None,
+) -> bool:
+    normalized = normalize_portuguese(value)
+    padded = f" {normalized} "
+
+    if isinstance(business_city, str) and business_city.strip():
+        city = normalize_portuguese(business_city)
+        if f" {city} " in padded:
+            return True
+
+    tokens = normalized.split()
+    if any(code in tokens for code in _BRAZIL_STATE_CODES):
+        return True
+    if any(f" {state} " in padded for state in _BRAZIL_STATE_NAMES):
+        return True
+
+    # Rua..., número..., cidade: último segmento textual sem marcador de bairro.
+    segments = [
+        normalize_portuguese(segment)
+        for segment in re.split(r"[,\n]+", value)
+        if normalize_portuguese(segment)
+    ]
+    if len(segments) >= 3:
+        last = segments[-1]
+        first_word = last.split()[0] if last.split() else ""
+        if (
+            not any(character.isdigit() for character in last)
+            and first_word not in _NEIGHBORHOOD_MARKERS
+            and 1 <= len(last.split()) <= 5
+        ):
+            return True
+
+    # Forma comum sem vírgulas: "Rua 28, Parque Imperial Jacareí" / "pq imperial jacarei".
+    for marker in _NEIGHBORHOOD_MARKERS - {"centro"}:
+        match = re.search(
+            rf"\b{marker}\b\s+([a-z0-9]+(?:\s+[a-z0-9]+){{1,5}})$",
+            normalized,
+        )
+        if match and len(match.group(1).split()) >= 2:
+            return True
+    return False
+
+
+def _city_from_label(value: str) -> str:
+    return re.split(r"\s+-\s+", value.strip(), maxsplit=1)[0].strip()
+
+
+def _state_from_label(value: str) -> str | None:
+    parts = re.split(r"\s+-\s+", value.strip(), maxsplit=1)
+    return parts[1].strip() if len(parts) == 2 and parts[1].strip() else None
+
+
+def _address_success_context(
+    context: dict[str, Any],
+    service_id: uuid.UUID,
+    address: ServiceAddress,
+) -> dict[str, Any]:
+    updated = _clear_repair_attempt(context, "address")
+    updated = _clear_repair_attempt(updated, "city")
+    updated.update(
+        {
+            "service_id": str(service_id),
+            "service_address": address.to_snapshot(),
+        }
+    )
+    updated.pop("pending_service_address", None)
+    updated.pop("pending_address_city_guess", None)
+    updated.pop("awaiting_address_city", None)
+    return updated
+
+
 def _friendly_fallback(configured: str) -> str:
     normalized = normalize_portuguese(configured)
     if normalized.startswith("nao entendi"):
@@ -720,6 +1000,15 @@ def _looks_like_city(value: str | None) -> bool:
     if len(normalized) < 3 or len(normalized) > 120:
         return False
     if any(character.isdigit() for character in normalized):
+        return False
+    if normalized in {
+        "nao sei",
+        "nao faco ideia",
+        "nao tenho certeza",
+        "sei la",
+        "talvez",
+        "nao lembro",
+    }:
         return False
     words = [word for word in normalized.split() if word]
     return 1 <= len(words) <= 8
@@ -793,12 +1082,20 @@ async def _handle_natural_start(
     interpretation: Interpretation,
     booking_port: BookingAvailabilityPort | None,
 ) -> ConversationTransition:
-    if interpretation.intent is ConversationIntent.GREETING:
+    if (
+        interpretation.intent is ConversationIntent.GREETING
+        and not _has_substantive_intent(interpretation)
+    ):
         return _transition(
             ConversationState.MENU,
             {},
             _text_message(
-                f"{_conversation_greeting(conversation)} Como posso ajudá-lo?"
+                conversational_greeting(
+                    inbound.body,
+                    conversation.business_timezone,
+                    customer_name=conversation.customer_name,
+                    include_help=True,
+                )
             ),
         )
     if interpretation.intent is ConversationIntent.RESCHEDULE:
@@ -811,6 +1108,7 @@ async def _handle_natural_start(
         ConversationIntent.BOOK,
         ConversationIntent.AVAILABILITY,
         ConversationIntent.SERVICE_INTENT,
+        ConversationIntent.EQUIPMENT_PURCHASE,
     }:
         try:
             port = _require_booking_port(booking_port)
@@ -823,24 +1121,27 @@ async def _handle_natural_start(
             )
         if not services:
             return _transition(ConversationState.MENU, {}, no_services_message())
-        matched = _service_for_interpretation(services, interpretation)
-        if matched is not None:
-            return await _handle_service(
-                inbound,
-                {},
-                f"service:{matched.id}",
-                port,
-                interpretation=interpretation,
-                fallback_message=conversation.fallback_message,
-                customer_name=conversation.customer_name,
-            )
-        return _transition(
-            ConversationState.BOOKING_SERVICE,
+
+        transition = await _handle_service(
+            inbound,
             {},
-            service_selection_message(
-                services, body="Qual serviço você precisa?"
-            ),
+            None,
+            port,
+            interpretation=interpretation,
+            fallback_message=conversation.fallback_message,
+            customer_name=conversation.customer_name,
         )
+        if interpretation.has(ConversationIntent.GREETING):
+            transition = _prepend_transition_body(
+                transition,
+                conversational_greeting(
+                    inbound.body,
+                    conversation.business_timezone,
+                    customer_name=conversation.customer_name,
+                    include_help=False,
+                ),
+            )
+        return transition
     return _transition(
         ConversationState.MENU,
         {},
@@ -935,6 +1236,72 @@ async def _handle_service(
     if not services:
         return _transition(ConversationState.MENU, {}, no_services_message())
 
+    normalized = normalize_portuguese(inbound.body or "")
+    clarification = _context_string(context, "service_clarification")
+    if action in {EQUIPMENT_PURCHASE, EQUIPMENT_BOTH}:
+        return _handoff_transition(
+            "Entendi. Para compra do aparelho, a equipe precisa confirmar modelos, "
+            "disponibilidade e valores. Vou encaminhar seu atendimento para continuarem com você."
+        )
+    if action == EQUIPMENT_INSTALLATION:
+        interpretation = DeterministicConversationInterpreter().interpret(
+            "instalação de ar condicionado split"
+        )
+        action = None
+    elif clarification == "equipment_purchase":
+        if normalized in {
+            "comprar",
+            "comprar aparelho",
+            "so comprar",
+            "somente comprar",
+            "compra",
+            "os dois",
+            "ambos",
+            "compra e instalacao",
+            "comprar e instalar",
+        }:
+            return _handoff_transition(
+                "Entendi. Como envolve a compra do aparelho, a equipe precisa confirmar "
+                "modelos, disponibilidade e valores. Vou encaminhar seu atendimento "
+                "para continuarem com você."
+            )
+        if "instal" in normalized:
+            interpretation = DeterministicConversationInterpreter().interpret(
+                "instalação de ar condicionado split"
+            )
+        elif (
+            interpretation is not None
+            and interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
+        ):
+            return _handoff_transition(
+                "Entendi. Para compra do aparelho, a equipe precisa confirmar modelos, "
+                "disponibilidade e valores. Vou encaminhar seu atendimento para continuarem com você."
+            )
+        else:
+            return _retry_or_handoff(
+                ConversationState.BOOKING_SERVICE,
+                context,
+                "service_clarification",
+                equipment_purchase_clarification_message(retry=True),
+                handoff_body=(
+                    "Não consegui confirmar com segurança se você quer comprar o aparelho, "
+                    "instalação ou os dois. Vou chamar uma pessoa da equipe para continuar."
+                ),
+            )
+    elif (
+        interpretation is not None
+        and interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
+    ):
+        updated = {
+            **context,
+            "service_clarification": "equipment_purchase",
+        }
+        return _transition(
+            ConversationState.BOOKING_SERVICE,
+            updated,
+            equipment_purchase_clarification_message(),
+        )
+
     service_id = _service_id(action)
     if service_id is None:
         interpretation = interpretation or DeterministicConversationInterpreter().interpret(
@@ -942,29 +1309,47 @@ async def _handle_service(
         )
         matched = _service_for_interpretation(services, interpretation)
         service_id = uuid.UUID(matched.id) if matched is not None else None
+    if (
+        action is not None
+        and action.startswith("service:")
+        and (service_id is None or not _option_exists(services, str(service_id)))
+    ):
+        return _transition(
+            ConversationState.BOOKING_SERVICE,
+            context,
+            service_selection_message(
+                services,
+                body="Essa opção não está mais disponível. Escolha um serviço para continuar.",
+            ),
+        )
     if service_id is None or not _option_exists(services, str(service_id)):
         if interpretation and interpretation.intent in {
             ConversationIntent.BOOK,
             ConversationIntent.AVAILABILITY,
         }:
-            return _transition(
-                ConversationState.BOOKING_SERVICE,
-                context,
-                service_selection_message(
-                    services,
-                    body="Claro. Qual serviço você quer agendar?",
+            message = service_selection_message(
+                services,
+                body="Claro. Qual serviço você quer agendar?",
+            )
+        elif inbound.body and inbound.body.strip():
+            message = service_selection_message(
+                services,
+                body=(
+                    "Não consegui identificar com segurança o serviço. "
+                    "Você pode escolher uma das opções abaixo?"
                 ),
             )
-        if inbound.body and inbound.body.strip():
-            return _transition(
-                ConversationState.BOOKING_SERVICE,
-                context,
-                service_selection_message(services, body=fallback_message),
-            )
-        return _transition(
+        else:
+            message = service_selection_message(services)
+        return _retry_or_handoff(
             ConversationState.BOOKING_SERVICE,
             context,
-            service_selection_message(services),
+            "service",
+            message,
+            handoff_body=(
+                "Não consegui identificar o serviço com segurança após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
         )
 
     try:
@@ -1007,16 +1392,25 @@ async def _handle_quantity(
         return _handoff_for_reason(str(exc))
     quantity = _quantity(action, inbound.body)
     if quantity is None:
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_QUANTITY,
             context,
+            "quantity",
             quantity_selection_message(),
+            handoff_body=(
+                "Não consegui confirmar a quantidade após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
         )
     return await _advance_intake(
         inbound,
         port,
         intake,
-        {**context, "service_id": str(service_id), "quantity": quantity},
+        {
+            **_clear_repair_attempt(context, "quantity"),
+            "service_id": str(service_id),
+            "quantity": quantity,
+        },
         customer_name=customer_name,
     )
 
@@ -1046,11 +1440,17 @@ async def _handle_access(
         ACCESS_UNKNOWN: AccessCondition.UNKNOWN,
     }.get(action)
     if access is None:
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_ACCESS,
             context,
+            "access",
             access_selection_message(),
+            handoff_body=(
+                "Não consegui confirmar a condição de acesso após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
         )
+    context = _clear_repair_attempt(context, "access")
     return await _advance_intake(
         inbound,
         port,
@@ -1083,80 +1483,6 @@ async def _handle_address(
     except BookingRequiresHandoff as exc:
         return _handoff_for_reason(str(exc))
 
-    value = (inbound.body or "").strip()
-    normalized = normalize_portuguese(value)
-    pending_address = _context_string(context, "pending_service_address")
-    city_guess = _context_string(context, "pending_address_city_guess")
-    awaiting_city = context.get("awaiting_address_city") is True
-
-    if pending_address is not None:
-        if (
-            inbound.interactive_id == ADDRESS_CITY_CONFIRM
-            or normalized in {"sim", "isso", "isso mesmo", "correto"}
-        ):
-            if city_guess is None:
-                return _transition(
-                    ConversationState.BOOKING_ADDRESS,
-                    {**context, "awaiting_address_city": True},
-                    address_request_message(
-                        "Certo. Qual é a cidade desse endereço?"
-                    ),
-                )
-            value = f"{pending_address}, {city_guess}"
-        elif (
-            inbound.interactive_id == ADDRESS_CITY_OTHER
-            or normalized in {"nao", "não"}
-        ):
-            updated = {
-                **context,
-                "awaiting_address_city": True,
-            }
-            updated.pop("pending_address_city_guess", None)
-            return _transition(
-                ConversationState.BOOKING_ADDRESS,
-                updated,
-                address_request_message(
-                    "Certo. Qual é a cidade desse endereço?"
-                ),
-            )
-        elif awaiting_city and _looks_like_city(value):
-            value = f"{pending_address}, {value}"
-        elif not _looks_like_address(value):
-            if _looks_like_city(value):
-                value = f"{pending_address}, {value}"
-            else:
-                return _transition(
-                    ConversationState.BOOKING_ADDRESS,
-                    context,
-                    address_request_message(
-                        "Só preciso confirmar a cidade desse endereço. "
-                        "Qual é a cidade?"
-                    ),
-                )
-
-    if normalized in {"nao sei", "nao tenho certeza"}:
-        return _transition(
-            ConversationState.BOOKING_ADDRESS,
-            context,
-            address_request_message(
-                "Sem problema. Para consultar a agenda eu preciso do endereço do "
-                "atendimento. Pode me enviar rua, número e cidade?"
-            ),
-        )
-    if (
-        len(value) < 5
-        or len(value) > 500
-        or not _looks_like_address(value)
-    ):
-        return _transition(
-            ConversationState.BOOKING_ADDRESS,
-            context,
-            address_request_message(
-                "Não consegui identificar o endereço com segurança. "
-                "Pode me enviar rua, número e cidade?"
-            ),
-        )
-
     try:
         details = await port.get_service_details(
             inbound.business_id,
@@ -1164,10 +1490,161 @@ async def _handle_address(
         )
     except BookingRequiresHandoff:
         details = None
-
     business_city = getattr(details, "business_city", None)
     business_state = getattr(details, "business_state", None)
-    if _address_needs_city(
+
+    raw_value = (inbound.body or "").strip()
+    value = _expand_address_abbreviations(raw_value)
+    normalized = normalize_portuguese(value)
+    pending_address = _context_string(context, "pending_service_address")
+    city_guess = _context_string(context, "pending_address_city_guess")
+    awaiting_city = context.get("awaiting_address_city") is True
+
+    if pending_address is not None:
+        pending_address = _expand_address_abbreviations(pending_address)
+        if (
+            inbound.interactive_id == ADDRESS_CITY_CONFIRM
+            or normalized in {"sim", "isso", "isso mesmo", "correto"}
+        ):
+            if city_guess is None:
+                return _retry_or_handoff(
+                    ConversationState.BOOKING_ADDRESS,
+                    {**context, "awaiting_address_city": True},
+                    "city",
+                    address_request_message(
+                        "Para eu localizar corretamente, qual é a cidade desse endereço?"
+                    ),
+                    handoff_body=(
+                        "Não consegui confirmar a cidade com segurança após duas tentativas. "
+                        "Vou chamar uma pessoa da equipe para continuar com você."
+                    ),
+                )
+            address = ServiceAddress(
+                address_line=pending_address,
+                city=_city_from_label(city_guess),
+                state=_state_from_label(city_guess),
+            )
+            return await _advance_intake(
+                inbound,
+                port,
+                intake,
+                _address_success_context(context, service_id, address),
+                customer_name=customer_name,
+            )
+
+        if (
+            inbound.interactive_id == ADDRESS_CITY_OTHER
+            or normalized in {"nao", "não", "outra cidade"}
+        ):
+            updated = {
+                **context,
+                "awaiting_address_city": True,
+            }
+            updated.pop("pending_address_city_guess", None)
+            return _retry_or_handoff(
+                ConversationState.BOOKING_ADDRESS,
+                updated,
+                "city",
+                address_request_message(
+                    "Certo. Me diga apenas a cidade desse endereço."
+                ),
+                handoff_body=(
+                    "Não consegui confirmar a cidade com segurança após duas tentativas. "
+                    "Vou chamar uma pessoa da equipe para continuar com você."
+                ),
+            )
+
+        if awaiting_city:
+            if _looks_like_city(raw_value):
+                address = ServiceAddress(
+                    address_line=pending_address,
+                    city=raw_value,
+                )
+                return await _advance_intake(
+                    inbound,
+                    port,
+                    intake,
+                    _address_success_context(context, service_id, address),
+                    customer_name=customer_name,
+                )
+            return _retry_or_handoff(
+                ConversationState.BOOKING_ADDRESS,
+                context,
+                "city",
+                address_request_message(
+                    "Não consegui reconhecer a cidade. Pode me informar somente o nome da cidade?"
+                ),
+                handoff_body=(
+                    "Não consegui confirmar a cidade com segurança após duas tentativas. "
+                    "Vou chamar uma pessoa da equipe para continuar com você."
+                ),
+            )
+
+        # O cliente pode ignorar os botões e corrigir o endereço completo por texto.
+        if _looks_like_address(value):
+            if _address_has_city_or_state(
+                value,
+                business_city=business_city,
+                business_state=business_state,
+            ):
+                address = ServiceAddress(address_line=value)
+                return await _advance_intake(
+                    inbound,
+                    port,
+                    intake,
+                    _address_success_context(context, service_id, address),
+                    customer_name=customer_name,
+                )
+            updated = {
+                **context,
+                "pending_service_address": value,
+            }
+            return _retry_or_handoff(
+                ConversationState.BOOKING_ADDRESS,
+                updated,
+                "city",
+                address_request_message(
+                    "Entendi o endereço. Só falta a cidade. Qual é?"
+                ),
+                handoff_body=(
+                    "Não consegui confirmar a cidade com segurança após duas tentativas. "
+                    "Vou chamar uma pessoa da equipe para continuar com você."
+                ),
+            )
+
+    if normalized in {"nao sei", "nao tenho certeza"}:
+        return _retry_or_handoff(
+            ConversationState.BOOKING_ADDRESS,
+            context,
+            "address",
+            address_request_message(
+                "Sem problema. Para consultar a agenda, me envie rua, número e cidade."
+            ),
+            handoff_body=(
+                "Não consegui obter um endereço suficiente após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
+        )
+
+    if (
+        len(value) < 5
+        or len(value) > 500
+        or not _looks_like_address(value)
+    ):
+        return _retry_or_handoff(
+            ConversationState.BOOKING_ADDRESS,
+            context,
+            "address",
+            address_request_message(
+                "Não consegui identificar o endereço. Tente me enviar rua, número, bairro e cidade."
+            ),
+            handoff_body=(
+                "Não consegui obter um endereço suficiente após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
+        )
+
+    if not _address_has_city_or_state(
         value,
         business_city=business_city,
         business_state=business_state,
@@ -1193,26 +1670,18 @@ async def _handle_address(
             ConversationState.BOOKING_ADDRESS,
             updated,
             address_request_message(
-                "Só preciso confirmar a cidade desse endereço. Qual é a cidade?"
+                "Só falta a cidade para eu localizar corretamente. Qual é?"
             ),
         )
 
-    updated_context = {
-        **context,
-        "service_id": str(service_id),
-        "service_address": ServiceAddress(address_line=value).to_snapshot(),
-    }
-    updated_context.pop("pending_service_address", None)
-    updated_context.pop("pending_address_city_guess", None)
-    updated_context.pop("awaiting_address_city", None)
+    address = ServiceAddress(address_line=value)
     return await _advance_intake(
         inbound,
         port,
         intake,
-        updated_context,
+        _address_success_context(context, service_id, address),
         customer_name=customer_name,
     )
-
 
 async def _handle_tubing(
     inbound: ConversationInput,
@@ -1284,14 +1753,25 @@ async def _handle_tubing(
 
     meters = _decimal_from_text(inbound.body)
     if meters is None or meters <= 0 or meters > Decimal("100"):
+        retried = _retry_or_handoff(
+            ConversationState.BOOKING_TUBING,
+            context,
+            "tubing",
+            tubing_length_message(),
+            handoff_body=(
+                "Não consegui confirmar a metragem após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
+        )
+        if retried.state is ConversationState.HUMAN_HANDOFF:
+            return retried
         return await _tubing_prompt_transition(
             inbound,
             port,
-            context,
+            retried.context,
             service_id,
             body=(
-                "Não consegui entender a metragem com segurança. "
-                "Você consegue estimar quantos metros serão necessários?"
+                "Não consegui entender a metragem. Você consegue me passar uma estimativa?"
             ),
         )
 
@@ -1308,6 +1788,7 @@ async def _handle_tubing(
             tubing_confirmation_message(meters),
         )
 
+    updated = _clear_repair_attempt(updated, "tubing")
     updated.pop("pending_tubing_meters", None)
     updated["tubing_meters"] = str(meters)
     return await _advance_intake(
@@ -1340,13 +1821,18 @@ async def _handle_site_limit(
         return _handoff_for_reason(str(exc))
     site_limit = _site_limit(action, inbound.body)
     if site_limit is False:
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_SITE_LIMIT,
             context,
+            "site_limit",
             site_limit_message(),
+            handoff_body=(
+                "Não consegui confirmar o horário limite após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
         )
     updated = {
-        **context,
+        **_clear_repair_attempt(context, "site_limit"),
         "service_id": str(service_id),
         "site_limit_answered": True,
     }
@@ -1412,15 +1898,20 @@ async def _handle_weekday(
     if weekday is None:
         weekday = weekday_from_text(inbound.body)
     if weekday is None:
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_WEEKDAY,
-            _intake_context(context),
+            context,
+            "weekday",
             weekday_selection_message(
                 weekday_options(dates),
                 body=(
                     f"{customer_lead(customer_name)}Tenho disponibilidade em vários dias. "
                     "Qual dia da semana fica melhor para o seu atendimento?"
                 ),
+            ),
+            handoff_body=(
+                "Não consegui confirmar o dia da semana após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
             ),
         )
 
@@ -1497,6 +1988,15 @@ async def _handle_date(
         )
 
     selected_date = _selected_date(action) or _date_from_text(inbound.body, dates)
+    if action is not None and action.startswith("date:") and _selected_date(action) is None:
+        return _transition(
+            ConversationState.BOOKING_DATE,
+            context,
+            date_selection_message(
+                dates,
+                body="Essa opção de data não é mais válida. Escolha uma data disponível.",
+            ),
+        )
     if selected_date is None:
         weekday = weekday_from_text(inbound.body)
         if weekday is not None and len(dates_for_weekday(dates, weekday)) > 1:
@@ -1508,9 +2008,10 @@ async def _handle_date(
                 customer_name=customer_name,
             )
         if len(dates) > 10:
-            return _transition(
+            return _retry_or_handoff(
                 ConversationState.BOOKING_WEEKDAY,
-                _intake_context(context),
+                context,
+                "date",
                 weekday_selection_message(
                     weekday_options(dates),
                     body=(
@@ -1518,10 +2019,15 @@ async def _handle_date(
                         "Qual dia da semana fica melhor para o seu atendimento?"
                     ),
                 ),
+                handoff_body=(
+                    "Não consegui confirmar a data após duas tentativas. "
+                    "Vou chamar uma pessoa da equipe para continuar com você."
+                ),
             )
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_DATE,
             context,
+            "date",
             date_selection_message(
                 dates,
                 body=(
@@ -1529,13 +2035,26 @@ async def _handle_date(
                     "para o seu atendimento?"
                 ),
             ),
+            handoff_body=(
+                "Não consegui confirmar a data após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
         )
     if not _option_exists(dates, selected_date):
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_DATE,
             context,
-            date_selection_message(dates),
+            "date",
+            date_selection_message(
+                dates,
+                body="Essa data não apareceu como disponível. Qual outra data fica melhor?"
+            ),
+            handoff_body=(
+                "Não consegui confirmar a data após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
         )
+    context = _clear_repair_attempt(context, "date")
     return await _offer_times_for_date(
         inbound,
         port,
@@ -1591,7 +2110,14 @@ async def _handle_time(
         )
 
     selected_time = _selected_time(action) or _time_from_text(inbound.body, times)
-    if selected_time is None or not _option_exists(times, selected_time):
+    if (
+        action is not None
+        and action.startswith("time:")
+        and (
+            _selected_time(action) is None
+            or not _option_exists(times, _selected_time(action) or "")
+        )
+    ):
         return _transition(
             ConversationState.BOOKING_TIME,
             context,
@@ -1600,6 +2126,21 @@ async def _handle_time(
                 body=_time_prompt(selected_date, times, customer_name),
             ),
         )
+    if selected_time is None or not _option_exists(times, selected_time):
+        return _retry_or_handoff(
+            ConversationState.BOOKING_TIME,
+            context,
+            "time",
+            time_selection_message(
+                times,
+                body=_time_prompt(selected_date, times, customer_name),
+            ),
+            handoff_body=(
+                "Não consegui confirmar o horário após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
+        )
+    context = _clear_repair_attempt(context, "time")
     return await _booking_confirm_transition(
         inbound,
         port,
@@ -1650,9 +2191,10 @@ async def _handle_confirmation(
     requirements = _requirements_from_context(context)
 
     if action not in {BOOKING_CONFIRM, BOOKING_BACK}:
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_CONFIRM,
             context,
+            "confirmation",
             booking_confirmation_message(
                 await _confirmation_body(
                     inbound,
@@ -1665,7 +2207,12 @@ async def _handle_confirmation(
                     customer_name=customer_name,
                 )
             ),
+            handoff_body=(
+                "Não consegui confirmar sua decisão após duas tentativas. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
         )
+    context = _clear_repair_attempt(context, "confirmation")
 
     if action == BOOKING_BACK:
         try:
@@ -2293,15 +2840,18 @@ def _time_prompt(
     customer_name: str | None,
 ) -> str:
     lead = customer_lead(customer_name)
-    if len(times) <= 10:
-        labels = ", ".join(item.label for item in times)
+    if not times:
+        return f"{lead}não encontrei horários disponíveis nessa data."
+    if len(times) == 1:
         return (
-            f"{lead}para {date_short_label(selected_date)}, tenho os horários "
-            f"{labels}. Qual fica melhor para o seu atendimento?"
+            f"{lead}para {date_short_label(selected_date)}, tenho "
+            f"{times[0].label} disponível. Esse horário funciona para você?"
         )
+    first = times[0].label
+    last = times[-1].label
     return (
-        f"{lead}para {date_short_label(selected_date)}, tenho vários horários "
-        "disponíveis. Qual fica melhor para o seu atendimento?"
+        f"{lead}para {date_short_label(selected_date)}, tenho horários disponíveis "
+        f"entre {first} e {last}. Qual fica melhor para o seu atendimento?"
     )
 
 
