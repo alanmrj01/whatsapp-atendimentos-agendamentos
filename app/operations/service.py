@@ -51,6 +51,7 @@ from app.operations.schemas import (
     CatalogItemCreate,
     CatalogItemUpdate,
     CatalogItemView,
+    EquipmentCatalogDetailsView,
     ConversationDetail,
     ConversationActionUpdate,
     ConversationAutomationUpdate,
@@ -1631,4 +1632,116 @@ def _catalog_item_view(item: BusinessCatalogItem) -> CatalogItemView:
         source_url=item.source_url,
         specifications=dict(item.specifications or {}),
         active=item.active,
+        equipment_details=_equipment_catalog_details(item),
     )
+
+
+def _equipment_catalog_details(
+    item: BusinessCatalogItem,
+) -> EquipmentCatalogDetailsView | None:
+    if item.kind != "equipment":
+        return None
+    specs = dict(item.specifications or {})
+    brand = specs.get("brand")
+    line = specs.get("line")
+    capacity = specs.get("capacity_btu")
+    if (
+        not isinstance(brand, str)
+        or not brand.strip()
+        or not isinstance(line, str)
+        or not line.strip()
+        or not isinstance(capacity, int)
+        or isinstance(capacity, bool)
+        or capacity <= 0
+    ):
+        return None
+
+    raw_segment = str(specs.get("segment") or "cost_benefit")
+    segment = (
+        raw_segment
+        if raw_segment in {"modern", "cost_benefit", "economy"}
+        else "cost_benefit"
+    )
+    raw_cycles = specs.get("cycles")
+    source_cycles = (
+        [value for value in raw_cycles if value in {"cold", "heat_cool"}]
+        if isinstance(raw_cycles, list)
+        else ["cold"]
+    )
+    cycles = [
+        "heat_cool" if value == "heat_cool" else "cooling_only"
+        for value in source_cycles
+    ]
+    features = [
+        value
+        for value in specs.get("features", [])
+        if isinstance(value, str)
+    ] if isinstance(specs.get("features"), list) else []
+    raw_wifi = specs.get("wifi")
+    wifi = (
+        raw_wifi
+        if isinstance(raw_wifi, bool)
+        else any("wifi" in value.casefold().replace("-", "") for value in features)
+    )
+    voltage_raw = specs.get("voltage")
+    if voltage_raw is None:
+        voltage_raw = specs.get("voltage_v")
+    voltage = None
+    if isinstance(voltage_raw, (int, float)) and not isinstance(voltage_raw, bool):
+        voltage = f"{voltage_raw:g} V"
+    elif isinstance(voltage_raw, str) and voltage_raw.strip():
+        voltage = voltage_raw.strip()
+
+    return EquipmentCatalogDetailsView(
+        catalog_item_id=str(specs.get("catalog_item_id") or item.id),
+        brand=brand.strip(),
+        line=line.strip(),
+        capacity_btu=capacity,
+        model_sku=_optional_catalog_text(specs.get("model_sku") or specs.get("sku")),
+        inverter=specs.get("inverter") is True,
+        voltage=voltage,
+        energy_efficiency=_optional_catalog_text(specs.get("energy_efficiency")),
+        wifi=wifi,
+        segment=segment,  # type: ignore[arg-type]
+        cycles=cycles,  # type: ignore[arg-type]
+        features=features,
+        source_url=item.source_url or "",
+        image_url=item.image_url,
+        image_alt=_optional_catalog_text(specs.get("image_alt")),
+        indoor_unit_dimensions=_format_catalog_dimensions(
+            specs.get("indoor_dimensions_cm")
+        ),
+        outdoor_unit_dimensions=_format_catalog_dimensions(
+            specs.get("outdoor_dimensions_cm")
+        ),
+        condenser_type=_optional_catalog_text(specs.get("condenser_form")),
+        indoor_restrictions=_optional_catalog_text(
+            specs.get("indoor_restrictions")
+        ),
+        outdoor_restrictions=_optional_catalog_text(
+            specs.get("outdoor_restrictions")
+        ),
+    )
+
+
+def _optional_catalog_text(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _format_catalog_dimensions(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    width = value.get("width")
+    height = value.get("height")
+    depth = value.get("depth")
+    if (
+        not isinstance(width, (int, float))
+        or isinstance(width, bool)
+        or not isinstance(height, (int, float))
+        or isinstance(height, bool)
+    ):
+        return None
+    parts = [f"{float(width):g}", f"{float(height):g}"]
+    if isinstance(depth, (int, float)) and not isinstance(depth, bool):
+        parts.append(f"{float(depth):g}")
+    return " × ".join(parts) + " cm"
