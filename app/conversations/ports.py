@@ -12,6 +12,7 @@ from app.booking.domain import (
     BookingRequirements,
     ServiceIntake,
 )
+from app.booking.equipment_recommender import EquipmentCatalogEntry
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +86,11 @@ class BookingAvailabilityPort(Protocol):
         business_id: uuid.UUID,
         service_id: uuid.UUID,
     ) -> ServiceIntake: ...
+
+    async def list_equipment_catalog(
+        self,
+        business_id: uuid.UUID,
+    ) -> Sequence[EquipmentCatalogEntry]: ...
 
     async def estimate(
         self,

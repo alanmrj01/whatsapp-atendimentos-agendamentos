@@ -109,6 +109,9 @@ class MessageView(StrictModel):
     body: str | None
     status: str
     created_at: datetime
+    media_mime_type: str | None = None
+    media_filename: str | None = None
+    media_url: str | None = None
 
 
 class ConversationView(StrictModel):
@@ -572,6 +575,9 @@ class CatalogItemView(StrictModel):
     price: Decimal | None
     unit_label: str | None
     preset_key: str | None
+    image_url: str | None = None
+    source_url: str | None = None
+    specifications: dict[str, Any] = Field(default_factory=dict)
     active: bool
 
 
@@ -579,8 +585,17 @@ class CatalogItemCreate(StrictModel):
     kind: Literal["material", "equipment"] = "material"
     name: str = Field(min_length=2, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
-    price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     unit_label: str | None = Field(default=None, max_length=64)
+    image_url: str | None = Field(default=None, max_length=2000)
+    source_url: str | None = Field(default=None, max_length=2000)
+    specifications: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def require_material_price(self) -> "CatalogItemCreate":
+        if self.kind == "material" and self.price is None:
+            raise ValueError("Material price is required")
+        return self
 
 
 class CatalogItemUpdate(StrictModel):
@@ -589,6 +604,9 @@ class CatalogItemUpdate(StrictModel):
     description: str | None = Field(default=None, max_length=2000)
     price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     unit_label: str | None = Field(default=None, max_length=64)
+    image_url: str | None = Field(default=None, max_length=2000)
+    source_url: str | None = Field(default=None, max_length=2000)
+    specifications: dict[str, Any] | None = None
     active: bool | None = None
 
     @model_validator(mode="after")

@@ -577,6 +577,14 @@ class BusinessCatalogItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     unit_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
     preset_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    specifications: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        nullable=False,
+    )
     active: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
@@ -897,6 +905,10 @@ class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     message_type: Mapped[str] = mapped_column(String(64), nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     interactive_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    media_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    media_mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    media_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    media_sha256: Mapped[str | None] = mapped_column(String(128), nullable=True)
     outbound_payload: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,

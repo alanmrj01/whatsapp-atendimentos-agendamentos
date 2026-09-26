@@ -41,7 +41,12 @@ from app.conversations.constants import (
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
     EQUIPMENT_PREF_MODERN,
+    EQUIPMENT_CYCLE_COLD,
+    EQUIPMENT_CYCLE_HEAT_COOL,
+    EQUIPMENT_SPACE_NO_LIMIT,
     EQUIPMENT_PURCHASE,
+    MEDIA_HANDOFF,
+    MEDIA_CONTINUE_TEXT,
     HEIGHT_AT_MOST_3M,
     HEIGHT_OVER_3M,
     PHONE_CONFIRM,
@@ -88,6 +93,10 @@ from app.conversations.outbound import (
     equipment_model_request_message,
     equipment_preference_message,
     equipment_profile_message,
+    equipment_cycle_message,
+    equipment_space_message,
+    equipment_image_message,
+    unsupported_media_message,
     equipment_purchase_clarification_message,
     existing_booking_selection_message,
     gate_details_message,
@@ -167,6 +176,37 @@ async def determine_transition(
     interpreter = DeterministicConversationInterpreter()
     interpretation = interpreter.interpret(inbound.body)
 
+    if action == MEDIA_HANDOFF and context.get("media_handoff_pending") is True:
+        return _handoff_transition(
+            "Vou encaminhar você para uma pessoa da equipe. "
+            "Como o atendimento será manual, a resposta e o agendamento podem levar um pouco mais."
+        )
+    if action == MEDIA_CONTINUE_TEXT and context.get("media_handoff_pending") is True:
+        updated = dict(context)
+        updated.pop("media_handoff_pending", None)
+        return _transition(
+            state,
+            updated,
+            _text_message(
+                "Tudo bem. Pode me contar por texto o que você precisa e continuo daqui."
+            ),
+        )
+    if inbound.message_type in {"audio", "video"}:
+        return _transition(
+            state,
+            {**context, "media_handoff_pending": True},
+            unsupported_media_message(inbound.message_type),
+        )
+    if inbound.message_type == "image":
+        return _transition(
+            state,
+            context,
+            _text_message(
+                "Recebi a foto e ela ficará registrada na conversa. "
+                "Pode continuar me passando as informações por texto."
+            ),
+        )
+
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
         return _handoff_transition(conversation.handoff_message)
 
@@ -237,11 +277,15 @@ async def _route_named_conversation(
     if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
 
-    question_answer = await _service_question_answer(
-        inbound,
-        context,
-        interpretation,
-        booking_port,
+    question_answer = (
+        None
+        if action in {QUOTE_FINISH, QUOTE_SCHEDULE}
+        else await _service_question_answer(
+            inbound,
+            context,
+            interpretation,
+            booking_port,
+        )
     )
     if (
         question_answer is not None
@@ -1213,24 +1257,36 @@ async def _safe_service_details(
         return None
 
 
-def _with_equipment_recommendation(
+async def _with_equipment_recommendation(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
     context: dict[str, Any],
 ) -> dict[str, Any]:
     area = context.get("room_area_m2")
     people = context.get("room_people_max")
     preference = context.get("equipment_preference")
+    climate_mode = context.get("equipment_cycle")
     if (
         not isinstance(area, (int, float))
         or isinstance(area, bool)
         or not isinstance(people, int)
         or isinstance(people, bool)
         or preference not in {"modern", "cost_benefit", "economy"}
+        or climate_mode not in {"cold", "heat_cool"}
     ):
         return dict(context)
+
+    indoor_space = _space_tuple(context, "indoor")
+    outdoor_space = _space_tuple(context, "outdoor")
+    catalog = await port.list_equipment_catalog(inbound.business_id)
     recommendation = recommend_equipment(
         float(area),
         people,
         preference,
+        climate_mode=climate_mode,
+        indoor_space=indoor_space,
+        outdoor_space=outdoor_space,
+        entries=catalog,
     )
     return {
         **context,
@@ -1241,25 +1297,38 @@ def _with_equipment_recommendation(
             "line": recommendation.line,
             "capacity_btu": recommendation.capacity_btu,
             "preference": recommendation.segment,
+            "cycles": list(recommendation.cycles),
             "features": list(recommendation.features),
             "source_url": recommendation.source_url,
+            "image_url": recommendation.image_url,
+            "condenser_form": recommendation.condenser_form,
+            "price": recommendation.price,
             "required_btu_reference": recommendation.required_btu,
         },
     }
 
 
-def _profile_grace_active(context: dict[str, Any]) -> bool:
-    raw = _context_string(context, "equipment_profile_last_answer_at")
-    if raw is None:
-        return False
-    try:
-        changed_at = datetime.fromisoformat(raw)
-    except ValueError:
-        return False
-    if changed_at.tzinfo is None:
-        return False
-    return datetime.now(UTC) - changed_at < timedelta(minutes=3)
-
+def _space_tuple(
+    context: dict[str, Any],
+    target: str,
+) -> tuple[float, float, float | None] | None:
+    if context.get(f"{target}_space_unrestricted") is True:
+        return None
+    width = context.get(f"{target}_space_width_cm")
+    height = context.get(f"{target}_space_height_cm")
+    depth = context.get(f"{target}_space_depth_cm")
+    if (
+        isinstance(width, (int, float))
+        and not isinstance(width, bool)
+        and isinstance(height, (int, float))
+        and not isinstance(height, bool)
+    ):
+        return (
+            float(width),
+            float(height),
+            float(depth) if isinstance(depth, (int, float)) and not isinstance(depth, bool) else None,
+        )
+    return None
 
 def _time_window_from_text(
     value: str | None,
@@ -2234,7 +2303,7 @@ async def _handle_equipment_profile(
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
-        service_id, intake = await _context_intake(inbound, context, port)
+        _service_id, intake = await _context_intake(inbound, context, port)
     except BookingPortUnavailable:
         return _transition(
             ConversationState.BOOKING_EQUIPMENT_PROFILE,
@@ -2252,10 +2321,30 @@ async def _handle_equipment_profile(
     }
     if action in preference_by_action:
         updated["equipment_preference"] = preference_by_action[action]
+    if action == EQUIPMENT_CYCLE_COLD:
+        updated["equipment_cycle"] = "cold"
+    elif action == EQUIPMENT_CYCLE_HEAT_COOL:
+        updated["equipment_cycle"] = "heat_cool"
 
     missing_before = missing_equipment_profile_fields(updated)
-    raw = normalize_portuguese(inbound.body or "")
-    single_number = re.fullmatch(r"\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*", inbound.body or "")
+    raw_text = (inbound.body or "").strip()
+    raw = normalize_portuguese(raw_text)
+
+    if action == EQUIPMENT_SPACE_NO_LIMIT and missing_before:
+        target = (
+            "indoor"
+            if missing_before[0] == "indoor_space"
+            else "outdoor"
+            if missing_before[0] == "outdoor_space"
+            else None
+        )
+        if target is not None:
+            updated[f"{target}_space_unrestricted"] = True
+
+    single_number = re.fullmatch(
+        r"\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*",
+        raw_text,
+    )
     if single_number and len(missing_before) == 1:
         number = float(single_number.group(1).replace(",", "."))
         if missing_before[0] == "people" and number.is_integer() and 1 <= number <= 100:
@@ -2263,67 +2352,96 @@ async def _handle_equipment_profile(
         elif missing_before[0] == "area" and 1 <= number <= 500:
             updated["room_area_m2"] = number
 
-    if (
-        "equipment_preference" not in updated
-        and raw in {"moderno", "mais moderno", "tecnologia"}
-    ):
-        updated["equipment_preference"] = "modern"
-    elif (
-        "equipment_preference" not in updated
-        and raw in {"custo beneficio", "custo-beneficio", "equilibrado"}
-    ):
-        updated["equipment_preference"] = "cost_benefit"
-    elif (
-        "equipment_preference" not in updated
-        and raw in {"economia", "mais barato", "maior economia"}
-    ):
-        updated["equipment_preference"] = "economy"
+    if "equipment_preference" not in updated:
+        if raw in {"moderno", "mais moderno", "tecnologia"}:
+            updated["equipment_preference"] = "modern"
+        elif raw in {"custo beneficio", "custo-beneficio", "equilibrado"}:
+            updated["equipment_preference"] = "cost_benefit"
+        elif raw in {"economia", "mais barato", "maior economia"}:
+            updated["equipment_preference"] = "economy"
 
     missing = missing_equipment_profile_fields(updated)
-    if not missing:
-        recommended = _with_equipment_recommendation(updated)
-        recommendation = recommended.get("recommended_equipment")
-        label = (
-            recommendation.get("label")
-            if isinstance(recommendation, dict)
-            else None
-        )
-        transition = await _advance_intake(
-            inbound,
-            port,
-            intake,
-            recommended,
-            customer_name=customer_name,
-        )
-        if isinstance(label, str) and label:
-            transition = _prepend_transition_body(
-                transition,
-                (
-                    f"Pelas informações do ambiente, minha referência é {label}. "
-                    "Essa é uma indicação comercial inicial; condições de insolação, "
-                    "pé-direito e carga térmica podem exigir ajuste."
-                ),
+    if missing:
+        if missing[0] == "preference":
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_PROFILE,
+                updated,
+                equipment_preference_message(),
             )
-        return transition
-
-    if _profile_grace_active(updated):
+        if missing[0] == "cycle":
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_PROFILE,
+                updated,
+                equipment_cycle_message(),
+            )
+        if missing[0] == "indoor_space":
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_PROFILE,
+                updated,
+                equipment_space_message("indoor"),
+            )
+        if missing[0] == "outdoor_space":
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_PROFILE,
+                updated,
+                equipment_space_message("outdoor"),
+            )
         return _transition(
             ConversationState.BOOKING_EQUIPMENT_PROFILE,
             updated,
-            _text_message(
-                "Perfeito, anotei. Pode me mandar as outras informações quando puder."
-            ),
+            equipment_profile_message(missing),
         )
 
-    return _retry_or_handoff(
-        ConversationState.BOOKING_EQUIPMENT_PROFILE,
-        updated,
-        "equipment_profile",
-        equipment_profile_message(missing, retry=True),
-        handoff_body=(
-            "Ainda faltaram dados essenciais para recomendar o equipamento com segurança. "
-            "Vou chamar uma pessoa da equipe para continuar."
-        ),
+    try:
+        recommended = await _with_equipment_recommendation(
+            inbound,
+            port,
+            updated,
+        )
+    except ValueError:
+        return _handoff_transition(
+            "Não encontrei no catálogo ativo um equipamento que atenda "
+            "ao ciclo e ao espaço informados. Vou chamar a equipe para validar uma opção."
+        )
+
+    recommendation = recommended.get("recommended_equipment")
+    label = (
+        recommendation.get("label")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    transition = await _advance_intake(
+        inbound,
+        port,
+        intake,
+        recommended,
+        customer_name=customer_name,
+    )
+    if not isinstance(label, str) or not label:
+        return transition
+
+    intro = _text_message(
+        f"Pelas informações do ambiente, uma boa referência é {label}. "
+        "A indicação ainda deve ser validada se houver carga térmica fora do padrão."
+    )
+    followups: list[OutboundMessage] = []
+    image_url = (
+        recommendation.get("image_url")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    if isinstance(image_url, str) and image_url.startswith("https://"):
+        followups.append(
+            equipment_image_message(
+                image_url,
+                f"{label} - referência do catálogo da empresa.",
+            )
+        )
+    followups.extend((transition.outbound, *transition.follow_ups))
+    return replace(
+        transition,
+        outbound=intro,
+        follow_ups=tuple(followups),
     )
 
 
@@ -4166,40 +4284,49 @@ async def _quote_transition(
         None,
     )
     service_label = selected.label if selected is not None else "serviço selecionado"
-    lines = [
-        (
-            f"Certo, {customer_name}. Com o que você me passou:"
-            if customer_name
-            else "Certo. Com o que você me passou:"
-        ),
-        f"Serviço: {service_label}",
-    ]
     recommendation = context.get("recommended_equipment")
+
+    equipment_lines: list[str] = []
     if isinstance(recommendation, dict):
         label = recommendation.get("label")
         if isinstance(label, str) and label:
-            lines.append(f"Equipamento sugerido: {label}")
-            lines.append(
-                "O preço do aparelho depende do estoque e da condição comercial da empresa."
-            )
+            equipment_lines.append(f"Equipamento sugerido: {label}.")
+            equipment_price = recommendation.get("price")
+            if isinstance(equipment_price, (int, float)) and not isinstance(
+                equipment_price, bool
+            ):
+                equipment_lines.append(
+                    f"Equipamento: {_format_brl(Decimal(str(equipment_price)))}."
+                )
+            else:
+                equipment_lines.append(
+                    "Equipamento: valor a confirmar conforme preço e estoque da empresa."
+                )
     model = _context_string(context, "equipment_model")
     if model:
-        lines.append(f"Equipamento informado: {model}")
+        equipment_lines.append(f"Equipamento informado: {model}.")
+
     if plan.service.estimated_price is not None:
-        price_label = (
-            "Valor"
-            if plan.service.pricing_type is PricingType.FIXED
-            else "Estimativa base"
+        service_price = (
+            f"Instalação/serviço: {_format_brl(plan.service.estimated_price)}."
         )
-        lines.append(f"{price_label}: {_format_brl(plan.service.estimated_price)}")
     else:
-        lines.append(
-            "Valor: depende da configuração final e de eventuais materiais adicionais."
+        service_price = (
+            "Instalação/serviço: valor a confirmar após validar a configuração."
         )
+
+    first_body = (
+        " ".join(equipment_lines)
+        if equipment_lines
+        else f"Cotação para {service_label}."
+    )
+    service_body = service_price
     if _service_kind(services, service_id) == "installation":
-        lines.append(
-            "Se a tubulação necessária passar da metragem incluída, o valor pode variar."
+        service_body += (
+            " A metragem incluída de tubulação segue o cadastro da empresa; "
+            "material adicional pode alterar o valor."
         )
+
     updated = {
         **context,
         "quote_presented": True,
@@ -4207,9 +4334,14 @@ async def _quote_transition(
     return _transition(
         ConversationState.QUOTE_DECISION,
         updated,
-        quote_decision_message("\n".join(lines)[:900]),
+        _text_message(first_body),
+        follow_ups=(
+            _text_message(service_body),
+            quote_decision_message(
+                "Quer consultar a agenda ou precisava apenas da cotação?"
+            ),
+        ),
     )
-
 
 async def _booking_confirm_transition(
     inbound: ConversationInput,
@@ -4430,6 +4562,23 @@ def _transition(
     handoff_status: str = "none",
     follow_ups: tuple[OutboundMessage, ...] = (),
 ) -> ConversationTransition:
+    if outbound.body:
+        chunks = _split_customer_message(outbound.body)
+        if len(chunks) > 1:
+            if outbound.message_type == "text":
+                outbound = replace(outbound, body=chunks[0])
+                follow_ups = (
+                    *(OutboundMessage(message_type="text", body=chunk) for chunk in chunks[1:]),
+                    *follow_ups,
+                )
+            else:
+                original = outbound
+                outbound = OutboundMessage(message_type="text", body=chunks[0])
+                follow_ups = (
+                    *(OutboundMessage(message_type="text", body=chunk) for chunk in chunks[1:-1]),
+                    replace(original, body=chunks[-1]),
+                    *follow_ups,
+                )
     return ConversationTransition(
         state=state,
         context=context,
@@ -4438,6 +4587,29 @@ def _transition(
         outbound=outbound,
         follow_ups=follow_ups,
     )
+
+
+def _split_customer_message(body: str, max_chars: int = 180) -> tuple[str, ...]:
+    normalized = " ".join(body.split())
+    if len(normalized) <= max_chars and body.count("\n") < 4:
+        return (body,)
+    sentences = [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+|\n+", normalized)
+        if part.strip()
+    ]
+    chunks: list[str] = []
+    current = ""
+    for sentence in sentences:
+        candidate = sentence if not current else f"{current} {sentence}"
+        if current and len(candidate) > max_chars:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return tuple(chunks or [normalized])
 
 
 def _require_booking_port(
@@ -4796,6 +4968,15 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         "room_area_m2",
         "room_people_max",
         "equipment_preference",
+        "equipment_cycle",
+        "indoor_space_width_cm",
+        "indoor_space_height_cm",
+        "indoor_space_depth_cm",
+        "indoor_space_unrestricted",
+        "outdoor_space_width_cm",
+        "outdoor_space_height_cm",
+        "outdoor_space_depth_cm",
+        "outdoor_space_unrestricted",
         "recommended_equipment",
         "installation_height_over_3m",
         "work_at_height",

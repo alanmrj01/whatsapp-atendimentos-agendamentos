@@ -1,6 +1,6 @@
 {
-  "catalog_version": "2026.09.25.1",
-  "scope": "30 configurações residenciais atuais de referência para recomendação comercial. Não representa ranking nacional auditado de vendas nem substitui dimensionamento térmico.",
+  "catalog_version": "2026.09.26.1",
+  "scope": "30 configurações comerciais populares e atuais de referência para o mercado brasileiro, curadas a partir de presença recorrente em varejo e páginas oficiais. Não representa ranking nacional auditado de sell-out.",
   "sizing_note": "Heurística comercial simples por área e ocupação; validar condições especiais no local.",
   "items": [
     {
@@ -16,7 +16,18 @@
         "WindFree"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "samsung-windfree-ai-12000",
@@ -31,7 +42,18 @@
         "WindFree"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "samsung-windfree-ai-18000",
@@ -46,7 +68,18 @@
         "WindFree"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "samsung-windfree-ai-24000",
@@ -61,7 +94,18 @@
         "WindFree"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "samsung-windfree-connect-9000",
@@ -75,7 +119,18 @@
         "WindFree"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "samsung-windfree-connect-12000",
@@ -89,7 +144,18 @@
         "WindFree"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "samsung-windfree-connect-18000",
@@ -103,7 +169,18 @@
         "WindFree"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "samsung-windfree-powervolt-ai-9000",
@@ -118,7 +195,18 @@
         "PowerVolt"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "samsung-windfree-powervolt-ai-12000",
@@ -133,7 +221,18 @@
         "PowerVolt"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "lg-ai-dual-inverter-voice-9000",
@@ -149,7 +248,26 @@
         "controle de energia"
       ],
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 75.4,
+        "height": 30.8,
+        "depth": 18.9
+      },
+      "outdoor_dimensions_cm": {
+        "width": 71.7,
+        "height": 49.5,
+        "depth": 23
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "lg-ai-dual-inverter-voice-12000",
@@ -165,7 +283,26 @@
         "controle de energia"
       ],
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 83.7,
+        "height": 30.8,
+        "depth": 18.9
+      },
+      "outdoor_dimensions_cm": {
+        "width": 71.7,
+        "height": 49.5,
+        "depth": 23
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "lg-ai-dual-inverter-voice-18000",
@@ -181,7 +318,26 @@
         "controle de energia"
       ],
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 99.8,
+        "height": 34.5,
+        "depth": 21
+      },
+      "outdoor_dimensions_cm": {
+        "width": 77,
+        "height": 54.5,
+        "depth": 28.8
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "lg-ai-dual-inverter-voice-24000",
@@ -197,7 +353,26 @@
         "controle de energia"
       ],
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 99.8,
+        "height": 34.5,
+        "depth": 21
+      },
+      "outdoor_dimensions_cm": {
+        "width": 77,
+        "height": 54.5,
+        "depth": 28.8
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "gree-g-top-auto-inverter-9000",
@@ -212,7 +387,26 @@
         "Auto Clean"
       ],
       "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 78.3,
+        "height": 26,
+        "depth": 18.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 42.5,
+        "height": 54.5,
+        "depth": 42
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "gree-g-top-auto-inverter-12000",
@@ -227,7 +421,26 @@
         "Auto Clean"
       ],
       "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 83.5,
+        "height": 27.5,
+        "depth": 20
+      },
+      "outdoor_dimensions_cm": {
+        "width": 42.5,
+        "height": 54.5,
+        "depth": 42
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "gree-g-top-auto-inverter-18000",
@@ -242,7 +455,26 @@
         "Auto Clean"
       ],
       "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 94.3,
+        "height": 33.3,
+        "depth": 24.6
+      },
+      "outdoor_dimensions_cm": {
+        "width": 51,
+        "height": 63,
+        "depth": 49
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "gree-g-top-auto-inverter-24000",
@@ -257,7 +489,26 @@
         "Auto Clean"
       ],
       "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 107.8,
+        "height": 33.3,
+        "depth": 24.6
+      },
+      "outdoor_dimensions_cm": {
+        "width": 51,
+        "height": 63,
+        "depth": 49
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "gree-g-top-auto-inverter-30000",
@@ -272,7 +523,26 @@
         "Auto Clean"
       ],
       "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 107.8,
+        "height": 33.3,
+        "depth": 24.6
+      },
+      "outdoor_dimensions_cm": {
+        "width": 95.8,
+        "height": 66,
+        "depth": 40.2
+      },
+      "condenser_form": "vertical"
     },
     {
       "id": "daikin-ecoswing-smart-r-32-9000",
@@ -287,7 +557,26 @@
         "Classe A"
       ],
       "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 77,
+        "height": 28.5,
+        "depth": 22.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 74,
+        "height": 55,
+        "depth": 32.6
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "daikin-ecoswing-smart-r-32-12000",
@@ -302,7 +591,26 @@
         "Classe A"
       ],
       "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 77,
+        "height": 28.5,
+        "depth": 22.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 74,
+        "height": 55,
+        "depth": 32.6
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "daikin-ecoswing-smart-r-32-18000",
@@ -317,7 +625,26 @@
         "Classe A"
       ],
       "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 77,
+        "height": 28.5,
+        "depth": 22.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 74,
+        "height": 55,
+        "depth": 32.6
+      },
+      "condenser_form": "compact"
     },
     {
       "id": "daikin-ecoswing-smart-r-32-24000",
@@ -332,7 +659,26 @@
         "Classe A"
       ],
       "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": {
+        "width": 99,
+        "height": 29.5,
+        "depth": 26.3
+      },
+      "outdoor_dimensions_cm": {
+        "width": 95.4,
+        "height": 73.5,
+        "depth": 36.8
+      },
+      "condenser_form": "large"
     },
     {
       "id": "tcl-a2-inverter-quente-frio-9000",
@@ -347,7 +693,18 @@
         "filtro Silver Ion"
       ],
       "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "tcl-a2-inverter-quente-frio-12000",
@@ -362,7 +719,18 @@
         "filtro Silver Ion"
       ],
       "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "tcl-a2-inverter-quente-frio-18000",
@@ -377,7 +745,18 @@
         "filtro Silver Ion"
       ],
       "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "tcl-a2-inverter-quente-frio-24000",
@@ -392,7 +771,18 @@
         "filtro Silver Ion"
       ],
       "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "tcl-a2-inverter-quente-frio-32000",
@@ -407,7 +797,18 @@
         "filtro Silver Ion"
       ],
       "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "tcl-t-pro-inverter-12000",
@@ -423,7 +824,18 @@
         "R-32"
       ],
       "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "tcl-t-pro-inverter-18000",
@@ -439,7 +851,18 @@
         "R-32"
       ],
       "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
       "id": "tcl-t-pro-inverter-24000",
@@ -455,7 +878,27 @@
         "R-32"
       ],
       "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro",
-      "active": true
+      "active": true,
+      "cycles": [
+        "cold",
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "sku": null,
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     }
+  ],
+  "curated_at": "2026-09-26",
+  "research_sources": [
+    "https://www.mybest-brazil.com.br/17989",
+    "https://www.mybest-brazil.com.br/18803",
+    "https://gree.com.br/produto/g-top-auto-inverter/",
+    "https://www.lg.com/br/ar-condicionado-residencial/",
+    "https://www.daikin.com.br/produto/ecoswing-r32",
+    "https://www.tcl.com/br/pt/air-conditioners"
   ]
 }

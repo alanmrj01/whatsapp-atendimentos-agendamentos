@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 from pytest import MonkeyPatch, mark, raises
 
+from app.booking.equipment_recommender import EquipmentCatalogEntry
 from app.booking.domain import (
     BookingPlan,
     BookingRequirements,
@@ -221,6 +222,23 @@ class FakeBookingPort:
         self.extra_tubing_price: Decimal | None = None
         self.business_city: str | None = None
         self.business_state: str | None = None
+        self.equipment_catalog = [
+            EquipmentCatalogEntry(
+                item_id="catalog-gree-9000",
+                brand="Gree",
+                line="G-Top Auto Inverter",
+                capacity_btu=9000,
+                segment="cost_benefit",
+                cycles=("cold", "heat_cool"),
+                features=("Wi-Fi",),
+                indoor_dimensions_cm={"width": 78.3, "height": 26.0, "depth": 18.5},
+                outdoor_dimensions_cm={"width": 42.5, "height": 54.5, "depth": 42.0},
+                condenser_form="compact",
+                image_url="https://example.com/gree-9000.jpg",
+                source_url="https://gree.com.br/",
+                price=2500.0,
+            )
+        ]
 
     async def list_services(self, _: uuid.UUID) -> tuple[BookingOption, ...]:
         self.calls.append("services")
@@ -253,6 +271,12 @@ class FakeBookingPort:
     ) -> ServiceIntake:
         assert service_id == SERVICE_ID
         return self.intake
+
+    async def list_equipment_catalog(
+        self,
+        _: uuid.UUID,
+    ) -> tuple[EquipmentCatalogEntry, ...]:
+        return tuple(self.equipment_catalog)
 
     async def estimate(
         self,

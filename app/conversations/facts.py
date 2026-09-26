@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
 from typing import Any
 
 from app.conversations.interpreter import normalize_portuguese
@@ -136,8 +135,24 @@ def enrich_context_from_message(
 
     preference = _preference(normalized)
     if preference is not None:
-        profile_changed = updated.get("equipment_preference") != preference or profile_changed
         updated["equipment_preference"] = preference
+
+    cycle = _climate_mode(normalized)
+    if cycle is not None:
+        updated["equipment_cycle"] = cycle
+
+    space = _installation_space(raw, normalized)
+    if space is not None:
+        target, values = space
+        if values == "unrestricted":
+            updated[f"{target}_space_unrestricted"] = True
+        else:
+            width, height_cm, depth = values
+            updated[f"{target}_space_width_cm"] = width
+            updated[f"{target}_space_height_cm"] = height_cm
+            if depth is not None:
+                updated[f"{target}_space_depth_cm"] = depth
+            updated[f"{target}_space_unrestricted"] = False
 
     height = _height_over_three_meters(normalized)
     if height is not None:
@@ -185,16 +200,6 @@ def enrich_context_from_message(
         if normalized_phone is not None:
             updated["whatsapp_contact_phone"] = normalized_phone
 
-    profile_keys = {
-        "room_area_m2",
-        "room_people_max",
-        "equipment_preference",
-    }
-    if profile_keys & updated.keys() and "equipment_profile_started_at" not in updated:
-        updated["equipment_profile_started_at"] = datetime.now(UTC).isoformat()
-    if profile_changed:
-        updated["equipment_profile_last_answer_at"] = datetime.now(UTC).isoformat()
-
     return updated
 
 
@@ -210,6 +215,12 @@ def missing_equipment_profile_fields(context: dict[str, Any]) -> tuple[str, ...]
         "economy",
     }:
         fields.append("preference")
+    if context.get("equipment_cycle") not in {"cold", "heat_cool"}:
+        fields.append("cycle")
+    if not _space_known(context, "indoor"):
+        fields.append("indoor_space")
+    if not _space_known(context, "outdoor"):
+        fields.append("outdoor_space")
     return tuple(fields)
 
 
@@ -312,6 +323,91 @@ def _preference(normalized: str) -> str | None:
     if any(phrase in normalized for phrase in _ECONOMY_PHRASES):
         return "economy"
     return None
+
+
+def _climate_mode(normalized: str) -> str | None:
+    if any(
+        phrase in normalized
+        for phrase in (
+            "quente frio",
+            "quente e frio",
+            "aquecer e gelar",
+            "aquecer tambem",
+            "tambem aqueca",
+            "tambem aquece",
+            "ciclo reverso",
+        )
+    ):
+        return "heat_cool"
+    if any(
+        phrase in normalized
+        for phrase in (
+            "so frio",
+            "somente frio",
+            "apenas frio",
+            "so gelar",
+            "apenas gelar",
+            "somente gelar",
+            "nao precisa aquecer",
+        )
+    ):
+        return "cold"
+    return None
+
+
+def _installation_space(
+    raw: str,
+    normalized: str,
+) -> tuple[str, tuple[float, float, float | None] | str] | None:
+    target: str | None = None
+    if any(
+        token in normalized
+        for token in ("unidade interna", "evaporadora", "espaco interno", "parede interna")
+    ):
+        target = "indoor"
+    elif any(
+        token in normalized
+        for token in ("unidade externa", "condensadora", "espaco externo", "area externa")
+    ):
+        target = "outdoor"
+    if target is None:
+        return None
+
+    if any(
+        phrase in normalized
+        for phrase in (
+            "sem limitacao",
+            "sem restricao",
+            "tem bastante espaco",
+            "espaco livre",
+            "nao tem problema de espaco",
+        )
+    ):
+        return target, "unrestricted"
+
+    values = [
+        float(value.replace(",", "."))
+        for value in re.findall(
+            r"(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:cm|centimetros?)?",
+            raw.casefold(),
+        )
+    ]
+    if len(values) >= 2:
+        return target, (
+            values[0],
+            values[1],
+            values[2] if len(values) >= 3 else None,
+        )
+    return None
+
+
+def _space_known(context: dict[str, Any], target: str) -> bool:
+    if context.get(f"{target}_space_unrestricted") is True:
+        return True
+    return (
+        isinstance(context.get(f"{target}_space_width_cm"), (int, float))
+        and isinstance(context.get(f"{target}_space_height_cm"), (int, float))
+    )
 
 
 def _height_over_three_meters(normalized: str) -> bool | None:

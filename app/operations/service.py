@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
+import json
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -943,6 +945,9 @@ class OperationalService:
             description=values.description,
             price=values.price,
             unit_label=values.unit_label,
+            image_url=values.image_url,
+            source_url=values.source_url,
+            specifications=dict(values.specifications),
             active=True,
         )
         business.materials_catalog_reviewed = True
@@ -1054,8 +1059,11 @@ class OperationalService:
         )
         team = active_technicians > 0
         services = bool(active_services) and all(item.base_price is not None for item in active_services)
+        priced_materials = [
+            item for item in active_materials if item.kind == "material"
+        ]
         materials = bool(business.materials_catalog_reviewed) and all(
-            item.price is not None for item in active_materials
+            item.price is not None for item in priced_materials
         )
         agenda = bool(business.agenda_preferences_reviewed)
 
@@ -1122,7 +1130,7 @@ class OperationalService:
         return await self.setup_status(business_id)
 
     async def _ensure_catalog_presets(self, business_id: UUID) -> None:
-        presets = (
+        material_presets = (
             ("extra-tubing-meter", "material", "Metro adicional de tubulação", "Cobrança por metro acima da metragem incluída no serviço.", "metro"),
             ("extra-drain-meter", "material", "Metro adicional de dreno", "Material adicional de drenagem quando necessário.", "metro"),
             ("extra-electrical-cable-meter", "material", "Metro adicional de cabo elétrico", "Cabo elétrico adicional utilizado na instalação.", "metro"),
@@ -1135,22 +1143,86 @@ class OperationalService:
                 BusinessCatalogItem.preset_key.is_not(None),
             )
         )).all())
-        missing = [preset for preset in presets if preset[0] not in existing]
-        if not missing:
-            return
-        self.session.add_all([
-            BusinessCatalogItem(
-                business_id=business_id,
-                preset_key=key,
-                kind=kind,
-                name=name,
-                description=description,
-                unit_label=unit_label,
-                active=True,
+
+        additions: list[BusinessCatalogItem] = []
+        for key, kind, name, description, unit_label in material_presets:
+            if key in existing:
+                continue
+            additions.append(
+                BusinessCatalogItem(
+                    business_id=business_id,
+                    preset_key=key,
+                    kind=kind,
+                    name=name,
+                    description=description,
+                    unit_label=unit_label,
+                    active=True,
+                )
             )
-            for key, kind, name, description, unit_label in missing
-        ])
-        await self.session.commit()
+
+        catalog_path = (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "equipment_recommendation_catalog.json"
+        )
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        for raw in payload.get("items", []):
+            if not isinstance(raw, dict) or raw.get("active") is not True:
+                continue
+            item_id = str(raw.get("id") or "").strip()
+            if not item_id:
+                continue
+            preset_key = f"equipment:{item_id}"
+            if preset_key in existing:
+                continue
+            capacity = raw.get("capacity_btu")
+            brand = str(raw.get("brand") or "").strip()
+            line = str(raw.get("line") or "").strip()
+            if not brand or not line or not isinstance(capacity, int):
+                continue
+            cycles = raw.get("cycles") if isinstance(raw.get("cycles"), list) else []
+            cycle_label = " / ".join(
+                "Quente/frio" if value == "heat_cool" else "Só frio"
+                for value in cycles
+                if value in {"cold", "heat_cool"}
+            )
+            description = (
+                f"{brand} {line} - {capacity:,} BTU/h".replace(",", ".")
+                + (f" - {cycle_label}" if cycle_label else "")
+            )
+            specifications = {
+                key: value
+                for key, value in raw.items()
+                if key not in {
+                    "id", "brand", "line", "capacity_btu", "active",
+                    "source_url", "image_url",
+                }
+            }
+            specifications.update({
+                "catalog_item_id": item_id,
+                "brand": brand,
+                "line": line,
+                "capacity_btu": capacity,
+            })
+            additions.append(
+                BusinessCatalogItem(
+                    business_id=business_id,
+                    preset_key=preset_key,
+                    kind="equipment",
+                    name=f"{brand} {line} {capacity:,} BTU".replace(",", "."),
+                    description=description,
+                    price=None,
+                    unit_label="unidade",
+                    image_url=raw.get("image_url"),
+                    source_url=raw.get("source_url"),
+                    specifications=specifications,
+                    active=True,
+                )
+            )
+
+        if additions:
+            self.session.add_all(additions)
+            await self.session.commit()
 
     async def _business(self, business_id: UUID, *, for_update: bool = False) -> Business:
         query = select(Business).where(Business.id == business_id, Business.active.is_(True))
@@ -1498,6 +1570,11 @@ def _employee_view(item: Employee, service_ids: list[UUID]) -> EmployeeView:
 
 
 def _message_view(item: Message) -> MessageView:
+    media_url = (
+        f"/api/v1/conversations/{item.conversation_id}/messages/{item.id}/media"
+        if item.media_id and item.message_type == "image"
+        else None
+    )
     return MessageView(
         id=item.id,
         direction=item.direction,
@@ -1505,6 +1582,9 @@ def _message_view(item: Message) -> MessageView:
         body=item.body,
         status=item.status,
         created_at=item.created_at,
+        media_mime_type=item.media_mime_type,
+        media_filename=item.media_filename,
+        media_url=media_url,
     )
 
 
@@ -1547,5 +1627,8 @@ def _catalog_item_view(item: BusinessCatalogItem) -> CatalogItemView:
         price=item.price,
         unit_label=item.unit_label,
         preset_key=item.preset_key,
+        image_url=item.image_url,
+        source_url=item.source_url,
+        specifications=dict(item.specifications or {}),
         active=item.active,
     )
