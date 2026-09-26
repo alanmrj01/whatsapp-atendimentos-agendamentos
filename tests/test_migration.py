@@ -96,7 +96,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260923_0018"]
+    assert script.get_heads() == ["20260926_0019"]
 
 
 def test_automatic_booking_notifications_migration_is_additive_and_reversible() -> None:
