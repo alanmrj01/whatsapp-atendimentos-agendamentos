@@ -222,7 +222,6 @@ class PostgresBookingAvailabilityPort:
                     BusinessCatalogItem.business_id == business_id,
                     BusinessCatalogItem.kind == "equipment",
                     BusinessCatalogItem.active.is_(True),
-                    BusinessCatalogItem.preset_key.like("equipment:%"),
                 )
                 .order_by(BusinessCatalogItem.name, BusinessCatalogItem.id)
             )
