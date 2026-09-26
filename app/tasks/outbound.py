@@ -70,6 +70,13 @@ class TransactionSession(Protocol):
 class WhatsAppSender(Protocol):
     async def send_text(self, to: str, text: str) -> str: ...
 
+    async def send_image_url(
+        self,
+        to: str,
+        image_url: str,
+        caption: str | None = None,
+    ) -> str: ...
+
     async def send_interactive_buttons(
         self,
         to: str,
@@ -239,6 +246,17 @@ async def _send_message(
         return await client.send_text(message.recipient, body)
 
     payload = message.outbound_payload
+    if message.message_type == "image":
+        if not isinstance(payload, Mapping):
+            raise WhatsAppValidationError("Outbound image payload is invalid")
+        image_url = payload.get("image_url")
+        if not isinstance(image_url, str):
+            raise WhatsAppValidationError("Outbound image URL is invalid")
+        return await client.send_image_url(
+            message.recipient,
+            image_url,
+            body or None,
+        )
     if not isinstance(payload, Mapping):
         raise WhatsAppValidationError("Outbound payload is invalid")
     if message.message_type == "interactive_button":

@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_origin, require_principal
@@ -59,7 +60,11 @@ from app.operations.schemas import (
     WorkingHoursUpdate,
     WorkingHoursView,
 )
+from app.models import Message
 from app.operations.service import OperationalService
+from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
+from app.whatsapp.client import WhatsAppClientError
+from app.whatsapp.sender import build_business_sender_resolver
 from app.schemas.automation import AutomationExclusionCreate, AutomationExclusionUpdate
 from app.tasks.cloud_tasks import CloudTasksEnqueueError
 from app.tasks.outbound import (
@@ -241,6 +246,53 @@ async def list_conversations(
 async def get_conversation(conversation_id: UUID, principal: Identity, service: ServiceDep):
     membership = _membership(principal)
     return await service.get_conversation(membership.business_id, conversation_id)
+
+
+@router.get(
+    "/conversations/{conversation_id}/messages/{message_id}/media",
+)
+async def get_conversation_message_media(
+    conversation_id: UUID,
+    message_id: UUID,
+    principal: Identity,
+    db: Db,
+):
+    membership = _membership(principal)
+    message = await db.scalar(
+        select(Message).where(
+            Message.business_id == membership.business_id,
+            Message.conversation_id == conversation_id,
+            Message.id == message_id,
+        )
+    )
+    if message is None or message.media_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
+    if message.message_type != "image":
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            "Media preview is not available for this message type",
+        )
+
+    settings = get_settings()
+    resolver = build_business_sender_resolver(
+        WhatsAppConnectionRepository(db),
+        settings,
+    )
+    sender = await resolver.resolve(membership.business_id)
+    try:
+        content, mime_type = await sender.download_media(message.media_id)
+    except WhatsAppClientError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Media is temporarily unavailable",
+        ) from None
+    finally:
+        await sender.aclose()
+    return Response(
+        content=content,
+        media_type=mime_type or message.media_mime_type or "image/jpeg",
+        headers={"Cache-Control": "private, max-age=60"},
+    )
 
 
 @router.patch(

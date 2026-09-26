@@ -36,6 +36,15 @@ class ConnectionLookup(Protocol):
 class Sender(Protocol):
     async def send_text(self, to: str, text: str) -> str: ...
 
+    async def send_image_url(
+        self,
+        to: str,
+        image_url: str,
+        caption: str | None = None,
+    ) -> str: ...
+
+    async def download_media(self, media_id: str) -> tuple[bytes, str]: ...
+
     async def send_interactive_buttons(
         self,
         to: str,

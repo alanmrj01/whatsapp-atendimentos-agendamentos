@@ -77,6 +77,7 @@ class WhatsAppClient:
             _validate_client_configuration(configuration)
         )
         self._access_token = access_token
+        self._graph_version = graph_version
         self._messages_url = (
             f"{GRAPH_API_BASE_URL}/{graph_version}/"
             f"{phone_number_id}/messages"
@@ -115,6 +116,101 @@ class WhatsAppClient:
         }
         response_data = await self._request("POST", payload)
         return _provider_message_id(response_data)
+
+    async def send_image_url(
+        self,
+        to: str,
+        image_url: str,
+        caption: str | None = None,
+    ) -> str:
+        destination = _validate_destination(to)
+        normalized_url = image_url.strip()
+        if (
+            not normalized_url.startswith("https://")
+            or len(normalized_url) > 2000
+        ):
+            raise WhatsAppValidationError("Image URL is invalid")
+        image: dict[str, str] = {"link": normalized_url}
+        if caption:
+            image["caption"] = _validate_text(
+                caption,
+                "caption",
+                max_length=1024,
+            )
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": destination,
+            "type": "image",
+            "image": image,
+        }
+        response_data = await self._request("POST", payload)
+        return _provider_message_id(response_data)
+
+    async def download_media(
+        self,
+        media_id: str,
+    ) -> tuple[bytes, str]:
+        normalized_id = _validate_identifier(
+            media_id,
+            "media_id",
+            max_length=255,
+        )
+        headers = {
+            "Authorization": (
+                "Bearer " + self._access_token.get_secret_value()
+            )
+        }
+        metadata_url = (
+            f"{GRAPH_API_BASE_URL}/{self._graph_version}/{normalized_id}"
+        )
+        try:
+            metadata_response = await self._http_client.get(
+                metadata_url,
+                headers=headers,
+                timeout=self._timeout,
+            )
+        except httpx.TimeoutException:
+            raise WhatsAppTimeoutError("WhatsApp media lookup timed out") from None
+        except httpx.RequestError:
+            raise WhatsAppNetworkError("WhatsApp media lookup failed") from None
+        _raise_for_status(metadata_response.status_code)
+        try:
+            metadata = metadata_response.json()
+        except ValueError:
+            raise WhatsAppInvalidResponseError(
+                "WhatsApp media lookup returned invalid JSON"
+            ) from None
+        if not isinstance(metadata, dict):
+            raise WhatsAppInvalidResponseError(
+                "WhatsApp media metadata is invalid"
+            )
+        download_url = metadata.get("url")
+        mime_type = metadata.get("mime_type")
+        if (
+            not isinstance(download_url, str)
+            or not download_url.startswith("https://")
+        ):
+            raise WhatsAppInvalidResponseError(
+                "WhatsApp media URL is missing"
+            )
+        try:
+            media_response = await self._http_client.get(
+                download_url,
+                headers=headers,
+                timeout=self._timeout,
+            )
+        except httpx.TimeoutException:
+            raise WhatsAppTimeoutError("WhatsApp media download timed out") from None
+        except httpx.RequestError:
+            raise WhatsAppNetworkError("WhatsApp media download failed") from None
+        _raise_for_status(media_response.status_code)
+        resolved_mime = (
+            mime_type
+            if isinstance(mime_type, str) and mime_type
+            else media_response.headers.get("content-type", "application/octet-stream")
+        )
+        return media_response.content, resolved_mime
 
     async def send_interactive_buttons(
         self,

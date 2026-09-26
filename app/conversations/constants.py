@@ -54,6 +54,11 @@ EQUIPMENT_MODEL_RECOMMEND = "equipment.model.recommend"
 EQUIPMENT_PREF_MODERN = "equipment.preference.modern"
 EQUIPMENT_PREF_COST_BENEFIT = "equipment.preference.cost_benefit"
 EQUIPMENT_PREF_ECONOMY = "equipment.preference.economy"
+EQUIPMENT_CYCLE_COLD = "equipment.cycle.cold"
+EQUIPMENT_CYCLE_HEAT_COOL = "equipment.cycle.heat_cool"
+EQUIPMENT_SPACE_NO_LIMIT = "equipment.space.no_limit"
+MEDIA_HANDOFF = "media.handoff"
+MEDIA_CONTINUE_TEXT = "media.continue_text"
 HEIGHT_AT_MOST_3M = "height.at_most_3m"
 HEIGHT_OVER_3M = "height.over_3m"
 PROPERTY_HOUSE = "property.house"
@@ -101,9 +106,17 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "room_area_m2",
         "room_people_max",
         "equipment_preference",
-        "equipment_profile_started_at",
-        "equipment_profile_last_answer_at",
+        "equipment_cycle",
+        "indoor_space_width_cm",
+        "indoor_space_height_cm",
+        "indoor_space_depth_cm",
+        "indoor_space_unrestricted",
+        "outdoor_space_width_cm",
+        "outdoor_space_height_cm",
+        "outdoor_space_depth_cm",
+        "outdoor_space_unrestricted",
         "recommended_equipment",
+        "media_handoff_pending",
         "installation_height_over_3m",
         "work_at_height",
         "tube_disclaimer_sent",

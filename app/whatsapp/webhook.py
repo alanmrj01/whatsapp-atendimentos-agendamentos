@@ -51,6 +51,10 @@ class InboundMessageEvent:
     message_type: str
     body: str | None
     interactive_id: str | None
+    media_id: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
+    media_sha256: str | None = None
     whatsapp_profile_name: str | None = None
     occurred_at: datetime | None = None
 
@@ -157,6 +161,9 @@ def _normalize_messages(
             continue
 
         body, interactive_id = _message_content(raw_message, message_type)
+        media_id, media_mime_type, media_filename, media_sha256 = (
+            _media_metadata(raw_message, message_type)
+        )
         events.append(
             InboundMessageEvent(
                 event_key=build_event_key("inbound", provider_message_id),
@@ -167,6 +174,10 @@ def _normalize_messages(
                 message_type=message_type,
                 body=body,
                 interactive_id=interactive_id,
+                media_id=media_id,
+                media_mime_type=media_mime_type,
+                media_filename=media_filename,
+                media_sha256=media_sha256,
                 whatsapp_profile_name=profile_names.get(whatsapp_id),
                 occurred_at=_unix_timestamp(raw_message.get("timestamp")),
             )
@@ -316,6 +327,23 @@ def _message_content(
     if isinstance(media_content, dict):
         return _body(media_content.get("caption")), None
     return None, None
+
+
+def _media_metadata(
+    raw_message: dict[str, Any],
+    message_type: str,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    if message_type not in {"image", "audio", "video", "document", "sticker"}:
+        return None, None, None, None
+    media = raw_message.get(message_type)
+    if not isinstance(media, dict):
+        return None, None, None, None
+    return (
+        _identifier(media.get("id"), 255),
+        _identifier(media.get("mime_type"), 128),
+        _identifier(media.get("filename"), 255),
+        _identifier(media.get("sha256"), 128),
+    )
 
 
 def _identifier(value: Any, max_length: int) -> str | None:

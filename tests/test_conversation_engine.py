@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 from pytest import MonkeyPatch, mark, raises
 
+from app.booking.equipment_recommender import EquipmentCatalogEntry
 from app.booking.domain import (
     BookingPlan,
     BookingRequirements,
@@ -221,6 +222,23 @@ class FakeBookingPort:
         self.extra_tubing_price: Decimal | None = None
         self.business_city: str | None = None
         self.business_state: str | None = None
+        self.equipment_catalog = [
+            EquipmentCatalogEntry(
+                item_id="catalog-gree-9000",
+                brand="Gree",
+                line="G-Top Auto Inverter",
+                capacity_btu=9000,
+                segment="cost_benefit",
+                cycles=("cold", "heat_cool"),
+                features=("Wi-Fi",),
+                indoor_dimensions_cm={"width": 78.3, "height": 26.0, "depth": 18.5},
+                outdoor_dimensions_cm={"width": 42.5, "height": 54.5, "depth": 42.0},
+                condenser_form="compact",
+                image_url="https://example.com/gree-9000.jpg",
+                source_url="https://gree.com.br/",
+                price=2500.0,
+            )
+        ]
 
     async def list_services(self, _: uuid.UUID) -> tuple[BookingOption, ...]:
         self.calls.append("services")
@@ -253,6 +271,12 @@ class FakeBookingPort:
     ) -> ServiceIntake:
         assert service_id == SERVICE_ID
         return self.intake
+
+    async def list_equipment_catalog(
+        self,
+        _: uuid.UUID,
+    ) -> tuple[EquipmentCatalogEntry, ...]:
+        return tuple(self.equipment_catalog)
 
     async def estimate(
         self,
@@ -465,9 +489,14 @@ async def test_many_available_dates_asks_weekday_before_listing_dates() -> None:
         inbound(1, action=f"service:{SERVICE_ID}")
     )
 
-    outbound = repository.outbounds[-1].transition.outbound
+    transition = repository.outbounds[-1].transition
     assert repository.state == ConversationState.BOOKING_WEEKDAY
-    assert outbound.interactive_id == "booking.weekdays"
+    messages = (transition.outbound, *transition.follow_ups)
+    outbound = next(
+        message
+        for message in messages
+        if message.interactive_id == "booking.weekdays"
+    )
     rows = outbound.outbound_payload["sections"][0]["rows"]
     assert 1 <= len(rows) <= 7
     assert all(row["id"].startswith("weekday:") for row in rows)
@@ -702,48 +731,50 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
             "09:00",
         )
     ]
-    message_types = [
-        outbound.transition.outbound.message_type
-        for outbound in repository.outbounds
+    messages = [
+        message
+        for stored in repository.outbounds
+        for message in (stored.transition.outbound, *stored.transition.follow_ups)
     ]
-    assert message_types == [
-        "text",
-        "interactive_list",
-        "interactive_list",
-        "interactive_list",
-        "interactive_button",
-        "interactive_button",
-        "interactive_button",
-        "text",
+    interactive_ids = [
+        message.interactive_id
+        for message in messages
+        if message.interactive_id is not None
     ]
-    payloads = [
-        outbound.transition.outbound.outbound_payload
-        for outbound in repository.outbounds
+    assert interactive_ids == [
+        "booking.services",
+        "booking.dates",
+        "booking.times",
+        "booking.attendee",
+        "booking.phone_confirmation",
+        "booking.confirmation",
     ]
-    assert payloads[0] is None
-    assert payloads[1]["sections"][0]["rows"] == [
+    interactive = {
+        message.interactive_id: message
+        for message in messages
+        if message.interactive_id is not None
+    }
+    assert interactive["booking.services"].outbound_payload["sections"][0]["rows"] == [
         {"id": f"service:{SERVICE_ID}", "title": "Service"}
     ]
-    assert payloads[2]["sections"][0]["rows"] == [
+    assert interactive["booking.dates"].outbound_payload["sections"][0]["rows"] == [
         {"id": "date:2026-09-02", "title": "02/09/2026"}
     ]
-    assert payloads[3]["sections"][0]["rows"] == [
+    assert interactive["booking.times"].outbound_payload["sections"][0]["rows"] == [
         {"id": "time:09:00", "title": "09:00"}
     ]
-    assert [button["id"] for button in payloads[4]["buttons"]] == [
-        "attendee.customer",
-        "attendee.other",
-    ]
-    assert [button["id"] for button in payloads[5]["buttons"]] == [
-        "phone.confirm",
-        "phone.other",
-    ]
-    assert [button["id"] for button in payloads[6]["buttons"]] == [
-        "booking.confirm",
-        "booking.back",
-        "booking.cancel",
-    ]
-    assert payloads[7] is None
+    assert [
+        button["id"]
+        for button in interactive["booking.attendee"].outbound_payload["buttons"]
+    ] == ["attendee.customer", "attendee.other"]
+    assert [
+        button["id"]
+        for button in interactive["booking.phone_confirmation"].outbound_payload["buttons"]
+    ] == ["phone.confirm", "phone.other"]
+    assert [
+        button["id"]
+        for button in interactive["booking.confirmation"].outbound_payload["buttons"]
+    ] == ["booking.confirm", "booking.back", "booking.cancel"]
 
 
 @mark.asyncio
@@ -1964,12 +1995,31 @@ async def test_equipment_recommendation_waits_for_all_three_profile_answers() ->
     assert "recommended_equipment" not in repository.context
 
     await engine.process(inbound(408, body="Quero algo mais moderno"))
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    assert "recommended_equipment" not in repository.context
+
+    await engine.process(inbound(409, body="Só frio"))
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    assert "recommended_equipment" not in repository.context
+
+    await engine.process(
+        inbound(410, body="Unidade interna sem restrição de espaço")
+    )
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    assert "recommended_equipment" not in repository.context
+
+    await engine.process(
+        inbound(411, body="Unidade externa sem restrição de espaço")
+    )
     assert repository.state == ConversationState.BOOKING_INSTALLATION_HEIGHT
     recommendation = repository.context["recommended_equipment"]
     assert recommendation["capacity_btu"] >= 9000
-    assert recommendation["label"] in (
-        repository.outbounds[-1].transition.outbound.body or ""
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
     )
+    assert recommendation["label"] in combined
 
 
 @mark.asyncio
@@ -2067,7 +2117,11 @@ async def test_selected_time_collects_attendee_and_confirms_whatsapp_before_fina
         )
     )
     assert repository.state == ConversationState.BOOKING_CONFIRM
-    confirmation_body = repository.outbounds[-1].transition.outbound.body or ""
+    transition = repository.outbounds[-1].transition
+    confirmation_body = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    )
     assert "Pessoa no local: Marcos" in confirmation_body
     assert "Contato: +5512981359722" in confirmation_body
 

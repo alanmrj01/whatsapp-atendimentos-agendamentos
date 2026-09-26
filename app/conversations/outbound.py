@@ -17,6 +17,11 @@ from app.conversations.constants import (
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
     EQUIPMENT_PREF_MODERN,
+    EQUIPMENT_CYCLE_COLD,
+    EQUIPMENT_CYCLE_HEAT_COOL,
+    EQUIPMENT_SPACE_NO_LIMIT,
+    MEDIA_HANDOFF,
+    MEDIA_CONTINUE_TEXT,
     EQUIPMENT_PURCHASE,
     HEIGHT_AT_MOST_3M,
     HEIGHT_OVER_3M,
@@ -166,29 +171,30 @@ def equipment_profile_message(
     *,
     retry: bool = False,
 ) -> OutboundMessage:
-    labels = {
-        "people": "quantas pessoas, no máximo, costumam ficar no ambiente",
-        "area": "qual é o tamanho aproximado do ambiente em m²",
+    next_field = missing[0] if missing else None
+    bodies = {
+        "people": "Em média, quantas pessoas ficam nesse ambiente?",
+        "area": "Qual é o tamanho aproximado do ambiente em m²?",
         "preference": (
-            "se você prefere tecnologia mais moderna, bom custo-benefício "
-            "ou máxima economia na compra"
+            "Você prioriza tecnologia mais moderna, bom custo-benefício "
+            "ou menor investimento?"
+        ),
+        "cycle": "Você quer só refrigerar ou também aquecer o ambiente?",
+        "indoor_space": (
+            "Há limitação de espaço para a unidade interna? "
+            "Se houver, me diga largura e altura aproximadas em cm."
+        ),
+        "outdoor_space": (
+            "E para a unidade externa: há limitação de espaço? "
+            "Se houver, me diga largura e altura aproximadas em cm."
         ),
     }
-    questions = [labels[key] for key in missing if key in labels]
-    if not questions:
-        body = "Perfeito. Já tenho as informações para sugerir um equipamento."
-    elif len(questions) == 1:
-        body = (
-            f"Só falta eu saber {questions[0]}."
-            if not retry
-            else f"Para eu fechar a recomendação, me diga {questions[0]}."
-        )
-    else:
-        numbered = " ".join(
-            f"{index + 1}) {question}?"
-            for index, question in enumerate(questions)
-        )
-        body = f"Para eu sugerir um modelo adequado: {numbered}"
+    body = bodies.get(
+        next_field,
+        "Já tenho os dados necessários para avaliar os equipamentos.",
+    )
+    if retry and next_field is not None:
+        body = "Só preciso confirmar este ponto: " + body[0].lower() + body[1:]
     return OutboundMessage(message_type="text", body=body)
 
 
@@ -202,6 +208,65 @@ def equipment_preference_message() -> OutboundMessage:
                 BookingOption(EQUIPMENT_PREF_MODERN, "Mais moderno"),
                 BookingOption(EQUIPMENT_PREF_COST_BENEFIT, "Custo-benefício"),
                 BookingOption(EQUIPMENT_PREF_ECONOMY, "Maior economia"),
+            )
+        ),
+    )
+
+
+def equipment_cycle_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="Você quer só refrigerar ou também aquecer o ambiente?",
+        interactive_id="booking.equipment_cycle",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_CYCLE_COLD, "Só frio"),
+                BookingOption(EQUIPMENT_CYCLE_HEAT_COOL, "Quente/frio"),
+            )
+        ),
+    )
+
+
+def equipment_space_message(target: str) -> OutboundMessage:
+    label = "unidade interna" if target == "indoor" else "unidade externa"
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            f"Há limitação de espaço para a {label}? "
+            "Se houver, envie largura e altura em cm."
+        ),
+        interactive_id=f"booking.equipment_space.{target}",
+        outbound_payload=_button_payload(
+            (BookingOption(EQUIPMENT_SPACE_NO_LIMIT, "Sem restrição"),)
+        ),
+    )
+
+
+def equipment_image_message(
+    image_url: str,
+    caption: str,
+) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="image",
+        body=caption,
+        interactive_id=None,
+        outbound_payload={"image_url": image_url},
+    )
+
+
+def unsupported_media_message(kind: str) -> OutboundMessage:
+    label = "áudios" if kind == "audio" else "vídeos"
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            f"Por enquanto não estou autorizado a analisar {label}. "
+            "Posso te encaminhar para uma pessoa da equipe?"
+        ),
+        interactive_id="media.unsupported",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(MEDIA_HANDOFF, "Falar com a equipe"),
+                BookingOption(MEDIA_CONTINUE_TEXT, "Continuar por texto"),
             )
         ),
     )

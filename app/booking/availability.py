@@ -28,6 +28,7 @@ from app.booking.domain import (
     UnknownAccessPolicy,
 )
 from app.booking.estimator import ServiceEstimator
+from app.booking.equipment_recommender import EquipmentCatalogEntry
 from app.booking.travel import (
     ConfiguredTravelTimePort,
     TravelTimePort,
@@ -209,6 +210,79 @@ class PostgresBookingAvailabilityPort:
             automatic_booking=service.automatic_booking,
             pricing_type=pricing_type,
         )
+
+    async def list_equipment_catalog(
+        self,
+        business_id: uuid.UUID,
+    ) -> Sequence[EquipmentCatalogEntry]:
+        rows = (
+            await self.session.scalars(
+                select(BusinessCatalogItem)
+                .where(
+                    BusinessCatalogItem.business_id == business_id,
+                    BusinessCatalogItem.kind == "equipment",
+                    BusinessCatalogItem.active.is_(True),
+                )
+                .order_by(BusinessCatalogItem.name, BusinessCatalogItem.id)
+            )
+        ).all()
+        entries: list[EquipmentCatalogEntry] = []
+        for item in rows:
+            specs = dict(item.specifications or {})
+            capacity = specs.get("capacity_btu")
+            brand = specs.get("brand")
+            line = specs.get("line")
+            if (
+                not isinstance(capacity, int)
+                or isinstance(capacity, bool)
+                or not isinstance(brand, str)
+                or not isinstance(line, str)
+            ):
+                continue
+            raw_cycles = specs.get("cycles")
+            cycles = tuple(
+                value
+                for value in raw_cycles
+                if value in {"cold", "heat_cool"}
+            ) if isinstance(raw_cycles, list) else ("cold",)
+            segment_raw = str(specs.get("segment") or "cost_benefit")
+            segment = (
+                segment_raw
+                if segment_raw in {"modern", "cost_benefit", "economy"}
+                else "cost_benefit"
+            )
+            raw_features = specs.get("features")
+            features = tuple(
+                value
+                for value in raw_features
+                if isinstance(value, str)
+            ) if isinstance(raw_features, list) else ()
+            entries.append(
+                EquipmentCatalogEntry(
+                    item_id=str(item.id),
+                    brand=brand,
+                    line=line,
+                    capacity_btu=capacity,
+                    segment=segment,  # type: ignore[arg-type]
+                    cycles=cycles,  # type: ignore[arg-type]
+                    features=features,
+                    indoor_dimensions_cm=_catalog_dimensions(
+                        specs.get("indoor_dimensions_cm")
+                    ),
+                    outdoor_dimensions_cm=_catalog_dimensions(
+                        specs.get("outdoor_dimensions_cm")
+                    ),
+                    condenser_form=(
+                        str(specs.get("condenser_form"))
+                        if specs.get("condenser_form") is not None
+                        else None
+                    ),
+                    image_url=item.image_url,
+                    source_url=item.source_url or "",
+                    price=float(item.price) if item.price is not None else None,
+                )
+            )
+        return tuple(entries)
 
     async def estimate(
         self,
@@ -1350,6 +1424,17 @@ class PostgresBookingAvailabilityPort:
             raise BookingRequiresHandoff(
                 plan.handoff_reason or "Booking requires human assistance"
             )
+
+
+def _catalog_dimensions(value: object) -> dict[str, float] | None:
+    if not isinstance(value, dict):
+        return None
+    result: dict[str, float] = {}
+    for key in ("width", "height", "depth"):
+        raw = value.get(key)
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            result[key] = float(raw)
+    return result if "width" in result and "height" in result else None
 
 
 def _time_from_detail(value: object) -> time | None:

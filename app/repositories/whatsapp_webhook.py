@@ -173,6 +173,10 @@ class WhatsAppWebhookRepository:
                 message_type=event.message_type,
                 body=event.body,
                 interactive_id=event.interactive_id,
+                media_id=event.media_id,
+                media_mime_type=event.media_mime_type,
+                media_filename=event.media_filename,
+                media_sha256=event.media_sha256,
                 status="received",
                 created_at=event.occurred_at or func.now(),
             )

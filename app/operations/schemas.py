@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, time
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -109,6 +109,9 @@ class MessageView(StrictModel):
     body: str | None
     status: str
     created_at: datetime
+    media_mime_type: str | None = None
+    media_filename: str | None = None
+    media_url: str | None = None
 
 
 class ConversationView(StrictModel):
@@ -564,6 +567,29 @@ class ServiceUpdate(StrictModel):
         return self
 
 
+class EquipmentCatalogDetailsView(StrictModel):
+    catalog_item_id: str
+    brand: str
+    line: str
+    capacity_btu: int
+    model_sku: str | None = None
+    inverter: bool = False
+    voltage: str | None = None
+    energy_efficiency: str | None = None
+    wifi: bool | None = None
+    segment: Literal["modern", "cost_benefit", "economy"]
+    cycles: list[Literal["cooling_only", "heat_cool"]]
+    features: list[str] = Field(default_factory=list)
+    source_url: str = ""
+    image_url: str | None = None
+    image_alt: str | None = None
+    indoor_unit_dimensions: str | None = None
+    outdoor_unit_dimensions: str | None = None
+    condenser_type: str | None = None
+    indoor_restrictions: str | None = None
+    outdoor_restrictions: str | None = None
+
+
 class CatalogItemView(StrictModel):
     id: UUID
     kind: Literal["material", "equipment"]
@@ -572,15 +598,28 @@ class CatalogItemView(StrictModel):
     price: Decimal | None
     unit_label: str | None
     preset_key: str | None
+    image_url: str | None = None
+    source_url: str | None = None
+    specifications: dict[str, Any] = Field(default_factory=dict)
     active: bool
+    equipment_details: EquipmentCatalogDetailsView | None = None
 
 
 class CatalogItemCreate(StrictModel):
     kind: Literal["material", "equipment"] = "material"
     name: str = Field(min_length=2, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
-    price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     unit_label: str | None = Field(default=None, max_length=64)
+    image_url: str | None = Field(default=None, max_length=2000)
+    source_url: str | None = Field(default=None, max_length=2000)
+    specifications: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def require_material_price(self) -> "CatalogItemCreate":
+        if self.kind == "material" and self.price is None:
+            raise ValueError("Material price is required")
+        return self
 
 
 class CatalogItemUpdate(StrictModel):
@@ -589,6 +628,9 @@ class CatalogItemUpdate(StrictModel):
     description: str | None = Field(default=None, max_length=2000)
     price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     unit_label: str | None = Field(default=None, max_length=64)
+    image_url: str | None = Field(default=None, max_length=2000)
+    source_url: str | None = Field(default=None, max_length=2000)
+    specifications: dict[str, Any] | None = None
     active: bool | None = None
 
     @model_validator(mode="after")

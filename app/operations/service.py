@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
+import json
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -49,6 +51,7 @@ from app.operations.schemas import (
     CatalogItemCreate,
     CatalogItemUpdate,
     CatalogItemView,
+    EquipmentCatalogDetailsView,
     ConversationDetail,
     ConversationActionUpdate,
     ConversationAutomationUpdate,
@@ -943,6 +946,9 @@ class OperationalService:
             description=values.description,
             price=values.price,
             unit_label=values.unit_label,
+            image_url=values.image_url,
+            source_url=values.source_url,
+            specifications=dict(values.specifications),
             active=True,
         )
         business.materials_catalog_reviewed = True
@@ -1054,8 +1060,11 @@ class OperationalService:
         )
         team = active_technicians > 0
         services = bool(active_services) and all(item.base_price is not None for item in active_services)
+        priced_materials = [
+            item for item in active_materials if item.kind == "material"
+        ]
         materials = bool(business.materials_catalog_reviewed) and all(
-            item.price is not None for item in active_materials
+            item.price is not None for item in priced_materials
         )
         agenda = bool(business.agenda_preferences_reviewed)
 
@@ -1122,7 +1131,7 @@ class OperationalService:
         return await self.setup_status(business_id)
 
     async def _ensure_catalog_presets(self, business_id: UUID) -> None:
-        presets = (
+        material_presets = (
             ("extra-tubing-meter", "material", "Metro adicional de tubulação", "Cobrança por metro acima da metragem incluída no serviço.", "metro"),
             ("extra-drain-meter", "material", "Metro adicional de dreno", "Material adicional de drenagem quando necessário.", "metro"),
             ("extra-electrical-cable-meter", "material", "Metro adicional de cabo elétrico", "Cabo elétrico adicional utilizado na instalação.", "metro"),
@@ -1135,22 +1144,86 @@ class OperationalService:
                 BusinessCatalogItem.preset_key.is_not(None),
             )
         )).all())
-        missing = [preset for preset in presets if preset[0] not in existing]
-        if not missing:
-            return
-        self.session.add_all([
-            BusinessCatalogItem(
-                business_id=business_id,
-                preset_key=key,
-                kind=kind,
-                name=name,
-                description=description,
-                unit_label=unit_label,
-                active=True,
+
+        additions: list[BusinessCatalogItem] = []
+        for key, kind, name, description, unit_label in material_presets:
+            if key in existing:
+                continue
+            additions.append(
+                BusinessCatalogItem(
+                    business_id=business_id,
+                    preset_key=key,
+                    kind=kind,
+                    name=name,
+                    description=description,
+                    unit_label=unit_label,
+                    active=True,
+                )
             )
-            for key, kind, name, description, unit_label in missing
-        ])
-        await self.session.commit()
+
+        catalog_path = (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "equipment_recommendation_catalog.json"
+        )
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        for raw in payload.get("items", []):
+            if not isinstance(raw, dict) or raw.get("active") is not True:
+                continue
+            item_id = str(raw.get("id") or "").strip()
+            if not item_id:
+                continue
+            preset_key = f"equipment:{item_id}"
+            if preset_key in existing:
+                continue
+            capacity = raw.get("capacity_btu")
+            brand = str(raw.get("brand") or "").strip()
+            line = str(raw.get("line") or "").strip()
+            if not brand or not line or not isinstance(capacity, int):
+                continue
+            cycles = raw.get("cycles") if isinstance(raw.get("cycles"), list) else []
+            cycle_label = " / ".join(
+                "Quente/frio" if value == "heat_cool" else "Só frio"
+                for value in cycles
+                if value in {"cold", "heat_cool"}
+            )
+            description = (
+                f"{brand} {line} - {capacity:,} BTU/h".replace(",", ".")
+                + (f" - {cycle_label}" if cycle_label else "")
+            )
+            specifications = {
+                key: value
+                for key, value in raw.items()
+                if key not in {
+                    "id", "brand", "line", "capacity_btu", "active",
+                    "source_url", "image_url",
+                }
+            }
+            specifications.update({
+                "catalog_item_id": item_id,
+                "brand": brand,
+                "line": line,
+                "capacity_btu": capacity,
+            })
+            additions.append(
+                BusinessCatalogItem(
+                    business_id=business_id,
+                    preset_key=preset_key,
+                    kind="equipment",
+                    name=f"{brand} {line} {capacity:,} BTU".replace(",", "."),
+                    description=description,
+                    price=None,
+                    unit_label="unidade",
+                    image_url=raw.get("image_url"),
+                    source_url=raw.get("source_url"),
+                    specifications=specifications,
+                    active=True,
+                )
+            )
+
+        if additions:
+            self.session.add_all(additions)
+            await self.session.commit()
 
     async def _business(self, business_id: UUID, *, for_update: bool = False) -> Business:
         query = select(Business).where(Business.id == business_id, Business.active.is_(True))
@@ -1498,6 +1571,11 @@ def _employee_view(item: Employee, service_ids: list[UUID]) -> EmployeeView:
 
 
 def _message_view(item: Message) -> MessageView:
+    media_url = (
+        f"/api/v1/conversations/{item.conversation_id}/messages/{item.id}/media"
+        if item.media_id and item.message_type == "image"
+        else None
+    )
     return MessageView(
         id=item.id,
         direction=item.direction,
@@ -1505,6 +1583,9 @@ def _message_view(item: Message) -> MessageView:
         body=item.body,
         status=item.status,
         created_at=item.created_at,
+        media_mime_type=item.media_mime_type,
+        media_filename=item.media_filename,
+        media_url=media_url,
     )
 
 
@@ -1547,5 +1628,120 @@ def _catalog_item_view(item: BusinessCatalogItem) -> CatalogItemView:
         price=item.price,
         unit_label=item.unit_label,
         preset_key=item.preset_key,
+        image_url=item.image_url,
+        source_url=item.source_url,
+        specifications=dict(item.specifications or {}),
         active=item.active,
+        equipment_details=_equipment_catalog_details(item),
     )
+
+
+def _equipment_catalog_details(
+    item: BusinessCatalogItem,
+) -> EquipmentCatalogDetailsView | None:
+    if item.kind != "equipment":
+        return None
+    specs = dict(item.specifications or {})
+    brand = specs.get("brand")
+    line = specs.get("line")
+    capacity = specs.get("capacity_btu")
+    if (
+        not isinstance(brand, str)
+        or not brand.strip()
+        or not isinstance(line, str)
+        or not line.strip()
+        or not isinstance(capacity, int)
+        or isinstance(capacity, bool)
+        or capacity <= 0
+    ):
+        return None
+
+    raw_segment = str(specs.get("segment") or "cost_benefit")
+    segment = (
+        raw_segment
+        if raw_segment in {"modern", "cost_benefit", "economy"}
+        else "cost_benefit"
+    )
+    raw_cycles = specs.get("cycles")
+    source_cycles = (
+        [value for value in raw_cycles if value in {"cold", "heat_cool"}]
+        if isinstance(raw_cycles, list)
+        else ["cold"]
+    )
+    cycles = [
+        "heat_cool" if value == "heat_cool" else "cooling_only"
+        for value in source_cycles
+    ]
+    features = [
+        value
+        for value in specs.get("features", [])
+        if isinstance(value, str)
+    ] if isinstance(specs.get("features"), list) else []
+    raw_wifi = specs.get("wifi")
+    wifi = (
+        raw_wifi
+        if isinstance(raw_wifi, bool)
+        else any("wifi" in value.casefold().replace("-", "") for value in features)
+    )
+    voltage_raw = specs.get("voltage")
+    if voltage_raw is None:
+        voltage_raw = specs.get("voltage_v")
+    voltage = None
+    if isinstance(voltage_raw, (int, float)) and not isinstance(voltage_raw, bool):
+        voltage = f"{voltage_raw:g} V"
+    elif isinstance(voltage_raw, str) and voltage_raw.strip():
+        voltage = voltage_raw.strip()
+
+    return EquipmentCatalogDetailsView(
+        catalog_item_id=str(specs.get("catalog_item_id") or item.id),
+        brand=brand.strip(),
+        line=line.strip(),
+        capacity_btu=capacity,
+        model_sku=_optional_catalog_text(specs.get("model_sku") or specs.get("sku")),
+        inverter=specs.get("inverter") is True,
+        voltage=voltage,
+        energy_efficiency=_optional_catalog_text(specs.get("energy_efficiency")),
+        wifi=wifi,
+        segment=segment,  # type: ignore[arg-type]
+        cycles=cycles,  # type: ignore[arg-type]
+        features=features,
+        source_url=item.source_url or "",
+        image_url=item.image_url,
+        image_alt=_optional_catalog_text(specs.get("image_alt")),
+        indoor_unit_dimensions=_format_catalog_dimensions(
+            specs.get("indoor_dimensions_cm")
+        ),
+        outdoor_unit_dimensions=_format_catalog_dimensions(
+            specs.get("outdoor_dimensions_cm")
+        ),
+        condenser_type=_optional_catalog_text(specs.get("condenser_form")),
+        indoor_restrictions=_optional_catalog_text(
+            specs.get("indoor_restrictions")
+        ),
+        outdoor_restrictions=_optional_catalog_text(
+            specs.get("outdoor_restrictions")
+        ),
+    )
+
+
+def _optional_catalog_text(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _format_catalog_dimensions(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    width = value.get("width")
+    height = value.get("height")
+    depth = value.get("depth")
+    if (
+        not isinstance(width, (int, float))
+        or isinstance(width, bool)
+        or not isinstance(height, (int, float))
+        or isinstance(height, bool)
+    ):
+        return None
+    parts = [f"{float(width):g}", f"{float(height):g}"]
+    if isinstance(depth, (int, float)) and not isinstance(depth, bool):
+        parts.append(f"{float(depth):g}")
+    return " × ".join(parts) + " cm"
