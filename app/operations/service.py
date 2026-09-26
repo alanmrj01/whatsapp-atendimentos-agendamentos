@@ -74,6 +74,10 @@ from app.operations.schemas import (
     WorkingHoursView,
 )
 from app.conversations.constants import ConversationState
+from app.booking.equipment_recommender import (
+    equipment_catalog_item,
+)
+from app.operations.catalog import ensure_business_catalog_presets
 from app.conversations.service_semantics import (
     generate_service_intent_examples,
     normalize_service_text,
@@ -1023,6 +1027,7 @@ class OperationalService:
         active_materials = (await self.session.scalars(
             select(BusinessCatalogItem).where(
                 BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.kind == "material",
                 BusinessCatalogItem.active.is_(True),
             )
         )).all()
@@ -1122,35 +1127,8 @@ class OperationalService:
         return await self.setup_status(business_id)
 
     async def _ensure_catalog_presets(self, business_id: UUID) -> None:
-        presets = (
-            ("extra-tubing-meter", "material", "Metro adicional de tubulação", "Cobrança por metro acima da metragem incluída no serviço.", "metro"),
-            ("extra-drain-meter", "material", "Metro adicional de dreno", "Material adicional de drenagem quando necessário.", "metro"),
-            ("extra-electrical-cable-meter", "material", "Metro adicional de cabo elétrico", "Cabo elétrico adicional utilizado na instalação.", "metro"),
-            ("condenser-bracket", "equipment", "Suporte para condensadora", "Suporte utilizado na instalação da unidade externa.", "unidade"),
-            ("wall-bracket-fixings", "material", "Kit de fixação", "Parafusos, buchas e itens de fixação adicionais.", "kit"),
-        )
-        existing = set((await self.session.scalars(
-            select(BusinessCatalogItem.preset_key).where(
-                BusinessCatalogItem.business_id == business_id,
-                BusinessCatalogItem.preset_key.is_not(None),
-            )
-        )).all())
-        missing = [preset for preset in presets if preset[0] not in existing]
-        if not missing:
-            return
-        self.session.add_all([
-            BusinessCatalogItem(
-                business_id=business_id,
-                preset_key=key,
-                kind=kind,
-                name=name,
-                description=description,
-                unit_label=unit_label,
-                active=True,
-            )
-            for key, kind, name, description, unit_label in missing
-        ])
-        await self.session.commit()
+        if await ensure_business_catalog_presets(self.session, business_id):
+            await self.session.commit()
 
     async def _business(self, business_id: UUID, *, for_update: bool = False) -> Business:
         query = select(Business).where(Business.id == business_id, Business.active.is_(True))
@@ -1539,6 +1517,9 @@ def _service_view(item: Service) -> ServiceOption:
 
 
 def _catalog_item_view(item: BusinessCatalogItem) -> CatalogItemView:
+    details = None
+    if item.preset_key and item.preset_key.startswith("equipment:"):
+        details = equipment_catalog_item(item.preset_key.removeprefix("equipment:"))
     return CatalogItemView(
         id=item.id,
         kind=item.kind,
@@ -1548,4 +1529,37 @@ def _catalog_item_view(item: BusinessCatalogItem) -> CatalogItemView:
         unit_label=item.unit_label,
         preset_key=item.preset_key,
         active=item.active,
+        equipment_details=(
+            {
+                "catalog_item_id": details["id"],
+                "brand": details["brand"],
+                "line": details["line"],
+                "capacity_btu": details["capacity_btu"],
+                "model_sku": details.get("model_sku"),
+                "inverter": details.get("inverter", False),
+                "voltage": details.get("voltage"),
+                "energy_efficiency": details.get("energy_efficiency"),
+                "wifi": (
+                    any(
+                        str(feature).casefold() == "wi-fi"
+                        for feature in details.get("features", [])
+                    )
+                    if isinstance(details.get("features"), list)
+                    else None
+                ),
+                "segment": details["segment"],
+                "cycles": details.get("cycles", ["cooling_only"]),
+                "features": details.get("features", []),
+                "source_url": details.get("source_url", ""),
+                "image_url": details.get("image_url"),
+                "image_alt": details.get("image_alt"),
+                "indoor_unit_dimensions": details.get("indoor_unit_dimensions"),
+                "outdoor_unit_dimensions": details.get("outdoor_unit_dimensions"),
+                "condenser_type": details.get("condenser_type"),
+                "indoor_restrictions": details.get("indoor_restrictions"),
+                "outdoor_restrictions": details.get("outdoor_restrictions"),
+            }
+            if details is not None
+            else None
+        ),
     )

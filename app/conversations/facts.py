@@ -139,6 +139,23 @@ def enrich_context_from_message(
         profile_changed = updated.get("equipment_preference") != preference or profile_changed
         updated["equipment_preference"] = preference
 
+    cycle = _equipment_cycle(normalized)
+    if cycle is not None:
+        profile_changed = updated.get("equipment_cycle") != cycle or profile_changed
+        updated["equipment_cycle"] = cycle
+
+    space_facts = _space_constraints(raw, normalized)
+    if space_facts:
+        updated.update(space_facts)
+
+    corrected_address = _corrected_service_address(updated, raw, normalized)
+    if corrected_address is not None:
+        updated["service_address"] = corrected_address
+        # A new locality invalidates any slot selected using the old route.
+        updated.pop("selected_date", None)
+        updated.pop("selected_time", None)
+        updated.pop("candidate_booking", None)
+
     height = _height_over_three_meters(normalized)
     if height is not None:
         updated["installation_height_over_3m"] = height
@@ -189,6 +206,7 @@ def enrich_context_from_message(
         "room_area_m2",
         "room_people_max",
         "equipment_preference",
+        "equipment_cycle",
     }
     if profile_keys & updated.keys() and "equipment_profile_started_at" not in updated:
         updated["equipment_profile_started_at"] = datetime.now(UTC).isoformat()
@@ -204,6 +222,21 @@ def missing_equipment_profile_fields(context: dict[str, Any]) -> tuple[str, ...]
         fields.append("people")
     if not isinstance(context.get("room_area_m2"), (int, float)):
         fields.append("area")
+    if context.get("equipment_cycle") not in {"cooling_only", "heat_cool"}:
+        fields.append("cycle")
+    if context.get("indoor_space_status") not in {
+        "ample",
+        "limited",
+        "measured",
+    }:
+        fields.append("indoor_space")
+    if context.get("outdoor_space_status") not in {
+        "ample",
+        "limited",
+        "measured",
+        "technical_balcony",
+    }:
+        fields.append("outdoor_space")
     if context.get("equipment_preference") not in {
         "modern",
         "cost_benefit",
@@ -211,6 +244,169 @@ def missing_equipment_profile_fields(context: dict[str, Any]) -> tuple[str, ...]
     }:
         fields.append("preference")
     return tuple(fields)
+
+
+def _equipment_cycle(normalized: str) -> str | None:
+    if any(
+        phrase in normalized
+        for phrase in (
+            "quente e frio",
+            "quente/frio",
+            "quente frio",
+            "ciclo reverso",
+            "aquecer e resfriar",
+        )
+    ):
+        return "heat_cool"
+    if any(
+        phrase in normalized
+        for phrase in (
+            "somente frio",
+            "so frio",
+            "apenas frio",
+            "ciclo frio",
+        )
+    ):
+        return "cooling_only"
+    return None
+
+
+def _space_constraints(raw: str, normalized: str) -> dict[str, Any]:
+    facts: dict[str, Any] = {}
+    indoor_tokens = (
+        "evaporadora",
+        "unidade interna",
+        "espaco interno",
+        "parede interna",
+        "nicho interno",
+    )
+    outdoor_tokens = (
+        "condensadora",
+        "unidade externa",
+        "espaco externo",
+        "area externa",
+        "varanda tecnica",
+        "varanda",
+    )
+    clauses = tuple(
+        normalize_portuguese(clause)
+        for clause in re.split(
+            r"[,;.]|\b(?:mas|enquanto)\b",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        if normalize_portuguese(clause)
+    )
+    indoor_clause = _constraint_clause(clauses, indoor_tokens)
+    outdoor_clause = _constraint_clause(clauses, outdoor_tokens)
+    indoor_status = _constraint_status(indoor_clause)
+    outdoor_status = _constraint_status(outdoor_clause, outdoor=True)
+
+    if indoor_status is not None:
+        facts["indoor_space_status"] = indoor_status
+        facts["indoor_space_confirmed"] = True
+        facts["indoor_space_details"] = raw[:300]
+    if outdoor_status is not None:
+        facts["outdoor_space_status"] = outdoor_status
+        facts["outdoor_space_confirmed"] = True
+        facts["outdoor_space_details"] = raw[:300]
+
+    condenser_preferences = {
+        "cilindrica": "cylindrical",
+        "redonda": "cylindrical",
+        "quadrada": "rectangular",
+        "retangular": "rectangular",
+        "compacta": "compact",
+        "mais estreita": "narrow",
+    }
+    for phrase, value in condenser_preferences.items():
+        if phrase in normalized and outdoor_clause is not None:
+            facts["condenser_type_preference"] = value
+            facts.setdefault("outdoor_space_status", "limited")
+            facts["outdoor_space_confirmed"] = True
+            facts["outdoor_space_details"] = raw[:300]
+            break
+    return facts
+
+
+def _constraint_clause(
+    clauses: tuple[str, ...],
+    target_tokens: tuple[str, ...],
+) -> str | None:
+    matches = [
+        clause
+        for clause in clauses
+        if any(token in clause for token in target_tokens)
+    ]
+    return " ".join(matches) if matches else None
+
+
+def _constraint_status(clause: str | None, *, outdoor: bool = False) -> str | None:
+    if clause is None:
+        return None
+    if outdoor and "varanda tecnica" in clause:
+        return "technical_balcony"
+    if any(
+        phrase in clause
+        for phrase in (
+            "bem apertado",
+            "espaco apertado",
+            "pouco espaco",
+            "espaco limitado",
+            "nicho",
+            "mais estreita",
+            "pequeno",
+            "pequena",
+        )
+    ):
+        return "limited"
+    if any(
+        phrase in clause
+        for phrase in (
+            "bastante espaco",
+            "espaco livre",
+            "espaco amplo",
+            "cabe tranquilo",
+            "sem limitacao",
+        )
+    ):
+        return "ample"
+    if re.search(
+        r"\b\d{1,4}(?:[.,]\d+)?\s*(?:x|por)\s*"
+        r"\d{1,4}(?:[.,]\d+)?(?:\s*(?:x|por)\s*"
+        r"\d{1,4}(?:[.,]\d+)?)?\s*(?:mm|cm|m)\b",
+        clause,
+    ):
+        return "measured"
+    return None
+
+
+def _corrected_service_address(
+    context: dict[str, Any],
+    raw: str,
+    normalized: str,
+) -> dict[str, Any] | None:
+    current = context.get("service_address")
+    if not isinstance(current, dict) or not isinstance(current.get("city"), str):
+        return None
+    if not any(
+        marker in normalized
+        for marker in ("desculpa", "corrigindo", "correcao", "na verdade")
+    ):
+        return None
+    match = re.search(
+        r"(?:desculpa|corrigindo|correção|correcao|na verdade)"
+        r"[^.!?]{0,50}?\b(?:é|e|fica em|cidade é|cidade e)\s+"
+        r"([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\- ]{1,60})",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    city = " ".join(match.group(1).strip(" .,;:!?").split())
+    if not 1 <= len(city.split()) <= 6 or any(character.isdigit() for character in city):
+        return None
+    return {**current, "city": city}
 
 
 def _equipment_ownership(normalized: str) -> str | None:
@@ -393,6 +589,7 @@ def _hours_window(value: str) -> tuple[str, str] | None:
 
 def _onsite_contact_name(raw: str) -> str | None:
     patterns = (
+        r"(?:minha esposa|meu marido|minha mãe|minha mae|meu pai|minha filha|meu filho)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\-]{1,40})",
         r"(?:quem vai estar|quem estará|vai estar|estara)\s+(?:e|é)?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\- ]{1,60})",
         r"(?:outra pessoa[,;:]?\s*)([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\- ]{1,60})",
     )

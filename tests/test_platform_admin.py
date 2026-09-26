@@ -8,7 +8,14 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.dependencies import require_super_admin
-from app.models import Business, BusinessAccess, BusinessUserMembership, Service, User
+from app.models import (
+    Business,
+    BusinessAccess,
+    BusinessCatalogItem,
+    BusinessUserMembership,
+    Service,
+    User,
+)
 from app.platform_admin import service as platform_service
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
@@ -131,6 +138,8 @@ async def test_set_business_access_uses_atomic_upsert() -> None:
     db = SimpleNamespace(
         get=AsyncMock(return_value=business),
         execute=AsyncMock(return_value=result),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [])),
+        add_all=Mock(),
         commit=AsyncMock(),
     )
 
@@ -285,10 +294,12 @@ async def test_create_business_flushes_parents_before_membership(monkeypatch) ->
             assert any(isinstance(item, User) for item in items)
             events.append("parents")
         else:
-            assert len(items) == 6
+            assert len(items) == 42
             assert sum(isinstance(item, Service) for item in items) == 5
+            assert sum(isinstance(item, BusinessCatalogItem) for item in items) == 35
+            assert any(isinstance(item, BusinessAccess) for item in items)
             assert any(isinstance(item, BusinessUserMembership) for item in items)
-            events.append("membership_and_services")
+            events.append("access_membership_services_and_catalog")
 
     async def flush():
         events.append("flush")
@@ -312,7 +323,12 @@ async def test_create_business_flushes_parents_before_membership(monkeypatch) ->
 
     await PlatformAdminService(db).create_business(payload)
 
-    assert events == ["parents", "flush", "membership_and_services", "commit"]
+    assert events == [
+        "parents",
+        "flush",
+        "access_membership_services_and_catalog",
+        "commit",
+    ]
     db.rollback.assert_not_awaited()
 
 

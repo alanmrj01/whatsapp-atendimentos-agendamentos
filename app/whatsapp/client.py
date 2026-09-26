@@ -165,6 +165,31 @@ class WhatsAppClient:
         response_data = await self._request("POST", payload)
         return _provider_message_id(response_data)
 
+    async def send_image(
+        self,
+        to: str,
+        image_url: str,
+        caption: str | None = None,
+    ) -> str:
+        destination = _validate_destination(to)
+        normalized_url = _validate_https_url(image_url)
+        image: dict[str, str] = {"link": normalized_url}
+        if caption is not None:
+            image["caption"] = _validate_text(
+                caption,
+                "caption",
+                max_length=1024,
+            )
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": destination,
+            "type": "image",
+            "image": image,
+        }
+        response_data = await self._request("POST", payload)
+        return _provider_message_id(response_data)
+
     async def mark_as_read(self, message_id: str) -> bool:
         normalized_message_id = _validate_identifier(
             message_id, "message_id", max_length=255
@@ -233,6 +258,17 @@ def _validate_client_configuration(
             "WhatsApp client configuration is invalid"
         )
     return access_token_secret, phone_number_id, graph_version
+
+
+def _validate_https_url(value: str) -> str:
+    normalized = value.strip() if isinstance(value, str) else ""
+    if (
+        not normalized.startswith("https://")
+        or len(normalized) > 2048
+        or any(character.isspace() for character in normalized)
+    ):
+        raise WhatsAppValidationError("image_url is invalid")
+    return normalized
 
 
 def _legacy_configuration(

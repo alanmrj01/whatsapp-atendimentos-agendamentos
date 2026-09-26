@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import textwrap
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -17,9 +19,17 @@ from app.conversations.constants import (
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
     EQUIPMENT_PREF_MODERN,
+    EQUIPMENT_CYCLE_COOLING,
+    EQUIPMENT_CYCLE_HEAT_COOL,
+    EQUIPMENT_INDOOR_SPACE_NO,
+    EQUIPMENT_INDOOR_SPACE_YES,
+    EQUIPMENT_OUTDOOR_SPACE_NO,
+    EQUIPMENT_OUTDOOR_SPACE_YES,
     EQUIPMENT_PURCHASE,
     HEIGHT_AT_MOST_3M,
     HEIGHT_OVER_3M,
+    MEDIA_CONTINUE_TEXT,
+    MEDIA_HUMAN_CONFIRM,
     PROPERTY_BUILDING,
     PROPERTY_CONDOMINIUM,
     PROPERTY_HOUSE,
@@ -61,6 +71,75 @@ class OutboundMessage:
     body: str | None
     interactive_id: str | None = None
     outbound_payload: dict[str, Any] | None = None
+
+
+def split_outbound_message(
+    message: OutboundMessage,
+    *,
+    max_lines: int = 4,
+    approximate_line_width: int = 72,
+) -> tuple[OutboundMessage, ...]:
+    """Split at semantic boundaries and keep interaction on the final chunk.
+
+    WhatsApp wrapping varies by device. The character width is therefore only a
+    conservative estimate; explicit newlines and sentence boundaries remain the
+    primary split points.
+    """
+
+    if max_lines < 1:
+        raise ValueError("max_lines must be positive")
+    if message.body is None:
+        return (message,)
+    if approximate_line_width < 20:
+        raise ValueError("approximate_line_width is too small")
+    groups = _semantic_line_groups(message.body, approximate_line_width)
+    if sum(len(group) for group in groups) <= max_lines:
+        return (message,)
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    for group in groups:
+        if current and len(current) + len(group) > max_lines:
+            chunks.append(current)
+            current = []
+        while len(group) > max_lines:
+            chunks.append(group[:max_lines])
+            group = group[max_lines:]
+        current.extend(group)
+    if current:
+        chunks.append(current)
+    normalized = ["\n".join(chunk).strip() for chunk in chunks if chunk]
+    if len(normalized) <= 1:
+        return (message,)
+    return tuple(
+        OutboundMessage(message_type="text", body=body)
+        if index < len(normalized) - 1
+        else OutboundMessage(
+            message_type=message.message_type,
+            body=body,
+            interactive_id=message.interactive_id,
+            outbound_payload=message.outbound_payload,
+        )
+        for index, body in enumerate(normalized)
+    )
+
+
+def _semantic_line_groups(body: str, width: int) -> list[list[str]]:
+    groups: list[list[str]] = []
+    for raw_line in body.splitlines() or [body]:
+        normalized = " ".join(raw_line.split())
+        if not normalized:
+            continue
+        sentences = re.split(r"(?<=[.!?])\s+", normalized)
+        for sentence in sentences:
+            wrapped = textwrap.wrap(
+                sentence,
+                width=width,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            if wrapped:
+                groups.append(wrapped)
+    return groups
 
 
 def main_menu_message() -> OutboundMessage:
@@ -166,6 +245,50 @@ def equipment_profile_message(
     *,
     retry: bool = False,
 ) -> OutboundMessage:
+    if not missing:
+        return OutboundMessage(
+            message_type="text",
+            body="Perfeito. Já tenho as informações para sugerir um equipamento.",
+        )
+
+    field = missing[0]
+    if field == "cycle":
+        return OutboundMessage(
+            message_type="interactive_button",
+            body="Você prefere um aparelho somente frio ou quente e frio?",
+            interactive_id="booking.equipment_cycle",
+            outbound_payload=_button_payload(
+                (
+                    BookingOption(EQUIPMENT_CYCLE_COOLING, "Somente frio"),
+                    BookingOption(EQUIPMENT_CYCLE_HEAT_COOL, "Quente e frio"),
+                )
+            ),
+        )
+    if field == "indoor_space":
+        return OutboundMessage(
+            message_type="interactive_button",
+            body="Há espaço livre para instalar a unidade interna na parede?",
+            interactive_id="booking.equipment_indoor_space",
+            outbound_payload=_button_payload(
+                (
+                    BookingOption(EQUIPMENT_INDOOR_SPACE_YES, "Há espaço"),
+                    BookingOption(EQUIPMENT_INDOOR_SPACE_NO, "Espaço limitado"),
+                )
+            ),
+        )
+    if field == "outdoor_space":
+        return OutboundMessage(
+            message_type="interactive_button",
+            body="Há espaço ventilado e seguro para a unidade externa?",
+            interactive_id="booking.equipment_outdoor_space",
+            outbound_payload=_button_payload(
+                (
+                    BookingOption(EQUIPMENT_OUTDOOR_SPACE_YES, "Há espaço"),
+                    BookingOption(EQUIPMENT_OUTDOOR_SPACE_NO, "Espaço limitado"),
+                )
+            ),
+        )
+
     labels = {
         "people": "quantas pessoas, no máximo, costumam ficar no ambiente",
         "area": "qual é o tamanho aproximado do ambiente em m²",
@@ -174,22 +297,56 @@ def equipment_profile_message(
             "ou máxima economia na compra"
         ),
     }
-    questions = [labels[key] for key in missing if key in labels]
-    if not questions:
-        body = "Perfeito. Já tenho as informações para sugerir um equipamento."
-    elif len(questions) == 1:
-        body = (
-            f"Só falta eu saber {questions[0]}."
-            if not retry
-            else f"Para eu fechar a recomendação, me diga {questions[0]}."
-        )
+    question = labels.get(field)
+    if question is None:
+        body = "Pode me contar um pouco mais sobre o ambiente?"
     else:
-        numbered = " ".join(
-            f"{index + 1}) {question}?"
-            for index, question in enumerate(questions)
+        body = (
+            f"Só falta eu saber {question}."
+            if not retry
+            else f"Para eu fechar a recomendação, me diga {question}."
         )
-        body = f"Para eu sugerir um modelo adequado: {numbered}"
     return OutboundMessage(message_type="text", body=body)
+
+
+def unsupported_media_message(media_type: str) -> OutboundMessage:
+    label = "vídeo" if media_type == "video" else "áudio"
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            f"Recebi seu {label}, mas ainda não posso interpretar esse conteúdo.\n"
+            "Você pode escrever a informação aqui.\n"
+            "Se preferir uma pessoa, o atendimento pode demorar mais."
+        ),
+        interactive_id="media.unsupported",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(MEDIA_CONTINUE_TEXT, "Continuar por texto"),
+                BookingOption(MEDIA_HUMAN_CONFIRM, "Falar com a equipe"),
+            )
+        ),
+    )
+
+
+def received_photo_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body=(
+            "Recebi a foto e ela ficará disponível no atendimento.\n"
+            "Como não faço diagnóstico só pela imagem, continue por texto."
+        ),
+    )
+
+
+def equipment_photo_message(
+    image_url: str,
+    caption: str,
+) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="image",
+        body=caption,
+        outbound_payload={"link": image_url},
+    )
 
 
 def equipment_preference_message() -> OutboundMessage:

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 
 import pytest
@@ -14,7 +14,11 @@ from fastapi import HTTPException
 
 from app.models import Business, BusinessCatalogItem, Service
 from app.operations.schemas import SetupStatus
-from app.operations.service import OperationalService
+from app.operations.catalog import (
+    catalog_preset_definitions,
+    ensure_business_catalog_presets,
+)
+from app.operations.service import OperationalService, _catalog_item_view
 
 
 BUSINESS_ID = uuid.UUID("c0000000-0000-0000-0000-000000000001")
@@ -63,6 +67,12 @@ class SetupSession:
 
     async def scalars(self, _: object) -> ScalarRows:
         return self.scalar_rows.pop(0)
+
+    def add_all(self, _: list[BusinessCatalogItem]) -> None:
+        return None
+
+    async def commit(self) -> None:
+        return None
 
 
 def company(**changes: Any) -> Business:
@@ -227,3 +237,46 @@ async def test_complete_onboarding_still_rejects_any_required_step_missing() -> 
     assert exc_info.value.status_code == 409
     service._business.assert_not_awaited()
     session.commit.assert_not_awaited()
+
+
+def test_paid_catalog_defines_thirty_equipment_presets() -> None:
+    definitions = catalog_preset_definitions()
+    equipment = [item for item in definitions if item[0].startswith("equipment:")]
+
+    assert len(equipment) == 30
+    assert len(definitions) == 35
+    assert len({item[0] for item in definitions}) == len(definitions)
+
+
+def test_equipment_catalog_contract_exposes_verified_reference_details() -> None:
+    item = BusinessCatalogItem(
+        id=uuid.uuid4(),
+        business_id=BUSINESS_ID,
+        preset_key="equipment:lg-ai-dual-inverter-voice-9000",
+        kind="equipment",
+        name="LG AI Dual Inverter Voice 9.000 BTU",
+        active=True,
+    )
+
+    view = _catalog_item_view(item)
+
+    assert view.equipment_details is not None
+    assert view.equipment_details.brand == "LG"
+    assert view.equipment_details.capacity_btu == 9000
+    assert view.equipment_details.cycles == ["cooling_only", "heat_cool"]
+    assert view.equipment_details.image_url is not None
+    assert view.equipment_details.source_url.startswith("https://")
+
+
+@pytest.mark.asyncio
+async def test_inactive_preset_key_is_not_silently_reseeded() -> None:
+    preset_keys = [item[0] for item in catalog_preset_definitions()]
+    session = SimpleNamespace(
+        scalars=AsyncMock(return_value=ScalarRows(preset_keys)),
+        add_all=Mock(),
+    )
+
+    changed = await ensure_business_catalog_presets(session, BUSINESS_ID)
+
+    assert changed is False
+    session.add_all.assert_not_called()

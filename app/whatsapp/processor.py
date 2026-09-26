@@ -492,6 +492,8 @@ async def _process_persisted_turns_without_cloud_tasks(
 def _assistant_processable_inbound(event: InboundMessageEvent) -> bool:
     if event.interactive_id is not None:
         return True
+    if event.message_type in {"image", "audio", "video"}:
+        return True
     return isinstance(event.body, str) and bool(event.body.strip())
 
 

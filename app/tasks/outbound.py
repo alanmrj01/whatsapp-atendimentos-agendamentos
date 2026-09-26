@@ -84,6 +84,13 @@ class WhatsAppSender(Protocol):
         sections: Sequence[Mapping[str, Any]],
     ) -> str: ...
 
+    async def send_image(
+        self,
+        to: str,
+        image_url: str,
+        caption: str | None = None,
+    ) -> str: ...
+
     async def aclose(self) -> None: ...
 
 
@@ -234,13 +241,26 @@ async def _send_message(
     client: WhatsAppSender,
     message: StoredOutboundMessage,
 ) -> str:
-    body = cast(str, message.body)
+    body = message.body
     if message.message_type == "text":
+        if not isinstance(body, str):
+            raise WhatsAppValidationError("Outbound body is invalid")
         return await client.send_text(message.recipient, body)
 
     payload = message.outbound_payload
     if not isinstance(payload, Mapping):
         raise WhatsAppValidationError("Outbound payload is invalid")
+    if message.message_type == "image":
+        image_url = payload.get("link")
+        if not isinstance(image_url, str):
+            raise WhatsAppValidationError("Outbound image payload is invalid")
+        return await client.send_image(
+            message.recipient,
+            image_url,
+            body if isinstance(body, str) else None,
+        )
+    if not isinstance(body, str):
+        raise WhatsAppValidationError("Outbound body is invalid")
     if message.message_type == "interactive_button":
         buttons = cast(Sequence[Mapping[str, Any]], payload.get("buttons"))
         return await client.send_interactive_buttons(

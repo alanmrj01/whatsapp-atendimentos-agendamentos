@@ -122,6 +122,46 @@ class PostgresBookingAvailabilityPort:
             tuple[uuid.UUID, datetime], BookingPlan
         ] = {}
 
+    async def list_active_equipment_catalog_ids(
+        self,
+        business_id: uuid.UUID,
+    ) -> Sequence[str] | None:
+        rows = (
+            await self.session.execute(
+                select(
+                    BusinessCatalogItem.preset_key,
+                    BusinessCatalogItem.active,
+                ).where(
+                    BusinessCatalogItem.business_id == business_id,
+                    BusinessCatalogItem.kind == "equipment",
+                    BusinessCatalogItem.preset_key.like("equipment:%"),
+                )
+            )
+        ).all()
+        if not rows:
+            # LEGACY/PILOT: businesses not opened in the new catalog yet keep
+            # the curated defaults until their per-business presets are seeded.
+            return None
+        return tuple(
+            preset_key.removeprefix("equipment:")
+            for preset_key, active in rows
+            if active and isinstance(preset_key, str)
+        )
+
+    async def get_equipment_catalog_price(
+        self,
+        business_id: uuid.UUID,
+        item_id: str,
+    ) -> Decimal | None:
+        price = await self.session.scalar(
+            select(BusinessCatalogItem.price).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.preset_key == f"equipment:{item_id}",
+                BusinessCatalogItem.active.is_(True),
+            )
+        )
+        return Decimal(price) if price is not None else None
+
     async def list_services(
         self,
         business_id: uuid.UUID,

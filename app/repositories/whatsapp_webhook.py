@@ -163,6 +163,12 @@ class WhatsAppWebhookRepository:
         conversation_id: uuid.UUID,
         event: InboundMessageEvent,
     ) -> None:
+        media_metadata = None
+        if event.provider_media_id is not None:
+            media_metadata = {
+                "provider_media_id": event.provider_media_id,
+                "mime_type": event.media_mime_type,
+            }
         await self.session.execute(
             postgresql_insert(Message).values(
                 id=uuid.uuid4(),
@@ -173,6 +179,7 @@ class WhatsAppWebhookRepository:
                 message_type=event.message_type,
                 body=event.body,
                 interactive_id=event.interactive_id,
+                outbound_payload=media_metadata,
                 status="received",
                 created_at=event.occurred_at or func.now(),
             )

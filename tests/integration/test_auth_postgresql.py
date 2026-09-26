@@ -25,6 +25,7 @@ from app.models import (
     AuthSession,
     Business,
     BusinessAccess,
+    BusinessCatalogItem,
     BusinessUserMembership,
     BusinessWhatsAppConnection,
     User,
@@ -82,6 +83,7 @@ async def auth_env(monkeypatch):
             User,
             BusinessWhatsAppConnection,
             BusinessAccess,
+            BusinessCatalogItem,
             Business,
         ):
             await db.execute(delete(model))

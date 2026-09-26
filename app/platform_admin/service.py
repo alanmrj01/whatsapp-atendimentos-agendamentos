@@ -20,6 +20,10 @@ from app.models import (
     User,
 )
 from app.operations.defaults import default_services_for_business
+from app.operations.catalog import (
+    catalog_preset_items,
+    ensure_business_catalog_presets,
+)
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
     PlatformBusinessAccessResponse,
@@ -147,13 +151,23 @@ class PlatformAdminService:
             business_id=business.id,
             role="owner",
         )
+        access = BusinessAccess(
+            business_id=business.id,
+            access_mode="paid",
+            has_had_operational_access=True,
+        )
         self.db.add_all([business, owner])
         try:
             # Persist parent rows inside the same transaction before inserting
             # the membership that references both foreign keys.
             await self.db.flush()
             self.db.add_all(
-                [membership, *default_services_for_business(business.id)]
+                [
+                    access,
+                    membership,
+                    *default_services_for_business(business.id),
+                    *catalog_preset_items(business.id),
+                ]
             )
             await self.db.commit()
         except IntegrityError:
@@ -219,6 +233,8 @@ class PlatformAdminService:
         )
         result = await self.db.execute(statement)
         updated_business_id, updated_access_mode = result.one()
+        if updated_access_mode == "paid":
+            await ensure_business_catalog_presets(self.db, updated_business_id)
         await self.db.commit()
         return PlatformBusinessAccessResponse(
             business_id=updated_business_id,

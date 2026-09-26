@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from dataclasses import replace
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
 from app.conversations.constants import ConversationState
+from app.conversations.outbound import split_outbound_message
 from app.conversations.ports import BookingAvailabilityPort
 from app.conversations.transitions import determine_transition
 from app.conversations.types import (
@@ -63,6 +65,7 @@ class ConversationEngine:
             )
             if transition is None:
                 return False
+            transition = _apply_outbound_line_policy(transition)
             return await self.repository.persist_transition(
                 conversation,
                 transition,
@@ -78,3 +81,19 @@ def build_outbound_idempotency_key(inbound: ConversationInput) -> str:
     )
     fingerprint = hashlib.sha256("\x1f".join(stable_parts).encode()).hexdigest()
     return f"conversation:outbound:{fingerprint}"
+
+
+def _apply_outbound_line_policy(
+    transition: ConversationTransition,
+) -> ConversationTransition:
+    messages = (transition.outbound, *transition.follow_ups)
+    normalized = tuple(
+        part
+        for message in messages
+        for part in split_outbound_message(message)
+    )
+    return replace(
+        transition,
+        outbound=normalized[0],
+        follow_ups=normalized[1:],
+    )

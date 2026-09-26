@@ -51,6 +51,8 @@ async def test_admin_grant_records_operational_history_without_billing() -> None
     db = SimpleNamespace(
         get=AsyncMock(return_value=business),
         execute=AsyncMock(return_value=result),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [])),
+        add_all=Mock(),
         commit=AsyncMock(),
     )
 
@@ -62,6 +64,7 @@ async def test_admin_grant_records_operational_history_without_billing() -> None
     assert statement.table.name == BusinessAccess.__tablename__
     assert "has_had_operational_access" in str(compiled)
     assert True in compiled.params.values()
+    assert len(db.add_all.call_args.args[0]) == 35
     db.commit.assert_awaited_once()
 
 

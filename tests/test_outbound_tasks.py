@@ -224,6 +224,14 @@ class FakeWhatsAppSender:
     ) -> str:
         return await self._send("list", (to, body, sections))
 
+    async def send_image(
+        self,
+        to: str,
+        image_url: str,
+        caption: str | None = None,
+    ) -> str:
+        return await self._send("image", (to, image_url, caption))
+
     async def _send(self, kind: str, arguments: Any) -> str:
         self.calls.append((kind, arguments))
         if self.error is not None:
@@ -264,6 +272,7 @@ def stored_message(
                 }
             ],
         },
+        "image": {"link": "https://example.com/equipment.jpg"},
     }
     return StoredOutboundMessage(
         message_id=MESSAGE_ID,
@@ -284,6 +293,7 @@ def stored_message(
         ("text", "text"),
         ("interactive_button", "buttons"),
         ("interactive_list", "list"),
+        ("image", "image"),
     ],
 )
 @pytest.mark.asyncio

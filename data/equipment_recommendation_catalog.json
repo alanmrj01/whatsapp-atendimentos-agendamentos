@@ -2,6 +2,42 @@
   "catalog_version": "2026.09.25.1",
   "scope": "30 configurações residenciais atuais de referência para recomendação comercial. Não representa ranking nacional auditado de vendas nem substitui dimensionamento térmico.",
   "sizing_note": "Heurística comercial simples por área e ocupação; validar condições especiais no local.",
+  "line_metadata": {
+    "Samsung|WindFree AI": {
+      "cycles": ["cooling_only", "heat_cool"]
+    },
+    "Samsung|WindFree Connect": {
+      "cycles": ["cooling_only", "heat_cool"]
+    },
+    "Samsung|WindFree PowerVolt AI": {
+      "cycles": ["cooling_only", "heat_cool"]
+    },
+    "LG|AI Dual Inverter Voice": {
+      "cycles": ["cooling_only", "heat_cool"],
+      "image_url": "https://www.lg.com/content/dam/channel/wcms/br/images/ar-condicionado-residencial/s3-w09aa31e/gallery/450-1.jpg",
+      "image_alt": "Imagem oficial de referência da linha LG AI Dual Inverter Voice"
+    },
+    "Gree|G-Top Auto Inverter": {
+      "cycles": ["cooling_only", "heat_cool"],
+      "image_url": "https://gree.com.br/wp-content/uploads/2025/01/GTopAutoInverter_002.webp",
+      "image_alt": "Imagem oficial de referência da linha Gree G-Top Auto Inverter"
+    },
+    "Daikin|EcoSwing Smart R-32": {
+      "cycles": ["cooling_only", "heat_cool"],
+      "image_url": "https://www.daikin.com.br/static/website/images/produto/imagem-split-2021.png",
+      "image_alt": "Imagem oficial de referência da linha Daikin EcoSwing",
+      "indoor_unit_dimensions": "285 x 770 x 225 mm",
+      "outdoor_unit_dimensions": "550 x 740 x 326 mm"
+    },
+    "TCL|A2 Inverter Quente/Frio": {
+      "cycles": ["heat_cool"],
+      "image_url": "https://blobmarketingsemp.blob.core.windows.net/website/lps/A2QFINV/assets/img/desktop/ar-condicionado.png",
+      "image_alt": "Imagem oficial de referência da linha TCL A2"
+    },
+    "TCL|T-Pro Inverter": {
+      "cycles": ["cooling_only"]
+    }
+  },
   "items": [
     {
       "id": "samsung-windfree-ai-9000",

@@ -69,6 +69,17 @@ class BookingNotFound(RuntimeError):
 
 
 class BookingAvailabilityPort(Protocol):
+    async def list_active_equipment_catalog_ids(
+        self,
+        business_id: uuid.UUID,
+    ) -> Sequence[str] | None: ...
+
+    async def get_equipment_catalog_price(
+        self,
+        business_id: uuid.UUID,
+        item_id: str,
+    ) -> Decimal | None: ...
+
     async def list_services(
         self,
         business_id: uuid.UUID,

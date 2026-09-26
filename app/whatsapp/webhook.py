@@ -51,6 +51,8 @@ class InboundMessageEvent:
     message_type: str
     body: str | None
     interactive_id: str | None
+    provider_media_id: str | None = None
+    media_mime_type: str | None = None
     whatsapp_profile_name: str | None = None
     occurred_at: datetime | None = None
 
@@ -156,7 +158,9 @@ def _normalize_messages(
         if not _is_individual_message(value, raw_message, whatsapp_id):
             continue
 
-        body, interactive_id = _message_content(raw_message, message_type)
+        body, interactive_id, provider_media_id, media_mime_type = (
+            _message_content(raw_message, message_type)
+        )
         events.append(
             InboundMessageEvent(
                 event_key=build_event_key("inbound", provider_message_id),
@@ -167,6 +171,8 @@ def _normalize_messages(
                 message_type=message_type,
                 body=body,
                 interactive_id=interactive_id,
+                provider_media_id=provider_media_id,
+                media_mime_type=media_mime_type,
                 whatsapp_profile_name=profile_names.get(whatsapp_id),
                 occurred_at=_unix_timestamp(raw_message.get("timestamp")),
             )
@@ -295,27 +301,37 @@ def _has_collective_indicator(value: dict[str, Any]) -> bool:
 
 def _message_content(
     raw_message: dict[str, Any], message_type: str
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str | None, str | None]:
     if message_type == "text":
         text_content = raw_message.get("text")
         if isinstance(text_content, dict):
-            return _body(text_content.get("body")), None
-        return None, None
+            return _body(text_content.get("body")), None, None, None
+        return None, None, None, None
 
     if message_type == "interactive":
         interactive = raw_message.get("interactive")
         if not isinstance(interactive, dict):
-            return None, None
+            return None, None, None, None
         reply_type = _identifier(interactive.get("type"), 64)
         reply = interactive.get(reply_type) if reply_type else None
         if not isinstance(reply, dict):
-            return None, None
-        return _body(reply.get("title")), _identifier(reply.get("id"), 255)
+            return None, None, None, None
+        return (
+            _body(reply.get("title")),
+            _identifier(reply.get("id"), 255),
+            None,
+            None,
+        )
 
     media_content = raw_message.get(message_type)
     if isinstance(media_content, dict):
-        return _body(media_content.get("caption")), None
-    return None, None
+        return (
+            _body(media_content.get("caption")),
+            None,
+            _identifier(media_content.get("id"), 255),
+            _identifier(media_content.get("mime_type"), 127),
+        )
+    return None, None, None, None
 
 
 def _identifier(value: Any, max_length: int) -> str | None:

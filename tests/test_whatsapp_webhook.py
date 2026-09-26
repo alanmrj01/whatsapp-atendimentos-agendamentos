@@ -785,6 +785,40 @@ async def test_post_normalizes_interactive_reply(
 
 
 @mark.asyncio
+async def test_post_normalizes_media_without_storing_raw_payload(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    processor = AsyncMock()
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+    payload = messages_payload(
+        messages=[
+            {
+                "id": "provider-image-1",
+                "from": "5511999990003",
+                "type": "image",
+                "image": {
+                    "id": "media-image-1",
+                    "mime_type": "image/jpeg",
+                    "caption": "Foto do aparelho",
+                    "sha256": "raw-provider-field-must-not-be-copied",
+                },
+            }
+        ]
+    )
+
+    _, response = await post_signed(client, payload)
+    event = processor.await_args.args[1][0]
+
+    assert response.status_code == 200
+    assert event.message_type == "image"
+    assert event.body == "Foto do aparelho"
+    assert event.provider_media_id == "media-image-1"
+    assert event.media_mime_type == "image/jpeg"
+    assert not hasattr(event, "sha256")
+
+
+@mark.asyncio
 async def test_post_supports_multiple_entries_changes_and_messages(
     client: AsyncClient, monkeypatch: MonkeyPatch
 ) -> None:

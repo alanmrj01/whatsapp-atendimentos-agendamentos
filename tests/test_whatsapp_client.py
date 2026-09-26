@@ -200,6 +200,32 @@ async def test_send_interactive_list_success() -> None:
 
 
 @mark.asyncio
+async def test_send_image_success() -> None:
+    captured_payload: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_payload.update(json.loads(request.content))
+        return httpx.Response(200, json={"messages": [{"id": "wamid.image"}]})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = WhatsAppClient(settings(), http_client=http_client)
+        provider_message_id = await client.send_image(
+            "recipient-4",
+            "https://example.com/equipment.jpg",
+            "Imagem oficial de referência da linha",
+        )
+
+    assert provider_message_id == "wamid.image"
+    assert captured_payload["type"] == "image"
+    assert captured_payload["image"] == {
+        "link": "https://example.com/equipment.jpg",
+        "caption": "Imagem oficial de referência da linha",
+    }
+
+
+@mark.asyncio
 async def test_mark_as_read_success() -> None:
     captured_request: httpx.Request | None = None
 

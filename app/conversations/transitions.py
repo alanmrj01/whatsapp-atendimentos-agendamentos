@@ -5,7 +5,7 @@ import hashlib
 import re
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Any
 
@@ -41,9 +41,17 @@ from app.conversations.constants import (
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
     EQUIPMENT_PREF_MODERN,
+    EQUIPMENT_CYCLE_COOLING,
+    EQUIPMENT_CYCLE_HEAT_COOL,
+    EQUIPMENT_INDOOR_SPACE_NO,
+    EQUIPMENT_INDOOR_SPACE_YES,
+    EQUIPMENT_OUTDOOR_SPACE_NO,
+    EQUIPMENT_OUTDOOR_SPACE_YES,
     EQUIPMENT_PURCHASE,
     HEIGHT_AT_MOST_3M,
     HEIGHT_OVER_3M,
+    MEDIA_CONTINUE_TEXT,
+    MEDIA_HUMAN_CONFIRM,
     PHONE_CONFIRM,
     PHONE_OTHER,
     PROPERTY_BUILDING,
@@ -89,12 +97,14 @@ from app.conversations.outbound import (
     equipment_preference_message,
     equipment_profile_message,
     equipment_purchase_clarification_message,
+    equipment_photo_message,
     existing_booking_selection_message,
     gate_details_message,
     installation_equipment_status_message,
     installation_height_message,
     handoff_message,
     main_menu_message,
+    received_photo_message,
     name_request_message,
     no_services_message,
     phone_confirmation_message,
@@ -112,6 +122,7 @@ from app.conversations.outbound import (
     tubing_guidance_message,
     tubing_length_message,
     tubing_variation_message,
+    unsupported_media_message,
     time_selection_message,
     weekday_selection_message,
 )
@@ -163,12 +174,39 @@ async def determine_transition(
         inbound.body,
         whatsapp_id=inbound.whatsapp_id,
     )
+    if inbound.message_type == "image":
+        context = {
+            **context,
+            "customer_photo_received": True,
+        }
+        if (inbound.body or "").strip():
+            context["customer_photo_caption"] = (inbound.body or "").strip()[:300]
     action = inbound.interactive_id
     interpreter = DeterministicConversationInterpreter()
     interpretation = interpreter.interpret(inbound.body)
 
+    if action == MEDIA_HUMAN_CONFIRM:
+        return _handoff_transition(
+            conversation.handoff_message,
+            context=context,
+        )
+    if action == MEDIA_CONTINUE_TEXT:
+        return _transition(
+            state,
+            context,
+            _text_message("Certo. Escreva a informação e eu continuo daqui."),
+        )
+    if inbound.message_type in {"audio", "video"}:
+        return _transition(
+            state,
+            context,
+            unsupported_media_message(inbound.message_type),
+        )
+    if inbound.message_type == "image" and not (inbound.body or "").strip():
+        return _transition(state, context, received_photo_message())
+
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
-        return _handoff_transition(conversation.handoff_message)
+        return _handoff_transition(conversation.handoff_message, context=context)
 
     stale_action = _stale_interactive_transition(
         state,
@@ -243,6 +281,16 @@ async def _route_named_conversation(
         interpretation,
         booking_port,
     )
+    if state is ConversationState.QUOTE_DECISION and (
+        action == QUOTE_FINISH
+        or any(
+            phrase in normalize_portuguese(inbound.body or "")
+            for phrase in ("so cotacao", "so queria cotacao", "obrigado", "era isso")
+        )
+    ):
+        # "Só queria a cotação" is a decision, not a new price question.
+        # Do not prepend the same estimate that was displayed immediately before.
+        question_answer = None
     if (
         question_answer is not None
         and state in {
@@ -760,6 +808,12 @@ def _stale_interactive_transition(
             EQUIPMENT_PREF_MODERN,
             EQUIPMENT_PREF_COST_BENEFIT,
             EQUIPMENT_PREF_ECONOMY,
+            EQUIPMENT_CYCLE_COOLING,
+            EQUIPMENT_CYCLE_HEAT_COOL,
+            EQUIPMENT_INDOOR_SPACE_YES,
+            EQUIPMENT_INDOOR_SPACE_NO,
+            EQUIPMENT_OUTDOOR_SPACE_YES,
+            EQUIPMENT_OUTDOOR_SPACE_NO,
         },
         ConversationState.BOOKING_INSTALLATION_HEIGHT: {
             HEIGHT_AT_MOST_3M,
@@ -1020,7 +1074,7 @@ def _retry_or_handoff(
     attempts = _repair_attempts(context)
     next_attempt = attempts.get(slot, 0) + 1
     if next_attempt >= 2:
-        return _handoff_transition(handoff_body)
+        return _handoff_transition(handoff_body, context=context)
     attempts[slot] = next_attempt
     return _transition(
         state,
@@ -1213,24 +1267,58 @@ async def _safe_service_details(
         return None
 
 
-def _with_equipment_recommendation(
+async def _with_equipment_recommendation(
     context: dict[str, Any],
+    port: BookingAvailabilityPort,
+    business_id: uuid.UUID,
 ) -> dict[str, Any]:
     area = context.get("room_area_m2")
     people = context.get("room_people_max")
     preference = context.get("equipment_preference")
+    cycle = context.get("equipment_cycle")
     if (
         not isinstance(area, (int, float))
         or isinstance(area, bool)
         or not isinstance(people, int)
         or isinstance(people, bool)
         or preference not in {"modern", "cost_benefit", "economy"}
+        or cycle not in {"cooling_only", "heat_cool"}
     ):
         return dict(context)
-    recommendation = recommend_equipment(
-        float(area),
-        people,
-        preference,
+    catalog_loader = getattr(port, "list_active_equipment_catalog_ids", None)
+    allowed_item_ids = (
+        await catalog_loader(business_id)
+        if callable(catalog_loader)
+        else None
+    )
+    try:
+        recommendation = recommend_equipment(
+            float(area),
+            people,
+            preference,
+            cycle=cycle,
+            allowed_item_ids=allowed_item_ids,
+            indoor_space_status=str(
+                context.get("indoor_space_status") or "ample"
+            ),
+            outdoor_space_status=str(
+                context.get("outdoor_space_status") or "ample"
+            ),
+            condenser_type_preference=(
+                str(context["condenser_type_preference"])
+                if context.get("condenser_type_preference")
+                else None
+            ),
+        )
+    except ValueError:
+        raise BookingRequiresHandoff(
+            "No active equipment matches the requested profile"
+        ) from None
+    price_loader = getattr(port, "get_equipment_catalog_price", None)
+    company_price = (
+        await price_loader(business_id, recommendation.item_id)
+        if callable(price_loader)
+        else None
     )
     return {
         **context,
@@ -1244,21 +1332,16 @@ def _with_equipment_recommendation(
             "features": list(recommendation.features),
             "source_url": recommendation.source_url,
             "required_btu_reference": recommendation.required_btu,
+            "cycle": recommendation.cycle,
+            "image_url": recommendation.image_url,
+            "image_alt": recommendation.image_alt,
+            "indoor_unit_dimensions": recommendation.indoor_unit_dimensions,
+            "outdoor_unit_dimensions": recommendation.outdoor_unit_dimensions,
+            "company_price": (
+                str(company_price) if company_price is not None else None
+            ),
         },
     }
-
-
-def _profile_grace_active(context: dict[str, Any]) -> bool:
-    raw = _context_string(context, "equipment_profile_last_answer_at")
-    if raw is None:
-        return False
-    try:
-        changed_at = datetime.fromisoformat(raw)
-    except ValueError:
-        return False
-    if changed_at.tzinfo is None:
-        return False
-    return datetime.now(UTC) - changed_at < timedelta(minutes=3)
 
 
 def _time_window_from_text(
@@ -1433,7 +1516,7 @@ async def _handle_natural_start(
     if interpretation.intent is ConversationIntent.CANCEL:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
-        return _handoff_transition(conversation.handoff_message)
+        return _handoff_transition(conversation.handoff_message, context=context)
     if interpretation.intent in {
         ConversationIntent.BOOK,
         ConversationIntent.AVAILABILITY,
@@ -1630,7 +1713,8 @@ async def _handle_service(
         if installation is None:
             return _handoff_transition(
                 "Entendi o que você procura, mas não encontrei uma instalação "
-                "residencial configurada para montar a cotação. Vou chamar a equipe."
+                "residencial configurada para montar a cotação. Vou chamar a equipe.",
+                context=context,
             )
         service_id = uuid.UUID(installation.id)
         updated_context = {
@@ -2244,6 +2328,7 @@ async def _handle_equipment_profile(
     except BookingRequiresHandoff as exc:
         return _handoff_for_reason(str(exc))
 
+    missing_on_entry = missing_equipment_profile_fields(context)
     updated = dict(context)
     preference_by_action = {
         EQUIPMENT_PREF_MODERN: "modern",
@@ -2252,8 +2337,24 @@ async def _handle_equipment_profile(
     }
     if action in preference_by_action:
         updated["equipment_preference"] = preference_by_action[action]
+    cycle_by_action = {
+        EQUIPMENT_CYCLE_COOLING: "cooling_only",
+        EQUIPMENT_CYCLE_HEAT_COOL: "heat_cool",
+    }
+    if action in cycle_by_action:
+        updated["equipment_cycle"] = cycle_by_action[action]
+    if action in {EQUIPMENT_INDOOR_SPACE_YES, EQUIPMENT_INDOOR_SPACE_NO}:
+        updated["indoor_space_status"] = (
+            "ample" if action == EQUIPMENT_INDOOR_SPACE_YES else "limited"
+        )
+        updated["indoor_space_confirmed"] = True
+    if action in {EQUIPMENT_OUTDOOR_SPACE_YES, EQUIPMENT_OUTDOOR_SPACE_NO}:
+        updated["outdoor_space_status"] = (
+            "ample" if action == EQUIPMENT_OUTDOOR_SPACE_YES else "limited"
+        )
+        updated["outdoor_space_confirmed"] = True
 
-    missing_before = missing_equipment_profile_fields(updated)
+    missing_before = missing_on_entry
     raw = normalize_portuguese(inbound.body or "")
     single_number = re.fullmatch(r"\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*", inbound.body or "")
     if single_number and len(missing_before) == 1:
@@ -2262,6 +2363,22 @@ async def _handle_equipment_profile(
             updated["room_people_max"] = int(number)
         elif missing_before[0] == "area" and 1 <= number <= 500:
             updated["room_area_m2"] = number
+
+    if action is None and len(missing_before) == 1:
+        if missing_before[0] == "indoor_space" and raw in {
+            "sim",
+            "tem espaco",
+            "tem bastante espaco",
+        }:
+            updated["indoor_space_status"] = "ample"
+            updated["indoor_space_confirmed"] = True
+        elif missing_before[0] == "outdoor_space" and raw in {
+            "sim",
+            "tem espaco",
+            "tem bastante espaco",
+        }:
+            updated["outdoor_space_status"] = "ample"
+            updated["outdoor_space_confirmed"] = True
 
     if (
         "equipment_preference" not in updated
@@ -2281,7 +2398,18 @@ async def _handle_equipment_profile(
 
     missing = missing_equipment_profile_fields(updated)
     if not missing:
-        recommended = _with_equipment_recommendation(updated)
+        try:
+            recommended = await _with_equipment_recommendation(
+                updated,
+                port,
+                inbound.business_id,
+            )
+        except BookingRequiresHandoff:
+            return _handoff_transition(
+                "Não encontrei um equipamento ativo no catálogo da empresa que "
+                "atenda a esse perfil. A equipe vai avaliar uma alternativa.",
+                context=updated,
+            )
         recommendation = recommended.get("recommended_equipment")
         label = (
             recommendation.get("label")
@@ -2296,34 +2424,44 @@ async def _handle_equipment_profile(
             customer_name=customer_name,
         )
         if isinstance(label, str) and label:
-            transition = _prepend_transition_body(
+            recommendation_text = (
+                f"Pelas informações do ambiente, minha referência é {label}.\n"
+                "É uma indicação comercial inicial, não um cálculo térmico final."
+            )
+            image_url = (
+                recommendation.get("image_url")
+                if isinstance(recommendation, dict)
+                else None
+            )
+            image_alt = (
+                recommendation.get("image_alt")
+                if isinstance(recommendation, dict)
+                else None
+            )
+            recommendation_outbounds = (
+                equipment_photo_message(
+                    image_url,
+                    image_alt or f"Imagem de referência da linha {label}",
+                ),
+            ) if isinstance(image_url, str) and image_url else ()
+            transition = replace(
                 transition,
-                (
-                    f"Pelas informações do ambiente, minha referência é {label}. "
-                    "Essa é uma indicação comercial inicial; condições de insolação, "
-                    "pé-direito e carga térmica podem exigir ajuste."
+                outbound=_text_message(recommendation_text),
+                follow_ups=(
+                    *recommendation_outbounds,
+                    transition.outbound,
+                    *transition.follow_ups,
                 ),
             )
         return transition
 
-    if _profile_grace_active(updated):
-        return _transition(
-            ConversationState.BOOKING_EQUIPMENT_PROFILE,
-            updated,
-            _text_message(
-                "Perfeito, anotei. Pode me mandar as outras informações quando puder."
-            ),
-        )
-
-    return _retry_or_handoff(
+    # Profile facts may arrive out of order or across several customer messages.
+    # Keep asking only the next missing fact instead of counting a different
+    # volunteered answer as a failed attempt for the current question.
+    return _transition(
         ConversationState.BOOKING_EQUIPMENT_PROFILE,
         updated,
-        "equipment_profile",
         equipment_profile_message(missing, retry=True),
-        handoff_body=(
-            "Ainda faltaram dados essenciais para recomendar o equipamento com segurança. "
-            "Vou chamar uma pessoa da equipe para continuar."
-        ),
     )
 
 
@@ -3099,7 +3237,7 @@ async def _handle_confirmation(
                 )
             )
         except BookingRequiresHandoff:
-            return _handoff_transition()
+            return _handoff_transition(context=context)
         if not times:
             return _transition(
                 ConversationState.BOOKING_CONFIRM,
@@ -3534,7 +3672,18 @@ async def _advance_intake(
                         context,
                         equipment_profile_message(missing),
                     )
-                context = _with_equipment_recommendation(context)
+                try:
+                    context = await _with_equipment_recommendation(
+                        context,
+                        port,
+                        inbound.business_id,
+                    )
+                except BookingRequiresHandoff:
+                    return _handoff_transition(
+                        "Não encontrei um equipamento ativo no catálogo da empresa "
+                        "que atenda a esse perfil. A equipe vai avaliar uma alternativa.",
+                        context=context,
+                    )
 
         if context.get("purchase_only") is True and "recommended_equipment" in context:
             recommendation = context.get("recommended_equipment")
@@ -3544,15 +3693,26 @@ async def _advance_intake(
                 else None
             )
             body = (
-                f"Pelas informações do ambiente, minha referência é {label}. "
+                f"Pelas informações do ambiente, uma boa referência inicial é {label}. "
                 if isinstance(label, str) and label
                 else "Já tenho uma referência de equipamento para o seu ambiente. "
             )
-            body += (
-                "Como preço e estoque do aparelho mudam com o fornecedor, a equipe "
-                "vai confirmar a disponibilidade e o valor atual com você."
+            raw_price = (
+                recommendation.get("company_price")
+                if isinstance(recommendation, dict)
+                else None
             )
-            return _handoff_transition(body)
+            if isinstance(raw_price, str) and raw_price:
+                body += (
+                    f"O preço cadastrado do aparelho é {_format_brl(Decimal(raw_price))}. "
+                    "A equipe vai confirmar o estoque antes de concluir."
+                )
+            else:
+                body += (
+                    "O preço do aparelho não está cadastrado. A equipe vai confirmar "
+                    "estoque e valor atual, sem criar uma estimativa automática."
+                )
+            return _handoff_transition(body, context=context)
 
         if context.get("installation_height_over_3m") is None:
             return _transition(
@@ -4179,26 +4339,41 @@ async def _quote_transition(
         label = recommendation.get("label")
         if isinstance(label, str) and label:
             lines.append(f"Equipamento sugerido: {label}")
-            lines.append(
-                "O preço do aparelho depende do estoque e da condição comercial da empresa."
-            )
+            raw_equipment_price = recommendation.get("company_price")
+            if isinstance(raw_equipment_price, str) and raw_equipment_price:
+                lines.append(
+                    "Preço do equipamento: "
+                    f"{_format_brl(Decimal(raw_equipment_price))}"
+                )
+            else:
+                lines.append(
+                    "Preço do equipamento: confirmar conforme estoque da empresa."
+                )
     model = _context_string(context, "equipment_model")
     if model:
         lines.append(f"Equipamento informado: {model}")
+    service_kind = _service_kind(services, service_id)
     if plan.service.estimated_price is not None:
-        price_label = (
-            "Valor"
-            if plan.service.pricing_type is PricingType.FIXED
-            else "Estimativa base"
-        )
+        if service_kind == "installation":
+            price_label = (
+                "Instalação padrão"
+                if plan.service.pricing_type is PricingType.FIXED
+                else "Instalação padrão (estimativa)"
+            )
+        else:
+            price_label = (
+                "Preço do serviço"
+                if plan.service.pricing_type is PricingType.FIXED
+                else "Serviço (estimativa)"
+            )
         lines.append(f"{price_label}: {_format_brl(plan.service.estimated_price)}")
     else:
         lines.append(
-            "Valor: depende da configuração final e de eventuais materiais adicionais."
+            "Preço do serviço: depende da configuração final."
         )
-    if _service_kind(services, service_id) == "installation":
+    if service_kind == "installation":
         lines.append(
-            "Se a tubulação necessária passar da metragem incluída, o valor pode variar."
+            "Materiais adicionais: podem alterar o valor conforme o cadastro da empresa."
         )
     updated = {
         **context,
@@ -4946,10 +5121,12 @@ def _handoff_for_reason(reason: str | None) -> ConversationTransition:
 
 def _handoff_transition(
     body: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
+    *,
+    context: dict[str, Any] | None = None,
 ) -> ConversationTransition:
     return _transition(
         ConversationState.HUMAN_HANDOFF,
-        {},
+        dict(context or {}),
         _text_message(body),
         automation_enabled=False,
         handoff_status="waiting",
