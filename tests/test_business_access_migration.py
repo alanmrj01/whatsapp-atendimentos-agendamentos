@@ -21,7 +21,7 @@ ACCESS_HISTORY_MIGRATION_PATH = (
 def test_access_history_remains_in_current_alembic_chain() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260923_0018"]
+    assert script.get_heads() == ["20260926_0019"]
     assert script.get_revision("20260915_0009").down_revision == "20260908_0008"
 
 
