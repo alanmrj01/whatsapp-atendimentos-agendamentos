@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, time
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -567,6 +567,29 @@ class ServiceUpdate(StrictModel):
         return self
 
 
+class EquipmentCatalogDetailsView(StrictModel):
+    catalog_item_id: str
+    brand: str
+    line: str
+    capacity_btu: int
+    model_sku: str | None = None
+    inverter: bool = False
+    voltage: str | None = None
+    energy_efficiency: str | None = None
+    wifi: bool | None = None
+    segment: Literal["modern", "cost_benefit", "economy"]
+    cycles: list[Literal["cooling_only", "heat_cool"]]
+    features: list[str] = Field(default_factory=list)
+    source_url: str = ""
+    image_url: str | None = None
+    image_alt: str | None = None
+    indoor_unit_dimensions: str | None = None
+    outdoor_unit_dimensions: str | None = None
+    condenser_type: str | None = None
+    indoor_restrictions: str | None = None
+    outdoor_restrictions: str | None = None
+
+
 class CatalogItemView(StrictModel):
     id: UUID
     kind: Literal["material", "equipment"]
@@ -579,6 +602,7 @@ class CatalogItemView(StrictModel):
     source_url: str | None = None
     specifications: dict[str, Any] = Field(default_factory=dict)
     active: bool
+    equipment_details: EquipmentCatalogDetailsView | None = None
 
 
 class CatalogItemCreate(StrictModel):
