@@ -3506,8 +3506,8 @@ async def _handle_confirmation(
         ),
         follow_ups=(
             booking_completed_message(
-                "Muito obrigado pela preferência! Qualquer dúvida, é só nos mandar "
-                "uma mensagem. Até logo."
+                "Muito obrigado pela preferência. Qualquer coisa ou dúvida, "
+                "é só nos mandar mensagem. Até logo."
             ),
         ),
     )
