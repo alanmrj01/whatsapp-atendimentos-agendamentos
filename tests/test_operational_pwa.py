@@ -24,6 +24,7 @@ from app.api import operational_pwa as operational_api
 from app.auth.dependencies import require_origin, require_principal
 from app.auth.schemas import MembershipResponse, MembershipRole
 from app.main import app
+from app.operations.service import OperationalService
 from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
@@ -423,3 +424,42 @@ def test_operational_migration_is_additive_and_reversible() -> None:
     assert 'op.add_column("appointments"' in source
     assert "'pending', 'confirmed', 'cancelled', 'completed'" in source
     assert 'op.drop_column("appointments", "notes")' in source
+
+@pytest.mark.asyncio
+async def test_delete_conversation_archives_history_and_resets_session_state() -> None:
+    now = datetime.now(UTC)
+    conversation = SimpleNamespace(
+        deleted_at=None,
+        state=ConversationState.BOOKING_BUILDING_HOURS.value,
+        context={"building_hours_start": "08:00", "repair_attempts": {"building_hours": 1}},
+        automation_enabled=False,
+        handoff_status="waiting",
+        automation_suppressed_until=now + timedelta(minutes=30),
+        suppression_reason="manual_business_message",
+        human_control_started_at=now,
+        last_human_message_at=now,
+        pinned_at=now,
+        manual_unread=True,
+    )
+    session = SimpleNamespace(
+        scalar=AsyncMock(return_value=conversation),
+        execute=AsyncMock(),
+        commit=AsyncMock(),
+    )
+
+    await OperationalService(session).delete_conversation(BUSINESS_A, uuid4())
+
+    assert conversation.deleted_at is not None
+    assert conversation.state == ConversationState.START.value
+    assert conversation.context == {}
+    assert conversation.automation_enabled is True
+    assert conversation.handoff_status == "none"
+    assert conversation.automation_suppressed_until is None
+    assert conversation.suppression_reason is None
+    assert conversation.human_control_started_at is None
+    assert conversation.last_human_message_at is None
+    assert conversation.pinned_at is None
+    assert conversation.manual_unread is False
+    session.execute.assert_awaited()
+    session.commit.assert_awaited_once()
+
