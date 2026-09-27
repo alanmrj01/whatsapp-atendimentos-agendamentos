@@ -2795,10 +2795,11 @@ async def _handle_building_hours(
             ConversationState.BOOKING_BUILDING_HOURS,
             context,
             "building_hours",
-            building_hours_message(),
+            building_hours_message(retry=True),
             handoff_body=(
-                "Não consegui confirmar o horário permitido no prédio/condomínio "
-                "após duas tentativas. Vou chamar a equipe para continuar."
+                "Ainda não consegui entender o horário permitido no prédio/condomínio. "
+                "Estou redirecionando você para uma pessoa da nossa equipe. "
+                "Por favor, aguarde."
             ),
         )
 
