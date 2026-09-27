@@ -25,7 +25,7 @@ from app.auth.dependencies import require_origin, require_principal
 from app.auth.schemas import MembershipResponse, MembershipRole
 from app.conversations.constants import ConversationState
 from app.main import app
-from app.operations.service import OperationalService
+from app.operations.service import OperationalService, _message_view
 from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
@@ -463,4 +463,32 @@ async def test_delete_conversation_archives_history_and_resets_session_state() -
     assert conversation.manual_unread is False
     session.execute.assert_awaited()
     session.commit.assert_awaited_once()
+
+@pytest.mark.parametrize("message_type", ["image", "audio", "video"])
+def test_message_view_exposes_supported_media_to_alovia(message_type: str) -> None:
+    message_id = uuid4()
+    conversation_id = uuid4()
+    item = SimpleNamespace(
+        id=message_id,
+        conversation_id=conversation_id,
+        media_id="media-123",
+        message_type=message_type,
+        direction="inbound",
+        body=None,
+        status="received",
+        created_at=datetime.now(UTC),
+        media_mime_type={
+            "image": "image/jpeg",
+            "audio": "audio/ogg",
+            "video": "video/mp4",
+        }[message_type],
+        media_filename="arquivo",
+    )
+
+    view = _message_view(item)
+
+    assert view.media_url == (
+        f"/api/v1/conversations/{conversation_id}/messages/{message_id}/media"
+    )
+    assert view.media_mime_type == item.media_mime_type
 
