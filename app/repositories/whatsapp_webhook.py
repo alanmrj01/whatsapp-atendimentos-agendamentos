@@ -146,7 +146,7 @@ class WhatsAppWebhookRepository:
             .values(
                 deleted_at=None,
                 state="START",
-                context={},
+                context=text("'{}'::jsonb"),
                 automation_enabled=True,
                 handoff_status="none",
                 automation_suppressed_until=None,
