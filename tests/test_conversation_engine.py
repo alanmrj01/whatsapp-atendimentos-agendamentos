@@ -2668,21 +2668,214 @@ async def test_final_confirmation_is_bulleted_and_completion_sends_farewell_then
     )
 
     completed = repository.outbounds[-1].transition
-    assert repository.state == ConversationState.COMPLETED
+    assert repository.state == ConversationState.POST_BOOKING_HELP
     assert "Agendamento confirmado" in (completed.outbound.body or "")
     assert completed.follow_ups
-    farewell = completed.follow_ups[0].body or ""
+    help_message = completed.follow_ups[0]
+    assert help_message.interactive_id == "post_booking.help"
+    assert "mais algum assunto" in (help_message.body or "").casefold()
+
+    await engine.process(
+        inbound(938, action="post_booking.help.no", body="Não, obrigado")
+    )
+    farewell = repository.outbounds[-1].transition.outbound.body or ""
+    assert repository.state == ConversationState.COMPLETED
     assert "Muito obrigado pela preferência" in farewell
     assert "Até logo" in farewell
 
-    await engine.process(inbound(938, body="Obrigado"))
+    await engine.process(inbound(939, body="Obrigado"))
 
     reaction = repository.outbounds[-1].transition.outbound
     assert repository.state == ConversationState.COMPLETED
     assert reaction.message_type == "reaction"
     assert reaction.body is None
     assert reaction.outbound_payload == {
-        "message_id": "provider-938",
+        "message_id": "provider-939",
         "emoji": "👍",
     }
+
+@mark.asyncio
+async def test_missing_city_is_asked_directly_without_business_city_guess() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(940, body="Avenida Charles Schneider, 1700, Vila Costa")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    outbound = repository.outbounds[-1].transition.outbound
+    assert outbound.message_type == "text"
+    assert outbound.interactive_id is None
+    body = (outbound.body or "").casefold()
+    assert "apenas a cidade" in body
+    assert "são josé dos campos" not in body
+    assert repository.context["awaiting_address_city"] is True
+
+    await engine.process(inbound(941, body="Taubaté"))
+
+    assert repository.context["service_address"]["city"] == "Taubaté"
+    assert repository.state == ConversationState.BOOKING_DATE
+
+
+@mark.asyncio
+async def test_common_city_abbreviation_bh_is_normalized() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "pending_service_address": "Rua A, 20, Centro",
+            "awaiting_address_city": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(942, body="BH")
+    )
+
+    address = repository.context["service_address"]
+    assert address["city"] == "Belo Horizonte"
+    assert address["state"] == "MG"
+    assert repository.state == ConversationState.BOOKING_DATE
+
+
+@mark.asyncio
+async def test_noise_diagnostic_collects_model_photo_and_video_before_agenda() -> None:
+    repository = FakeConversationRepository(customer_name="Alan")
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Diagnóstico / manutenção corretiva")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(943, body="Meu aparelho de ar condicionado está fazendo barulho")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["issue_video_required"] is True
+    assert "barulho" in repository.context["reported_issue"].casefold()
+
+    await engine.process(
+        inbound(944, body="Rua A, 10, Centro, SJC")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert "marca e o modelo" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+    await engine.process(inbound(945, body="Não sei"))
+
+    assert repository.context["equipment_photo_requested"] is True
+    assert "foto" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+    await engine.process(
+        inbound(946, message_type="image")
+    )
+
+    assert repository.context["equipment_photo_received"] is True
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert "vídeo" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+    await engine.process(
+        inbound(947, message_type="video")
+    )
+
+    assert repository.context["issue_video_received"] is True
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert "vídeo" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+
+@mark.asyncio
+async def test_gas_recharge_collects_existing_equipment_before_agenda() -> None:
+    repository = FakeConversationRepository(customer_name="Alan")
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Recarga de gás e teste de vazamento")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(948, body="Gostaria de fazer a reposição do gás do meu ar condicionado")
+    )
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+
+    await engine.process(
+        inbound(949, body="Rua A, 10, Centro, SJC")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["equipment_ownership"] == "has_equipment"
+
+
+@mark.asyncio
+async def test_post_booking_supported_request_starts_new_supported_flow() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.POST_BOOKING_HELP,
+        context={},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(950, body="Também gostaria de fazer uma limpeza")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_post_booking_unrelated_subject_goes_to_human_team() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.POST_BOOKING_HELP,
+        context={},
+        customer_name="Alan",
+    )
+
+    await ConversationEngine(repository, FakeBookingPort()).process(
+        inbound(951, body="Também queria falar sobre um assunto financeiro diferente")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
 
