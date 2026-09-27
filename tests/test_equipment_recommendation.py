@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from pytest import raises
+
 from app.booking.equipment_recommender import (
+    EquipmentCatalogEntry,
     equipment_catalog,
     recommend_equipment,
     required_capacity_btu,
@@ -72,3 +75,82 @@ def test_negative_model_phrase_is_not_mistaken_for_a_model() -> None:
     context = enrich_context_from_message({}, "Não tenho nenhum modelo em mente")
 
     assert "equipment_model" not in context
+
+def test_cold_request_never_selects_explicit_heat_cool_model() -> None:
+    entries = (
+        EquipmentCatalogEntry(
+            item_id="tcl-qf",
+            brand="TCL",
+            line="A2 Inverter Quente/Frio",
+            capacity_btu=12000,
+            segment="economy",
+            cycles=("cold", "heat_cool"),
+        ),
+        EquipmentCatalogEntry(
+            item_id="gree-family",
+            brand="Gree",
+            line="G-Top Auto Inverter",
+            capacity_btu=12000,
+            segment="economy",
+            cycles=("cold", "heat_cool"),
+        ),
+    )
+
+    result = recommend_equipment(
+        area_m2=16,
+        people=4,
+        preference="economy",
+        climate_mode="cold",
+        entries=entries,
+    )
+
+    assert result.item_id == "gree-family"
+    assert result.selected_cycle == "cold"
+    assert "Só Frio" in result.label
+    assert "Quente/Frio" not in result.label
+
+
+def test_cold_request_fails_closed_when_only_explicit_heat_cool_model_exists() -> None:
+    entries = (
+        EquipmentCatalogEntry(
+            item_id="tcl-qf",
+            brand="TCL",
+            line="A2 Inverter Quente/Frio",
+            capacity_btu=12000,
+            segment="economy",
+            cycles=("cold", "heat_cool"),
+        ),
+    )
+
+    with raises(ValueError, match="requested cycle"):
+        recommend_equipment(
+            area_m2=16,
+            people=4,
+            preference="economy",
+            climate_mode="cold",
+            entries=entries,
+        )
+
+
+def test_heat_cool_request_keeps_explicit_heat_cool_model() -> None:
+    entry = EquipmentCatalogEntry(
+        item_id="tcl-qf",
+        brand="TCL",
+        line="A2 Inverter Quente/Frio",
+        capacity_btu=12000,
+        segment="economy",
+        cycles=("cold", "heat_cool"),
+    )
+
+    result = recommend_equipment(
+        area_m2=16,
+        people=4,
+        preference="economy",
+        climate_mode="heat_cool",
+        entries=(entry,),
+    )
+
+    assert result.item_id == "tcl-qf"
+    assert result.selected_cycle == "heat_cool"
+    assert result.label.count("Quente/Frio") == 1
+
