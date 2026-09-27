@@ -694,8 +694,9 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
     assert await engine.process(
         inbound(3, action=f"service:{SERVICE_ID}")
     ) is True
-    assert repository.state == ConversationState.BOOKING_DATE
-    assert repository.context == {"service_id": str(SERVICE_ID)}
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["equipment_ownership"] == "has_equipment"
 
     assert await engine.process(
         inbound(4, action="date:2026-09-02")
@@ -736,6 +737,12 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
     assert repository.context["contact_phone_confirmed"] is True
 
     assert await engine.process(inbound(8, action="booking.confirm")) is True
+    assert repository.state == ConversationState.POST_BOOKING_HELP
+    assert repository.context == {}
+
+    assert await engine.process(
+        inbound(9, action="post_booking.help.no", body="Não, obrigado")
+    ) is True
     assert repository.state == ConversationState.COMPLETED
     assert repository.context == {}
     assert booking_port.confirmations == [
@@ -1603,7 +1610,7 @@ async def test_travel_handoff_explains_reason_instead_of_abrupt_generic_message(
 
 
 @mark.asyncio
-async def test_incomplete_address_confirms_business_city_before_route_planning() -> None:
+async def test_incomplete_address_asks_city_directly_before_route_planning() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_ADDRESS,
         context={"service_id": str(SERVICE_ID)},
@@ -1629,24 +1636,13 @@ async def test_incomplete_address_confirms_business_city_before_route_planning()
     assert repository.context["pending_service_address"].startswith(
         "Rua Maurício Cardoso"
     )
+    assert repository.context["awaiting_address_city"] is True
     prompt = repository.outbounds[-1].transition.outbound
-    assert prompt.message_type == "interactive_button"
-    assert "São José dos Campos" in (prompt.body or "")
-
-    await engine.process(
-        inbound(
-            202,
-            action="address.city.confirm",
-            body="Sim",
-        )
-    )
-
-    assert repository.state == ConversationState.BOOKING_DATE
-    address = repository.context["service_address"]
-    assert address["city"] == "São José dos Campos"
-    assert address["state"] == "SP"
-    assert repository.automation_enabled is True
-
+    assert prompt.message_type == "text"
+    assert prompt.interactive_id is None
+    body = (prompt.body or "").casefold()
+    assert "apenas a cidade" in body
+    assert "são josé dos campos" not in body
 
 @mark.asyncio
 async def test_customer_can_supply_different_city_after_city_confirmation() -> None:
@@ -2166,7 +2162,7 @@ async def test_work_at_height_and_contact_are_persisted_in_booking_requirements(
         inbound(416, action="booking.confirm", body="Confirmar")
     )
 
-    assert repository.state == ConversationState.COMPLETED
+    assert repository.state == ConversationState.POST_BOOKING_HELP
     requirements = booking_port.confirmation_requirements[-1]
     assert requirements.operational_details["work_at_height"] is True
     assert requirements.operational_details["onsite_contact_name"] == "Alan"
