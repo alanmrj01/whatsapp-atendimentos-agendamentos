@@ -83,6 +83,45 @@ _OTHER_CONTACT_PHRASES = (
 
 _PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+?55\s*)?(\d{2})\s*(\d{4,5})[-\s]?(\d{4})(?!\d)")
 
+_SIMPLE_NUMBERS = {
+    "um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "quatro": 4,
+    "cinco": 5, "seis": 6, "sete": 7, "oito": 8, "nove": 9, "dez": 10,
+    "onze": 11, "doze": 12, "treze": 13, "quatorze": 14, "catorze": 14,
+    "quinze": 15, "dezesseis": 16, "dezessete": 17, "dezoito": 18,
+    "dezenove": 19, "cem": 100,
+}
+_TENS = {
+    "vinte": 20, "trinta": 30, "quarenta": 40, "cinquenta": 50,
+    "sessenta": 60, "setenta": 70, "oitenta": 80, "noventa": 90,
+}
+
+
+def parse_number_answer(value: str | None) -> float | None:
+    """Parse a compact numeric answer in digits or common Portuguese words."""
+
+    normalized = normalize_portuguese(value or "")
+    if not normalized:
+        return None
+    digit = re.search(r"(?<!\d)(\d{1,3}(?:[.,]\d{1,2})?)(?!\d)", normalized)
+    if digit:
+        return float(digit.group(1).replace(",", "."))
+
+    tokens = normalized.split()
+    for index, token in enumerate(tokens):
+        if token in _SIMPLE_NUMBERS:
+            return float(_SIMPLE_NUMBERS[token])
+        if token in _TENS:
+            number = _TENS[token]
+            if (
+                index + 2 < len(tokens)
+                and tokens[index + 1] == "e"
+                and tokens[index + 2] in _SIMPLE_NUMBERS
+                and _SIMPLE_NUMBERS[tokens[index + 2]] < 10
+            ):
+                number += _SIMPLE_NUMBERS[tokens[index + 2]]
+            return float(number)
+    return None
+
 
 def enrich_context_from_message(
     context: dict[str, Any],
@@ -298,10 +337,14 @@ def _room_area(normalized: str) -> float | None:
         r"\b(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:m2|m²|metros? quadrados?)\b",
         normalized,
     )
-    if not match:
-        return None
-    value = float(match.group(1).replace(",", "."))
-    return value if 1 <= value <= 500 else None
+    if match:
+        value = float(match.group(1).replace(",", "."))
+        return value if 1 <= value <= 500 else None
+    if re.search(r"\b(?:m2|m²|metros? quadrados?|metros? de area)\b", normalized):
+        value = parse_number_answer(normalized)
+        if value is not None and 1 <= value <= 500:
+            return value
+    return None
 
 
 def _people_count(normalized: str) -> int | None:
@@ -312,6 +355,10 @@ def _people_count(normalized: str) -> int | None:
     if match:
         value = int(match.group(1))
         return value if value <= 100 else None
+    if re.search(r"\b(?:pessoa|pessoas|ocupantes)\b", normalized):
+        value = parse_number_answer(normalized)
+        if value is not None and value.is_integer() and 1 <= value <= 100:
+            return int(value)
     return None
 
 

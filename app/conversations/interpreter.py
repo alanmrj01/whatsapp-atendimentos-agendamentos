@@ -279,16 +279,7 @@ def _clean_name(value: str) -> str | None:
 
 
 def _contains_equipment_purchase(value: str) -> bool:
-    purchase_verbs = (
-        "comprar",
-        "compra",
-        "adquirir",
-        "vender",
-        "vendem",
-        "vende",
-    )
-    if not _contains_any(value, purchase_verbs):
-        return False
+    """Recognize purchase/quote intent for equipment without stealing install quotes."""
 
     tokens = value.split()
     has_equipment = (
@@ -307,7 +298,39 @@ def _contains_equipment_purchase(value: str) -> bool:
             for token in tokens
         )
     )
-    return has_equipment
+    if not has_equipment:
+        return False
+
+    purchase_verbs = (
+        "comprar",
+        "compra",
+        "adquirir",
+        "vender",
+        "vendem",
+        "vende",
+    )
+    if _contains_any(value, purchase_verbs):
+        return True
+
+    quote_phrases = (
+        "cotacao",
+        "orcamento",
+        "cotar",
+        "preco do aparelho",
+        "preco do ar condicionado",
+        "valor do aparelho",
+        "valor do ar condicionado",
+    )
+    if not _contains_any(value, quote_phrases):
+        return False
+
+    installation_phrases = (
+        "instalacao",
+        "instalar",
+        "colocar um split",
+        "colocar o ar",
+    )
+    return not _contains_any(value, installation_phrases)
 
 
 def _contains_greeting(value: str) -> bool:

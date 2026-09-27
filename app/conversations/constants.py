@@ -103,6 +103,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "equipment_model_known",
         "equipment_model",
         "equipment_quantity",
+        "equipment_profile_intro_sent",
         "room_area_m2",
         "room_people_max",
         "equipment_preference",

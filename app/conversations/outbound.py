@@ -107,12 +107,11 @@ def equipment_purchase_clarification_message(
     retry: bool = False,
 ) -> OutboundMessage:
     body = (
-        "Só para eu direcionar corretamente: você quer comprar o aparelho, "
-        "contratar a instalação ou os dois?"
+        "Você quer apenas comprar o aparelho ou gostaria de contratar a instalação também?"
         if not retry
         else (
-            "Quero confirmar para não te direcionar errado. Você precisa somente "
-            "da instalação, somente comprar o aparelho, ou quer compra e instalação?"
+            "Para eu seguir com a opção certa: você quer comprar somente o aparelho, "
+            "fazer somente a instalação ou comprar e instalar?"
         )
     )
     return OutboundMessage(
@@ -194,14 +193,50 @@ def equipment_profile_message(
         "Já tenho os dados necessários para avaliar os equipamentos.",
     )
     if retry and next_field is not None:
-        body = "Só preciso confirmar este ponto: " + body[0].lower() + body[1:]
+        retry_bodies = {
+            "people": "Só para confirmar: normalmente ficam quantas pessoas nesse ambiente?",
+            "area": "Pode me dizer aproximadamente quantos metros quadrados tem esse ambiente?",
+            "preference": (
+                "O que pesa mais para você: tecnologia, custo-benefício ou menor preço?"
+            ),
+            "cycle": (
+                "Você precisa que o aparelho apenas gele ou também aqueça o ambiente?"
+            ),
+            "indoor_space": (
+                "Existe alguma restrição no espaço interno da instalação? "
+                "Se houver, informe largura e altura aproximadas em cm."
+            ),
+            "outdoor_space": (
+                "Existe alguma restrição no espaço externo da instalação? "
+                "Se houver, informe largura e altura aproximadas em cm."
+            ),
+        }
+        body = retry_bodies.get(next_field, body)
     return OutboundMessage(message_type="text", body=body)
 
 
-def equipment_preference_message() -> OutboundMessage:
+def equipment_profile_intro_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body=(
+            "Como você ainda não escolheu um aparelho, vou fazer algumas perguntas rápidas "
+            "para te ajudar a encontrar a opção mais adequada para o ambiente."
+        ),
+    )
+
+
+def equipment_preference_message(*, retry: bool = False) -> OutboundMessage:
+    body = (
+        "Qual perfil faz mais sentido para você?"
+        if not retry
+        else (
+            "Pensando no que você mais valoriza, prefere um aparelho mais moderno, "
+            "um bom custo-benefício ou o menor investimento possível?"
+        )
+    )
     return OutboundMessage(
         message_type="interactive_button",
-        body="Qual perfil faz mais sentido para você?",
+        body=body,
         interactive_id="booking.equipment_preference",
         outbound_payload=_button_payload(
             (
@@ -213,10 +248,18 @@ def equipment_preference_message() -> OutboundMessage:
     )
 
 
-def equipment_cycle_message() -> OutboundMessage:
+def equipment_cycle_message(*, retry: bool = False) -> OutboundMessage:
+    body = (
+        "Você quer só refrigerar ou também aquecer o ambiente?"
+        if not retry
+        else (
+            "Esse aparelho precisa funcionar apenas no frio ou também deve aquecer "
+            "o ambiente nos dias frios?"
+        )
+    )
     return OutboundMessage(
         message_type="interactive_button",
-        body="Você quer só refrigerar ou também aquecer o ambiente?",
+        body=body,
         interactive_id="booking.equipment_cycle",
         outbound_payload=_button_payload(
             (
@@ -227,15 +270,37 @@ def equipment_cycle_message() -> OutboundMessage:
     )
 
 
-def equipment_space_message(target: str) -> OutboundMessage:
-    label = "unidade interna" if target == "indoor" else "unidade externa"
+def equipment_space_message(target: str, *, retry: bool = False) -> OutboundMessage:
+    if target == "both":
+        body = (
+            "No local da instalação, existe alguma limitação de espaço para a unidade "
+            "interna ou para a unidade externa? Se houver, me passe a largura e a altura "
+            "aproximadas em cm."
+            if not retry
+            else (
+                "Existe alguma restrição de espaço onde ficarão as partes interna e externa "
+                "do ar-condicionado? Se não houver, escolha “Sem restrição”. Se houver, "
+                "informe largura e altura aproximadas em cm."
+            )
+        )
+        interactive_id = "booking.equipment_space.both"
+    else:
+        label = "parte interna" if target == "indoor" else "parte externa"
+        body = (
+            f"Há alguma limitação de espaço para a {label} do ar-condicionado? "
+            "Se houver, me diga largura e altura aproximadas em cm."
+            if not retry
+            else (
+                f"Existe alguma restrição no local onde ficará a {label}? "
+                "Se não houver, escolha “Sem restrição”. Se houver, informe largura "
+                "e altura aproximadas em cm."
+            )
+        )
+        interactive_id = f"booking.equipment_space.{target}"
     return OutboundMessage(
         message_type="interactive_button",
-        body=(
-            f"Há limitação de espaço para a {label}? "
-            "Se houver, envie largura e altura em cm."
-        ),
-        interactive_id=f"booking.equipment_space.{target}",
+        body=body,
+        interactive_id=interactive_id,
         outbound_payload=_button_payload(
             (BookingOption(EQUIPMENT_SPACE_NO_LIMIT, "Sem restrição"),)
         ),

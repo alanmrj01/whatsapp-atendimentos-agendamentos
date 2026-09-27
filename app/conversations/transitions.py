@@ -22,6 +22,7 @@ from app.booking.domain import (
 from app.conversations.facts import (
     enrich_context_from_message,
     missing_equipment_profile_fields,
+    parse_number_answer,
 )
 from app.conversations.constants import (
     ALLOWED_CONTEXT_KEYS,
@@ -92,6 +93,7 @@ from app.conversations.outbound import (
     equipment_model_known_message,
     equipment_model_request_message,
     equipment_preference_message,
+    equipment_profile_intro_message,
     equipment_profile_message,
     equipment_cycle_message,
     equipment_space_message,
@@ -804,6 +806,9 @@ def _stale_interactive_transition(
             EQUIPMENT_PREF_MODERN,
             EQUIPMENT_PREF_COST_BENEFIT,
             EQUIPMENT_PREF_ECONOMY,
+            EQUIPMENT_CYCLE_COLD,
+            EQUIPMENT_CYCLE_HEAT_COOL,
+            EQUIPMENT_SPACE_NO_LIMIT,
         },
         ConversationState.BOOKING_INSTALLATION_HEIGHT: {
             HEIGHT_AT_MOST_3M,
@@ -2314,6 +2319,10 @@ async def _handle_equipment_profile(
         return _handoff_for_reason(str(exc))
 
     updated = dict(context)
+    raw_text = (inbound.body or "").strip()
+    message_facts = enrich_context_from_message({}, raw_text)
+    accepted_answer = _has_profile_fact(message_facts)
+
     preference_by_action = {
         EQUIPMENT_PREF_MODERN: "modern",
         EQUIPMENT_PREF_COST_BENEFIT: "cost_benefit",
@@ -2321,75 +2330,59 @@ async def _handle_equipment_profile(
     }
     if action in preference_by_action:
         updated["equipment_preference"] = preference_by_action[action]
+        accepted_answer = True
     if action == EQUIPMENT_CYCLE_COLD:
         updated["equipment_cycle"] = "cold"
+        accepted_answer = True
     elif action == EQUIPMENT_CYCLE_HEAT_COOL:
         updated["equipment_cycle"] = "heat_cool"
+        accepted_answer = True
 
     missing_before = missing_equipment_profile_fields(updated)
-    raw_text = (inbound.body or "").strip()
-    raw = normalize_portuguese(raw_text)
 
     if action == EQUIPMENT_SPACE_NO_LIMIT and missing_before:
-        target = (
-            "indoor"
-            if missing_before[0] == "indoor_space"
-            else "outdoor"
-            if missing_before[0] == "outdoor_space"
-            else None
-        )
-        if target is not None:
-            updated[f"{target}_space_unrestricted"] = True
+        if (
+            missing_before[0] == "indoor_space"
+            and "outdoor_space" in missing_before
+        ):
+            updated["indoor_space_unrestricted"] = True
+            updated["outdoor_space_unrestricted"] = True
+            accepted_answer = True
+        elif missing_before[0] == "indoor_space":
+            updated["indoor_space_unrestricted"] = True
+            accepted_answer = True
+        elif missing_before[0] == "outdoor_space":
+            updated["outdoor_space_unrestricted"] = True
+            accepted_answer = True
 
-    single_number = re.fullmatch(
-        r"\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*",
+    updated, parsed = _apply_expected_profile_answer(
+        updated,
+        missing_before,
         raw_text,
     )
-    if single_number and len(missing_before) == 1:
-        number = float(single_number.group(1).replace(",", "."))
-        if missing_before[0] == "people" and number.is_integer() and 1 <= number <= 100:
-            updated["room_people_max"] = int(number)
-        elif missing_before[0] == "area" and 1 <= number <= 500:
-            updated["room_area_m2"] = number
-
-    if "equipment_preference" not in updated:
-        if raw in {"moderno", "mais moderno", "tecnologia"}:
-            updated["equipment_preference"] = "modern"
-        elif raw in {"custo beneficio", "custo-beneficio", "equilibrado"}:
-            updated["equipment_preference"] = "cost_benefit"
-        elif raw in {"economia", "mais barato", "maior economia"}:
-            updated["equipment_preference"] = "economy"
+    accepted_answer = accepted_answer or parsed
 
     missing = missing_equipment_profile_fields(updated)
+    updated = _clear_resolved_profile_attempts(updated, missing)
+
     if missing:
-        if missing[0] == "preference":
-            return _transition(
+        current_field = missing[0]
+        if not accepted_answer and raw_text:
+            return _retry_or_handoff(
                 ConversationState.BOOKING_EQUIPMENT_PROFILE,
                 updated,
-                equipment_preference_message(),
-            )
-        if missing[0] == "cycle":
-            return _transition(
-                ConversationState.BOOKING_EQUIPMENT_PROFILE,
-                updated,
-                equipment_cycle_message(),
-            )
-        if missing[0] == "indoor_space":
-            return _transition(
-                ConversationState.BOOKING_EQUIPMENT_PROFILE,
-                updated,
-                equipment_space_message("indoor"),
-            )
-        if missing[0] == "outdoor_space":
-            return _transition(
-                ConversationState.BOOKING_EQUIPMENT_PROFILE,
-                updated,
-                equipment_space_message("outdoor"),
+                f"equipment_profile:{current_field}",
+                _equipment_profile_prompt(missing, retry=True),
+                handoff_body=(
+                    "Ainda não consegui entender essa informação. "
+                    "Estou redirecionando você para uma pessoa da nossa equipe. "
+                    "Por favor, aguarde."
+                ),
             )
         return _transition(
             ConversationState.BOOKING_EQUIPMENT_PROFILE,
             updated,
-            equipment_profile_message(missing),
+            _equipment_profile_prompt(missing),
         )
 
     try:
@@ -2443,6 +2436,201 @@ async def _handle_equipment_profile(
         outbound=intro,
         follow_ups=tuple(followups),
     )
+
+
+def _has_profile_fact(context: dict[str, Any]) -> bool:
+    keys = {
+        "room_people_max",
+        "room_area_m2",
+        "equipment_preference",
+        "equipment_cycle",
+        "indoor_space_width_cm",
+        "indoor_space_height_cm",
+        "indoor_space_unrestricted",
+        "outdoor_space_width_cm",
+        "outdoor_space_height_cm",
+        "outdoor_space_unrestricted",
+    }
+    return any(key in context for key in keys)
+
+
+def _apply_expected_profile_answer(
+    context: dict[str, Any],
+    missing: Sequence[str],
+    body: str,
+) -> tuple[dict[str, Any], bool]:
+    if not missing or not body.strip():
+        return context, False
+
+    updated = dict(context)
+    field = missing[0]
+    normalized = normalize_portuguese(body)
+    number = parse_number_answer(body)
+
+    if field == "people":
+        if (
+            number is not None
+            and number.is_integer()
+            and 1 <= number <= 100
+            and not re.search(r"\b(?:m2|metro|metros|cm|centimetro|centimetros)\b", normalized)
+        ):
+            updated["room_people_max"] = int(number)
+            return updated, True
+        return updated, False
+
+    if field == "area":
+        if (
+            number is not None
+            and 1 <= number <= 500
+            and not re.search(r"\b(?:pessoa|pessoas|ocupantes)\b", normalized)
+        ):
+            updated["room_area_m2"] = number
+            return updated, True
+        return updated, False
+
+    if field in {"indoor_space", "outdoor_space"}:
+        if _unrestricted_space_answer(normalized):
+            if field == "indoor_space" and "outdoor_space" in missing:
+                updated["indoor_space_unrestricted"] = True
+                updated["outdoor_space_unrestricted"] = True
+            else:
+                target = "indoor" if field == "indoor_space" else "outdoor"
+                updated[f"{target}_space_unrestricted"] = True
+            return updated, True
+
+        both = _labeled_space_dimensions(body)
+        if both:
+            for target, dimensions in both.items():
+                width, height, depth = dimensions
+                updated[f"{target}_space_width_cm"] = width
+                updated[f"{target}_space_height_cm"] = height
+                if depth is not None:
+                    updated[f"{target}_space_depth_cm"] = depth
+                updated[f"{target}_space_unrestricted"] = False
+            return updated, True
+
+        values = [
+            float(value.replace(",", "."))
+            for value in re.findall(r"(\d{1,3}(?:[.,]\d{1,2})?)", body)
+        ]
+        if len(values) >= 2 and all(1 <= value <= 500 for value in values[:3]):
+            target = "indoor" if field == "indoor_space" else "outdoor"
+            updated[f"{target}_space_width_cm"] = values[0]
+            updated[f"{target}_space_height_cm"] = values[1]
+            if len(values) >= 3:
+                updated[f"{target}_space_depth_cm"] = values[2]
+            updated[f"{target}_space_unrestricted"] = False
+            return updated, True
+
+    return updated, False
+
+
+def _unrestricted_space_answer(normalized: str) -> bool:
+    exact = {
+        "nao",
+        "nenhuma",
+        "nenhum",
+        "sem restricao",
+        "sem limitacao",
+        "nao tem",
+        "nao tenho",
+        "nao ha",
+        "espaco livre",
+        "tem espaco",
+        "tem bastante espaco",
+    }
+    if normalized in exact:
+        return True
+    return any(
+        phrase in normalized
+        for phrase in (
+            "nao tem limitacao",
+            "nao tenho limitacao",
+            "nao tem restricao",
+            "nao tenho restricao",
+            "nao ha limitacao",
+            "nao ha restricao",
+            "sem problema de espaco",
+        )
+    )
+
+
+def _labeled_space_dimensions(
+    body: str,
+) -> dict[str, tuple[float, float, float | None]]:
+    prepared = re.sub(r"(?<=\d)[x×](?=\d)", " x ", body.casefold())
+    normalized = normalize_portuguese(prepared)
+    labels = {
+        "indoor": r"(?:unidade interna|parte interna|evaporadora|interna)",
+        "outdoor": r"(?:unidade externa|parte externa|condensadora|externa)",
+    }
+    result: dict[str, tuple[float, float, float | None]] = {}
+    for target, label in labels.items():
+        match = re.search(
+            rf"{label}.{{0,45}}?(\d{{1,3}}(?:[.,]\d{{1,2}})?)"
+            rf"\s*(?:x|por|cm)?\s*"
+            rf"(\d{{1,3}}(?:[.,]\d{{1,2}})?)"
+            rf"(?:\s*(?:x|por|cm)?\s*(\d{{1,3}}(?:[.,]\d{{1,2}})?))?",
+            normalized,
+        )
+        if not match:
+            continue
+        values = [
+            float(value.replace(",", "."))
+            for value in match.groups()
+            if value is not None
+        ]
+        if len(values) >= 2 and all(1 <= value <= 500 for value in values):
+            result[target] = (
+                values[0],
+                values[1],
+                values[2] if len(values) >= 3 else None,
+            )
+    return result
+
+
+def _equipment_profile_prompt(
+    missing: Sequence[str],
+    *,
+    retry: bool = False,
+) -> OutboundMessage:
+    if not missing:
+        return equipment_profile_message(missing)
+    field = missing[0]
+    if field == "preference":
+        return equipment_preference_message(retry=retry)
+    if field == "cycle":
+        return equipment_cycle_message(retry=retry)
+    if field == "indoor_space":
+        target = "both" if "outdoor_space" in missing else "indoor"
+        return equipment_space_message(target, retry=retry)
+    if field == "outdoor_space":
+        return equipment_space_message("outdoor", retry=retry)
+    return equipment_profile_message(missing, retry=retry)
+
+
+def _clear_resolved_profile_attempts(
+    context: dict[str, Any],
+    missing: Sequence[str],
+) -> dict[str, Any]:
+    updated = dict(context)
+    attempts = _repair_attempts(updated)
+    unresolved = set(missing)
+    for field in (
+        "people",
+        "area",
+        "preference",
+        "cycle",
+        "indoor_space",
+        "outdoor_space",
+    ):
+        if field not in unresolved:
+            attempts.pop(f"equipment_profile:{field}", None)
+    if attempts:
+        updated["repair_attempts"] = attempts
+    else:
+        updated.pop("repair_attempts", None)
+    return updated
 
 
 async def _handle_installation_height(
@@ -3647,10 +3835,22 @@ async def _advance_intake(
             if model_known is False and "recommended_equipment" not in context:
                 missing = missing_equipment_profile_fields(context)
                 if missing:
+                    prompt = _equipment_profile_prompt(missing)
+                    if context.get("equipment_profile_intro_sent") is not True:
+                        updated = {
+                            **context,
+                            "equipment_profile_intro_sent": True,
+                        }
+                        return _transition(
+                            ConversationState.BOOKING_EQUIPMENT_PROFILE,
+                            updated,
+                            equipment_profile_intro_message(),
+                            follow_ups=(prompt,),
+                        )
                     return _transition(
                         ConversationState.BOOKING_EQUIPMENT_PROFILE,
                         context,
-                        equipment_profile_message(missing),
+                        prompt,
                     )
                 context = _with_equipment_recommendation(context)
 
