@@ -267,7 +267,7 @@ async def get_conversation_message_media(
     )
     if message is None or message.media_id is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
-    if message.message_type != "image":
+    if message.message_type not in {"image", "audio", "video"}:
         raise HTTPException(
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             "Media preview is not available for this message type",
@@ -290,8 +290,19 @@ async def get_conversation_message_media(
         await sender.aclose()
     return Response(
         content=content,
-        media_type=mime_type or message.media_mime_type or "image/jpeg",
-        headers={"Cache-Control": "private, max-age=60"},
+        media_type=(
+            mime_type
+            or message.media_mime_type
+            or {
+                "image": "image/jpeg",
+                "audio": "audio/mpeg",
+                "video": "video/mp4",
+            }.get(message.message_type, "application/octet-stream")
+        ),
+        headers={
+            "Cache-Control": "private, max-age=60",
+            "Content-Disposition": "inline",
+        },
     )
 
 

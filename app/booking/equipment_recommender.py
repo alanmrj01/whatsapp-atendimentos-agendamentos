@@ -236,12 +236,7 @@ def _matches_requested_cycle(
 ) -> bool:
     if climate_mode == "heat_cool":
         return "heat_cool" in item.cycles
-    if "cold" not in item.cycles:
-        return False
-    # Uma linha explicitamente cadastrada como Quente/Frio nunca pode ser
-    # oferecida quando o cliente pediu apenas refrigeração, mesmo que o
-    # cadastro antigo tenha marcado ambos os ciclos como disponíveis.
-    return not _line_explicitly_heat_cool(item.line)
+    return "cold" in item.cycles and "heat_cool" not in item.cycles
 
 
 def _fits(

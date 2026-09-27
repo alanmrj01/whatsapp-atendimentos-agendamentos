@@ -37,6 +37,8 @@ from app.conversations.constants import (
     BOOKING_BACK,
     BOOKING_CANCEL,
     BOOKING_CONFIRM,
+    POST_BOOKING_HELP_YES,
+    POST_BOOKING_HELP_NO,
     CANCEL_ABORT,
     CANCEL_CONFIRM,
     RESCHEDULE_CONFIRM,
@@ -318,13 +320,73 @@ def equipment_image_message(
     )
 
 
+def equipment_photo_request_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body=(
+            "Sem problema. Tire uma foto do ar-condicionado e envie aqui. "
+            "A foto ficará anexada para a equipe identificar o aparelho."
+        ),
+    )
+
+
+def diagnostic_noise_video_request_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body=(
+            "Como o aparelho está fazendo barulho, grave um vídeo curto dele funcionando "
+            "e envie aqui. Não vou analisar o vídeo; ele ficará anexado para o técnico "
+            "consultar antes do atendimento."
+        ),
+    )
+
+
+def media_received_message(kind: str) -> OutboundMessage:
+    labels = {
+        "image": "foto",
+        "video": "vídeo",
+        "audio": "áudio",
+    }
+    label = labels.get(kind, "arquivo")
+    return OutboundMessage(
+        message_type="text",
+        body=f"Recebi o {label}. Ele ficará registrado nesta conversa.",
+    )
+
+
+def post_booking_help_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="Precisa de ajuda em mais algum assunto?",
+        interactive_id="post_booking.help",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(POST_BOOKING_HELP_YES, "Sim"),
+                BookingOption(POST_BOOKING_HELP_NO, "Não, obrigado"),
+            )
+        ),
+    )
+
+
+def farewell_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="text",
+        body=(
+            "Muito obrigado pela preferência. Qualquer coisa ou dúvida, "
+            "é só nos mandar mensagem. Até logo."
+        ),
+    )
+
+
 def unsupported_media_message(kind: str) -> OutboundMessage:
-    label = "áudios" if kind == "audio" else "vídeos"
+    label = "áudios" if kind == "audio" else "esse tipo de mídia"
     return OutboundMessage(
         message_type="interactive_button",
         body=(
-            f"Por enquanto não estou autorizado a analisar {label}. "
-            "Posso te encaminhar para uma pessoa da equipe?"
+            f"Recebi seu {kind == 'audio' and 'áudio' or 'arquivo'}. "
+            f"Eu não consigo analisar {label}. Se precisar que alguém avalie o conteúdo, "
+            "posso passar o atendimento para uma pessoa da equipe. Se preferir, "
+            "continue por texto e eu sigo daqui."
         ),
         interactive_id="media.unsupported",
         outbound_payload=_button_payload(

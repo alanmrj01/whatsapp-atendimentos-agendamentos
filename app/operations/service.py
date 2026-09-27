@@ -315,16 +315,7 @@ class OperationalService:
         )
         return ConversationDetail(
             **view.model_dump(),
-            messages=[
-                MessageView(
-                    id=item.id,
-                    direction=item.direction,
-                    message_type=item.message_type,
-                    body=item.body,
-                    status=item.status,
-                    created_at=item.created_at,
-                ) for item in messages
-            ],
+            messages=[_message_view(item) for item in messages],
             assistant_enabled=rows[0][0].automation_enabled,
             automation_suppressed_until=rows[0][0].automation_suppressed_until,
             free_form_window_open=(
@@ -1593,7 +1584,7 @@ def _employee_view(item: Employee, service_ids: list[UUID]) -> EmployeeView:
 def _message_view(item: Message) -> MessageView:
     media_url = (
         f"/api/v1/conversations/{item.conversation_id}/messages/{item.id}/media"
-        if item.media_id and item.message_type == "image"
+        if item.media_id and item.message_type in {"image", "audio", "video"}
         else None
     )
     return MessageView(

@@ -25,6 +25,7 @@ def test_recommendation_uses_area_people_and_customer_preference() -> None:
         area_m2=15,
         people=2,
         preference="modern",
+        climate_mode="heat_cool",
     )
 
     assert result.capacity_btu >= 9000
@@ -92,7 +93,7 @@ def test_cold_request_never_selects_explicit_heat_cool_model() -> None:
             line="G-Top Auto Inverter",
             capacity_btu=12000,
             segment="economy",
-            cycles=("cold", "heat_cool"),
+            cycles=("cold",),
         ),
     )
 
@@ -153,4 +154,59 @@ def test_heat_cool_request_keeps_explicit_heat_cool_model() -> None:
     assert result.item_id == "tcl-qf"
     assert result.selected_cycle == "heat_cool"
     assert result.label.count("Quente/Frio") == 1
+
+def test_recommendation_respects_internal_and_external_space_limits() -> None:
+    too_large = EquipmentCatalogEntry(
+        item_id="too-large",
+        brand="Marca A",
+        line="Linha A",
+        capacity_btu=12000,
+        segment="cost_benefit",
+        cycles=("cold",),
+        indoor_dimensions_cm={"width": 95.0, "height": 32.0, "depth": 25.0},
+        outdoor_dimensions_cm={"width": 80.0, "height": 60.0, "depth": 35.0},
+    )
+    fits = EquipmentCatalogEntry(
+        item_id="fits",
+        brand="Marca B",
+        line="Linha B",
+        capacity_btu=12000,
+        segment="cost_benefit",
+        cycles=("cold",),
+        indoor_dimensions_cm={"width": 78.0, "height": 28.0, "depth": 20.0},
+        outdoor_dimensions_cm={"width": 60.0, "height": 50.0, "depth": 30.0},
+    )
+
+    result = recommend_equipment(
+        area_m2=16,
+        people=4,
+        preference="cost_benefit",
+        climate_mode="cold",
+        indoor_space=(80.0, 30.0, 22.0),
+        outdoor_space=(65.0, 55.0, 32.0),
+        entries=(too_large, fits),
+    )
+
+    assert result.item_id == "fits"
+
+
+def test_recommendation_fails_closed_when_dimensions_are_unknown_under_restriction() -> None:
+    unknown = EquipmentCatalogEntry(
+        item_id="unknown-size",
+        brand="Marca",
+        line="Linha",
+        capacity_btu=12000,
+        segment="cost_benefit",
+        cycles=("cold",),
+    )
+
+    with raises(ValueError, match="installation space"):
+        recommend_equipment(
+            area_m2=16,
+            people=4,
+            preference="cost_benefit",
+            climate_mode="cold",
+            indoor_space=(80.0, 30.0, 22.0),
+            entries=(unknown,),
+        )
 
