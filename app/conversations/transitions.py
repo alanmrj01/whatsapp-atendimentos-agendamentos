@@ -1339,6 +1339,12 @@ def _service_kind(
         return "installation"
     if any(token in normalized for token in ("limpeza", "higien", "lavagem")):
         return "cleaning"
+    if any(token in normalized for token in ("recarga", "gas", "vazamento")):
+        return "gas_recharge"
+    if any(token in normalized for token in ("diagnost", "corretiv")):
+        return "diagnostics"
+    if "preventiv" in normalized or "revis" in normalized:
+        return "preventive"
     return "other"
 
 
