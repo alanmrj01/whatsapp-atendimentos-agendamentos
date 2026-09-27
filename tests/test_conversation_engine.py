@@ -772,6 +772,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         "booking.attendee",
         "booking.phone_confirmation",
         "booking.confirmation",
+        "post_booking.help",
     ]
     interactive = {
         message.interactive_id: message
