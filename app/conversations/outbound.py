@@ -273,14 +273,13 @@ def equipment_cycle_message(*, retry: bool = False) -> OutboundMessage:
 def equipment_space_message(target: str, *, retry: bool = False) -> OutboundMessage:
     if target == "both":
         body = (
-            "O local onde o ar-condicionado será instalado é apertado ou tem alguma "
-            "limitação de espaço, na parte interna ou externa? Se tiver, me diga as "
-            "medidas aproximadas; se não, escolha “Sem restrição”."
+            "O espaço onde o ar-condicionado será instalado é apertado ou limitado, "
+            "na parte interna ou externa? Se houver limitação, me passe as medidas. "
+            "Se não, escolha “Sem restrição”."
             if not retry
             else (
-                "Só preciso saber se o espaço onde ficarão a unidade interna ou a "
-                "condensadora externa é apertado. Se não houver limitação, escolha "
-                "“Sem restrição”; se houver, me passe as medidas aproximadas."
+                "A unidade interna ou a condensadora externa ficarão em um espaço "
+                "apertado? Se sim, me passe as medidas. Se não, escolha “Sem restrição”."
             )
         )
         interactive_id = "booking.equipment_space.both"
