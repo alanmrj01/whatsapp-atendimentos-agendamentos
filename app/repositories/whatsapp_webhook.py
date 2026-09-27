@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.postgresql.dml import Insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -121,7 +121,7 @@ class WhatsAppWebhookRepository:
                 business_id=business_id,
                 customer_id=customer_id,
                 state="START",
-                context={},
+                context=text("'{}'::jsonb"),
                 automation_enabled=True,
                 handoff_status="none",
                 last_interaction_at=func.now(),
@@ -136,19 +136,43 @@ class WhatsAppWebhookRepository:
         if created_id is not None:
             return created_id
 
-        existing = await self.session.execute(
+        resurrected = await self.session.execute(
             update(Conversation)
             .where(
                 Conversation.business_id == business_id,
                 Conversation.customer_id == customer_id,
+                Conversation.deleted_at.is_not(None),
             )
             .values(
                 deleted_at=None,
+                state="START",
+                context=text("'{}'::jsonb"),
+                automation_enabled=True,
+                handoff_status="none",
+                automation_suppressed_until=None,
+                suppression_reason=None,
+                human_control_started_at=None,
+                last_human_message_at=None,
+                pinned_at=None,
+                manual_unread=False,
+                conversation_initiated_by=initiated_by,
                 last_interaction_at=func.now(),
             )
             .returning(Conversation.id)
         )
-        return existing.scalar_one()
+        resurrected_id = resurrected.scalar_one_or_none()
+        if resurrected_id is not None:
+            return resurrected_id
+
+        existing = await self.session.scalar(
+            select(Conversation.id).where(
+                Conversation.business_id == business_id,
+                Conversation.customer_id == customer_id,
+            )
+        )
+        if existing is None:
+            raise RuntimeError("Conversation disappeared during get-or-create")
+        return existing
 
     async def touch_conversation(self, conversation_id: uuid.UUID) -> None:
         await self.session.execute(

@@ -438,7 +438,27 @@ class OperationalService:
         )
         if conversation is None:
             raise HTTPException(404, "Conversation not found")
+
+        # "Excluir" no PWA arquiva o histórico, mas deve encerrar a sessão
+        # conversacional atual. Se esse contato escrever novamente, o mesmo
+        # registro pode reaparecer por causa da restrição business/customer,
+        # porém o assistente precisa recomeçar em START sem contexto antigo.
         conversation.deleted_at = datetime.now(UTC)
+        conversation.state = ConversationState.START.value
+        conversation.context = {}
+        conversation.automation_enabled = True
+        conversation.handoff_status = "none"
+        conversation.automation_suppressed_until = None
+        conversation.suppression_reason = None
+        conversation.human_control_started_at = None
+        conversation.last_human_message_at = None
+        conversation.pinned_at = None
+        conversation.manual_unread = False
+
+        await AutomationRepository(self.session).cancel_pending_outbounds(
+            business_id,
+            conversation_id,
+        )
         await self.session.commit()
 
     async def send_manual_message(
