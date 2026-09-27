@@ -429,9 +429,11 @@ async def test_natural_service_request_advances_without_permission_question() ->
         inbound(1, body="Quero limpar meu ar")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["equipment_ownership"] == "has_equipment"
     body = repository.outbounds[-1].transition.outbound.body or ""
-    assert "Tenho disponibilidade" in body
+    assert "marca e o modelo" in body.casefold()
     assert "Quer que eu" not in body
 
 
@@ -694,9 +696,8 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
     assert await engine.process(
         inbound(3, action=f"service:{SERVICE_ID}")
     ) is True
-    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
-    assert repository.context["service_id"] == str(SERVICE_ID)
-    assert repository.context["equipment_ownership"] == "has_equipment"
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context == {"service_id": str(SERVICE_ID)}
 
     assert await engine.process(
         inbound(4, action="date:2026-09-02")
