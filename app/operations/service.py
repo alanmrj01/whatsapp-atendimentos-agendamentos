@@ -1260,6 +1260,8 @@ class OperationalService:
             current_specs = dict(existing.specifications or {})
             if current_specs.get("_preset_overridden") is True:
                 continue
+            if current_specs.get("_preset_catalog_version") == catalog_version:
+                continue
 
             existing.kind = "equipment"
             existing.name = desired_name
@@ -1277,14 +1279,19 @@ class OperationalService:
             ):
                 continue
             specs = dict(item.specifications or {})
-            explicitly_customized = (
-                specs.get("_preset_overridden") is True
-                or item.price is not None
-            )
-            if explicitly_customized:
+            explicitly_overridden = specs.get("_preset_overridden") is True
+            if explicitly_overridden:
                 item.preset_key = None
                 specs.pop("_preset_catalog_version", None)
-                specs["_preset_overridden"] = True
+                item.specifications = specs
+                changed = True
+            elif item.price is not None:
+                # Preserve commercial data without allowing a retired system
+                # preset to keep participating in automatic recommendations.
+                item.preset_key = None
+                item.active = False
+                specs.pop("_preset_catalog_version", None)
+                specs["_preset_retired"] = True
                 item.specifications = specs
                 changed = True
             else:
