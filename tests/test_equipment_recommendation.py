@@ -25,6 +25,7 @@ def test_recommendation_uses_area_people_and_customer_preference() -> None:
         area_m2=15,
         people=2,
         preference="modern",
+        climate_mode="heat_cool",
     )
 
     assert result.capacity_btu >= 9000
