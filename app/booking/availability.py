@@ -1461,6 +1461,18 @@ def _operational_notes(details: dict[str, object]) -> str | None:
         label = recommendation.get("label")
         if isinstance(label, str) and label.strip():
             lines.append(f"Equipamento recomendado: {label.strip()}")
+        selected_cycle = recommendation.get("selected_cycle")
+        if selected_cycle == "cold":
+            lines.append("Ciclo solicitado: somente refrigeração.")
+        elif selected_cycle == "heat_cool":
+            lines.append("Ciclo solicitado: refrigeração e aquecimento.")
+    reported_issue = details.get("reported_issue")
+    if isinstance(reported_issue, str) and reported_issue.strip():
+        lines.append(f"Relato do cliente: {reported_issue.strip()}")
+    if details.get("equipment_photo_received") is True:
+        lines.append("Foto do equipamento recebida na conversa.")
+    if details.get("issue_video_received") is True:
+        lines.append("Vídeo do problema recebido na conversa para consulta técnica.")
     attendee = details.get("onsite_contact_name")
     if isinstance(attendee, str) and attendee.strip():
         lines.append(f"Pessoa no local: {attendee.strip()}")
