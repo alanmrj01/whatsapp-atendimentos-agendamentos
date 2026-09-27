@@ -15,9 +15,54 @@ def test_equipment_catalog_has_exactly_thirty_reference_configurations() -> None
     items = equipment_catalog()
 
     assert len(items) == 30
+    assert len({str(item["id"]) for item in items}) == 30
     assert all(item["active"] is True for item in items)
     assert all(int(item["capacity_btu"]) > 0 for item in items)
     assert all(str(item["source_url"]).startswith("https://") for item in items)
+
+    brands = {str(item["brand"]) for item in items}
+    assert {
+        "Samsung", "LG", "Midea", "Gree", "Electrolux", "Philco",
+        "TCL", "Agratto", "Daikin", "Elgin", "Hisense",
+    } <= brands
+
+    cycles = [tuple(item["cycles"]) for item in items]
+    assert ("cold",) in cycles
+    assert ("heat_cool",) in cycles
+    assert all(cycle in {("cold",), ("heat_cool",)} for cycle in cycles)
+
+    capacities = {int(item["capacity_btu"]) for item in items}
+    assert {9000, 12000, 18000, 24000} <= capacities
+
+    dimensioned = [
+        item
+        for item in items
+        if item.get("indoor_dimensions_cm")
+        and item.get("outdoor_dimensions_cm")
+    ]
+    assert len(dimensioned) >= 20
+
+
+def test_default_catalog_can_recommend_both_commercial_cycles() -> None:
+    cold = recommend_equipment(
+        area_m2=16,
+        people=2,
+        preference="cost_benefit",
+        climate_mode="cold",
+    )
+    heat_cool = recommend_equipment(
+        area_m2=16,
+        people=2,
+        preference="cost_benefit",
+        climate_mode="heat_cool",
+    )
+
+    assert cold.cycles == ("cold",)
+    assert cold.selected_cycle == "cold"
+    assert "Só Frio" in cold.label
+    assert heat_cool.cycles == ("heat_cool",)
+    assert heat_cool.selected_cycle == "heat_cool"
+    assert "Quente/Frio" in heat_cool.label
 
 
 def test_recommendation_uses_area_people_and_customer_preference() -> None:

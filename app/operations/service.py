@@ -978,7 +978,16 @@ class OperationalService:
         )
         if item is None:
             raise HTTPException(404, "Catalog item not found")
-        for field, value in values.model_dump(exclude_unset=True).items():
+        update_values = values.model_dump(exclude_unset=True)
+        if (
+            item.preset_key
+            and item.preset_key.startswith("equipment:")
+            and "specifications" in update_values
+        ):
+            specifications = dict(update_values.get("specifications") or {})
+            specifications["_preset_overridden"] = True
+            update_values["specifications"] = specifications
+        for field, value in update_values.items():
             setattr(item, field, value)
         if item.active:
             business = await self._business(business_id, for_update=True)
@@ -1149,28 +1158,34 @@ class OperationalService:
             ("condenser-bracket", "equipment", "Suporte para condensadora", "Suporte utilizado na instalação da unidade externa.", "unidade"),
             ("wall-bracket-fixings", "material", "Kit de fixação", "Parafusos, buchas e itens de fixação adicionais.", "kit"),
         )
-        existing = set((await self.session.scalars(
-            select(BusinessCatalogItem.preset_key).where(
+        preset_items = list((await self.session.scalars(
+            select(BusinessCatalogItem).where(
                 BusinessCatalogItem.business_id == business_id,
                 BusinessCatalogItem.preset_key.is_not(None),
             )
         )).all())
+        existing_by_key = {
+            item.preset_key: item
+            for item in preset_items
+            if item.preset_key
+        }
 
-        additions: list[BusinessCatalogItem] = []
+        changed = False
         for key, kind, name, description, unit_label in material_presets:
-            if key in existing:
+            if key in existing_by_key:
                 continue
-            additions.append(
-                BusinessCatalogItem(
-                    business_id=business_id,
-                    preset_key=key,
-                    kind=kind,
-                    name=name,
-                    description=description,
-                    unit_label=unit_label,
-                    active=True,
-                )
+            item = BusinessCatalogItem(
+                business_id=business_id,
+                preset_key=key,
+                kind=kind,
+                name=name,
+                description=description,
+                unit_label=unit_label,
+                active=True,
             )
+            self.session.add(item)
+            existing_by_key[key] = item
+            changed = True
 
         catalog_path = (
             Path(__file__).resolve().parents[2]
@@ -1178,6 +1193,9 @@ class OperationalService:
             / "equipment_recommendation_catalog.json"
         )
         payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog_version = str(payload.get("catalog_version") or "").strip()
+        desired_equipment_keys: set[str] = set()
+
         for raw in payload.get("items", []):
             if not isinstance(raw, dict) or raw.get("active") is not True:
                 continue
@@ -1185,13 +1203,13 @@ class OperationalService:
             if not item_id:
                 continue
             preset_key = f"equipment:{item_id}"
-            if preset_key in existing:
-                continue
+            desired_equipment_keys.add(preset_key)
             capacity = raw.get("capacity_btu")
             brand = str(raw.get("brand") or "").strip()
             line = str(raw.get("line") or "").strip()
             if not brand or not line or not isinstance(capacity, int):
                 continue
+
             cycles = raw.get("cycles") if isinstance(raw.get("cycles"), list) else []
             cycle_label = " / ".join(
                 "Quente/frio" if value == "heat_cool" else "Só frio"
@@ -1215,13 +1233,17 @@ class OperationalService:
                 "brand": brand,
                 "line": line,
                 "capacity_btu": capacity,
+                "_preset_catalog_version": catalog_version,
             })
-            additions.append(
-                BusinessCatalogItem(
+            desired_name = f"{brand} {line} {capacity:,} BTU".replace(",", ".")
+
+            existing = existing_by_key.get(preset_key)
+            if existing is None:
+                item = BusinessCatalogItem(
                     business_id=business_id,
                     preset_key=preset_key,
                     kind="equipment",
-                    name=f"{brand} {line} {capacity:,} BTU".replace(",", "."),
+                    name=desired_name,
                     description=description,
                     price=None,
                     unit_label="unidade",
@@ -1230,10 +1252,53 @@ class OperationalService:
                     specifications=specifications,
                     active=True,
                 )
-            )
+                self.session.add(item)
+                existing_by_key[preset_key] = item
+                changed = True
+                continue
 
-        if additions:
-            self.session.add_all(additions)
+            current_specs = dict(existing.specifications or {})
+            if current_specs.get("_preset_overridden") is True:
+                continue
+            if current_specs.get("_preset_catalog_version") == catalog_version:
+                continue
+
+            existing.kind = "equipment"
+            existing.name = desired_name
+            existing.description = description
+            existing.unit_label = "unidade"
+            existing.image_url = raw.get("image_url")
+            existing.source_url = raw.get("source_url")
+            existing.specifications = specifications
+            changed = True
+
+        for preset_key, item in list(existing_by_key.items()):
+            if (
+                not preset_key.startswith("equipment:")
+                or preset_key in desired_equipment_keys
+            ):
+                continue
+            specs = dict(item.specifications or {})
+            explicitly_overridden = specs.get("_preset_overridden") is True
+            if explicitly_overridden:
+                item.preset_key = None
+                specs.pop("_preset_catalog_version", None)
+                item.specifications = specs
+                changed = True
+            elif item.price is not None:
+                # Preserve commercial data without allowing a retired system
+                # preset to keep participating in automatic recommendations.
+                item.preset_key = None
+                item.active = False
+                specs.pop("_preset_catalog_version", None)
+                specs["_preset_retired"] = True
+                item.specifications = specs
+                changed = True
+            else:
+                await self.session.delete(item)
+                changed = True
+
+        if changed:
             await self.session.commit()
 
     async def _business(self, business_id: UUID, *, for_update: bool = False) -> Business:
