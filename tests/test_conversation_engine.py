@@ -2606,7 +2606,7 @@ async def test_final_confirmation_is_bulleted_and_completion_sends_farewell_then
         state=ConversationState.BOOKING_TIME,
         context={
             "service_id": str(SERVICE_ID),
-            "selected_date": "2026-09-30",
+            "selected_date": "2026-09-02",
             "property_type": "house",
             "service_address": {
                 "address_line": "Rua A, 10",
