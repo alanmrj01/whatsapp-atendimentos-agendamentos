@@ -3524,19 +3524,97 @@ async def _handle_confirmation(
             booking_unavailable_message(),
         )
     return _transition(
-        ConversationState.COMPLETED,
+        ConversationState.POST_BOOKING_HELP,
         {},
         booking_completed_message(
             f"Agendamento confirmado para {date_short_label(selected_date)} "
             f"às {selected_time}."
         ),
-        follow_ups=(
-            booking_completed_message(
-                "Muito obrigado pela preferência. Qualquer coisa ou dúvida, "
-                "é só nos mandar mensagem. Até logo."
-            ),
-        ),
+        follow_ups=(post_booking_help_message(),),
     )
+
+
+async def _handle_post_booking_help(
+    conversation: ConversationSnapshot,
+    inbound: ConversationInput,
+    interpretation: Interpretation,
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition:
+    normalized = normalize_portuguese(inbound.body or "")
+    no_more_help = (
+        action == POST_BOOKING_HELP_NO
+        or normalized in {
+            "nao",
+            "nao obrigado",
+            "nao obrigada",
+            "nao preciso",
+            "era so isso",
+            "so isso",
+            "tudo certo",
+            "obrigado",
+            "obrigada",
+            "muito obrigado",
+            "muito obrigada",
+        }
+    )
+    if no_more_help:
+        return _transition(
+            ConversationState.COMPLETED,
+            {},
+            farewell_message(),
+        )
+
+    if action == POST_BOOKING_HELP_YES or normalized in {
+        "sim",
+        "sim preciso",
+        "preciso",
+        "quero",
+    }:
+        return _transition(
+            ConversationState.MENU,
+            {},
+            _text_message(
+                "Claro. Me diga o que mais você precisa e continuo por aqui."
+            ),
+        )
+
+    supported = {
+        ConversationIntent.BOOK,
+        ConversationIntent.AVAILABILITY,
+        ConversationIntent.SERVICE_INTENT,
+        ConversationIntent.EQUIPMENT_PURCHASE,
+        ConversationIntent.PRICE_QUESTION,
+        ConversationIntent.DURATION_QUESTION,
+        ConversationIntent.SERVICE_QUESTION,
+        ConversationIntent.RESCHEDULE,
+        ConversationIntent.CANCEL,
+    }
+    if any(interpretation.has(intent) for intent in supported):
+        restarted = replace(
+            conversation,
+            state=ConversationState.START.value,
+            context={},
+        )
+        return await _handle_natural_start(
+            restarted,
+            inbound,
+            interpretation,
+            booking_port,
+        )
+
+    if isinstance(inbound.body, str) and inbound.body.strip():
+        return _handoff_transition(
+            "Esse assunto precisa de uma pessoa da equipe para continuar. "
+            "Estou encaminhando seu atendimento."
+        )
+
+    return _transition(
+        ConversationState.POST_BOOKING_HELP,
+        {},
+        post_booking_help_message(),
+    )
+
 
 async def _begin_existing_booking_flow(
     inbound: ConversationInput,
