@@ -510,9 +510,9 @@ def _property_type(normalized: str) -> str | None:
 
 def _hours_window(value: str) -> tuple[str, str] | None:
     match = re.search(
-        r"\b(?:das?\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:h|horas?)?"
-        r"\s*(?:às|as|até|ate|a)\s*(\d{1,2})(?::(\d{2}))?"
-        r"\s*(?:h|horas?)?\b",
+        r"\b(?:das?\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:h|hs|hr|hrs|hora|horas)?"
+        r"\s*(?:às|as|até|ate|a|-|–|—)\s*(\d{1,2})(?::(\d{2}))?"
+        r"\s*(?:h|hs|hr|hrs|hora|horas)?\b",
         value.casefold(),
         flags=re.IGNORECASE,
     )
@@ -533,6 +533,7 @@ def _hours_window(value: str) -> tuple[str, str] | None:
     start_value = f"{start_h:02d}:{start_m:02d}"
     end_value = f"{end_h:02d}:{end_m:02d}"
     return (start_value, end_value) if start_value < end_value else None
+
 
 def _onsite_contact_name(raw: str) -> str | None:
     patterns = (
