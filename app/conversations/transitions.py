@@ -201,20 +201,31 @@ async def determine_transition(
                 "Tudo bem. Pode me contar por texto o que você precisa e continuo daqui."
             ),
         )
-    if inbound.message_type in {"audio", "video"}:
+    if (
+        context.get("media_handoff_pending") is True
+        and inbound.message_type == "text"
+        and action is None
+        and isinstance(inbound.body, str)
+        and inbound.body.strip()
+    ):
+        context = dict(context)
+        context.pop("media_handoff_pending", None)
+
+    if inbound.message_type == "audio":
         return _transition(
             state,
             {**context, "media_handoff_pending": True},
-            unsupported_media_message(inbound.message_type),
+            unsupported_media_message("audio"),
         )
-    if inbound.message_type == "image":
+
+    if (
+        inbound.message_type in {"image", "video"}
+        and state is not ConversationState.BOOKING_EQUIPMENT_MODEL
+    ):
         return _transition(
             state,
             context,
-            _text_message(
-                "Recebi a foto e ela ficará registrada na conversa. "
-                "Pode continuar me passando as informações por texto."
-            ),
+            media_received_message(inbound.message_type),
         )
 
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
