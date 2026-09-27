@@ -392,13 +392,19 @@ def property_type_message() -> OutboundMessage:
     )
 
 
-def building_hours_message() -> OutboundMessage:
+def building_hours_message(*, retry: bool = False) -> OutboundMessage:
+    body = (
+        "Qual é o horário permitido para entrada e trabalho de prestadores? "
+        "Exemplo: das 08:00 às 17:00."
+        if not retry
+        else (
+            "Pode me informar apenas o intervalo de horário permitido para os prestadores? "
+            "Por exemplo: 8h às 16h."
+        )
+    )
     return OutboundMessage(
         message_type="text",
-        body=(
-            "Qual é o horário permitido para entrada e trabalho de prestadores? "
-            "Exemplo: das 08:00 às 17:00."
-        ),
+        body=body,
     )
 
 
