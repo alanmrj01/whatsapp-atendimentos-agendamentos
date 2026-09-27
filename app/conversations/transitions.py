@@ -1149,10 +1149,60 @@ _BRAZIL_STATE_CODES = {
     "mt", "ms", "mg", "pa", "pb", "pr", "pe", "pi", "rj", "rn",
     "rs", "ro", "rr", "sc", "sp", "se", "to",
 }
+
+_CITY_ABBREVIATIONS = {
+    "sjc": ("São José dos Campos", "SP"),
+    "bh": ("Belo Horizonte", "MG"),
+    "bsb": ("Brasília", "DF"),
+    "poa": ("Porto Alegre", "RS"),
+    "cwb": ("Curitiba", "PR"),
+    "fln": ("Florianópolis", "SC"),
+    "ssa": ("Salvador", "BA"),
+    "rec": ("Recife", "PE"),
+    "for": ("Fortaleza", "CE"),
+    "gyn": ("Goiânia", "GO"),
+    "vix": ("Vitória", "ES"),
+    "nat": ("Natal", "RN"),
+    "jpa": ("João Pessoa", "PB"),
+    "slz": ("São Luís", "MA"),
+    "the": ("Teresina", "PI"),
+    "mcz": ("Maceió", "AL"),
+    "aju": ("Aracaju", "SE"),
+    "bel": ("Belém", "PA"),
+    "mao": ("Manaus", "AM"),
+    "pvh": ("Porto Velho", "RO"),
+    "rbr": ("Rio Branco", "AC"),
+    "mcp": ("Macapá", "AP"),
+    "bvb": ("Boa Vista", "RR"),
+    "pmw": ("Palmas", "TO"),
+    "cgr": ("Campo Grande", "MS"),
+    "cgb": ("Cuiabá", "MT"),
+}
 _NEIGHBORHOOD_MARKERS = {
     "bairro", "jardim", "jd", "parque", "pq", "vila", "vl",
     "residencial", "loteamento", "conjunto", "centro",
 }
+
+
+def _city_alias_from_text(value: str) -> tuple[str, str] | None:
+    segments = [
+        normalize_portuguese(segment)
+        for segment in re.split(r"[,\n]+", value)
+        if normalize_portuguese(segment)
+    ]
+    candidates = segments[-2:] if segments else [normalize_portuguese(value)]
+    for segment in reversed(candidates):
+        tokens = [
+            token
+            for token in segment.split()
+            if token not in _BRAZIL_STATE_CODES
+        ]
+        if len(tokens) == 1 and tokens[0] in _CITY_ABBREVIATIONS:
+            return _CITY_ABBREVIATIONS[tokens[0]]
+    normalized = normalize_portuguese(value)
+    if normalized in _CITY_ABBREVIATIONS:
+        return _CITY_ABBREVIATIONS[normalized]
+    return None
 
 
 def _expand_address_abbreviations(value: str) -> str:
@@ -2038,6 +2088,21 @@ async def _handle_address(
             )
 
         if awaiting_city:
+            city_alias = _city_alias_from_text(raw_value)
+            if city_alias is not None:
+                city_name, state_code = city_alias
+                address = ServiceAddress(
+                    address_line=pending_address,
+                    city=city_name,
+                    state=state_code,
+                )
+                return await _advance_intake(
+                    inbound,
+                    port,
+                    intake,
+                    _address_success_context(context, service_id, address),
+                    customer_name=customer_name,
+                )
             if _looks_like_city(raw_value):
                 address = ServiceAddress(
                     address_line=pending_address,
@@ -2127,6 +2192,22 @@ async def _handle_address(
             ),
         )
 
+    city_alias = _city_alias_from_text(value)
+    if city_alias is not None:
+        city_name, state_code = city_alias
+        address = ServiceAddress(
+            address_line=value,
+            city=city_name,
+            state=state_code,
+        )
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            _address_success_context(context, service_id, address),
+            customer_name=customer_name,
+        )
+
     if not _address_has_city_or_state(
         value,
         business_city=business_city,
@@ -2137,23 +2218,13 @@ async def _handle_address(
             "service_id": str(service_id),
             "pending_service_address": value,
         }
-        if isinstance(business_city, str) and business_city.strip():
-            city_label = business_city.strip()
-            if isinstance(business_state, str) and business_state.strip():
-                city_label = f"{city_label} - {business_state.strip()}"
-            updated["pending_address_city_guess"] = city_label
-            updated.pop("awaiting_address_city", None)
-            return _transition(
-                ConversationState.BOOKING_ADDRESS,
-                updated,
-                address_city_confirmation_message(city_label),
-            )
+        updated.pop("pending_address_city_guess", None)
         updated["awaiting_address_city"] = True
         return _transition(
             ConversationState.BOOKING_ADDRESS,
             updated,
             address_request_message(
-                "Só falta a cidade para eu localizar corretamente. Qual é?"
+                "Agora me diga apenas a cidade desse endereço."
             ),
         )
 
