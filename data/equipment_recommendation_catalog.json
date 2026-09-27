@@ -1,10 +1,11 @@
 {
-  "catalog_version": "2026.09.26.1",
-  "scope": "30 configurações comerciais populares e atuais de referência para o mercado brasileiro, curadas a partir de presença recorrente em varejo e páginas oficiais. Não representa ranking nacional auditado de sell-out.",
+  "catalog_version": "2026.09.27.1",
+  "reviewed_at": "2026-09-27",
+  "scope": "30 configurações populares e recorrentes no mercado brasileiro em 2026, curadas por presença em rankings/editoriais atuais, varejo e páginas oficiais. Não representa um ranking nacional auditado de sell-out.",
   "sizing_note": "Heurística comercial simples por área e ocupação; validar condições especiais no local.",
   "items": [
     {
-      "id": "samsung-windfree-ai-9000",
+      "id": "samsung-windfree-ai-9000-cold",
       "brand": "Samsung",
       "line": "WindFree AI",
       "capacity_btu": 9000,
@@ -13,24 +14,25 @@
       "features": [
         "Wi-Fi",
         "IA",
-        "WindFree"
+        "WindFree",
+        "Auto Clean"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "F-AR09DYFAAWK",
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
       "condenser_form": "unknown"
     },
     {
-      "id": "samsung-windfree-ai-12000",
+      "id": "samsung-windfree-ai-12000-cold",
       "brand": "Samsung",
       "line": "WindFree AI",
       "capacity_btu": 12000,
@@ -39,203 +41,105 @@
       "features": [
         "Wi-Fi",
         "IA",
-        "WindFree"
+        "WindFree",
+        "Auto Clean"
       ],
-      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "source_url": "https://www.samsung.com/br/air-conditioners/wall-mount/kit-air-conditioner-split-inverter-windfree-connect-ai-12000-btus-cold-white-220v-f-ar12dyfaawk/",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "model_sku": "F-AR12DYFAAWK",
+      "indoor_dimensions_cm": {
+        "width": 82,
+        "height": 29.9,
+        "depth": 21.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 66,
+        "height": 47.5,
+        "depth": 24.2
+      },
+      "condenser_form": "compact"
     },
     {
-      "id": "samsung-windfree-ai-18000",
+      "id": "samsung-windfree-ai-12000-heat-cool",
       "brand": "Samsung",
       "line": "WindFree AI",
-      "capacity_btu": 18000,
-      "inverter": true,
-      "segment": "modern",
-      "features": [
-        "Wi-Fi",
-        "IA",
-        "WindFree"
-      ],
-      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true,
-      "cycles": [
-        "cold",
-        "heat_cool"
-      ],
-      "voltage_v": 220,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
-    },
-    {
-      "id": "samsung-windfree-ai-24000",
-      "brand": "Samsung",
-      "line": "WindFree AI",
-      "capacity_btu": 24000,
-      "inverter": true,
-      "segment": "modern",
-      "features": [
-        "Wi-Fi",
-        "IA",
-        "WindFree"
-      ],
-      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true,
-      "cycles": [
-        "cold",
-        "heat_cool"
-      ],
-      "voltage_v": 220,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
-    },
-    {
-      "id": "samsung-windfree-connect-9000",
-      "brand": "Samsung",
-      "line": "WindFree Connect",
-      "capacity_btu": 9000,
-      "inverter": true,
-      "segment": "cost_benefit",
-      "features": [
-        "Wi-Fi",
-        "WindFree"
-      ],
-      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true,
-      "cycles": [
-        "cold",
-        "heat_cool"
-      ],
-      "voltage_v": 220,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
-    },
-    {
-      "id": "samsung-windfree-connect-12000",
-      "brand": "Samsung",
-      "line": "WindFree Connect",
-      "capacity_btu": 12000,
-      "inverter": true,
-      "segment": "cost_benefit",
-      "features": [
-        "Wi-Fi",
-        "WindFree"
-      ],
-      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true,
-      "cycles": [
-        "cold",
-        "heat_cool"
-      ],
-      "voltage_v": 220,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
-    },
-    {
-      "id": "samsung-windfree-connect-18000",
-      "brand": "Samsung",
-      "line": "WindFree Connect",
-      "capacity_btu": 18000,
-      "inverter": true,
-      "segment": "cost_benefit",
-      "features": [
-        "Wi-Fi",
-        "WindFree"
-      ],
-      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true,
-      "cycles": [
-        "cold",
-        "heat_cool"
-      ],
-      "voltage_v": 220,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
-    },
-    {
-      "id": "samsung-windfree-powervolt-ai-9000",
-      "brand": "Samsung",
-      "line": "WindFree PowerVolt AI",
-      "capacity_btu": 9000,
-      "inverter": true,
-      "segment": "modern",
-      "features": [
-        "Wi-Fi",
-        "IA",
-        "PowerVolt"
-      ],
-      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
-      "active": true,
-      "cycles": [
-        "cold",
-        "heat_cool"
-      ],
-      "voltage_v": 220,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
-    },
-    {
-      "id": "samsung-windfree-powervolt-ai-12000",
-      "brand": "Samsung",
-      "line": "WindFree PowerVolt AI",
       "capacity_btu": 12000,
       "inverter": true,
       "segment": "modern",
       "features": [
         "Wi-Fi",
         "IA",
-        "PowerVolt"
+        "WindFree",
+        "Auto Clean"
       ],
-      "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
+      "source_url": "https://www.samsung.com/br/air-conditioners/wall-mount/kit-air-conditioner-split-inverter-windfree-connect-ai-12-000-btus-hot-and-cold-white-220v-f-ar12dxfaawk/",
       "active": true,
       "cycles": [
-        "cold",
         "heat_cool"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "model_sku": "F-AR12DXFAAWK",
+      "indoor_dimensions_cm": {
+        "width": 82,
+        "height": 29.9,
+        "depth": 21.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 66,
+        "height": 47.5,
+        "depth": 24.2
+      },
+      "condenser_form": "compact"
     },
     {
-      "id": "lg-ai-dual-inverter-voice-9000",
+      "id": "samsung-windfree-ai-powervolt-12000-cold",
+      "brand": "Samsung",
+      "line": "WindFree AI PowerVolt",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "WindFree",
+        "PowerVolt",
+        "Auto Clean"
+      ],
+      "source_url": "https://www.samsung.com/br/air-conditioners/wall-mount/air-conditioner-split-inverter-windfree-ai-powervolt-12-000-btus-f-ar60h12d1vw/",
+      "active": true,
+      "cycles": [
+        "cold"
+      ],
+      "voltage_v": 220,
+      "voltage": "127/220 V",
+      "wifi": true,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "model_sku": "F-AR60H12D1VW",
+      "indoor_dimensions_cm": {
+        "width": 82,
+        "height": 29.9,
+        "depth": 21.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 71,
+        "height": 54,
+        "depth": 22
+      },
+      "condenser_form": "compact"
+    },
+    {
+      "id": "lg-ai-dual-inverter-voice-9000-cold",
       "brand": "LG",
       "line": "AI Dual Inverter Voice",
       "capacity_btu": 9000,
@@ -250,13 +154,13 @@
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "S3-Q09AA31C",
       "indoor_dimensions_cm": {
         "width": 75.4,
         "height": 30.8,
@@ -270,7 +174,7 @@
       "condenser_form": "compact"
     },
     {
-      "id": "lg-ai-dual-inverter-voice-12000",
+      "id": "lg-ai-dual-inverter-voice-12000-cold",
       "brand": "LG",
       "line": "AI Dual Inverter Voice",
       "capacity_btu": 12000,
@@ -285,13 +189,13 @@
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "S3-Q12JAQAL",
       "indoor_dimensions_cm": {
         "width": 83.7,
         "height": 30.8,
@@ -305,77 +209,287 @@
       "condenser_form": "compact"
     },
     {
-      "id": "lg-ai-dual-inverter-voice-18000",
+      "id": "lg-ai-dual-inverter-voice-9000-heat-cool",
       "brand": "LG",
       "line": "AI Dual Inverter Voice",
+      "capacity_btu": 9000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Dual Inverter",
+        "controle de energia"
+      ],
+      "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
+      "active": true,
+      "cycles": [
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "wifi": true,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "model_sku": null,
+      "indoor_dimensions_cm": {
+        "width": 75.4,
+        "height": 30.8,
+        "depth": 18.9
+      },
+      "outdoor_dimensions_cm": {
+        "width": 71.7,
+        "height": 49.5,
+        "depth": 23
+      },
+      "condenser_form": "compact"
+    },
+    {
+      "id": "lg-ai-dual-inverter-voice-12000-heat-cool",
+      "brand": "LG",
+      "line": "AI Dual Inverter Voice",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Dual Inverter",
+        "controle de energia"
+      ],
+      "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
+      "active": true,
+      "cycles": [
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "wifi": true,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "model_sku": null,
+      "indoor_dimensions_cm": {
+        "width": 83.7,
+        "height": 30.8,
+        "depth": 18.9
+      },
+      "outdoor_dimensions_cm": {
+        "width": 71.7,
+        "height": 49.5,
+        "depth": 23
+      },
+      "condenser_form": "compact"
+    },
+    {
+      "id": "midea-ai-ecomaster-9000-cold",
+      "brand": "Midea",
+      "line": "AI Ecomaster",
+      "capacity_btu": 9000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Smart Turbo",
+        "Air Magic"
+      ],
+      "source_url": "https://www.midea.com.br/ar-condicionado",
+      "active": true,
+      "cycles": [
+        "cold"
+      ],
+      "voltage_v": 220,
+      "wifi": true,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "model_sku": "42EZVCA09M5 / 38EZVCA09M5",
+      "indoor_dimensions_cm": {
+        "width": 72.3,
+        "height": 28.6,
+        "depth": 19.9
+      },
+      "outdoor_dimensions_cm": {
+        "width": 74,
+        "height": 46.9,
+        "depth": 25.2
+      },
+      "condenser_form": "compact"
+    },
+    {
+      "id": "midea-ai-ecomaster-12000-cold",
+      "brand": "Midea",
+      "line": "AI Ecomaster",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Smart Turbo",
+        "Air Magic"
+      ],
+      "source_url": "https://www.midea.com.br/ar-condicionado",
+      "active": true,
+      "cycles": [
+        "cold"
+      ],
+      "voltage_v": 220,
+      "wifi": true,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "model_sku": "42EZVCA12M5 / 38EZVCA12M5",
+      "indoor_dimensions_cm": {
+        "width": 72.3,
+        "height": 28.6,
+        "depth": 19.9
+      },
+      "outdoor_dimensions_cm": {
+        "width": 79.2,
+        "height": 49.5,
+        "depth": 27
+      },
+      "condenser_form": "compact"
+    },
+    {
+      "id": "midea-ai-ecomaster-18000-cold",
+      "brand": "Midea",
+      "line": "AI Ecomaster",
       "capacity_btu": 18000,
       "inverter": true,
       "segment": "modern",
       "features": [
         "Wi-Fi",
         "IA",
-        "Dual Inverter",
-        "controle de energia"
+        "Smart Turbo",
+        "Air Magic"
       ],
-      "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
+      "source_url": "https://www.midea.com.br/ar-condicionado",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "42EZVCA18M5 / 38EZVCA18M5",
       "indoor_dimensions_cm": {
-        "width": 99.8,
-        "height": 34.5,
-        "depth": 21
+        "width": 97.5,
+        "height": 30.8,
+        "depth": 21.8
       },
       "outdoor_dimensions_cm": {
-        "width": 77,
-        "height": 54.5,
-        "depth": 28.8
+        "width": 83.5,
+        "height": 55.5,
+        "depth": 30.3
       },
       "condenser_form": "compact"
     },
     {
-      "id": "lg-ai-dual-inverter-voice-24000",
-      "brand": "LG",
-      "line": "AI Dual Inverter Voice",
+      "id": "midea-ai-ecomaster-24000-cold",
+      "brand": "Midea",
+      "line": "AI Ecomaster",
       "capacity_btu": 24000,
       "inverter": true,
       "segment": "modern",
       "features": [
         "Wi-Fi",
         "IA",
-        "Dual Inverter",
-        "controle de energia"
+        "Smart Turbo",
+        "Air Magic"
       ],
-      "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
+      "source_url": "https://www.midea.com.br/ar-condicionado",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "42EZVCA24M5 / 38EZVCA24M5",
       "indoor_dimensions_cm": {
-        "width": 99.8,
-        "height": 34.5,
-        "depth": 21
+        "width": 105.5,
+        "height": 33,
+        "depth": 23.1
       },
       "outdoor_dimensions_cm": {
-        "width": 77,
-        "height": 54.5,
-        "depth": 28.8
+        "width": 87,
+        "height": 55.4,
+        "depth": 33
       },
       "condenser_form": "compact"
     },
     {
-      "id": "gree-g-top-auto-inverter-9000",
+      "id": "midea-ai-ecomaster-12000-heat-cool",
+      "brand": "Midea",
+      "line": "AI Ecomaster",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Smart Turbo",
+        "Air Magic"
+      ],
+      "source_url": "https://www.midea.com.br/ar-condicionado",
+      "active": true,
+      "cycles": [
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "wifi": true,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "model_sku": "42EZVQA12M5 / 38EZVQA12M5",
+      "indoor_dimensions_cm": {
+        "width": 72.3,
+        "height": 28.6,
+        "depth": 19.9
+      },
+      "outdoor_dimensions_cm": {
+        "width": 79.2,
+        "height": 49.5,
+        "depth": 27
+      },
+      "condenser_form": "compact"
+    },
+    {
+      "id": "midea-ai-ecomaster-18000-heat-cool",
+      "brand": "Midea",
+      "line": "AI Ecomaster",
+      "capacity_btu": 18000,
+      "inverter": true,
+      "segment": "modern",
+      "features": [
+        "Wi-Fi",
+        "IA",
+        "Smart Turbo",
+        "Air Magic"
+      ],
+      "source_url": "https://www.midea.com.br/ar-condicionado",
+      "active": true,
+      "cycles": [
+        "heat_cool"
+      ],
+      "voltage_v": 220,
+      "wifi": true,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "model_sku": "42EZVQA18M5 / 38EZVQA18M5",
+      "indoor_dimensions_cm": {
+        "width": 97.5,
+        "height": 30.8,
+        "depth": 21.8
+      },
+      "outdoor_dimensions_cm": {
+        "width": 83.5,
+        "height": 55.5,
+        "depth": 30.3
+      },
+      "condenser_form": "compact"
+    },
+    {
+      "id": "gree-g-top-auto-inverter-9000-cold",
       "brand": "Gree",
       "line": "G-Top Auto Inverter",
       "capacity_btu": 9000,
@@ -384,18 +498,19 @@
       "features": [
         "Wi-Fi",
         "Bluetooth",
-        "Auto Clean"
+        "Auto Clean",
+        "iFeel"
       ],
       "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "GWC09ATB-D6DNA1A",
       "indoor_dimensions_cm": {
         "width": 78.3,
         "height": 26,
@@ -409,7 +524,7 @@
       "condenser_form": "compact"
     },
     {
-      "id": "gree-g-top-auto-inverter-12000",
+      "id": "gree-g-top-auto-inverter-12000-cold",
       "brand": "Gree",
       "line": "G-Top Auto Inverter",
       "capacity_btu": 12000,
@@ -418,18 +533,19 @@
       "features": [
         "Wi-Fi",
         "Bluetooth",
-        "Auto Clean"
+        "Auto Clean",
+        "iFeel"
       ],
       "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "GWC12ATC-D6DNA1A",
       "indoor_dimensions_cm": {
         "width": 83.5,
         "height": 27.5,
@@ -443,7 +559,7 @@
       "condenser_form": "compact"
     },
     {
-      "id": "gree-g-top-auto-inverter-18000",
+      "id": "gree-g-top-auto-inverter-18000-cold",
       "brand": "Gree",
       "line": "G-Top Auto Inverter",
       "capacity_btu": 18000,
@@ -452,18 +568,19 @@
       "features": [
         "Wi-Fi",
         "Bluetooth",
-        "Auto Clean"
+        "Auto Clean",
+        "iFeel"
       ],
       "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": null,
       "indoor_dimensions_cm": {
         "width": 94.3,
         "height": 33.3,
@@ -477,428 +594,415 @@
       "condenser_form": "compact"
     },
     {
-      "id": "gree-g-top-auto-inverter-24000",
+      "id": "gree-g-top-auto-inverter-12000-heat-cool",
       "brand": "Gree",
       "line": "G-Top Auto Inverter",
-      "capacity_btu": 24000,
+      "capacity_btu": 12000,
       "inverter": true,
       "segment": "cost_benefit",
       "features": [
         "Wi-Fi",
         "Bluetooth",
-        "Auto Clean"
+        "Auto Clean",
+        "iFeel"
       ],
       "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
       "active": true,
       "cycles": [
-        "cold",
         "heat_cool"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": null,
       "indoor_dimensions_cm": {
-        "width": 107.8,
-        "height": 33.3,
-        "depth": 24.6
+        "width": 83.5,
+        "height": 27.5,
+        "depth": 20
       },
       "outdoor_dimensions_cm": {
-        "width": 51,
-        "height": 63,
-        "depth": 49
+        "width": 42.5,
+        "height": 54.5,
+        "depth": 42
       },
       "condenser_form": "compact"
     },
     {
-      "id": "gree-g-top-auto-inverter-30000",
-      "brand": "Gree",
-      "line": "G-Top Auto Inverter",
-      "capacity_btu": 30000,
+      "id": "electrolux-color-adapt-9000-cold",
+      "brand": "Electrolux",
+      "line": "Color Adapt",
+      "capacity_btu": 9000,
       "inverter": true,
       "segment": "cost_benefit",
       "features": [
         "Wi-Fi",
-        "Bluetooth",
-        "Auto Clean"
+        "Auto Sense",
+        "Tripla Filtragem"
       ],
-      "source_url": "https://gree.com.br/produto/g-top-auto-inverter/",
+      "source_url": "https://loja.electrolux.com.br/eletrodomesticos/ar-condicionado/ar-condicionado-inverter",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": {
-        "width": 107.8,
-        "height": 33.3,
-        "depth": 24.6
-      },
-      "outdoor_dimensions_cm": {
-        "width": 95.8,
-        "height": 66,
-        "depth": 40.2
-      },
-      "condenser_form": "vertical"
+      "model_sku": "YI09F / YE09F",
+      "indoor_dimensions_cm": null,
+      "outdoor_dimensions_cm": null,
+      "condenser_form": "unknown"
     },
     {
-      "id": "daikin-ecoswing-smart-r-32-9000",
-      "brand": "Daikin",
-      "line": "EcoSwing Smart R-32",
-      "capacity_btu": 9000,
-      "inverter": true,
-      "segment": "economy",
-      "features": [
-        "Wi-Fi",
-        "R-32",
-        "Classe A"
-      ],
-      "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
-      "active": true,
-      "cycles": [
-        "cold",
-        "heat_cool"
-      ],
-      "voltage_v": 220,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": {
-        "width": 77,
-        "height": 28.5,
-        "depth": 22.5
-      },
-      "outdoor_dimensions_cm": {
-        "width": 74,
-        "height": 55,
-        "depth": 32.6
-      },
-      "condenser_form": "compact"
-    },
-    {
-      "id": "daikin-ecoswing-smart-r-32-12000",
-      "brand": "Daikin",
-      "line": "EcoSwing Smart R-32",
+      "id": "electrolux-color-adapt-12000-cold",
+      "brand": "Electrolux",
+      "line": "Color Adapt",
       "capacity_btu": 12000,
       "inverter": true,
-      "segment": "economy",
+      "segment": "cost_benefit",
       "features": [
         "Wi-Fi",
-        "R-32",
-        "Classe A"
+        "Auto Sense",
+        "Tripla Filtragem"
       ],
-      "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
+      "source_url": "https://loja.electrolux.com.br/eletrodomesticos/ar-condicionado/ar-condicionado-inverter",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "YI12F / YE12F",
       "indoor_dimensions_cm": {
-        "width": 77,
-        "height": 28.5,
-        "depth": 22.5
+        "width": 85.3,
+        "height": 28.9,
+        "depth": 20.6
       },
       "outdoor_dimensions_cm": {
-        "width": 74,
-        "height": 55,
-        "depth": 32.6
+        "width": 44.6,
+        "height": 62.5,
+        "depth": 44.6
       },
       "condenser_form": "compact"
     },
     {
-      "id": "daikin-ecoswing-smart-r-32-18000",
-      "brand": "Daikin",
-      "line": "EcoSwing Smart R-32",
-      "capacity_btu": 18000,
-      "inverter": true,
-      "segment": "economy",
-      "features": [
-        "Wi-Fi",
-        "R-32",
-        "Classe A"
-      ],
-      "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
-      "active": true,
-      "cycles": [
-        "cold",
-        "heat_cool"
-      ],
-      "voltage_v": 220,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": {
-        "width": 77,
-        "height": 28.5,
-        "depth": 22.5
-      },
-      "outdoor_dimensions_cm": {
-        "width": 74,
-        "height": 55,
-        "depth": 32.6
-      },
-      "condenser_form": "compact"
-    },
-    {
-      "id": "daikin-ecoswing-smart-r-32-24000",
-      "brand": "Daikin",
-      "line": "EcoSwing Smart R-32",
-      "capacity_btu": 24000,
-      "inverter": true,
-      "segment": "economy",
-      "features": [
-        "Wi-Fi",
-        "R-32",
-        "Classe A"
-      ],
-      "source_url": "https://www.daikin.com.br/produto/ecoswing-r32",
-      "active": true,
-      "cycles": [
-        "cold",
-        "heat_cool"
-      ],
-      "voltage_v": 220,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": {
-        "width": 99,
-        "height": 29.5,
-        "depth": 26.3
-      },
-      "outdoor_dimensions_cm": {
-        "width": 95.4,
-        "height": 73.5,
-        "depth": 36.8
-      },
-      "condenser_form": "large"
-    },
-    {
-      "id": "tcl-a2-inverter-quente-frio-9000",
-      "brand": "TCL",
-      "line": "A2 Inverter Quente/Frio",
+      "id": "philco-split-inverter-9000-cold",
+      "brand": "Philco",
+      "line": "Split Inverter",
       "capacity_btu": 9000,
       "inverter": true,
       "segment": "economy",
       "features": [
         "Inverter",
-        "modo silêncio",
-        "filtro Silver Ion"
+        "Desumidificação",
+        "Turbo",
+        "Silêncio"
       ],
-      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "source_url": "https://www.philco.com.br/ar-condicionado",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": false,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "PAC9FB",
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
       "condenser_form": "unknown"
     },
     {
-      "id": "tcl-a2-inverter-quente-frio-12000",
-      "brand": "TCL",
-      "line": "A2 Inverter Quente/Frio",
+      "id": "philco-split-inverter-12000-cold",
+      "brand": "Philco",
+      "line": "Split Inverter",
       "capacity_btu": 12000,
       "inverter": true,
       "segment": "economy",
       "features": [
         "Inverter",
-        "modo silêncio",
-        "filtro Silver Ion"
+        "Desumidificação",
+        "Turbo",
+        "Silêncio"
       ],
-      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "source_url": "https://www.philco.com.br/ar-condicionado",
       "active": true,
       "cycles": [
-        "cold",
+        "cold"
+      ],
+      "voltage_v": 220,
+      "wifi": false,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "model_sku": "PAC12FC",
+      "indoor_dimensions_cm": {
+        "width": 79.8,
+        "height": 25,
+        "depth": 19.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 48,
+        "height": 55.5,
+        "depth": 38
+      },
+      "condenser_form": "compact"
+    },
+    {
+      "id": "tcl-t-pro-2-12000-cold",
+      "brand": "TCL",
+      "line": "T-Pro 2.0",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "Brisa Suave",
+        "Auto diagnóstico",
+        "Modo Eco"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro-2-0-cool",
+      "active": true,
+      "cycles": [
+        "cold"
+      ],
+      "voltage_v": 220,
+      "wifi": true,
+      "image_url": null,
+      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "model_sku": "TAC-12CTG2-INV",
+      "indoor_dimensions_cm": {
+        "width": 79,
+        "height": 27.5,
+        "depth": 19.2
+      },
+      "outdoor_dimensions_cm": {
+        "width": 77.7,
+        "height": 49.8,
+        "depth": 29
+      },
+      "condenser_form": "compact"
+    },
+    {
+      "id": "tcl-t-pro-2-12000-heat-cool",
+      "brand": "TCL",
+      "line": "T-Pro 2.0",
+      "capacity_btu": 12000,
+      "inverter": true,
+      "segment": "cost_benefit",
+      "features": [
+        "Wi-Fi",
+        "Brisa Suave",
+        "Auto diagnóstico",
+        "Modo Eco"
+      ],
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro-2-0-cool",
+      "active": true,
+      "cycles": [
         "heat_cool"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "model_sku": "TAC-12CHTG2-INV",
+      "indoor_dimensions_cm": {
+        "width": 79,
+        "height": 27.5,
+        "depth": 19.2
+      },
+      "outdoor_dimensions_cm": {
+        "width": 77.7,
+        "height": 49.8,
+        "depth": 29
+      },
+      "condenser_form": "compact"
     },
     {
-      "id": "tcl-a2-inverter-quente-frio-18000",
+      "id": "tcl-t-pro-2-18000-heat-cool",
       "brand": "TCL",
-      "line": "A2 Inverter Quente/Frio",
+      "line": "T-Pro 2.0",
       "capacity_btu": 18000,
       "inverter": true,
-      "segment": "economy",
+      "segment": "cost_benefit",
       "features": [
-        "Inverter",
-        "modo silêncio",
-        "filtro Silver Ion"
+        "Wi-Fi",
+        "Brisa Suave",
+        "Auto diagnóstico",
+        "Modo Eco"
       ],
-      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro-2-0-cool",
       "active": true,
       "cycles": [
-        "cold",
         "heat_cool"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "TAC-18CHTG2X-INV",
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
       "condenser_form": "unknown"
     },
     {
-      "id": "tcl-a2-inverter-quente-frio-24000",
-      "brand": "TCL",
-      "line": "A2 Inverter Quente/Frio",
-      "capacity_btu": 24000,
+      "id": "agratto-liv-top-12000-cold",
+      "brand": "Agratto",
+      "line": "LIV Top Inverter",
+      "capacity_btu": 12000,
       "inverter": true,
       "segment": "economy",
       "features": [
         "Inverter",
-        "modo silêncio",
-        "filtro Silver Ion"
+        "Ventilação 4D",
+        "Desumidificação",
+        "Turbo"
       ],
-      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "source_url": "https://agratto.com.br/",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": false,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "model_sku": "LCST12F-02I",
+      "indoor_dimensions_cm": {
+        "width": 77,
+        "height": 32,
+        "depth": 27.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 58,
+        "height": 41,
+        "depth": 50
+      },
+      "condenser_form": "compact"
     },
     {
-      "id": "tcl-a2-inverter-quente-frio-32000",
-      "brand": "TCL",
-      "line": "A2 Inverter Quente/Frio",
-      "capacity_btu": 32000,
+      "id": "agratto-liv-top-12000-heat-cool",
+      "brand": "Agratto",
+      "line": "LIV Top Inverter",
+      "capacity_btu": 12000,
       "inverter": true,
       "segment": "economy",
       "features": [
         "Inverter",
-        "modo silêncio",
-        "filtro Silver Ion"
+        "Ventilação 4D",
+        "Desumidificação",
+        "Turbo"
       ],
-      "source_url": "https://www.tcl.com/br/pt/air-conditioners/series-a2-inverter-quente-frio",
+      "source_url": "https://agratto.com.br/",
       "active": true,
       "cycles": [
-        "cold",
         "heat_cool"
       ],
       "voltage_v": 220,
+      "wifi": false,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "model_sku": "LCST12QF-02I",
+      "indoor_dimensions_cm": {
+        "width": 77,
+        "height": 27,
+        "depth": 32
+      },
+      "outdoor_dimensions_cm": {
+        "width": 58,
+        "height": 50,
+        "depth": 41
+      },
+      "condenser_form": "compact"
     },
     {
-      "id": "tcl-t-pro-inverter-12000",
-      "brand": "TCL",
-      "line": "T-Pro Inverter",
+      "id": "daikin-ecoswing-smart-gold-12000-heat-cool",
+      "brand": "Daikin",
+      "line": "EcoSwing Smart Gold R-32",
       "capacity_btu": 12000,
       "inverter": true,
       "segment": "modern",
       "features": [
         "Wi-Fi",
-        "comando de voz",
-        "função brisa",
-        "R-32"
+        "R-32",
+        "Dupla filtragem"
       ],
-      "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro",
+      "source_url": "https://www.daikin.com.br/produto/split-ecoswing-smart-gold-r-32",
       "active": true,
       "cycles": [
-        "cold",
         "heat_cool"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
-      "indoor_dimensions_cm": null,
-      "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "model_sku": "FTHP12S5VL / RHP12S5VL",
+      "indoor_dimensions_cm": {
+        "width": 77,
+        "height": 28.5,
+        "depth": 22.5
+      },
+      "outdoor_dimensions_cm": {
+        "width": 74,
+        "height": 55,
+        "depth": 32.6
+      },
+      "condenser_form": "compact"
     },
     {
-      "id": "tcl-t-pro-inverter-18000",
-      "brand": "TCL",
-      "line": "T-Pro Inverter",
-      "capacity_btu": 18000,
+      "id": "elgin-eco-inverter-iii-12000-cold",
+      "brand": "Elgin",
+      "line": "Eco Inverter III",
+      "capacity_btu": 12000,
       "inverter": true,
-      "segment": "modern",
+      "segment": "economy",
       "features": [
         "Wi-Fi",
-        "comando de voz",
-        "função brisa",
-        "R-32"
+        "Clean Air",
+        "Comando de voz"
       ],
-      "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro",
+      "source_url": "https://www.elgin.com.br/",
       "active": true,
       "cycles": [
-        "cold",
-        "heat_cool"
+        "cold"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": null,
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
       "condenser_form": "unknown"
     },
     {
-      "id": "tcl-t-pro-inverter-24000",
-      "brand": "TCL",
-      "line": "T-Pro Inverter",
+      "id": "hisense-inverter-wifi-24000-heat-cool",
+      "brand": "Hisense",
+      "line": "Inverter Wi-Fi",
       "capacity_btu": 24000,
       "inverter": true,
-      "segment": "modern",
+      "segment": "economy",
       "features": [
         "Wi-Fi",
-        "comando de voz",
-        "função brisa",
-        "R-32"
+        "I Feel",
+        "Modo Eco",
+        "Comando de voz"
       ],
-      "source_url": "https://www.tcl.com/br/pt/air-conditioners/t-pro",
+      "source_url": "https://www.hisense.com.br/",
       "active": true,
       "cycles": [
-        "cold",
         "heat_cool"
       ],
       "voltage_v": 220,
+      "wifi": true,
       "image_url": null,
       "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
-      "sku": null,
+      "model_sku": "AS-24UW2RBB02C",
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
       "condenser_form": "unknown"
     }
-  ],
-  "curated_at": "2026-09-26",
-  "research_sources": [
-    "https://www.mybest-brazil.com.br/17989",
-    "https://www.mybest-brazil.com.br/18803",
-    "https://gree.com.br/produto/g-top-auto-inverter/",
-    "https://www.lg.com/br/ar-condicionado-residencial/",
-    "https://www.daikin.com.br/produto/ecoswing-r32",
-    "https://www.tcl.com/br/pt/air-conditioners"
   ]
 }
