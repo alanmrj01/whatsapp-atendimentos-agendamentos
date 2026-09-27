@@ -273,27 +273,26 @@ def equipment_cycle_message(*, retry: bool = False) -> OutboundMessage:
 def equipment_space_message(target: str, *, retry: bool = False) -> OutboundMessage:
     if target == "both":
         body = (
-            "No local da instalação, existe alguma limitação de espaço para a unidade "
-            "interna ou para a unidade externa? Se houver, me passe a largura e a altura "
-            "aproximadas em cm."
+            "O espaço onde o ar-condicionado será instalado é apertado ou limitado, "
+            "na parte interna ou externa? Se houver limitação, me passe as medidas. "
+            "Se não, escolha “Sem restrição”."
             if not retry
             else (
-                "Existe alguma restrição de espaço onde ficarão as partes interna e externa "
-                "do ar-condicionado? Se não houver, escolha “Sem restrição”. Se houver, "
-                "informe largura e altura aproximadas em cm."
+                "A unidade interna ou a condensadora externa ficarão em um espaço "
+                "apertado? Se sim, me passe as medidas. Se não, escolha “Sem restrição”."
             )
         )
         interactive_id = "booking.equipment_space.both"
     else:
-        label = "parte interna" if target == "indoor" else "parte externa"
+        label = "unidade interna" if target == "indoor" else "condensadora externa"
         body = (
-            f"Há alguma limitação de espaço para a {label} do ar-condicionado? "
-            "Se houver, me diga largura e altura aproximadas em cm."
+            f"O espaço onde ficará a {label} é apertado ou tem alguma limitação? "
+            "Se tiver, me diga as medidas aproximadas; se não, escolha “Sem restrição”."
             if not retry
             else (
-                f"Existe alguma restrição no local onde ficará a {label}? "
-                "Se não houver, escolha “Sem restrição”. Se houver, informe largura "
-                "e altura aproximadas em cm."
+                f"Só preciso saber se o local da {label} é apertado. "
+                "Se não houver limitação, escolha “Sem restrição”; se houver, "
+                "me passe as medidas aproximadas."
             )
         )
         interactive_id = f"booking.equipment_space.{target}"
@@ -662,6 +661,20 @@ def booking_completed_message(
     return OutboundMessage(
         message_type="text",
         body=body,
+    )
+
+
+def reaction_message(
+    provider_message_id: str,
+    emoji: str = "👍",
+) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="reaction",
+        body=None,
+        outbound_payload={
+            "message_id": provider_message_id,
+            "emoji": emoji,
+        },
     )
 
 

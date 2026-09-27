@@ -36,6 +36,13 @@ class ConnectionLookup(Protocol):
 class Sender(Protocol):
     async def send_text(self, to: str, text: str) -> str: ...
 
+    async def send_reaction(
+        self,
+        to: str,
+        message_id: str,
+        emoji: str = "👍",
+    ) -> str: ...
+
     async def send_image_url(
         self,
         to: str,

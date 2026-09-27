@@ -70,6 +70,13 @@ class TransactionSession(Protocol):
 class WhatsAppSender(Protocol):
     async def send_text(self, to: str, text: str) -> str: ...
 
+    async def send_reaction(
+        self,
+        to: str,
+        message_id: str,
+        emoji: str = "👍",
+    ) -> str: ...
+
     async def send_image_url(
         self,
         to: str,
@@ -246,6 +253,18 @@ async def _send_message(
         return await client.send_text(message.recipient, body)
 
     payload = message.outbound_payload
+    if message.message_type == "reaction":
+        if not isinstance(payload, Mapping):
+            raise WhatsAppValidationError("Outbound reaction payload is invalid")
+        target_message_id = payload.get("message_id")
+        emoji = payload.get("emoji")
+        if not isinstance(target_message_id, str) or not isinstance(emoji, str):
+            raise WhatsAppValidationError("Outbound reaction payload is invalid")
+        return await client.send_reaction(
+            message.recipient,
+            target_message_id,
+            emoji,
+        )
     if message.message_type == "image":
         if not isinstance(payload, Mapping):
             raise WhatsAppValidationError("Outbound image payload is invalid")

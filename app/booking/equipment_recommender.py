@@ -41,10 +41,16 @@ class EquipmentRecommendation:
     condenser_form: str | None
     price: float | None
     required_btu: int
+    selected_cycle: ClimateMode
 
     @property
     def label(self) -> str:
-        return f"{self.brand} {self.line} {self.capacity_btu:,} BTU".replace(",", ".")
+        base = f"{self.brand} {self.line} {self.capacity_btu:,} BTU".replace(",", ".")
+        if self.selected_cycle == "cold":
+            return f"{base} — Só Frio"
+        if _line_explicitly_heat_cool(self.line):
+            return base
+        return f"{base} — Quente/Frio"
 
 
 @lru_cache(maxsize=1)
@@ -103,7 +109,7 @@ def recommend_equipment(
     candidates = [
         item
         for item in catalog
-        if climate_mode in item.cycles
+        if _matches_requested_cycle(item, climate_mode)
         and _fits(item.indoor_dimensions_cm, indoor_space)
         and _fits(item.outdoor_dimensions_cm, outdoor_space)
     ]
@@ -154,6 +160,7 @@ def recommend_equipment(
         condenser_form=chosen.condenser_form,
         price=chosen.price,
         required_btu=required,
+        selected_cycle=climate_mode,
     )
 
 
@@ -207,6 +214,34 @@ def _dimension_dict(value: Any) -> dict[str, float] | None:
         if isinstance(raw, (int, float)) and not isinstance(raw, bool):
             result[key] = float(raw)
     return result if {"width", "height"} <= result.keys() else None
+
+
+def _line_explicitly_heat_cool(line: str) -> bool:
+    normalized = " ".join(
+        line.casefold()
+        .replace("/", " ")
+        .replace("-", " ")
+        .split()
+    )
+    return (
+        "quente frio" in normalized
+        or "quente e frio" in normalized
+        or "heat cool" in normalized
+    )
+
+
+def _matches_requested_cycle(
+    item: EquipmentCatalogEntry,
+    climate_mode: ClimateMode,
+) -> bool:
+    if climate_mode == "heat_cool":
+        return "heat_cool" in item.cycles
+    if "cold" not in item.cycles:
+        return False
+    # Uma linha explicitamente cadastrada como Quente/Frio nunca pode ser
+    # oferecida quando o cliente pediu apenas refrigeração, mesmo que o
+    # cadastro antigo tenha marcado ambos os ciclos como disponíveis.
+    return not _line_explicitly_heat_cool(item.line)
 
 
 def _fits(

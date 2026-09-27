@@ -113,6 +113,7 @@ from app.conversations.outbound import (
     property_type_message,
     quantity_selection_message,
     quote_decision_message,
+    reaction_message,
     reschedule_completed_message,
     reschedule_confirmation_message,
     reschedule_message,
@@ -342,15 +343,23 @@ async def _route_named_conversation(
         and not _has_service_question(interpretation)
     ):
         if interpretation.intent is ConversationIntent.EQUIPMENT_PURCHASE:
-            return await _handle_service(
-                inbound,
-                {},
-                None,
-                booking_port,
-                interpretation=interpretation,
-                fallback_message=conversation.fallback_message,
-                customer_name=customer_name,
-            )
+            # Durante uma cotação de instalação já em andamento, frases como
+            # "quero cotar aparelho" são respostas ao fluxo atual. Reiniciar o
+            # serviço aqui apaga endereço e escolhas já coletadas e provoca
+            # perguntas repetidas.
+            if not (
+                _context_service_id(context) is not None
+                and context.get("request_mode") == "quote"
+            ):
+                return await _handle_service(
+                    inbound,
+                    {},
+                    None,
+                    booking_port,
+                    interpretation=interpretation,
+                    fallback_message=conversation.fallback_message,
+                    customer_name=customer_name,
+                )
         try:
             port = _require_booking_port(booking_port)
             services = _snapshot_options(await port.list_services(inbound.business_id))
@@ -399,6 +408,15 @@ async def _route_named_conversation(
             ConversationState.BOOKING_ADDRESS,
             context,
             address_request_message(),
+        )
+    elif (
+        state is ConversationState.COMPLETED
+        and _is_completion_acknowledgement(inbound.body)
+    ):
+        transition = _transition(
+            ConversationState.COMPLETED,
+            {},
+            reaction_message(inbound.provider_message_id),
         )
     elif state in {
         ConversationState.START,
@@ -1303,6 +1321,7 @@ async def _with_equipment_recommendation(
             "capacity_btu": recommendation.capacity_btu,
             "preference": recommendation.segment,
             "cycles": list(recommendation.cycles),
+            "selected_cycle": recommendation.selected_cycle,
             "features": list(recommendation.features),
             "source_url": recommendation.source_url,
             "image_url": recommendation.image_url,
@@ -2415,8 +2434,7 @@ async def _handle_equipment_profile(
         return transition
 
     intro = _text_message(
-        f"Pelas informações do ambiente, uma boa referência é {label}. "
-        "A indicação ainda deve ser validada se houver carga térmica fora do padrão."
+        f"Pelas informações do ambiente, uma boa referência é {label}."
     )
     followups: list[OutboundMessage] = []
     image_url = (
@@ -2436,6 +2454,36 @@ async def _handle_equipment_profile(
         transition,
         outbound=intro,
         follow_ups=tuple(followups),
+    )
+
+
+def _is_completion_acknowledgement(value: str | None) -> bool:
+    normalized = normalize_portuguese(value or "").strip()
+    if not normalized:
+        return False
+    exact = {
+        "obrigado",
+        "obrigada",
+        "muito obrigado",
+        "muito obrigada",
+        "valeu",
+        "ate logo",
+        "tchau",
+        "falou",
+        "blz",
+        "beleza",
+    }
+    if normalized in exact:
+        return True
+    return any(
+        normalized.startswith(prefix)
+        for prefix in (
+            "obrigado ",
+            "obrigada ",
+            "valeu ",
+            "ate logo ",
+            "tchau ",
+        )
     )
 
 
@@ -3456,6 +3504,12 @@ async def _handle_confirmation(
             f"Agendamento confirmado para {date_short_label(selected_date)} "
             f"às {selected_time}."
         ),
+        follow_ups=(
+            booking_completed_message(
+                "Muito obrigado pela preferência! Qualquer dúvida, é só nos mandar "
+                "uma mensagem. Até logo."
+            ),
+        ),
     )
 
 async def _begin_existing_booking_flow(
@@ -3805,6 +3859,15 @@ async def _advance_intake(
 
     if service_kind == "installation":
         ownership = _context_string(context, "equipment_ownership")
+        if (
+            ownership not in {"has_equipment", "needs_equipment"}
+            and isinstance(context.get("purchase_only"), bool)
+        ):
+            ownership = "needs_equipment"
+            context = {
+                **context,
+                "equipment_ownership": ownership,
+            }
         if ownership not in {"has_equipment", "needs_equipment"}:
             return _transition(
                 ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
@@ -4386,7 +4449,7 @@ async def _handle_quote_decision(
         context,
         "quote_decision",
         quote_decision_message(
-            "Você quer consultar a agenda ou precisava apenas da cotação?"
+            "Gostaria de já agendar a instalação?"
         ),
         handoff_body=(
             "Não consegui entender se você quer seguir para o agendamento. "
@@ -4523,11 +4586,6 @@ async def _quote_transition(
         else f"Cotação para {service_label}."
     )
     service_body = service_price
-    if _service_kind(services, service_id) == "installation":
-        service_body += (
-            " A metragem incluída de tubulação segue o cadastro da empresa; "
-            "material adicional pode alterar o valor."
-        )
 
     updated = {
         **context,
@@ -4540,7 +4598,7 @@ async def _quote_transition(
         follow_ups=(
             _text_message(service_body),
             quote_decision_message(
-                "Quer consultar a agenda ou precisava apenas da cotação?"
+                "Gostaria de já agendar a instalação?"
             ),
         ),
     )
@@ -4602,33 +4660,33 @@ async def _confirmation_body(
     service_label = service.label if service is not None else "Serviço selecionado"
     lines = [
         (
-            f"Perfeito, {customer_name}. Só para confirmar:"
+            f"Perfeito, {customer_name}.\n\nSó para confirmar:"
             if customer_name
-            else "Perfeito. Só para confirmar:"
+            else "Perfeito.\n\nSó para confirmar:"
         ),
-        f"Serviço: {service_label}",
+        f"• Serviço: {service_label}",
     ]
     if requirements.quantity > 1:
-        lines.append(f"Quantidade: {requirements.quantity}")
+        lines.append(f"• Quantidade: {requirements.quantity}")
     lines.extend(
         (
-            f"Data: {date_short_label(selected_date)}",
-            f"Horário: {selected_time}",
+            f"• Data: {date_short_label(selected_date)}",
+            f"• Horário: {selected_time}",
         )
     )
     address = ServiceAddress.from_snapshot(context.get("service_address"))
     if address is not None:
-        lines.append(f"Endereço: {address.searchable_text}")
+        lines.append(f"• Endereço: {address.searchable_text}")
     model = _context_string(context, "equipment_model")
     if model:
-        lines.append(f"Equipamento: {model}")
+        lines.append(f"• Equipamento: {model}")
     recommendation = context.get("recommended_equipment")
     if isinstance(recommendation, dict):
         label = recommendation.get("label")
         if isinstance(label, str) and label and not model:
-            lines.append(f"Equipamento sugerido: {label}")
+            lines.append(f"• Equipamento sugerido: {label}")
     if context.get("work_at_height") is True:
-        lines.append("Detalhe: trabalho em altura (acima de 3 m)")
+        lines.append("• Detalhe: trabalho em altura (acima de 3 m)")
     property_type = _context_string(context, "property_type")
     property_labels = {
         "house": "Casa",
@@ -4636,16 +4694,16 @@ async def _confirmation_body(
         "condominium": "Condomínio",
     }
     if property_type in property_labels:
-        lines.append(f"Local: {property_labels[property_type]}")
+        lines.append(f"• Local: {property_labels[property_type]}")
     onsite_name = _context_string(context, "onsite_contact_name")
     if onsite_name:
-        lines.append(f"Pessoa no local: {onsite_name}")
+        lines.append(f"• Pessoa no local: {onsite_name}")
     contact_phone = (
         _context_string(context, "contact_phone")
         or _context_string(context, "whatsapp_contact_phone")
     )
     if contact_phone:
-        lines.append(f"Contato: {contact_phone}")
+        lines.append(f"• Contato: {contact_phone}")
     try:
         plan = await port.estimate(
             inbound.business_id,
@@ -4657,12 +4715,12 @@ async def _confirmation_body(
     if plan is not None:
         if plan.service.estimated_price is not None:
             prefix = "Valor" if plan.service.pricing_type is PricingType.FIXED else "Valor estimado"
-            lines.append(f"{prefix}: {_format_brl(plan.service.estimated_price)}")
+            lines.append(f"• {prefix}: {_format_brl(plan.service.estimated_price)}")
         lines.append(
-            "Duração estimada: "
+            "• Duração estimada: "
             f"{_format_duration(plan.service.estimated_duration_minutes)}"
         )
-    lines.append("Posso confirmar?")
+    lines.append("\nPosso confirmar?")
     return "\n".join(lines)[:1024]
 
 
@@ -4765,7 +4823,15 @@ def _transition(
     follow_ups: tuple[OutboundMessage, ...] = (),
 ) -> ConversationTransition:
     if outbound.body:
-        chunks = _split_customer_message(outbound.body)
+        preserve_structured_confirmation = (
+            outbound.interactive_id == "booking.confirmation"
+            and len(outbound.body) <= 1024
+        )
+        chunks = (
+            (outbound.body,)
+            if preserve_structured_confirmation
+            else _split_customer_message(outbound.body)
+        )
         if len(chunks) > 1:
             if outbound.message_type == "text":
                 outbound = replace(outbound, body=chunks[0])
