@@ -92,7 +92,7 @@ def test_cold_request_never_selects_explicit_heat_cool_model() -> None:
             line="G-Top Auto Inverter",
             capacity_btu=12000,
             segment="economy",
-            cycles=("cold", "heat_cool"),
+            cycles=("cold",),
         ),
     )
 
