@@ -549,6 +549,14 @@ async def _route_named_conversation(
         transition = await _handle_confirmation(
             inbound, context, action, booking_port, customer_name=customer_name
         )
+    elif state is ConversationState.POST_BOOKING_HELP:
+        transition = await _handle_post_booking_help(
+            conversation,
+            inbound,
+            interpretation,
+            action,
+            booking_port,
+        )
     elif state is ConversationState.RESCHEDULE:
         transition = await _handle_reschedule(inbound, context, action, booking_port)
     elif state is ConversationState.CANCEL:
