@@ -2376,3 +2376,60 @@ async def test_profile_accepts_typed_no_limit_for_both_spaces() -> None:
     assert repository.context["outdoor_space_unrestricted"] is True
     assert repository.state == ConversationState.BOOKING_INSTALLATION_HEIGHT
 
+@mark.asyncio
+async def test_building_hours_accepts_common_hrs_variants() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_BUILDING_HOURS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "property_type": "condominium",
+            "quote_presented": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(920, body="Das 8hrs as 16hrs")
+    )
+
+    assert repository.context["building_hours_start"] == "08:00"
+    assert repository.context["building_hours_end"] == "16:00"
+    assert repository.context["site_allowed_end"] == "16:00"
+    assert repository.context["site_limit_answered"] is True
+    assert repository.state == ConversationState.BOOKING_GATE_DETAILS
+
+
+@mark.asyncio
+async def test_building_hours_rephrases_once_before_handoff() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_BUILDING_HOURS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "property_type": "condominium",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(921, body="durante o dia"))
+
+    first = repository.outbounds[-1].transition
+    assert repository.state == ConversationState.BOOKING_BUILDING_HOURS
+    assert repository.context["repair_attempts"]["building_hours"] == 1
+    assert "apenas o intervalo" in (first.outbound.body or "").casefold()
+    assert "qual é o horário permitido" not in (first.outbound.body or "").casefold()
+
+    await engine.process(inbound(922, body="não sei dizer"))
+
+    second = repository.outbounds[-1].transition
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    body = (second.outbound.body or "").casefold()
+    assert "redirecionando" in body
+    assert "pessoa da nossa equipe" in body
+    assert "aguarde" in body
+
