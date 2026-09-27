@@ -386,13 +386,14 @@ def inbound(
     action: str | None = None,
     body: str | None = None,
     whatsapp_id: str | None = None,
+    message_type: str | None = None,
 ) -> ConversationInput:
     return ConversationInput(
         business_id=BUSINESS_ID,
         customer_id=CUSTOMER_ID,
         conversation_id=CONVERSATION_ID,
         provider_message_id=f"provider-{sequence}",
-        message_type="interactive" if action else "text",
+        message_type=message_type or ("interactive" if action else "text"),
         body=body,
         interactive_id=action,
         whatsapp_id=whatsapp_id,
