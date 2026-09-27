@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.postgresql.dml import Insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -121,7 +121,7 @@ class WhatsAppWebhookRepository:
                 business_id=business_id,
                 customer_id=customer_id,
                 state="START",
-                context={},
+                context=text("'{}'::jsonb"),
                 automation_enabled=True,
                 handoff_status="none",
                 last_interaction_at=func.now(),
