@@ -4823,7 +4823,15 @@ def _transition(
     follow_ups: tuple[OutboundMessage, ...] = (),
 ) -> ConversationTransition:
     if outbound.body:
-        chunks = _split_customer_message(outbound.body)
+        preserve_structured_confirmation = (
+            outbound.interactive_id == "booking.confirmation"
+            and len(outbound.body) <= 1024
+        )
+        chunks = (
+            (outbound.body,)
+            if preserve_structured_confirmation
+            else _split_customer_message(outbound.body)
+        )
         if len(chunks) > 1:
             if outbound.message_type == "text":
                 outbound = replace(outbound, body=chunks[0])
