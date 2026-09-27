@@ -1891,6 +1891,23 @@ async def _handle_service(
         "service_id": str(service_id),
     }
     updated_context.pop("service_clarification", None)
+    if _service_kind(services, service_id) == "diagnostics":
+        raw_issue = " ".join((inbound.body or "").strip().split())
+        if raw_issue:
+            updated_context["reported_issue"] = raw_issue[:300]
+        if any(
+            token in normalized
+            for token in (
+                "barulho",
+                "ruido",
+                "chiando",
+                "estalando",
+                "estalo",
+                "vibrando",
+                "vibracao",
+            )
+        ):
+            updated_context["issue_video_required"] = True
     return await _advance_intake(
         inbound,
         port,
@@ -5083,6 +5100,26 @@ def _service_for_interpretation(
     text = interpretation.normalized_text
     if not text:
         return None
+
+    key_tokens = {
+        "split-installation": ("instal",),
+        "cleaning": ("limpeza", "higien", "lavagem"),
+        "preventive-maintenance": ("preventiv", "revis"),
+        "diagnostics": ("diagnost", "corretiv", "manutencao corretiva"),
+        "gas-recharge": ("recarga", "gas", "vazamento"),
+    }
+    if interpretation.service_key in key_tokens:
+        tokens = key_tokens[interpretation.service_key]
+        direct = [
+            service
+            for service in services
+            if any(
+                token in normalize_portuguese(service.label)
+                for token in tokens
+            )
+        ]
+        if len(direct) == 1:
+            return direct[0]
 
     ranked = sorted(
         (
