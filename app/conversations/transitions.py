@@ -2347,6 +2347,7 @@ async def _handle_equipment_model(
     try:
         port = _require_booking_port(booking_port)
         service_id, intake = await _context_intake(inbound, context, port)
+        services = _snapshot_options(await port.list_services(inbound.business_id))
     except BookingPortUnavailable:
         return _transition(
             ConversationState.BOOKING_EQUIPMENT_MODEL,
@@ -2356,59 +2357,150 @@ async def _handle_equipment_model(
     except BookingRequiresHandoff as exc:
         return _handoff_for_reason(str(exc))
 
+    service_kind = _service_kind(services, service_id)
+    existing_equipment = (
+        _context_string(context, "equipment_ownership") == "has_equipment"
+        or service_kind in {
+            "cleaning",
+            "gas_recharge",
+            "diagnostics",
+            "preventive",
+        }
+    )
+
+    if inbound.message_type == "video":
+        if context.get("issue_video_required") is True:
+            updated = {
+                **context,
+                "issue_video_received": True,
+            }
+            updated.pop("issue_video_requested", None)
+            transition = await _advance_intake(
+                inbound,
+                port,
+                intake,
+                updated,
+                services=services,
+                customer_name=customer_name,
+            )
+            return _prepend_transition_body(
+                transition,
+                "Recebi o vídeo. Ele ficará anexado para o técnico consultar antes do atendimento.",
+            )
+        return _transition(
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
+            context,
+            media_received_message("video"),
+        )
+
+    if inbound.message_type == "image" and existing_equipment:
+        updated = {
+            **_clear_repair_attempt(context, "equipment_model"),
+            "equipment_model_known": False,
+            "equipment_photo_received": True,
+        }
+        updated.pop("equipment_model", None)
+        updated.pop("equipment_photo_requested", None)
+        transition = await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            services=services,
+            customer_name=customer_name,
+        )
+        return _prepend_transition_body(
+            transition,
+            "Recebi a foto do aparelho. Ela ficará anexada para a equipe consultar.",
+        )
+
     if _context_string(context, "equipment_model") is not None:
         return await _advance_intake(
             inbound,
             port,
             intake,
             context,
+            services=services,
             customer_name=customer_name,
         )
 
     normalized = normalize_portuguese(inbound.body or "")
-    if action == EQUIPMENT_MODEL_RECOMMEND or normalized in {
-        "nao",
-        "nao tenho",
-        "nao sei",
-        "sem preferencia",
-        "pode recomendar",
-    }:
+    unknown_model = (
+        action == EQUIPMENT_MODEL_RECOMMEND
+        or normalized in {
+            "nao",
+            "nao tenho",
+            "nao sei",
+            "nao sei o modelo",
+            "nao conheco",
+            "sem preferencia",
+            "pode recomendar",
+        }
+    )
+    if unknown_model:
         updated = {
             **_clear_repair_attempt(context, "equipment_model"),
             "equipment_model_known": False,
         }
         updated.pop("equipment_model", None)
+        if existing_equipment:
+            updated["equipment_photo_requested"] = True
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_MODEL,
+                updated,
+                equipment_photo_request_message(),
+            )
         return await _advance_intake(
             inbound,
             port,
             intake,
             updated,
+            services=services,
             customer_name=customer_name,
         )
 
     if action == EQUIPMENT_MODEL_KNOWN and context.get("equipment_model_known") is not True:
+        body = (
+            "Qual é a marca e o modelo do ar-condicionado? "
+            "Se não souber, responda “não sei” e eu peço uma foto."
+            if existing_equipment
+            else "Qual é a marca e o modelo do ar-condicionado?"
+        )
         return _transition(
             ConversationState.BOOKING_EQUIPMENT_MODEL,
             {**context, "equipment_model_known": True},
-            equipment_model_request_message(),
+            equipment_model_request_message(body),
         )
 
     raw = " ".join((inbound.body or "").strip().split())
     if (
-        context.get("equipment_model_known") is True
-        and 2 <= len(raw) <= 180
-        and normalized not in {"sim", "isso", "tenho", "ok", "certo"}
+        2 <= len(raw) <= 180
+        and normalized not in {
+            "sim",
+            "isso",
+            "tenho",
+            "ok",
+            "certo",
+            "nao",
+            "nao sei",
+        }
+        and (
+            context.get("equipment_model_known") is True
+            or existing_equipment
+        )
     ):
         updated = {
             **_clear_repair_attempt(context, "equipment_model"),
             "equipment_model_known": True,
             "equipment_model": raw,
         }
+        updated.pop("equipment_photo_requested", None)
         return await _advance_intake(
             inbound,
             port,
             intake,
             updated,
+            services=services,
             customer_name=customer_name,
         )
 
@@ -2426,9 +2518,9 @@ async def _handle_equipment_model(
         (
             equipment_model_request_message(
                 "Não consegui identificar o modelo. Pode me dizer a marca e o modelo "
-                "ou a capacidade em BTUs?"
+                "ou a capacidade em BTUs? Se não souber, diga “não sei”."
             )
-            if context.get("equipment_model_known") is True
+            if existing_equipment or context.get("equipment_model_known") is True
             else equipment_model_known_message()
         ),
         handoff_body=(
