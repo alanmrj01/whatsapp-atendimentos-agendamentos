@@ -875,6 +875,10 @@ def _stale_interactive_transition(
             QUOTE_SCHEDULE,
             QUOTE_FINISH,
         },
+        ConversationState.POST_BOOKING_HELP: {
+            POST_BOOKING_HELP_YES,
+            POST_BOOKING_HELP_NO,
+        },
     }
     if action in expected_actions.get(state, set()):
         return None
