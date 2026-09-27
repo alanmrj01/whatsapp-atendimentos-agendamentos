@@ -5595,6 +5595,10 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         "request_mode",
         "equipment_ownership",
         "equipment_model",
+        "equipment_photo_received",
+        "issue_video_required",
+        "issue_video_received",
+        "reported_issue",
         "equipment_quantity",
         "room_area_m2",
         "room_people_max",
@@ -5625,6 +5629,14 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         for key in operational_keys
         if key in context
     }
+    recommendation = operational_details.get("recommended_equipment")
+    if isinstance(recommendation, dict):
+        selected_cycle = recommendation.get("selected_cycle")
+        if selected_cycle in {"cold", "heat_cool"}:
+            normalized_recommendation = dict(recommendation)
+            normalized_recommendation["cycles"] = [selected_cycle]
+            normalized_recommendation["selected_cycle"] = selected_cycle
+            operational_details["recommended_equipment"] = normalized_recommendation
     if context.get("request_mode") == "quote":
         operational_details["quote_only"] = True
     return BookingRequirements(
