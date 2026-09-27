@@ -126,6 +126,37 @@ async def test_send_text_success() -> None:
 
 
 @mark.asyncio
+async def test_send_reaction_success() -> None:
+    captured_payload: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_payload.update(json.loads(request.content))
+        return httpx.Response(200, json={"messages": [{"id": "wamid.reaction"}]})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = WhatsAppClient(settings(), http_client=http_client)
+        provider_message_id = await client.send_reaction(
+            "recipient-1",
+            "wamid.customer",
+            "👍",
+        )
+
+    assert provider_message_id == "wamid.reaction"
+    assert captured_payload == {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": "recipient-1",
+        "type": "reaction",
+        "reaction": {
+            "message_id": "wamid.customer",
+            "emoji": "👍",
+        },
+    }
+
+
+@mark.asyncio
 async def test_send_interactive_buttons_success() -> None:
     captured_payload: dict[str, Any] = {}
 
