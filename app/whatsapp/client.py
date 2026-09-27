@@ -117,6 +117,36 @@ class WhatsAppClient:
         response_data = await self._request("POST", payload)
         return _provider_message_id(response_data)
 
+    async def send_reaction(
+        self,
+        to: str,
+        message_id: str,
+        emoji: str = "👍",
+    ) -> str:
+        destination = _validate_destination(to)
+        target_message_id = _validate_identifier(
+            message_id,
+            "message_id",
+            max_length=255,
+        )
+        reaction_emoji = _validate_text(
+            emoji,
+            "emoji",
+            max_length=16,
+        ).strip()
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": destination,
+            "type": "reaction",
+            "reaction": {
+                "message_id": target_message_id,
+                "emoji": reaction_emoji,
+            },
+        }
+        response_data = await self._request("POST", payload)
+        return _provider_message_id(response_data)
+
     async def send_image_url(
         self,
         to: str,
