@@ -224,12 +224,12 @@ class FakeBookingPort:
         self.business_state: str | None = None
         self.equipment_catalog = [
             EquipmentCatalogEntry(
-                item_id="catalog-gree-9000",
+                item_id="catalog-gree-9000-cold",
                 brand="Gree",
                 line="G-Top Auto Inverter",
                 capacity_btu=9000,
                 segment="cost_benefit",
-                cycles=("cold", "heat_cool"),
+                cycles=("cold",),
                 features=("Wi-Fi",),
                 indoor_dimensions_cm={"width": 78.3, "height": 26.0, "depth": 18.5},
                 outdoor_dimensions_cm={"width": 42.5, "height": 54.5, "depth": 42.0},
@@ -237,7 +237,22 @@ class FakeBookingPort:
                 image_url="https://example.com/gree-9000.jpg",
                 source_url="https://gree.com.br/",
                 price=2500.0,
-            )
+            ),
+            EquipmentCatalogEntry(
+                item_id="catalog-tcl-9000-heat-cool",
+                brand="TCL",
+                line="A2 Inverter Quente/Frio",
+                capacity_btu=9000,
+                segment="cost_benefit",
+                cycles=("cold", "heat_cool"),
+                features=(),
+                indoor_dimensions_cm={"width": 78.0, "height": 27.0, "depth": 20.0},
+                outdoor_dimensions_cm={"width": 45.0, "height": 55.0, "depth": 40.0},
+                condenser_form="compact",
+                image_url=None,
+                source_url="https://example.com/tcl",
+                price=2600.0,
+            ),
         ]
 
     async def list_services(self, _: uuid.UUID) -> tuple[BookingOption, ...]:
