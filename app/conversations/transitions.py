@@ -1321,6 +1321,7 @@ async def _with_equipment_recommendation(
             "capacity_btu": recommendation.capacity_btu,
             "preference": recommendation.segment,
             "cycles": list(recommendation.cycles),
+            "selected_cycle": recommendation.selected_cycle,
             "features": list(recommendation.features),
             "source_url": recommendation.source_url,
             "image_url": recommendation.image_url,
