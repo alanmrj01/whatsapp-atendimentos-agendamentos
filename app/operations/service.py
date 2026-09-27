@@ -1154,7 +1154,7 @@ class OperationalService:
         material_presets = (
             ("extra-tubing-meter", "material", "Metro adicional de tubulação", "Cobrança por metro acima da metragem incluída no serviço.", "metro"),
             ("extra-drain-meter", "material", "Metro adicional de dreno", "Material adicional de drenagem quando necessário.", "metro"),
-            ("extra-electrical-cable-meter", "material", "Cabo elétrico adicional utilizado na instalação.", "metro"),
+            ("extra-electrical-cable-meter", "material", "Metro adicional de cabo elétrico", "Cabo elétrico adicional utilizado na instalação.", "metro"),
             ("condenser-bracket", "equipment", "Suporte para condensadora", "Suporte utilizado na instalação da unidade externa.", "unidade"),
             ("wall-bracket-fixings", "material", "Kit de fixação", "Parafusos, buchas e itens de fixação adicionais.", "kit"),
         )
