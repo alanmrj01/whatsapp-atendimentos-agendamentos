@@ -23,6 +23,7 @@ from app.api.operational_pwa import (
 from app.api import operational_pwa as operational_api
 from app.auth.dependencies import require_origin, require_principal
 from app.auth.schemas import MembershipResponse, MembershipRole
+from app.conversations.constants import ConversationState
 from app.main import app
 from app.operations.service import OperationalService
 from app.operations.schemas import (
