@@ -25,6 +25,7 @@ class ConversationState(StrEnum):
     BOOKING_ATTENDEE_NAME = "BOOKING_ATTENDEE_NAME"
     BOOKING_PHONE_CONFIRM = "BOOKING_PHONE_CONFIRM"
     BOOKING_CONFIRM = "BOOKING_CONFIRM"
+    POST_BOOKING_HELP = "POST_BOOKING_HELP"
     QUOTE_DECISION = "QUOTE_DECISION"
     RESCHEDULE = "RESCHEDULE"
     CANCEL = "CANCEL"
@@ -40,6 +41,8 @@ MENU_HUMAN = "menu.human"
 BOOKING_CONFIRM = "booking.confirm"
 BOOKING_BACK = "booking.back"
 BOOKING_CANCEL = "booking.cancel"
+POST_BOOKING_HELP_YES = "post_booking.help.yes"
+POST_BOOKING_HELP_NO = "post_booking.help.no"
 TUBING_CONFIRM = "tubing.confirm"
 TUBING_UNKNOWN = "tubing.unknown"
 ADDRESS_CITY_CONFIRM = "address.city.confirm"
@@ -102,6 +105,12 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "equipment_ownership",
         "equipment_model_known",
         "equipment_model",
+        "equipment_photo_requested",
+        "equipment_photo_received",
+        "issue_video_required",
+        "issue_video_requested",
+        "issue_video_received",
+        "reported_issue",
         "equipment_quantity",
         "equipment_profile_intro_sent",
         "room_area_m2",
