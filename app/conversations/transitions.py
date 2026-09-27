@@ -4128,23 +4128,56 @@ async def _advance_intake(
             address_request_message(),
         )
 
-    # Quote-specific service details are collected only when needed. Facts that
-    # the customer volunteered earlier are already present in the shared context.
-    if context.get("request_mode") == "quote" and service_kind == "cleaning":
-        if _context_string(context, "equipment_model") is None:
-            updated = {**context, "equipment_model_known": True}
+    if service_kind in {
+        "cleaning",
+        "gas_recharge",
+        "diagnostics",
+        "preventive",
+    }:
+        context = {
+            **context,
+            "equipment_ownership": "has_equipment",
+        }
+        has_equipment_reference = (
+            _context_string(context, "equipment_model") is not None
+            or context.get("equipment_photo_received") is True
+        )
+        if not has_equipment_reference:
+            if context.get("equipment_model_known") is False:
+                updated = {
+                    **context,
+                    "equipment_photo_requested": True,
+                }
+                return _transition(
+                    ConversationState.BOOKING_EQUIPMENT_MODEL,
+                    updated,
+                    equipment_photo_request_message(),
+                )
+            updated = {
+                **context,
+                "equipment_model_known": True,
+            }
             return _transition(
                 ConversationState.BOOKING_EQUIPMENT_MODEL,
                 updated,
                 equipment_model_request_message(
-                    "Qual é a marca/modelo ou a capacidade em BTUs do ar-condicionado?"
+                    "Qual é a marca e o modelo do ar-condicionado? "
+                    "Se não souber, responda “não sei” e eu peço uma foto."
                 ),
             )
-        if not isinstance(context.get("equipment_quantity"), int):
+
+        if (
+            context.get("issue_video_required") is True
+            and context.get("issue_video_received") is not True
+        ):
+            updated = {
+                **context,
+                "issue_video_requested": True,
+            }
             return _transition(
-                ConversationState.BOOKING_QUANTITY,
-                context,
-                quantity_selection_message(),
+                ConversationState.BOOKING_EQUIPMENT_MODEL,
+                updated,
+                diagnostic_noise_video_request_message(),
             )
 
     if service_kind == "installation":
@@ -4166,12 +4199,32 @@ async def _advance_intake(
             )
 
         if ownership == "has_equipment":
-            if _context_string(context, "equipment_model") is None:
-                updated = {**context, "equipment_model_known": True}
+            has_equipment_reference = (
+                _context_string(context, "equipment_model") is not None
+                or context.get("equipment_photo_received") is True
+            )
+            if not has_equipment_reference:
+                if context.get("equipment_model_known") is False:
+                    updated = {
+                        **context,
+                        "equipment_photo_requested": True,
+                    }
+                    return _transition(
+                        ConversationState.BOOKING_EQUIPMENT_MODEL,
+                        updated,
+                        equipment_photo_request_message(),
+                    )
+                updated = {
+                    **context,
+                    "equipment_model_known": True,
+                }
                 return _transition(
                     ConversationState.BOOKING_EQUIPMENT_MODEL,
                     updated,
-                    equipment_model_request_message(),
+                    equipment_model_request_message(
+                        "Qual é a marca e o modelo do ar-condicionado? "
+                        "Se não souber, responda “não sei” e eu peço uma foto."
+                    ),
                 )
         else:
             model_known = context.get("equipment_model_known")
