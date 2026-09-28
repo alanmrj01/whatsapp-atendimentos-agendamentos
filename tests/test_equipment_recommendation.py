@@ -19,6 +19,9 @@ def test_equipment_catalog_has_exactly_thirty_reference_configurations() -> None
     assert all(item["active"] is True for item in items)
     assert all(int(item["capacity_btu"]) > 0 for item in items)
     assert all(str(item["source_url"]).startswith("https://") for item in items)
+    assert all(str(item["image_url"]).startswith("https://") for item in items)
+    assert all(float(item["price_brl"]) > 0 for item in items)
+    assert all(item["price_reviewed_at"] == "2026-09-28" for item in items)
 
     brands = {str(item["brand"]) for item in items}
     assert {
@@ -63,6 +66,10 @@ def test_default_catalog_can_recommend_both_commercial_cycles() -> None:
     assert heat_cool.cycles == ("heat_cool",)
     assert heat_cool.selected_cycle == "heat_cool"
     assert "Quente/Frio" in heat_cool.label
+    assert cold.image_url and cold.image_url.startswith("https://")
+    assert cold.price is not None and cold.price > 0
+    assert heat_cool.image_url and heat_cool.image_url.startswith("https://")
+    assert heat_cool.price is not None and heat_cool.price > 0
 
 
 def test_recommendation_uses_area_people_and_customer_preference() -> None:
