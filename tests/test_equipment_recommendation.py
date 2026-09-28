@@ -19,6 +19,15 @@ def test_equipment_catalog_has_exactly_thirty_reference_configurations() -> None
     assert all(item["active"] is True for item in items)
     assert all(int(item["capacity_btu"]) > 0 for item in items)
     assert all(str(item["source_url"]).startswith("https://") for item in items)
+    assert all(str(item["image_url"]).startswith("https://") for item in items)
+    assert all(float(item["reference_price_brl"]) > 0 for item in items)
+    assert all(item["price_reviewed_at"] == "2026-09-28" for item in items)
+    assert all(
+        isinstance(item.get("price_sources"), list)
+        and item["price_sources"]
+        and all(str(url).startswith("https://") for url in item["price_sources"])
+        for item in items
+    )
 
     brands = {str(item["brand"]) for item in items}
     assert {
