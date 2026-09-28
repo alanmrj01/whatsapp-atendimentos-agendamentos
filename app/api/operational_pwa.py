@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +62,13 @@ from app.operations.schemas import (
     WorkingHoursView,
 )
 from app.models import Message
+from app.operations.catalog_media import (
+    CatalogMediaConfigurationError,
+    CatalogMediaUploadError,
+    CatalogMediaValidationError,
+    MAX_CATALOG_IMAGE_BYTES,
+    upload_catalog_image,
+)
 from app.operations.service import OperationalService
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.client import WhatsAppClientError
@@ -726,6 +734,43 @@ async def create_catalog_item(
 ):
     membership = _authorize(principal, CONFIG_ROLES)
     return await service.create_catalog_item(membership.business_id, payload)
+
+
+@router.post(
+    "/catalog-items/{item_id}/image",
+    response_model=CatalogItemView,
+    dependencies=[Depends(require_origin)],
+)
+async def upload_catalog_item_image(
+    item_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+    settings: Config,
+    file: UploadFile = File(...),
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    await service.ensure_equipment_catalog_item(membership.business_id, item_id)
+    content = await file.read(MAX_CATALOG_IMAGE_BYTES + 1)
+    try:
+        uploaded = await asyncio.to_thread(
+            upload_catalog_image,
+            bucket_name=(settings.catalog_media_bucket or ""),
+            business_id=membership.business_id,
+            item_id=item_id,
+            content=content,
+            content_type=file.content_type,
+        )
+    except CatalogMediaValidationError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    except CatalogMediaConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Upload de fotos não configurado") from exc
+    except CatalogMediaUploadError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível armazenar a foto") from exc
+    return await service.update_catalog_item(
+        membership.business_id,
+        item_id,
+        CatalogItemUpdate(image_url=uploaded.url),
+    )
 
 
 @router.patch(
