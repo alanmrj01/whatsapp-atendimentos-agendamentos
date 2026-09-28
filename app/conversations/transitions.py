@@ -2649,9 +2649,21 @@ async def _handle_equipment_profile(
     if not isinstance(label, str) or not label:
         return transition
 
-    intro = _text_message(
-        f"Pelas informações do ambiente, uma boa referência é {label}."
+    price = (
+        recommendation.get("price")
+        if isinstance(recommendation, dict)
+        else None
     )
+    price_text: str | None = None
+    if isinstance(price, (int, float)) and not isinstance(price, bool):
+        formatted = f"{float(price):,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+        price_text = f"R$ {formatted}"
+
+    intro_body = f"Pelas informações do ambiente, uma boa referência é {label}."
+    if price_text:
+        intro_body += f" Preço cadastrado pela empresa: {price_text}."
+    intro = _text_message(intro_body)
+
     followups: list[OutboundMessage] = []
     image_url = (
         recommendation.get("image_url")
@@ -2659,10 +2671,13 @@ async def _handle_equipment_profile(
         else None
     )
     if isinstance(image_url, str) and image_url.startswith("https://"):
+        caption = f"{label} - referência do catálogo da empresa."
+        if price_text:
+            caption += f" {price_text}."
         followups.append(
             equipment_image_message(
                 image_url,
-                f"{label} - referência do catálogo da empresa.",
+                caption,
             )
         )
     followups.extend((transition.outbound, *transition.follow_ups))
