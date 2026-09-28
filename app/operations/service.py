@@ -982,9 +982,14 @@ class OperationalService:
         if (
             item.preset_key
             and item.preset_key.startswith("equipment:")
-            and "specifications" in update_values
+            and set(update_values).intersection({
+                "name", "description", "price", "image_url", "source_url",
+                "specifications", "active",
+            })
         ):
-            specifications = dict(update_values.get("specifications") or {})
+            specifications = dict(
+                update_values.get("specifications") or item.specifications or {}
+            )
             specifications["_preset_overridden"] = True
             update_values["specifications"] = specifications
         for field, value in update_values.items():
@@ -1225,7 +1230,7 @@ class OperationalService:
                 for key, value in raw.items()
                 if key not in {
                     "id", "brand", "line", "capacity_btu", "active",
-                    "source_url", "image_url",
+                    "source_url", "image_url", "price_brl",
                 }
             }
             specifications.update({
@@ -1245,8 +1250,8 @@ class OperationalService:
                     kind="equipment",
                     name=desired_name,
                     description=description,
-                    price=None,
-                    unit_label="unidade",
+                    price=raw.get("price_brl"),
+                    unit_label=None,
                     image_url=raw.get("image_url"),
                     source_url=raw.get("source_url"),
                     specifications=specifications,
@@ -1266,7 +1271,8 @@ class OperationalService:
             existing.kind = "equipment"
             existing.name = desired_name
             existing.description = description
-            existing.unit_label = "unidade"
+            existing.price = raw.get("price_brl")
+            existing.unit_label = None
             existing.image_url = raw.get("image_url")
             existing.source_url = raw.get("source_url")
             existing.specifications = specifications
