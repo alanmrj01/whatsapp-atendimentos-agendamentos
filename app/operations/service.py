@@ -1359,6 +1359,12 @@ class OperationalService:
             if "_preset_default_image_url" not in current_specs and existing.image_url:
                 image_overridden = True
 
+            if (
+                current_specs.get("_preset_catalog_version") == catalog_version
+                and existing.unit_label is None
+            ):
+                continue
+
             if technical_overridden:
                 next_specs = current_specs
                 next_specs["_preset_catalog_version"] = catalog_version
