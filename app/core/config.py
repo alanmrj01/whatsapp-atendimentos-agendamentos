@@ -120,6 +120,9 @@ class Settings(BaseSettings):
         default=None, validation_alias="GCP_PROJECT_ID"
     )
     gcp_region: str | None = Field(default=None, validation_alias="GCP_REGION")
+    catalog_media_bucket: str | None = Field(
+        default=None, validation_alias="CATALOG_MEDIA_BUCKET"
+    )
     cloud_tasks_events_queue: str | None = Field(
         default=None, validation_alias="CLOUD_TASKS_EVENTS_QUEUE"
     )
