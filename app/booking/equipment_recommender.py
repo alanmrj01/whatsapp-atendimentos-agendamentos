@@ -202,6 +202,12 @@ def _entry_from_mapping(item: dict[str, object]) -> EquipmentCatalogEntry:
             else None
         ),
         source_url=str(item.get("source_url") or ""),
+        price=(
+            float(item["price_brl"])
+            if isinstance(item.get("price_brl"), (int, float))
+            and not isinstance(item.get("price_brl"), bool)
+            else None
+        ),
     )
 
 
