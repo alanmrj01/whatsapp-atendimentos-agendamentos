@@ -982,6 +982,12 @@ class OperationalService:
         is_equipment_preset = bool(
             item.preset_key and item.preset_key.startswith("equipment:")
         )
+        if (
+            "image_url" in update_values
+            and update_values.get("image_url") != item.image_url
+        ):
+            item.image_data = None
+            item.image_mime_type = None
         existing_specs = dict(item.specifications or {})
         if is_equipment_preset:
             incoming_specs = dict(
@@ -1012,9 +1018,6 @@ class OperationalService:
                     incoming_specs.pop("_preset_image_overridden", None)
                 else:
                     incoming_specs["_preset_image_overridden"] = True
-                    if update_values.get("image_url") != item.image_url:
-                        item.image_data = None
-                        item.image_mime_type = None
 
             update_values["specifications"] = incoming_specs
 
