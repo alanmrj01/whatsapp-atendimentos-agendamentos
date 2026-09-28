@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -741,6 +741,50 @@ async def update_catalog_item(
 ):
     membership = _authorize(principal, CONFIG_ROLES)
     return await service.update_catalog_item(membership.business_id, item_id, payload)
+
+
+@router.put(
+    "/catalog-items/{item_id}/image",
+    response_model=CatalogItemView,
+    dependencies=[Depends(require_origin)],
+)
+async def upload_catalog_item_image(
+    item_id: UUID,
+    request: Request,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, CONFIG_ROLES)
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > 4 * 1024 * 1024:
+                raise HTTPException(413, "Catalog image exceeds 4 MB")
+        except ValueError:
+            raise HTTPException(400, "Invalid Content-Length") from None
+    image_data = await request.body()
+    public_url = (
+        str(request.base_url).rstrip("/")
+        + f"/api/v1/public/catalog-items/{item_id}/image"
+    )
+    return await service.set_catalog_item_image(
+        membership.business_id,
+        item_id,
+        image_data=image_data,
+        content_type=content_type,
+        public_url=public_url,
+    )
+
+
+@router.get("/public/catalog-items/{item_id}/image")
+async def public_catalog_item_image(item_id: UUID, service: ServiceDep):
+    image_data, content_type = await service.get_catalog_item_image(item_id)
+    return Response(
+        content=image_data,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.delete(
