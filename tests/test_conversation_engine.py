@@ -2034,6 +2034,10 @@ async def test_equipment_recommendation_waits_for_all_three_profile_answers() ->
         for message in (transition.outbound, *transition.follow_ups)
     )
     assert recommendation["label"] in combined
+    assert any(
+        message.message_type == "image"
+        for message in transition.follow_ups
+    )
 
 
 @mark.asyncio
