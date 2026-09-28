@@ -991,18 +991,28 @@ class OperationalService:
         if item is None:
             raise HTTPException(404, "Catalog item not found")
         update_values = values.model_dump(exclude_unset=True)
+        preset_editable_fields = {
+            "name", "description", "price", "image_url", "source_url",
+            "specifications", "active",
+        }
+        overridden_fields = set(update_values).intersection(preset_editable_fields)
         if (
             item.preset_key
             and item.preset_key.startswith("equipment:")
-            and set(update_values).intersection({
-                "name", "description", "price", "image_url", "source_url",
-                "specifications", "active",
-            })
+            and overridden_fields
         ):
             specifications = dict(
                 update_values.get("specifications") or item.specifications or {}
             )
+            previous_fields = specifications.get("_preset_overridden_fields")
+            tracked_fields = {
+                value
+                for value in previous_fields
+                if isinstance(value, str)
+            } if isinstance(previous_fields, list) else set()
+            tracked_fields.update(overridden_fields)
             specifications["_preset_overridden"] = True
+            specifications["_preset_overridden_fields"] = sorted(tracked_fields)
             update_values["specifications"] = specifications
         for field, value in update_values.items():
             setattr(item, field, value)
@@ -1276,6 +1286,32 @@ class OperationalService:
 
             current_specs = dict(existing.specifications or {})
             if current_specs.get("_preset_overridden") is True:
+                raw_fields = current_specs.get("_preset_overridden_fields")
+                overridden_fields = {
+                    value
+                    for value in raw_fields
+                    if isinstance(value, str)
+                } if isinstance(raw_fields, list) else set()
+
+                # Presets edited before field-level tracking only carried the
+                # legacy boolean marker. Preserve their technical/company edits,
+                # but backfill the new commercial defaults when still missing.
+                preset_changed = False
+                if "price" not in overridden_fields and existing.price is None:
+                    existing.price = raw.get("price_brl")
+                    preset_changed = True
+                if "image_url" not in overridden_fields and not existing.image_url:
+                    existing.image_url = raw.get("image_url")
+                    preset_changed = True
+                if existing.unit_label is not None:
+                    existing.unit_label = None
+                    preset_changed = True
+                if current_specs.get("_preset_catalog_version") != catalog_version:
+                    current_specs["_preset_catalog_version"] = catalog_version
+                    existing.specifications = current_specs
+                    preset_changed = True
+                if preset_changed:
+                    changed = True
                 continue
             if current_specs.get("_preset_catalog_version") == catalog_version:
                 continue
