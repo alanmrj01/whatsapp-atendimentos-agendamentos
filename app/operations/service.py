@@ -956,7 +956,7 @@ class OperationalService:
             name=values.name,
             description=values.description,
             price=values.price,
-            unit_label=values.unit_label,
+            unit_label=None if values.kind == "equipment" else values.unit_label,
             image_url=values.image_url,
             source_url=values.source_url,
             specifications=dict(values.specifications),
@@ -979,14 +979,47 @@ class OperationalService:
         if item is None:
             raise HTTPException(404, "Catalog item not found")
         update_values = values.model_dump(exclude_unset=True)
-        if (
-            item.preset_key
-            and item.preset_key.startswith("equipment:")
-            and "specifications" in update_values
-        ):
-            specifications = dict(update_values.get("specifications") or {})
-            specifications["_preset_overridden"] = True
-            update_values["specifications"] = specifications
+        is_equipment_preset = bool(
+            item.preset_key and item.preset_key.startswith("equipment:")
+        )
+        existing_specs = dict(item.specifications or {})
+        if is_equipment_preset:
+            incoming_specs = dict(
+                update_values.get("specifications", existing_specs) or {}
+            )
+            for key, value in existing_specs.items():
+                if key.startswith("_preset_"):
+                    incoming_specs.setdefault(key, value)
+            if "specifications" in update_values:
+                incoming_specs["_preset_overridden"] = True
+
+            if "price" in update_values:
+                default_price = existing_specs.get("_preset_default_price_brl")
+                incoming_price = update_values.get("price")
+                same_as_default = (
+                    default_price is not None
+                    and incoming_price is not None
+                    and float(incoming_price) == float(default_price)
+                )
+                if same_as_default:
+                    incoming_specs.pop("_preset_price_overridden", None)
+                else:
+                    incoming_specs["_preset_price_overridden"] = True
+
+            if "image_url" in update_values:
+                default_image = existing_specs.get("_preset_default_image_url")
+                if update_values.get("image_url") == default_image:
+                    incoming_specs.pop("_preset_image_overridden", None)
+                else:
+                    incoming_specs["_preset_image_overridden"] = True
+                    if update_values.get("image_url") != item.image_url:
+                        item.image_data = None
+                        item.image_mime_type = None
+
+            update_values["specifications"] = incoming_specs
+
+        if update_values.get("kind", item.kind) == "equipment":
+            update_values["unit_label"] = None
         for field, value in update_values.items():
             setattr(item, field, value)
         if item.active:
@@ -994,6 +1027,53 @@ class OperationalService:
             business.materials_catalog_reviewed = True
         await self.session.commit()
         return _catalog_item_view(item)
+
+    async def set_catalog_item_image(
+        self,
+        business_id: UUID,
+        item_id: UUID,
+        *,
+        image_data: bytes,
+        content_type: str,
+        public_url: str,
+    ) -> CatalogItemView:
+        item = await self.session.scalar(
+            select(BusinessCatalogItem).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.id == item_id,
+            ).with_for_update()
+        )
+        if item is None:
+            raise HTTPException(404, "Catalog item not found")
+        if item.kind != "equipment":
+            raise HTTPException(422, "Images are supported only for equipment")
+
+        _validate_catalog_image(image_data, content_type)
+        item.image_data = image_data
+        item.image_mime_type = content_type
+        item.image_url = public_url
+        item.unit_label = None
+
+        specs = dict(item.specifications or {})
+        if item.preset_key and item.preset_key.startswith("equipment:"):
+            specs["_preset_image_overridden"] = True
+        item.specifications = specs
+        await self.session.commit()
+        return _catalog_item_view(item)
+
+    async def get_catalog_item_image(
+        self,
+        item_id: UUID,
+    ) -> tuple[bytes, str]:
+        item = await self.session.scalar(
+            select(BusinessCatalogItem).where(
+                BusinessCatalogItem.id == item_id,
+                BusinessCatalogItem.image_data.is_not(None),
+            )
+        )
+        if item is None or item.image_data is None or not item.image_mime_type:
+            raise HTTPException(404, "Catalog image not found")
+        return bytes(item.image_data), item.image_mime_type
 
     async def delete_catalog_item(self, business_id: UUID, item_id: UUID) -> None:
         item = await self.session.scalar(
@@ -1220,12 +1300,19 @@ class OperationalService:
                 f"{brand} {line} - {capacity:,} BTU/h".replace(",", ".")
                 + (f" - {cycle_label}" if cycle_label else "")
             )
+            default_price = raw.get("reference_price_brl")
+            if not isinstance(default_price, (int, float)) or isinstance(default_price, bool):
+                default_price = None
+            default_image = raw.get("image_url")
+            if not isinstance(default_image, str) or not default_image.startswith("https://"):
+                default_image = None
+
             specifications = {
                 key: value
                 for key, value in raw.items()
                 if key not in {
                     "id", "brand", "line", "capacity_btu", "active",
-                    "source_url", "image_url",
+                    "source_url", "image_url", "reference_price_brl",
                 }
             }
             specifications.update({
@@ -1234,6 +1321,8 @@ class OperationalService:
                 "line": line,
                 "capacity_btu": capacity,
                 "_preset_catalog_version": catalog_version,
+                "_preset_default_price_brl": default_price,
+                "_preset_default_image_url": default_image,
             })
             desired_name = f"{brand} {line} {capacity:,} BTU".replace(",", ".")
 
@@ -1245,9 +1334,9 @@ class OperationalService:
                     kind="equipment",
                     name=desired_name,
                     description=description,
-                    price=None,
-                    unit_label="unidade",
-                    image_url=raw.get("image_url"),
+                    price=default_price,
+                    unit_label=None,
+                    image_url=default_image,
                     source_url=raw.get("source_url"),
                     specifications=specifications,
                     active=True,
@@ -1258,18 +1347,46 @@ class OperationalService:
                 continue
 
             current_specs = dict(existing.specifications or {})
-            if current_specs.get("_preset_overridden") is True:
-                continue
-            if current_specs.get("_preset_catalog_version") == catalog_version:
-                continue
+            technical_overridden = current_specs.get("_preset_overridden") is True
+            price_overridden = current_specs.get("_preset_price_overridden") is True
+            image_overridden = current_specs.get("_preset_image_overridden") is True
+
+            # Legacy catalog versions had no default commercial values. A value
+            # already entered by the tenant before this version is therefore a
+            # customization and must never be silently replaced.
+            if "_preset_default_price_brl" not in current_specs and existing.price is not None:
+                price_overridden = True
+            if "_preset_default_image_url" not in current_specs and existing.image_url:
+                image_overridden = True
+
+            if technical_overridden:
+                next_specs = current_specs
+                next_specs["_preset_catalog_version"] = catalog_version
+                next_specs["_preset_default_price_brl"] = default_price
+                next_specs["_preset_default_image_url"] = default_image
+            else:
+                next_specs = specifications
+
+            if price_overridden:
+                next_specs["_preset_price_overridden"] = True
+            else:
+                next_specs.pop("_preset_price_overridden", None)
+                existing.price = default_price
+            if image_overridden:
+                next_specs["_preset_image_overridden"] = True
+            else:
+                next_specs.pop("_preset_image_overridden", None)
+                existing.image_url = default_image
+                existing.image_data = None
+                existing.image_mime_type = None
 
             existing.kind = "equipment"
-            existing.name = desired_name
-            existing.description = description
-            existing.unit_label = "unidade"
-            existing.image_url = raw.get("image_url")
-            existing.source_url = raw.get("source_url")
-            existing.specifications = specifications
+            existing.unit_label = None
+            if not technical_overridden:
+                existing.name = desired_name
+                existing.description = description
+                existing.source_url = raw.get("source_url")
+            existing.specifications = next_specs
             changed = True
 
         for preset_key, item in list(existing_by_key.items()):
@@ -1279,15 +1396,17 @@ class OperationalService:
             ):
                 continue
             specs = dict(item.specifications or {})
-            explicitly_overridden = specs.get("_preset_overridden") is True
+            explicitly_overridden = (
+                specs.get("_preset_overridden") is True
+                or specs.get("_preset_price_overridden") is True
+                or specs.get("_preset_image_overridden") is True
+            )
             if explicitly_overridden:
                 item.preset_key = None
                 specs.pop("_preset_catalog_version", None)
                 item.specifications = specs
                 changed = True
             elif item.price is not None:
-                # Preserve commercial data without allowing a retired system
-                # preset to keep participating in automatic recommendations.
                 item.preset_key = None
                 item.active = False
                 specs.pop("_preset_catalog_version", None)
@@ -1693,6 +1812,26 @@ def _service_view(item: Service) -> ServiceOption:
         active=item.active,
         intent_examples=list(examples),
     )
+
+
+CATALOG_IMAGE_MAX_BYTES = 4 * 1024 * 1024
+CATALOG_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+
+def _validate_catalog_image(data: bytes, content_type: str) -> None:
+    if content_type not in CATALOG_IMAGE_TYPES:
+        raise HTTPException(415, "Unsupported catalog image type")
+    if not data:
+        raise HTTPException(422, "Catalog image is empty")
+    if len(data) > CATALOG_IMAGE_MAX_BYTES:
+        raise HTTPException(413, "Catalog image exceeds 4 MB")
+    signatures = {
+        "image/jpeg": data.startswith(b"\xff\xd8\xff"),
+        "image/png": data.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/webp": len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP",
+    }
+    if not signatures[content_type]:
+        raise HTTPException(422, "Catalog image content does not match its type")
 
 
 def _catalog_item_view(item: BusinessCatalogItem) -> CatalogItemView:
