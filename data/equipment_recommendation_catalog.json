@@ -1,6 +1,6 @@
 {
-  "catalog_version": "2026.09.27.1",
-  "reviewed_at": "2026-09-27",
+  "catalog_version": "2026.09.28.1",
+  "reviewed_at": "2026-09-28",
   "scope": "30 configurações populares e recorrentes no mercado brasileiro em 2026, curadas por presença em rankings/editoriais atuais, varejo e páginas oficiais. Não representa um ranking nacional auditado de sell-out.",
   "sizing_note": "Heurística comercial simples por área e ocupação; validar condições especiais no local.",
   "items": [
@@ -24,12 +24,17 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://images.samsung.com/is/image/samsung/p6pim/br/f-ar12dyfaawk/gallery/br-wall-mount-f-ar12dyfaawk-front-white-544394184?$1164_776_PNG$",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "F-AR09DYFAAWK",
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "condenser_form": "unknown",
+      "reference_price_brl": 2599,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.samsung.com/br/air-conditioners/windfree/"
+      ]
     },
     {
       "id": "samsung-windfree-ai-12000-cold",
@@ -51,8 +56,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://images.samsung.com/is/image/samsung/p6pim/br/f-ar12dyfaawk/gallery/br-wall-mount-f-ar12dyfaawk-front-white-544394184?$1164_776_PNG$",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "F-AR12DYFAAWK",
       "indoor_dimensions_cm": {
         "width": 82,
@@ -64,7 +69,12 @@
         "height": 47.5,
         "depth": 24.2
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2799,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.samsung.com/br/air-conditioners/windfree/"
+      ]
     },
     {
       "id": "samsung-windfree-ai-12000-heat-cool",
@@ -86,8 +96,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://images.samsung.com/is/image/samsung/p6pim/br/f-ar12dyfaawk/gallery/br-wall-mount-f-ar12dyfaawk-front-white-544394184?$1164_776_PNG$",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "F-AR12DXFAAWK",
       "indoor_dimensions_cm": {
         "width": 82,
@@ -99,7 +109,12 @@
         "height": 47.5,
         "depth": 24.2
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 3199,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.samsung.com/br/air-conditioners/windfree/"
+      ]
     },
     {
       "id": "samsung-windfree-ai-powervolt-12000-cold",
@@ -123,8 +138,8 @@
       "voltage_v": 220,
       "voltage": "127/220 V",
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://images.samsung.com/is/image/samsung/p6pim/br/f-ar12dyfavwk/gallery/br-wall-mount-f-ar12dyfavwk-front-white-544460526?$1164_776_PNG$",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "F-AR60H12D1VW",
       "indoor_dimensions_cm": {
         "width": 82,
@@ -136,7 +151,12 @@
         "height": 54,
         "depth": 22
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 3099,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.samsung.com/br/air-conditioners/windfree/"
+      ]
     },
     {
       "id": "lg-ai-dual-inverter-voice-9000-cold",
@@ -158,8 +178,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://www.lg.com/content/dam/channel/wcms/br/images/ar-condicionado-residencial/s3-w12ja33b/gallery/DZ-2.jpg/jcr%3Acontent/renditions/thum-1600x1062.jpeg?w=800",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "S3-Q09AA31C",
       "indoor_dimensions_cm": {
         "width": 75.4,
@@ -171,7 +191,12 @@
         "height": 49.5,
         "depth": 23
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2399,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.lg.com/br/ar-condicionado-residencial/"
+      ]
     },
     {
       "id": "lg-ai-dual-inverter-voice-12000-cold",
@@ -193,8 +218,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://www.lg.com/content/dam/channel/wcms/br/images/ar-condicionado-residencial/s3-w12ja33b/gallery/DZ-2.jpg/jcr%3Acontent/renditions/thum-1600x1062.jpeg?w=800",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "S3-Q12JAQAL",
       "indoor_dimensions_cm": {
         "width": 83.7,
@@ -206,7 +231,12 @@
         "height": 49.5,
         "depth": 23
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2599,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.lg.com/br/ar-condicionado-residencial/"
+      ]
     },
     {
       "id": "lg-ai-dual-inverter-voice-9000-heat-cool",
@@ -228,8 +258,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://www.lg.com/content/dam/channel/wcms/br/images/ar-condicionado-residencial/s3-w12ja33b/gallery/DZ-2.jpg/jcr%3Acontent/renditions/thum-1600x1062.jpeg?w=800",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": null,
       "indoor_dimensions_cm": {
         "width": 75.4,
@@ -241,7 +271,12 @@
         "height": 49.5,
         "depth": 23
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2549,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.lg.com/br/ar-condicionado-residencial/"
+      ]
     },
     {
       "id": "lg-ai-dual-inverter-voice-12000-heat-cool",
@@ -263,8 +298,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://www.lg.com/content/dam/channel/wcms/br/images/ar-condicionado-residencial/s3-w12ja33b/gallery/DZ-2.jpg/jcr%3Acontent/renditions/thum-1600x1062.jpeg?w=800",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": null,
       "indoor_dimensions_cm": {
         "width": 83.7,
@@ -276,7 +311,12 @@
         "height": 49.5,
         "depth": 23
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2699,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.lg.com/br/ar-condicionado-residencial/"
+      ]
     },
     {
       "id": "midea-ai-ecomaster-9000-cold",
@@ -298,8 +338,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://mideabr.vtexassets.com/arquivos/ids/185963-1440-auto/07-ar-condicionado-inverter-ecomaster-pro-capa.webp?quality=9&v=639168077177630000",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "42EZVCA09M5 / 38EZVCA09M5",
       "indoor_dimensions_cm": {
         "width": 72.3,
@@ -311,7 +351,12 @@
         "height": 46.9,
         "depth": 25.2
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2099,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.midea.com.br/ar-condicionado"
+      ]
     },
     {
       "id": "midea-ai-ecomaster-12000-cold",
@@ -333,8 +378,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://mideabr.vtexassets.com/arquivos/ids/185963-1440-auto/07-ar-condicionado-inverter-ecomaster-pro-capa.webp?quality=9&v=639168077177630000",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "42EZVCA12M5 / 38EZVCA12M5",
       "indoor_dimensions_cm": {
         "width": 72.3,
@@ -346,7 +391,12 @@
         "height": 49.5,
         "depth": 27
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2399,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.midea.com.br/ar-condicionado"
+      ]
     },
     {
       "id": "midea-ai-ecomaster-18000-cold",
@@ -368,8 +418,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://mideabr.vtexassets.com/arquivos/ids/185963-1440-auto/07-ar-condicionado-inverter-ecomaster-pro-capa.webp?quality=9&v=639168077177630000",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "42EZVCA18M5 / 38EZVCA18M5",
       "indoor_dimensions_cm": {
         "width": 97.5,
@@ -381,7 +431,12 @@
         "height": 55.5,
         "depth": 30.3
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 3599,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.midea.com.br/ar-condicionado"
+      ]
     },
     {
       "id": "midea-ai-ecomaster-24000-cold",
@@ -403,8 +458,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://mideabr.vtexassets.com/arquivos/ids/185963-1440-auto/07-ar-condicionado-inverter-ecomaster-pro-capa.webp?quality=9&v=639168077177630000",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "42EZVCA24M5 / 38EZVCA24M5",
       "indoor_dimensions_cm": {
         "width": 105.5,
@@ -416,7 +471,12 @@
         "height": 55.4,
         "depth": 33
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 4899,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.midea.com.br/ar-condicionado"
+      ]
     },
     {
       "id": "midea-ai-ecomaster-12000-heat-cool",
@@ -438,8 +498,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://mideabr.vtexassets.com/arquivos/ids/185963-1440-auto/07-ar-condicionado-inverter-ecomaster-pro-capa.webp?quality=9&v=639168077177630000",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "42EZVQA12M5 / 38EZVQA12M5",
       "indoor_dimensions_cm": {
         "width": 72.3,
@@ -451,7 +511,12 @@
         "height": 49.5,
         "depth": 27
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2999,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.midea.com.br/ar-condicionado"
+      ]
     },
     {
       "id": "midea-ai-ecomaster-18000-heat-cool",
@@ -473,8 +538,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://mideabr.vtexassets.com/arquivos/ids/185963-1440-auto/07-ar-condicionado-inverter-ecomaster-pro-capa.webp?quality=9&v=639168077177630000",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "42EZVQA18M5 / 38EZVQA18M5",
       "indoor_dimensions_cm": {
         "width": 97.5,
@@ -486,7 +551,12 @@
         "height": 55.5,
         "depth": 30.3
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 3899,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.midea.com.br/ar-condicionado"
+      ]
     },
     {
       "id": "gree-g-top-auto-inverter-9000-cold",
@@ -508,8 +578,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://loja.gree.com.br/upload/produto/imagem/b_ar-condicionado-split-inverter-gree-g-top-auto-12000-btuh-frio-r-32-220v-12000-frio-58-1.webp",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "GWC09ATB-D6DNA1A",
       "indoor_dimensions_cm": {
         "width": 78.3,
@@ -521,7 +591,12 @@
         "height": 54.5,
         "depth": 42
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2049,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://loja.gree.com.br/"
+      ]
     },
     {
       "id": "gree-g-top-auto-inverter-12000-cold",
@@ -543,8 +618,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://loja.gree.com.br/upload/produto/imagem/b_ar-condicionado-split-inverter-gree-g-top-auto-12000-btuh-frio-r-32-220v-12000-frio-58-1.webp",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "GWC12ATC-D6DNA1A",
       "indoor_dimensions_cm": {
         "width": 83.5,
@@ -556,7 +631,12 @@
         "height": 54.5,
         "depth": 42
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2399,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://loja.gree.com.br/"
+      ]
     },
     {
       "id": "gree-g-top-auto-inverter-18000-cold",
@@ -578,8 +658,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://loja.gree.com.br/upload/produto/imagem/b_ar-condicionado-split-inverter-gree-g-top-auto-12000-btuh-frio-r-32-220v-12000-frio-58-1.webp",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": null,
       "indoor_dimensions_cm": {
         "width": 94.3,
@@ -591,7 +671,12 @@
         "height": 63,
         "depth": 49
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 3299,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://loja.gree.com.br/"
+      ]
     },
     {
       "id": "gree-g-top-auto-inverter-12000-heat-cool",
@@ -613,8 +698,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://loja.gree.com.br/upload/produto/imagem/b_ar-condicionado-split-inverter-gree-g-top-auto-12000-btuh-frio-r-32-220v-12000-frio-58-1.webp",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": null,
       "indoor_dimensions_cm": {
         "width": 83.5,
@@ -626,7 +711,12 @@
         "height": 54.5,
         "depth": 42
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2499,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://loja.gree.com.br/"
+      ]
     },
     {
       "id": "electrolux-color-adapt-9000-cold",
@@ -647,12 +737,17 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://cdn.leroymerlin.com.br/products/ar_condicionado_split_electrolux_12_000_btus_color_adapt_frio_1572114897_a8d4_600x600.jpg",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "YI09F / YE09F",
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "condenser_form": "unknown",
+      "reference_price_brl": 2099,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://loja.electrolux.com.br/eletrodomesticos/ar-condicionado/ar-condicionado-split"
+      ]
     },
     {
       "id": "electrolux-color-adapt-12000-cold",
@@ -673,8 +768,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://cdn.leroymerlin.com.br/products/ar_condicionado_split_electrolux_12_000_btus_color_adapt_frio_1572114897_a8d4_600x600.jpg",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "YI12F / YE12F",
       "indoor_dimensions_cm": {
         "width": 85.3,
@@ -686,7 +781,12 @@
         "height": 62.5,
         "depth": 44.6
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2099,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://loja.electrolux.com.br/eletrodomesticos/ar-condicionado/ar-condicionado-split"
+      ]
     },
     {
       "id": "philco-split-inverter-9000-cold",
@@ -708,12 +808,17 @@
       ],
       "voltage_v": 220,
       "wifi": false,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://philco.vtexassets.com/arquivos/ids/270846-800-800?aspect=true&height=800&v=638985639660830000&width=800",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "PAC9FB",
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "condenser_form": "unknown",
+      "reference_price_brl": 2099,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.philco.com.br/ar-condicionado"
+      ]
     },
     {
       "id": "philco-split-inverter-12000-cold",
@@ -735,8 +840,8 @@
       ],
       "voltage_v": 220,
       "wifi": false,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://philco.vtexassets.com/arquivos/ids/270846-800-800?aspect=true&height=800&v=638985639660830000&width=800",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "PAC12FC",
       "indoor_dimensions_cm": {
         "width": 79.8,
@@ -748,7 +853,12 @@
         "height": 55.5,
         "depth": 38
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2199,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.philco.com.br/ar-condicionado"
+      ]
     },
     {
       "id": "tcl-t-pro-2-12000-cold",
@@ -770,8 +880,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://static-obg.tcl.com/content/dam/brandsite/region/brazil/products/air-conditioners/the-gentlecool-series/html-v2/assets/img/mobile/ar-condicionado.png",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "TAC-12CTG2-INV",
       "indoor_dimensions_cm": {
         "width": 79,
@@ -783,7 +893,12 @@
         "height": 49.8,
         "depth": 29
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2299,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.tcl.com/br/pt/air-conditioners/t-pro-2-0"
+      ]
     },
     {
       "id": "tcl-t-pro-2-12000-heat-cool",
@@ -805,8 +920,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://static-obg.tcl.com/content/dam/brandsite/region/brazil/products/air-conditioners/the-gentlecool-series/html-v2/assets/img/mobile/ar-condicionado.png",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "TAC-12CHTG2-INV",
       "indoor_dimensions_cm": {
         "width": 79,
@@ -818,7 +933,12 @@
         "height": 49.8,
         "depth": 29
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2449,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.tcl.com/br/pt/air-conditioners/t-pro-2-0"
+      ]
     },
     {
       "id": "tcl-t-pro-2-18000-heat-cool",
@@ -840,12 +960,17 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://static-obg.tcl.com/content/dam/brandsite/region/brazil/products/air-conditioners/the-gentlecool-series/html-v2/assets/img/mobile/ar-condicionado.png",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "TAC-18CHTG2X-INV",
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "condenser_form": "unknown",
+      "reference_price_brl": 3499,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.tcl.com/br/pt/air-conditioners/t-pro-2-0"
+      ]
     },
     {
       "id": "agratto-liv-top-12000-cold",
@@ -867,8 +992,8 @@
       ],
       "voltage_v": 220,
       "wifi": false,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://images.tcdn.com.br/img/img_prod/1153568/condicionador_de_ar_12_000_btus_frio_split_liv_inverter_top_lcst12f_02i_220v_agratto_1737_7_3ec9fd098caf5ff5ffc7cdb20094e924.jpg",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "LCST12F-02I",
       "indoor_dimensions_cm": {
         "width": 77,
@@ -880,7 +1005,12 @@
         "height": 41,
         "depth": 50
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2399,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://agratto.com.br/"
+      ]
     },
     {
       "id": "agratto-liv-top-12000-heat-cool",
@@ -902,8 +1032,8 @@
       ],
       "voltage_v": 220,
       "wifi": false,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://images.tcdn.com.br/img/img_prod/1153568/condicionador_de_ar_12_000_btus_frio_split_liv_inverter_top_lcst12f_02i_220v_agratto_1737_7_3ec9fd098caf5ff5ffc7cdb20094e924.jpg",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "LCST12QF-02I",
       "indoor_dimensions_cm": {
         "width": 77,
@@ -915,7 +1045,12 @@
         "height": 50,
         "depth": 41
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 2599,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://agratto.com.br/"
+      ]
     },
     {
       "id": "daikin-ecoswing-smart-gold-12000-heat-cool",
@@ -936,8 +1071,8 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://arccotec.com.br/wp-content/uploads/sites/71/2023/11/ar-condicionado-daikin-inverter-r32.png",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "FTHP12S5VL / RHP12S5VL",
       "indoor_dimensions_cm": {
         "width": 77,
@@ -949,7 +1084,12 @@
         "height": 55,
         "depth": 32.6
       },
-      "condenser_form": "compact"
+      "condenser_form": "compact",
+      "reference_price_brl": 3799,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.daikin.com.br/produto/split-ecoswing-smart-gold-r-32"
+      ]
     },
     {
       "id": "elgin-eco-inverter-iii-12000-cold",
@@ -970,12 +1110,17 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://elgin.vtexassets.com/arquivos/ids/163680-800-800?aspect=true&height=800&v=638974269737130000&width=800",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": null,
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "condenser_form": "unknown",
+      "reference_price_brl": 2099,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.elgin.com.br/"
+      ]
     },
     {
       "id": "hisense-inverter-wifi-24000-heat-cool",
@@ -997,12 +1142,18 @@
       ],
       "voltage_v": 220,
       "wifi": true,
-      "image_url": null,
-      "image_license_note": "Definir imagem autorizada pela empresa/fabricante antes do envio automático.",
+      "image_url": "https://images.kabum.com.br/produtos/fotos/sync_mirakl/899083/large/Condensadora-Split-Hisense-Hi-wall-Inverter-Wi-fi-24000-Btus-Quente-E-Frio-Branco-As-24uw2rbb02c-220v_1777496331.jpg",
+      "image_license_note": "Imagem de referência do produto/linha obtida de página pública do fabricante ou varejo; a empresa pode substituir pela própria foto.",
       "model_sku": "AS-24UW2RBB02C",
       "indoor_dimensions_cm": null,
       "outdoor_dimensions_cm": null,
-      "condenser_form": "unknown"
+      "condenser_form": "unknown",
+      "reference_price_brl": 3499,
+      "price_reviewed_at": "2026-09-28",
+      "price_sources": [
+        "https://www.hisense.com.br/"
+      ]
     }
-  ]
+  ],
+  "pricing_note": "Preços iniciais sugeridos, arredondados a partir de referências observadas no varejo brasileiro e páginas oficiais na revisão indicada. Não incluem frete nem instalação e devem ser ajustados pela empresa conforme sua política comercial."
 }

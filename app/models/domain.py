@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     SmallInteger,
     String,
@@ -578,6 +579,8 @@ class BusinessCatalogItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     unit_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
     preset_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    image_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    image_mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     specifications: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
