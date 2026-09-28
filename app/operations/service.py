@@ -967,6 +967,18 @@ class OperationalService:
         await self.session.commit()
         return _catalog_item_view(item)
 
+    async def ensure_equipment_catalog_item(
+        self, business_id: UUID, item_id: UUID
+    ) -> None:
+        item = await self.session.scalar(
+            select(BusinessCatalogItem).where(
+                BusinessCatalogItem.business_id == business_id,
+                BusinessCatalogItem.id == item_id,
+            )
+        )
+        if item is None or item.kind != "equipment":
+            raise HTTPException(404, "Equipment catalog item not found")
+
     async def update_catalog_item(
         self, business_id: UUID, item_id: UUID, values: CatalogItemUpdate
     ) -> CatalogItemView:
