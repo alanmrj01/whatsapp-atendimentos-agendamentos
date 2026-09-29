@@ -98,6 +98,17 @@ def test_interpreter_preserves_service_questions_as_secondary_signals(
         assert result.has(ConversationIntent.SERVICE_QUESTION)
 
 
+def test_equipment_question_with_price_comparison_is_preserved_as_side_question() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Tem algum modelo de ar-condicionado mais em conta que eu consiga conectar com Alexa?"
+    )
+
+    assert result.intent is ConversationIntent.EQUIPMENT_QUESTION
+    assert result.has(ConversationIntent.EQUIPMENT_QUESTION)
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+
+
 def test_bare_name_extraction_is_restricted_to_name_like_text() -> None:
     assert extract_customer_name("Alan de Magalhães", allow_bare=True) == (
         "Alan de Magalhães"

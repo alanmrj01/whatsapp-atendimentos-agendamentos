@@ -18,6 +18,7 @@ class ConversationIntent(StrEnum):
     PRICE_QUESTION = "price_question"
     DURATION_QUESTION = "duration_question"
     SERVICE_QUESTION = "service_question"
+    EQUIPMENT_QUESTION = "equipment_question"
     CANCEL_QUESTION = "cancel_question"
     RESCHEDULE_QUESTION = "reschedule_question"
     UNKNOWN = "unknown"
@@ -92,6 +93,9 @@ _PRICE_PHRASES = (
     "cotacao",
     "orcamento",
     "pesquisa de preco",
+    "mais barato",
+    "mais barata",
+    "mais em conta",
 )
 
 _DURATION_PHRASES = (
@@ -112,6 +116,60 @@ _SERVICE_QUESTION_PHRASES = (
     "o que voces fazem",
     "o que e feito",
     "faz parte",
+)
+
+_EQUIPMENT_QUESTION_MARKERS = (
+    "ar condicionado",
+    "aparelho",
+    "equipamento",
+    "modelo",
+    "btu",
+    "alexa",
+    "google assistant",
+    "google assistente",
+    "google home",
+    "siri",
+    "wifi",
+    "wi fi",
+    "inverter",
+    "voltagem",
+    "127v",
+    "220v",
+    "quente frio",
+    "so frio",
+    "dimensao",
+    "dimensoes",
+    "medida",
+    "medidas",
+    "tamanho",
+)
+
+_EQUIPMENT_DETAIL_MARKERS = (
+    "alexa",
+    "google assistant",
+    "google assistente",
+    "google home",
+    "siri",
+    "wifi",
+    "wi fi",
+    "conectar",
+    "compativel",
+    "modelo",
+    "btu",
+    "inverter",
+    "voltagem",
+    "127v",
+    "220v",
+    "quente frio",
+    "so frio",
+    "dimensao",
+    "dimensoes",
+    "medida",
+    "medidas",
+    "tamanho",
+    "mais barato",
+    "mais barata",
+    "mais em conta",
 )
 
 _SOCIAL_ONLY = frozenset(
@@ -281,6 +339,11 @@ class DeterministicConversationInterpreter:
         if _contains_any(normalized, _SERVICE_QUESTION_PHRASES):
             intents.add(ConversationIntent.SERVICE_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
+        equipment_context = _contains_any(normalized, _EQUIPMENT_QUESTION_MARKERS)
+        equipment_detail = _contains_any(normalized, _EQUIPMENT_DETAIL_MARKERS)
+        if equipment_context and equipment_detail:
+            intents.add(ConversationIntent.EQUIPMENT_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_greeting(normalized):
             intents.add(ConversationIntent.GREETING)
         if intents == {ConversationIntent.GREETING}:
@@ -298,6 +361,7 @@ class DeterministicConversationInterpreter:
             ConversationIntent.BOOK,
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
+            ConversationIntent.EQUIPMENT_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
             ConversationIntent.CANCEL_QUESTION,
             ConversationIntent.RESCHEDULE_QUESTION,
