@@ -12,6 +12,7 @@ class ConversationState(StrEnum):
     BOOKING_EQUIPMENT_OWNERSHIP = "BOOKING_EQUIPMENT_OWNERSHIP"
     BOOKING_EQUIPMENT_MODEL = "BOOKING_EQUIPMENT_MODEL"
     BOOKING_EQUIPMENT_PROFILE = "BOOKING_EQUIPMENT_PROFILE"
+    BOOKING_EQUIPMENT_DELIVERY = "BOOKING_EQUIPMENT_DELIVERY"
     BOOKING_INSTALLATION_HEIGHT = "BOOKING_INSTALLATION_HEIGHT"
     BOOKING_PROPERTY = "BOOKING_PROPERTY"
     BOOKING_BUILDING_HOURS = "BOOKING_BUILDING_HOURS"
@@ -60,6 +61,12 @@ EQUIPMENT_PREF_ECONOMY = "equipment.preference.economy"
 EQUIPMENT_CYCLE_COLD = "equipment.cycle.cold"
 EQUIPMENT_CYCLE_HEAT_COOL = "equipment.cycle.heat_cool"
 EQUIPMENT_SPACE_NO_LIMIT = "equipment.space.no_limit"
+EQUIPMENT_DELIVERY_PICKUP = "equipment.delivery.pickup"
+EQUIPMENT_DELIVERY_ADDRESS = "equipment.delivery.address"
+EQUIPMENT_INSTALLATION_SAME_ADDRESS = "equipment.installation.same_address"
+EQUIPMENT_INSTALLATION_OTHER_ADDRESS = "equipment.installation.other_address"
+CHANGE_CONFIRM = "change.confirm"
+CHANGE_KEEP = "change.keep"
 MEDIA_HANDOFF = "media.handoff"
 MEDIA_CONTINUE_TEXT = "media.continue_text"
 HEIGHT_AT_MOST_3M = "height.at_most_3m"
@@ -126,6 +133,15 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "outdoor_space_depth_cm",
         "outdoor_space_unrestricted",
         "recommended_equipment",
+        "recommendation_presented",
+        "delivery_method",
+        "delivery_address",
+        "address_purpose",
+        "delivery_installation_match_pending",
+        "pending_change_action",
+        "pending_change_label",
+        "pending_service_change_id",
+        "pending_service_change_label",
         "media_handoff_pending",
         "installation_height_over_3m",
         "work_at_height",
@@ -140,6 +156,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "contact_phone",
         "contact_phone_confirmed",
         "quote_presented",
+        "purchase_mode",
         "purchase_only",
         "awaiting_other_phone",
         "repair_attempts",

@@ -1,6 +1,7 @@
 import pytest
 
 from app.conversations.interpreter import (
+    ConversationAct,
     ConversationIntent,
     DeterministicConversationInterpreter,
     extract_customer_name,
@@ -123,3 +124,57 @@ def test_equipment_purchase_is_distinguished_from_installation(body: str) -> Non
 def test_social_reply_is_not_accepted_as_bare_customer_name() -> None:
     assert extract_customer_name("suave", allow_bare=True) is None
     assert extract_customer_name("beleza", allow_bare=True) is None
+
+
+@pytest.mark.parametrize(
+    ("body", "forbidden"),
+    [
+        ("Não quero cancelar", ConversationIntent.CANCEL),
+        ("Não quero falar com atendente", ConversationIntent.HUMAN_HANDOFF),
+    ],
+)
+def test_negated_actions_do_not_trigger_destructive_intents(
+    body: str,
+    forbidden: ConversationIntent,
+) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert not result.has(forbidden)
+    assert result.has_act(ConversationAct.NEGATED_ACTION)
+
+
+def test_reschedule_question_is_not_treated_as_action() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Depois posso remarcar?"
+    )
+
+    assert result.has(ConversationIntent.RESCHEDULE_QUESTION)
+    assert not result.has(ConversationIntent.RESCHEDULE)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+
+
+@pytest.mark.parametrize(
+    ("body", "service_key"),
+    [
+        ("Não é limpeza, é manutenção", "diagnostics"),
+        ("Não quero comprar, só instalar", "split-installation"),
+    ],
+)
+def test_latest_corrected_service_assertion_wins(
+    body: str,
+    service_key: str,
+) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.service_key == service_key
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+    assert result.has_act(ConversationAct.CORRECTION)
+
+
+def test_additional_request_is_explicitly_classified() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Também quero uma limpeza"
+    )
+
+    assert result.has_act(ConversationAct.ADDITIONAL_REQUEST)
+    assert result.service_key == "cleaning"

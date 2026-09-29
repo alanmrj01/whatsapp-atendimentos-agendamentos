@@ -67,6 +67,9 @@ def _message_payload(
     if transition_state is ConversationState.HUMAN_HANDOFF:
         outbound_payload = outbound_payload or {}
         outbound_payload["_alovia_transition"] = "handoff"
+    if outbound.sequence_optional:
+        outbound_payload = outbound_payload or {}
+        outbound_payload["_alovia_optional"] = True
     if sequence_group is not None:
         outbound_payload = outbound_payload or {}
         outbound_payload["_alovia_sequence_group"] = sequence_group

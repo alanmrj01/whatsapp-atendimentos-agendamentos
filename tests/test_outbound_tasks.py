@@ -6,7 +6,8 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -19,6 +20,7 @@ from app.api import internal_tasks
 from app.core.config import CloudTasksConfigurationError, Settings
 from app.main import app
 from app.repositories.outbound_tasks import (
+    OutboundTaskRepository,
     StoredOutboundMessage,
     _automation_blocked_for_message,
 )
@@ -675,3 +677,59 @@ async def test_sequenced_outbound_stops_when_there_is_no_follow_up() -> None:
 
     assert result is None
     assert enqueuer.message_ids == []
+
+
+@pytest.mark.asyncio
+async def test_optional_failed_image_allows_next_sequence_message() -> None:
+    next_id = uuid.UUID("70000000-0000-0000-0000-000000000008")
+    row = SimpleNamespace(
+        business_id=BUSINESS_ID,
+        conversation_id=uuid.uuid4(),
+        status="failed",
+        outbound_payload={
+            "_alovia_optional": True,
+            "_alovia_sequence_group": "recommendation-1",
+            "_alovia_sequence_index": 1,
+            "_alovia_sequence_count": 3,
+        },
+    )
+    result = Mock()
+    result.one_or_none.return_value = row
+    session = SimpleNamespace(
+        execute=AsyncMock(return_value=result),
+        scalar=AsyncMock(return_value=next_id),
+    )
+
+    found = await OutboundTaskRepository(session).next_sequence_message_id(  # type: ignore[arg-type]
+        MESSAGE_ID
+    )
+
+    assert found == next_id
+    session.scalar.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_critical_failed_message_still_blocks_sequence() -> None:
+    row = SimpleNamespace(
+        business_id=BUSINESS_ID,
+        conversation_id=uuid.uuid4(),
+        status="failed",
+        outbound_payload={
+            "_alovia_sequence_group": "recommendation-1",
+            "_alovia_sequence_index": 0,
+            "_alovia_sequence_count": 3,
+        },
+    )
+    result = Mock()
+    result.one_or_none.return_value = row
+    session = SimpleNamespace(
+        execute=AsyncMock(return_value=result),
+        scalar=AsyncMock(),
+    )
+
+    found = await OutboundTaskRepository(session).next_sequence_message_id(  # type: ignore[arg-type]
+        MESSAGE_ID
+    )
+
+    assert found is None
+    session.scalar.assert_not_awaited()
