@@ -38,6 +38,25 @@ _SCHEDULING_FIELDS = frozenset(
     }
 )
 
+_PLANNING_INPUTS = frozenset(
+    {
+        "quantity",
+        "access_condition",
+        "service_address",
+        "equipment_ownership",
+        "equipment_model",
+        "installation_height_over_3m",
+        "work_at_height",
+        "property_type",
+        "building_hours_start",
+        "building_hours_end",
+        "gate_instructions",
+        "tubing_meters",
+        "site_allowed_end",
+        "site_limit_answered",
+    }
+) | _RECOMMENDATION_INPUTS
+
 _SERVICE_REUSABLE_FIELDS = frozenset(
     {
         "service_address",
@@ -70,6 +89,11 @@ def invalidate_changed_facts(
         updated.pop("recommended_equipment", None)
         updated.pop("recommendation_presented", None)
         updated.pop("quote_presented", None)
+
+    if changed & _PLANNING_INPUTS:
+        updated.pop("quote_presented", None)
+        for field in _SCHEDULING_FIELDS:
+            updated.pop(field, None)
 
     if "selected_date" in changed:
         updated.pop("selected_time", None)
