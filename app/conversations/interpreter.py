@@ -199,22 +199,23 @@ class DeterministicConversationInterpreter:
             acts.add(ConversationAct.ADDITIONAL_REQUEST)
         if re.search(
             r"\bnao\s+(?:quero\s+|vou\s+|pretendo\s+|desejo\s+)?"
-            r"(?:cancelar|desmarcar|remarcar|reagendar|comprar|falar\s+com)\b",
+            r"(?:cancelar|cancelamento|desmarcar|remarcar|reagendar|"
+            r"reagendamento|comprar|falar\s+com|(?:um\s+)?atendente)\b",
             normalized,
         ):
             acts.add(ConversationAct.NEGATED_ACTION)
 
-        if _contains_any(
-            assertion,
-            (
-                "falar com atendente",
-                "falar com alguem",
-                "falar com uma pessoa",
-                "quero um atendente",
-                "atendente humano",
-                "pessoa da equipe",
-            ),
-        ) and not _phrase_is_negated(normalized, "falar com atendente"):
+        handoff_aliases = (
+            "falar com atendente",
+            "falar com alguem",
+            "falar com uma pessoa",
+            "quero um atendente",
+            "atendente humano",
+            "pessoa da equipe",
+        )
+        if _contains_any(assertion, handoff_aliases) and not any(
+            _phrase_is_negated(normalized, alias) for alias in handoff_aliases
+        ):
             intents.add(ConversationIntent.HUMAN_HANDOFF)
         reschedule_signal = _contains_any(
             assertion,
@@ -230,7 +231,13 @@ class DeterministicConversationInterpreter:
             assertion,
             ("cancelar", "cancelamento", "cancela", "desmarcar"),
         )
-        reschedule_aliases = ("remarcar", "reagendar", "mudar horario", "trocar horario")
+        reschedule_aliases = (
+            "remarcar",
+            "reagendar",
+            "reagendamento",
+            "mudar horario",
+            "trocar horario",
+        )
         if reschedule_signal and not any(
             _phrase_is_negated(assertion, alias) for alias in reschedule_aliases
         ):
@@ -239,7 +246,7 @@ class DeterministicConversationInterpreter:
             else:
                 intents.add(ConversationIntent.RESCHEDULE_QUESTION)
                 acts.add(ConversationAct.SIDE_QUESTION)
-        cancel_aliases = ("cancelar", "cancela", "desmarcar")
+        cancel_aliases = ("cancelar", "cancelamento", "cancela", "desmarcar")
         if cancel_signal and not any(
             _phrase_is_negated(assertion, alias) for alias in cancel_aliases
         ):
