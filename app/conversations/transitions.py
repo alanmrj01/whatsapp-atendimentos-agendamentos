@@ -1336,7 +1336,7 @@ async def _resume_pending_question(
         ConversationState.BOOKING_EQUIPMENT_DELIVERY: (
             delivery_installation_address_message()
             if context.get("delivery_installation_match_pending") is True
-            else equipment_delivery_message()
+            else _equipment_delivery_prompt(context)
         ),
         ConversationState.BOOKING_INSTALLATION_HEIGHT: installation_height_message(),
         ConversationState.BOOKING_PROPERTY: property_type_message(),
@@ -3532,6 +3532,13 @@ async def _handle_equipment_delivery(
             action = EQUIPMENT_DELIVERY_PICKUP
         elif normalized in {"receber", "entregar", "entrega", "quero receber"}:
             action = EQUIPMENT_DELIVERY_ADDRESS
+        elif normalized in {
+            "junto da instalacao",
+            "junto com a instalacao",
+            "receber na instalacao",
+            "entregar na instalacao",
+        }:
+            action = EQUIPMENT_DELIVERY_WITH_INSTALLATION
         elif normalized in {"sim", "mesmo endereco", "no mesmo endereco"}:
             action = EQUIPMENT_INSTALLATION_SAME_ADDRESS
         elif normalized in {"nao", "outro endereco", "endereco diferente"}:
@@ -3557,6 +3564,21 @@ async def _handle_equipment_delivery(
             address_request_message(
                 "Qual é o endereço de entrega, com rua, número e cidade?"
             ),
+        )
+    if (
+        action == EQUIPMENT_DELIVERY_WITH_INSTALLATION
+        and context.get("purchase_only") is False
+    ):
+        updated["delivery_method"] = "installation"
+        updated.pop("delivery_address", None)
+        updated.pop("delivery_installation_match_pending", None)
+        updated.pop("address_purpose", None)
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            customer_name=customer_name,
         )
     if action == EQUIPMENT_INSTALLATION_SAME_ADDRESS:
         delivery_address = ServiceAddress.from_snapshot(
@@ -3593,7 +3615,7 @@ async def _handle_equipment_delivery(
     prompt = (
         delivery_installation_address_message()
         if pending_match
-        else equipment_delivery_message()
+        else _equipment_delivery_prompt(context)
     )
     return _retry_or_handoff(
         ConversationState.BOOKING_EQUIPMENT_DELIVERY,
@@ -5224,7 +5246,7 @@ async def _advance_intake(
                 return _transition(
                     ConversationState.BOOKING_EQUIPMENT_DELIVERY,
                     context,
-                    equipment_delivery_message(),
+                    _equipment_delivery_prompt(context),
                 )
             if (
                 context.get("delivery_method") == "delivery"
@@ -5247,10 +5269,7 @@ async def _advance_intake(
                 return _transition(
                     ConversationState.COMPLETED,
                     context,
-                    _text_message(
-                        "Perfeito. A equipe seguirá com a confirmação de disponibilidade "
-                        "do aparelho e os próximos detalhes da compra."
-                    ),
+                    _text_message(_equipment_purchase_summary(context)),
                 )
 
         if (
@@ -5424,10 +5443,12 @@ async def _offer_dates(
             ),
         )
 
+    details = await _safe_service_details(inbound, port, service_id)
+    service_label = getattr(details, "name", None)
     estimate = (
         ""
         if context.get("quote_presented") is True
-        else _estimate_message(plan)
+        else _estimate_message(plan, service_label=service_label)
     )
     prefix = f"{estimate}\n\n" if estimate else ""
     if len(dates) > 10:
@@ -5900,13 +5921,29 @@ async def _quote_transition(
     if model:
         equipment_lines.append(f"Equipamento informado: {model}.")
 
-    if plan.service.estimated_price is not None:
-        service_price = (
-            f"Instalação/serviço: {_format_brl(plan.service.estimated_price)}."
-        )
+    service_value = plan.service.estimated_price
+    equipment_value = _equipment_price(recommendation)
+    if service_value is not None:
+        if _is_maintenance_service(service_label):
+            service_price = (
+                f"Taxa base de manutenção: {_format_brl(service_value)}. "
+                "O valor final é confirmado após a inspeção do técnico e pode variar "
+                "conforme o defeito, o tempo necessário e eventual troca ou reposição de peças."
+            )
+        else:
+            service_price = f"Serviço: {_format_brl(service_value)}."
     else:
-        service_price = (
-            "Instalação/serviço: valor a confirmar após validar a configuração."
+        service_price = "Serviço: valor a confirmar após validar a configuração."
+
+    total_line = ""
+    if (
+        context.get("purchase_only") is False
+        and service_value is not None
+        and equipment_value is not None
+    ):
+        total_line = (
+            f" Total equipamento + serviço: "
+            f"{_format_brl(service_value + equipment_value)}."
         )
 
     first_body = (
@@ -5914,7 +5951,7 @@ async def _quote_transition(
         if equipment_lines
         else f"Cotação para {service_label}."
     )
-    service_body = service_price
+    service_body = service_price + total_line
 
     updated = {
         **context,
@@ -6042,9 +6079,42 @@ async def _confirmation_body(
     except BookingRequiresHandoff:
         plan = None
     if plan is not None:
-        if plan.service.estimated_price is not None:
-            prefix = "Valor" if plan.service.pricing_type is PricingType.FIXED else "Valor estimado"
-            lines.append(f"• {prefix}: {_format_brl(plan.service.estimated_price)}")
+        service_value = plan.service.estimated_price
+        equipment_value = _equipment_price(recommendation)
+        includes_equipment_purchase = (
+            context.get("purchase_only") is False
+            and isinstance(recommendation, dict)
+        )
+        if service_value is not None:
+            if _is_maintenance_service(service_label):
+                lines.append(
+                    f"• Taxa base de manutenção: {_format_brl(service_value)}"
+                )
+            else:
+                label = (
+                    "Valor do serviço"
+                    if plan.service.pricing_type is PricingType.FIXED
+                    else "Valor estimado do serviço"
+                )
+                lines.append(f"• {label}: {_format_brl(service_value)}")
+        if includes_equipment_purchase and equipment_value is not None:
+            lines.append(
+                f"• Valor do equipamento: {_format_brl(equipment_value)}"
+            )
+        if (
+            includes_equipment_purchase
+            and service_value is not None
+            and equipment_value is not None
+        ):
+            lines.append(
+                f"• Total: {_format_brl(service_value + equipment_value)}"
+            )
+        if _is_maintenance_service(service_label) and service_value is not None:
+            lines.append(
+                "• Observação: a taxa de manutenção é base. O valor final é "
+                "confirmado após a inspeção do técnico e pode variar conforme "
+                "o defeito, o tempo de serviço e peças necessárias."
+            )
         lines.append(
             "• Duração estimada: "
             f"{_format_duration(plan.service.estimated_duration_minutes)}"
@@ -6701,10 +6771,16 @@ def _site_limit(
     return parsed
 
 
-def _estimate_message(plan: BookingPlan) -> str:
+def _estimate_message(
+    plan: BookingPlan,
+    *,
+    service_label: str | None = None,
+) -> str:
     price = plan.service.estimated_price
     if price is None:
         return "Já tenho as informações necessárias para consultar a agenda."
+    if _is_maintenance_service(service_label):
+        return _maintenance_base_fee_message(price)
     formatted = _format_brl(price)
     if plan.service.pricing_type is PricingType.FIXED:
         return f"O valor do serviço é {formatted}."
@@ -6712,6 +6788,73 @@ def _estimate_message(plan: BookingPlan) -> str:
         f"Pelas informações que você passou, o valor estimado é {formatted}. "
         "Ele pode mudar se houver uma condição diferente no local."
     )
+
+
+def _is_maintenance_service(service_label: str | None) -> bool:
+    normalized = normalize_portuguese(service_label or "")
+    return any(
+        token in normalized
+        for token in (
+            "manutenc",
+            "diagnost",
+            "corretiv",
+            "conserto",
+            "preventiv",
+            "revisao",
+        )
+    )
+
+
+def _maintenance_base_fee_message(price: Decimal) -> str:
+    return (
+        f"A taxa base de manutenção cadastrada é {_format_brl(price)}. "
+        "O valor final pode variar conforme o defeito identificado, o tempo "
+        "necessário e eventual troca ou reposição de peças. "
+        "O valor exato é confirmado após a inspeção do técnico no local."
+    )
+
+
+def _equipment_price(value: object) -> Decimal | None:
+    if not isinstance(value, dict):
+        return None
+    raw = value.get("price")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, Decimal)):
+        return None
+    return Decimal(str(raw))
+
+
+def _equipment_delivery_prompt(
+    context: dict[str, Any],
+) -> OutboundMessage:
+    return equipment_delivery_message(
+        include_installation=context.get("purchase_only") is False
+    )
+
+
+def _equipment_purchase_summary(context: dict[str, Any]) -> str:
+    recommendation = context.get("recommended_equipment")
+    if not isinstance(recommendation, dict):
+        return (
+            "Compra registrada. A equipe seguirá com a confirmação de "
+            "disponibilidade e os próximos detalhes."
+        )
+    label = recommendation.get("label")
+    equipment_label = label if isinstance(label, str) and label else "Equipamento selecionado"
+    lines = ["Resumo da compra:", f"• Equipamento: {equipment_label}"]
+    price = _equipment_price(recommendation)
+    if price is not None:
+        lines.append(f"• Valor do equipamento: {_format_brl(price)}")
+    else:
+        lines.append("• Valor do equipamento: a confirmar")
+    delivery_method = _context_string(context, "delivery_method")
+    if delivery_method == "pickup":
+        lines.append("• Entrega: retirada")
+    elif delivery_method == "delivery":
+        lines.append("• Entrega: no endereço informado")
+    lines.append(
+        "A equipe seguirá com a confirmação de disponibilidade e os próximos detalhes."
+    )
+    return "\n".join(lines)
 
 
 def _format_brl(value: Decimal) -> str:
