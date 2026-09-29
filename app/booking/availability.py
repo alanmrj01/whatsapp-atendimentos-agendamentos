@@ -561,6 +561,12 @@ class PostgresBookingAvailabilityPort:
         business, service = await self._load_business_service(
             business_id, appointment.service_id
         )
+        minimum_date = (
+            self._local_now(business.timezone).date()
+            + timedelta(days=MIN_BOOKING_LEAD_DAYS)
+        )
+        if parsed_date < minimum_date:
+            raise SlotUnavailable("Selected date is inside the booking lead window")
         plan = await self._build_plan(business, service, requirements)
         self._require_automatic_plan(plan)
         employee_ids, starts_at = await self._employees_for_exact_start(
