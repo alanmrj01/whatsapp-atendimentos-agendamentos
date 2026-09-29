@@ -134,6 +134,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "outdoor_space_depth_cm",
         "outdoor_space_unrestricted",
         "recommended_equipment",
+        "equipment_suggestion",
         "recommendation_presented",
         "delivery_method",
         "equipment_budget_max",
