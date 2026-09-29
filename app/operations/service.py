@@ -1776,7 +1776,8 @@ def _employee_view(item: Employee, service_ids: list[UUID]) -> EmployeeView:
 
 
 def _message_history_sort_key(item: Message) -> tuple[datetime, str, int, str]:
-    payload = item.outbound_payload if isinstance(item.outbound_payload, dict) else {}
+    raw_payload = getattr(item, "outbound_payload", None)
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
     group = payload.get("_alovia_sequence_group")
     index = payload.get("_alovia_sequence_index")
     return (
@@ -1794,7 +1795,8 @@ def _message_view(item: Message) -> MessageView:
         else None
     )
     if media_url is None and item.direction == "outbound" and item.message_type == "image":
-        payload = item.outbound_payload if isinstance(item.outbound_payload, dict) else {}
+        raw_payload = getattr(item, "outbound_payload", None)
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
         image_url = payload.get("image_url")
         if isinstance(image_url, str) and image_url.startswith("https://"):
             media_url = image_url
