@@ -1099,13 +1099,8 @@ async def _equipment_question_answer(
             "para não indicar uma capacidade inadequada."
         )
 
-    budget = (
+    explicit_equipment_budget = (
         interpretation.equipment_budget_max
-        or (
-            interpretation.total_budget_max
-            if context.get("purchase_mode") != "both"
-            else None
-        )
         or (
             float(context["equipment_budget_max"])
             if isinstance(context.get("equipment_budget_max"), (int, float))
@@ -1113,6 +1108,41 @@ async def _equipment_question_answer(
             else None
         )
     )
+    total_budget = (
+        interpretation.total_budget_max
+        or (
+            float(context["total_budget_max"])
+            if isinstance(context.get("total_budget_max"), (int, float))
+            and not isinstance(context.get("total_budget_max"), bool)
+            else None
+        )
+    )
+    budget = explicit_equipment_budget
+    total_service_amount: Decimal | None = None
+    if budget is None and total_budget is not None:
+        if context.get("purchase_mode") == "both":
+            service_id = _context_service_id(context)
+            if service_id is not None:
+                try:
+                    service_plan = await port.estimate(
+                        inbound.business_id,
+                        service_id,
+                        _requirements_from_context(context),
+                    )
+                except BookingRequiresHandoff:
+                    service_plan = None
+                if (
+                    service_plan is not None
+                    and service_plan.service.estimated_price is not None
+                ):
+                    total_service_amount = service_plan.service.estimated_price
+                    budget = max(
+                        0.0,
+                        float(total_budget) - float(total_service_amount),
+                    )
+        else:
+            budget = float(total_budget)
+
     current_price = (
         recommendation.get("price")
         if isinstance(recommendation, dict)
