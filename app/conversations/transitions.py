@@ -1543,6 +1543,20 @@ async def _handle_pending_change(
             booking_port,
             customer_name=conversation.customer_name,
         )
+    if pending_action in {
+        EQUIPMENT_DELIVERY_PICKUP,
+        EQUIPMENT_DELIVERY_ADDRESS,
+        EQUIPMENT_DELIVERY_WITH_INSTALLATION,
+        EQUIPMENT_INSTALLATION_SAME_ADDRESS,
+        EQUIPMENT_INSTALLATION_OTHER_ADDRESS,
+    }:
+        return await _handle_equipment_delivery(
+            inbound,
+            cleaned,
+            pending_action,
+            booking_port,
+            customer_name=conversation.customer_name,
+        )
 
     property_by_action = {
         PROPERTY_HOUSE: "house",
@@ -1630,6 +1644,7 @@ def _stale_interactive_transition(
         ConversationState.BOOKING_EQUIPMENT_DELIVERY: {
             EQUIPMENT_DELIVERY_PICKUP,
             EQUIPMENT_DELIVERY_ADDRESS,
+            EQUIPMENT_DELIVERY_WITH_INSTALLATION,
             EQUIPMENT_INSTALLATION_SAME_ADDRESS,
             EQUIPMENT_INSTALLATION_OTHER_ADDRESS,
         },
@@ -1683,6 +1698,9 @@ def _stale_interactive_transition(
         EQUIPMENT_PREF_ECONOMY: "maior economia",
         EQUIPMENT_CYCLE_COLD: "só frio",
         EQUIPMENT_CYCLE_HEAT_COOL: "quente/frio",
+        EQUIPMENT_DELIVERY_PICKUP: "retirar o aparelho",
+        EQUIPMENT_DELIVERY_ADDRESS: "receber o aparelho no endereço",
+        EQUIPMENT_DELIVERY_WITH_INSTALLATION: "levar o aparelho junto com a instalação",
         PROPERTY_HOUSE: "casa",
         PROPERTY_BUILDING: "prédio/apartamento",
         PROPERTY_CONDOMINIUM: "condomínio",
