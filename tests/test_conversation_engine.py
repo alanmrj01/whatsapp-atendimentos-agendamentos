@@ -3515,3 +3515,36 @@ async def test_diagnostics_confirmation_marks_service_amount_as_base() -> None:
     assert "Valor base do serviço técnico: R$ 100,00" in body
     assert "valor final" in body.casefold()
     assert "peças" in body.casefold()
+
+
+@mark.asyncio
+async def test_new_purchase_with_budget_keeps_budget_and_enters_purchase_flow() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.START,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            1190,
+            body=(
+                "Eu preciso de um ar-condicionado, mas só posso gastar "
+                "até R$ 1.500"
+            ),
+        )
+    )
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert repository.context["equipment_budget_max"] == 1500.0
+    assert repository.context["service_clarification"] == "equipment_purchase"
+    assert "R$ 1.500,00" in body
+    assert "capacidade inadequada" in body.casefold()
+    assert "comprar" in body.casefold() or "instalar" in body.casefold()
