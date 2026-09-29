@@ -3537,6 +3537,89 @@ async def test_diagnostics_confirmation_marks_service_amount_as_base() -> None:
 
 
 @mark.asyncio
+async def test_generic_equipment_quote_never_recommends_model_before_sizing() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.START,
+        customer_name="Alan",
+        business_timezone="America/Sao_Paulo",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            1185,
+            body=(
+                "Olá boa noite, tudo bem?\n"
+                "Gostaria de fazer uma cotação de um ar condicionado"
+            ),
+        )
+    )
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    normalized = body.casefold()
+
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert repository.context["service_clarification"] == "equipment_purchase"
+    assert "comprar" in normalized
+    assert "instalação" in normalized
+    assert "gree" not in normalized
+    assert "9.000 btu" not in normalized
+    assert "uma opção compatível" not in normalized
+    assert body.find("boa noite") < body.find("Você quer")
+
+
+@mark.asyncio
+async def test_generic_cheaper_question_without_sizing_does_not_pick_catalog_item() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1186, body="Tem algum modelo mais barato?")
+    )
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert repository.state == ConversationState.POST_BOOKING_HELP
+    assert "capacidade necessária em BTU" in body
+    assert "Gree" not in body
+    assert "TCL" not in body
+    assert "opção compatível" not in body.casefold()
+
+
+@mark.asyncio
+async def test_specific_catalog_price_lookup_without_sizing_is_factual_not_compatibility_claim() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            1187,
+            body="Quanto custa o aparelho Gree G-Top Auto Inverter?",
+        )
+    )
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "Gree G-Top Auto Inverter" in body
+    assert "R$ 2.500,00" in body
+    assert "consulta de catálogo" in body.casefold()
+    assert "não uma indicação de capacidade" in body.casefold()
+    assert "uma opção compatível" not in body.casefold()
+
+
+@mark.asyncio
 async def test_new_purchase_with_budget_keeps_budget_and_enters_purchase_flow() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.START,

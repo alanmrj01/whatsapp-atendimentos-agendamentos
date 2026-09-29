@@ -1183,6 +1183,35 @@ async def _equipment_question_answer(
             "para não indicar uma capacidade inadequada."
         )
 
+    explicit_catalog_lookup = bool(mentioned_candidates) or requested_capacity is not None
+    has_sizing_basis = (
+        isinstance(required_btu, int)
+        and not isinstance(required_btu, bool)
+    )
+    if not explicit_catalog_lookup and not has_sizing_basis:
+        if requested_features:
+            feature_label = ", ".join(requested_features)
+            if not candidates:
+                return (
+                    f"Não tenho compatibilidade com {feature_label} explicitamente "
+                    "cadastrada em uma opção do catálogo. Prefiro não assumir essa "
+                    "função sem confirmação."
+                )
+            return (
+                f"Encontrei opções com {feature_label} cadastradas, mas antes de "
+                "indicar um modelo preciso confirmar o perfil do ambiente e a "
+                "capacidade necessária em BTU."
+            )
+        if interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE):
+            # Generic purchase/quote requests must enter the commercial flow
+            # first. Do not let the catalog sorter manufacture a "compatible"
+            # recommendation before the environment has been dimensioned.
+            return None
+        return (
+            "Antes de comparar modelos, preciso confirmar o perfil do ambiente "
+            "e a capacidade necessária em BTU para não indicar um aparelho inadequado."
+        )
+
     explicit_equipment_budget = (
         interpretation.equipment_budget_max
         or (
@@ -1324,6 +1353,14 @@ async def _equipment_question_answer(
         required_btu=(required_btu if isinstance(required_btu, int) else None),
         selected_cycle=cycle,
     )
+    if not has_sizing_basis:
+        return (
+            f"No catálogo, {selected.brand} {selected.line} "
+            f"{selected.capacity_btu:,} BTU".replace(",", ".")
+            + f", {cycle_label}{feature_text}, está por {price_text}. "
+            "Isso é uma consulta de catálogo, não uma indicação de capacidade "
+            "para o ambiente."
+        )
     return (
         f"Uma opção compatível é {selected.brand} {selected.line} "
         f"{selected.capacity_btu:,} BTU".replace(",", ".")

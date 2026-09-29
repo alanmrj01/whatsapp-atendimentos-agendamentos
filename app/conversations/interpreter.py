@@ -275,6 +275,12 @@ class DeterministicConversationInterpreter:
 
         if _contains_equipment_purchase(assertion) and not _purchase_is_negated(normalized):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
+        elif (
+            service_key is None
+            and _contains_generic_equipment_price_request(assertion)
+            and not _purchase_is_negated(normalized)
+        ):
+            intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
 
         if _contains_any(normalized, ("tem horario", "disponibilidade", "quando pode", "qual horario")):
             intents.add(ConversationIntent.AVAILABILITY)
@@ -555,6 +561,41 @@ def _clean_name(value: str) -> str | None:
     if cleaned.isupper() or cleaned.islower():
         cleaned = cleaned.title()
     return cleaned
+
+
+def _contains_generic_equipment_price_request(value: str) -> bool:
+    """Treat a generic equipment price/quote request as purchase intent.
+
+    Specific product lookups may still be answered factually by the catalog
+    question path. Service quotes are excluded earlier when a service intent
+    was recognized.
+    """
+
+    has_equipment = _contains_any(
+        value,
+        (
+            "ar condicionado",
+            "ar-condicionado",
+            "aparelho",
+            "equipamento",
+            "split",
+        ),
+    )
+    if not has_equipment:
+        return False
+    return _contains_any(
+        value,
+        (
+            "quanto custa",
+            "qual o valor",
+            "qual valor",
+            "preco",
+            "cotacao",
+            "orcamento",
+            "cotar",
+            "pesquisa de preco",
+        ),
+    )
 
 
 def _contains_equipment_purchase(value: str) -> bool:
