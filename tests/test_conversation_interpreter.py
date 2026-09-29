@@ -130,7 +130,13 @@ def test_social_reply_is_not_accepted_as_bare_customer_name() -> None:
     ("body", "forbidden"),
     [
         ("Não quero cancelar", ConversationIntent.CANCEL),
+        ("Não quero cancelamento", ConversationIntent.CANCEL),
+        ("Não quero remarcar", ConversationIntent.RESCHEDULE),
+        ("Não quero reagendamento", ConversationIntent.RESCHEDULE),
         ("Não quero falar com atendente", ConversationIntent.HUMAN_HANDOFF),
+        ("Não quero falar com uma pessoa", ConversationIntent.HUMAN_HANDOFF),
+        ("Não quero falar com alguém", ConversationIntent.HUMAN_HANDOFF),
+        ("Não quero um atendente", ConversationIntent.HUMAN_HANDOFF),
     ],
 )
 def test_negated_actions_do_not_trigger_destructive_intents(
