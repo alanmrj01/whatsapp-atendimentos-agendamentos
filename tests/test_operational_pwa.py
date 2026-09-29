@@ -557,3 +557,104 @@ def test_message_history_sort_key_preserves_sequence_index_for_same_timestamp() 
     )
 
     assert ordered == [first, second, third]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message_type", "stored_mime", "downloaded_mime", "expected_mime"),
+    [
+        ("image", "image/jpeg", "image/jpeg", "image/jpeg"),
+        ("audio", "audio/ogg", "application/octet-stream", "audio/ogg"),
+        ("video", "video/mp4", "video/mp4", "video/mp4"),
+    ],
+)
+async def test_conversation_media_endpoint_returns_playable_bytes_and_mime(
+    monkeypatch,
+    message_type: str,
+    stored_mime: str,
+    downloaded_mime: str,
+    expected_mime: str,
+) -> None:
+    conversation_id = uuid4()
+    message_id = uuid4()
+    payload = b"real-media-bytes"
+    message = SimpleNamespace(
+        id=message_id,
+        business_id=BUSINESS_A,
+        conversation_id=conversation_id,
+        media_id="media-123",
+        message_type=message_type,
+        media_mime_type=stored_mime,
+    )
+    db = SimpleNamespace(scalar=AsyncMock(return_value=message))
+    sender = SimpleNamespace(
+        download_media=AsyncMock(return_value=(payload, downloaded_mime)),
+        aclose=AsyncMock(),
+    )
+    resolver = SimpleNamespace(resolve=AsyncMock(return_value=sender))
+    monkeypatch.setattr(
+        operational_api,
+        "build_business_sender_resolver",
+        lambda *_args, **_kwargs: resolver,
+    )
+    monkeypatch.setattr(
+        operational_api,
+        "get_settings",
+        lambda: SimpleNamespace(),
+    )
+
+    response = await operational_api.get_conversation_message_media(
+        conversation_id,
+        message_id,
+        principal(BUSINESS_A),
+        db,
+    )
+
+    assert response.body == payload
+    assert response.media_type == expected_mime
+    assert response.headers["x-content-type-options"] == "nosniff"
+    sender.download_media.assert_awaited_once_with("media-123")
+    sender.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_conversation_media_endpoint_rejects_empty_download(
+    monkeypatch,
+) -> None:
+    conversation_id = uuid4()
+    message_id = uuid4()
+    message = SimpleNamespace(
+        id=message_id,
+        business_id=BUSINESS_A,
+        conversation_id=conversation_id,
+        media_id="media-123",
+        message_type="audio",
+        media_mime_type="audio/ogg",
+    )
+    db = SimpleNamespace(scalar=AsyncMock(return_value=message))
+    sender = SimpleNamespace(
+        download_media=AsyncMock(return_value=(b"", "audio/ogg")),
+        aclose=AsyncMock(),
+    )
+    resolver = SimpleNamespace(resolve=AsyncMock(return_value=sender))
+    monkeypatch.setattr(
+        operational_api,
+        "build_business_sender_resolver",
+        lambda *_args, **_kwargs: resolver,
+    )
+    monkeypatch.setattr(
+        operational_api,
+        "get_settings",
+        lambda: SimpleNamespace(),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await operational_api.get_conversation_message_media(
+            conversation_id,
+            message_id,
+            principal(BUSINESS_A),
+            db,
+        )
+
+    assert exc.value.status_code == 503
+    sender.aclose.assert_awaited_once()
