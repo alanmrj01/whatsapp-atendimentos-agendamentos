@@ -280,7 +280,7 @@ async def get_conversation_message_media(
     )
     sender = await resolver.resolve(membership.business_id)
     try:
-        content, mime_type = await sender.download_media(message.media_id)
+        content, downloaded_mime_type = await sender.download_media(message.media_id)
     except WhatsAppClientError:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -288,20 +288,44 @@ async def get_conversation_message_media(
         ) from None
     finally:
         await sender.aclose()
+
+    if not content:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Media is temporarily unavailable",
+        )
+
+    expected_prefix = f"{message.message_type}/"
+    downloaded_mime = (
+        downloaded_mime_type.strip()
+        if isinstance(downloaded_mime_type, str)
+        else ""
+    )
+    stored_mime = (
+        message.media_mime_type.strip()
+        if isinstance(message.media_mime_type, str)
+        else ""
+    )
+    default_mime = {
+        "image": "image/jpeg",
+        "audio": "audio/mpeg",
+        "video": "video/mp4",
+    }[message.message_type]
+    media_type = next(
+        (
+            candidate
+            for candidate in (downloaded_mime, stored_mime)
+            if candidate.casefold().startswith(expected_prefix)
+        ),
+        default_mime,
+    )
     return Response(
         content=content,
-        media_type=(
-            mime_type
-            or message.media_mime_type
-            or {
-                "image": "image/jpeg",
-                "audio": "audio/mpeg",
-                "video": "video/mp4",
-            }.get(message.message_type, "application/octet-stream")
-        ),
+        media_type=media_type,
         headers={
             "Cache-Control": "private, max-age=60",
             "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
