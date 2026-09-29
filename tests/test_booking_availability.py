@@ -633,6 +633,24 @@ async def test_confirmation_freezes_duration_travel_price_and_address() -> None:
 
 
 @pytest.mark.asyncio
+async def test_confirmation_rejects_dates_inside_three_day_lead_window() -> None:
+    session = MutationSession()
+    port = MutationPort(session)
+
+    with pytest.raises(SlotUnavailable):
+        await port.confirm(
+            BUSINESS_ID,
+            CUSTOMER_ID,
+            SERVICE_ID,
+            "2026-09-03",
+            "09:00",
+            BookingRequirements(),
+        )
+
+    assert session.added == []
+
+
+@pytest.mark.asyncio
 async def test_confirmation_is_defensively_idempotent() -> None:
     existing = appointment(
         starts_at=datetime(2026, 9, 2, 12, tzinfo=timezone.utc),
