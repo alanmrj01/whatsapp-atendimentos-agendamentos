@@ -57,6 +57,7 @@ from app.models import (
 )
 
 AVAILABILITY_HORIZON_DAYS = 30
+MIN_FULL_BOOKING_LEAD_DAYS = 3
 APPOINTMENT_EXCLUSION_CONSTRAINT = (
     "excl_appointments_employee_confirmed_overlap"
 )
@@ -107,6 +108,8 @@ class _CapacityData:
 
 
 class PostgresBookingAvailabilityPort:
+    minimum_full_booking_lead_days = MIN_FULL_BOOKING_LEAD_DAYS
+
     def __init__(
         self,
         session: AsyncSession,
@@ -308,7 +311,7 @@ class PostgresBookingAvailabilityPort:
         plan = await self._build_plan(business, service, requirements)
         self._require_automatic_plan(plan)
         local_now = self._local_now(business.timezone)
-        first_date = local_now.date()
+        first_date = self._minimum_bookable_date(business)
         last_date = first_date + timedelta(days=AVAILABILITY_HORIZON_DAYS - 1)
         starts = await self._available_starts(
             business,
@@ -338,6 +341,8 @@ class PostgresBookingAvailabilityPort:
         business, service = await self._load_business_service(
             business_id, service_id
         )
+        if parsed_date < self._minimum_bookable_date(business):
+            return ()
         plan = await self._build_plan(business, service, requirements)
         self._require_automatic_plan(plan)
         starts = await self._available_starts(
@@ -374,6 +379,8 @@ class PostgresBookingAvailabilityPort:
         business, service = await self._load_business_service(
             business_id, service_id
         )
+        if parsed_date < self._minimum_bookable_date(business):
+            raise SlotUnavailable("Selected date is unavailable")
         plan = await self._build_plan(business, service, requirements)
         self._require_automatic_plan(plan)
         employee_ids, starts_at = await self._employees_for_exact_start(
@@ -554,6 +561,8 @@ class PostgresBookingAvailabilityPort:
         business, service = await self._load_business_service(
             business_id, appointment.service_id
         )
+        if parsed_date < self._minimum_bookable_date(business):
+            raise SlotUnavailable("Selected date is unavailable")
         plan = await self._build_plan(business, service, requirements)
         self._require_automatic_plan(plan)
         employee_ids, starts_at = await self._employees_for_exact_start(
@@ -587,6 +596,12 @@ class PostgresBookingAvailabilityPort:
             return _confirmation(appointment)
         await self.session.refresh(appointment)
         raise SlotUnavailable("Selected slot is unavailable")
+
+    def _minimum_bookable_date(self, business: Business) -> date:
+        local_today = self._local_now(business.timezone).date()
+        return local_today + timedelta(
+            days=self.minimum_full_booking_lead_days + 1
+        )
 
     async def _load_business_service(
         self,
