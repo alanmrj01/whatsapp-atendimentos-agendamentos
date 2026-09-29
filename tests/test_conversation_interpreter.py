@@ -237,3 +237,12 @@ def test_cheaper_equipment_question_is_a_price_side_question() -> None:
 
     assert result.has(ConversationIntent.PRICE_QUESTION)
     assert result.has_act(ConversationAct.SIDE_QUESTION)
+
+
+def test_direct_need_for_equipment_with_budget_is_purchase_intent() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Eu preciso de um ar-condicionado, mas só posso gastar até R$ 1.500"
+    )
+
+    assert result.has(ConversationIntent.EQUIPMENT_PURCHASE)
+    assert result.equipment_budget_max == 1500.0
