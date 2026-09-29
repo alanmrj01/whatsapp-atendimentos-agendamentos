@@ -22,6 +22,8 @@ from app.tasks.auth import (
 from app.tasks.outbound import (
     build_outbound_task_enqueuer,
     enqueue_next_sequence_outbound,
+    enqueue_outbound_retry_for_event,
+    enqueue_outbound_retry_for_message,
     enqueue_pending_outbounds_for_event,
     process_outbound_message,
 )
@@ -60,6 +62,11 @@ async def process_whatsapp_event_task(
                 payload.event_key,
                 outbound_enqueuer,
             )
+            await enqueue_outbound_retry_for_event(
+                session,
+                payload.event_key,
+                outbound_enqueuer,
+            )
     except Exception as exc:
         logger.warning(
             "cloud_task_processing_failed",
@@ -83,7 +90,7 @@ async def process_whatsapp_outbound_task(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> TaskAcknowledgement:
     try:
-        await process_outbound_message(
+        result = await process_outbound_message(
             session,
             payload.message_id,
             sender_resolver=build_business_sender_resolver(
@@ -91,11 +98,19 @@ async def process_whatsapp_outbound_task(
                 settings,
             ),
         )
-        await enqueue_next_sequence_outbound(
-            session,
-            payload.message_id,
-            build_outbound_task_enqueuer(settings),
-        )
+        outbound_enqueuer = build_outbound_task_enqueuer(settings)
+        if result == "retry":
+            await enqueue_outbound_retry_for_message(
+                session,
+                payload.message_id,
+                outbound_enqueuer,
+            )
+        else:
+            await enqueue_next_sequence_outbound(
+                session,
+                payload.message_id,
+                outbound_enqueuer,
+            )
     except Exception as exc:
         logger.warning(
             "outbound_task_processing_failed",
