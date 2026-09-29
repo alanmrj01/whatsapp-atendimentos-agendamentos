@@ -9,7 +9,10 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
-from app.booking.equipment_recommender import recommend_equipment
+from app.booking.equipment_recommender import (
+    recommend_equipment,
+    required_capacity_btu,
+)
 from app.booking.domain import (
     AccessCondition,
     BookingPlan,
@@ -981,6 +984,19 @@ async def _equipment_question_answer(
         if isinstance(recommendation, dict)
         else None
     )
+    if not isinstance(required_btu, int) or isinstance(required_btu, bool):
+        area = context.get("room_area_m2")
+        people = context.get("room_people_max")
+        if (
+            isinstance(area, (int, float))
+            and not isinstance(area, bool)
+            and isinstance(people, int)
+            and not isinstance(people, bool)
+        ):
+            try:
+                required_btu = required_capacity_btu(float(area), people)
+            except ValueError:
+                required_btu = None
     if (
         not requested_capacity
         and isinstance(required_btu, int)
@@ -991,22 +1007,36 @@ async def _equipment_question_answer(
 
     feature_aliases = {
         "alexa": ("alexa", "amazon alexa"),
-        "wifi": ("wifi", "wi fi"),
+        "wifi": ("wifi", "wi fi", "wi-fi"),
         "bluetooth": ("bluetooth",),
         "inverter": ("inverter",),
     }
+    canonical_input = re.sub(r"[^a-z0-9]+", " ", normalized)
     requested_features = [
         key
         for key, aliases in feature_aliases.items()
-        if any(alias in normalized for alias in aliases)
+        if any(
+            re.sub(r"[^a-z0-9]+", " ", alias) in canonical_input
+            for alias in aliases
+        )
     ]
     for feature in requested_features:
-        aliases = feature_aliases[feature]
+        aliases = tuple(
+            re.sub(r"[^a-z0-9]+", " ", alias)
+            for alias in feature_aliases[feature]
+        )
         candidates = [
             item
             for item in candidates
             if any(
-                any(alias in normalize_portuguese(value) for alias in aliases)
+                any(
+                    alias in re.sub(
+                        r"[^a-z0-9]+",
+                        " ",
+                        normalize_portuguese(value),
+                    )
+                    for alias in aliases
+                )
                 for value in item.features
             )
             or (
