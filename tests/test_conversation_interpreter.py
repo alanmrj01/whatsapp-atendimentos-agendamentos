@@ -199,3 +199,41 @@ def test_discourse_marker_is_social_without_consuming_a_slot() -> None:
     result = DeterministicConversationInterpreter().interpret("Só uma dúvida")
 
     assert result.has_act(ConversationAct.SOCIAL)
+
+
+@pytest.mark.parametrize(
+    ("body", "equipment_budget", "service_budget", "total_budget"),
+    [
+        ("Só posso gastar até R$ 1.500 no aparelho", 1500.0, None, None),
+        ("Quero um ar-condicionado até 2 mil", 2000.0, None, None),
+        ("Meu orçamento para instalação é R$ 800", None, 800.0, None),
+        (
+            "Tenho orçamento total de R$ 4.000 com instalação",
+            None,
+            None,
+            4000.0,
+        ),
+    ],
+)
+def test_interpreter_extracts_budget_scope(
+    body: str,
+    equipment_budget: float | None,
+    service_budget: float | None,
+    total_budget: float | None,
+) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+    assert result.equipment_budget_max == equipment_budget
+    assert result.service_budget_max == service_budget
+    assert result.total_budget_max == total_budget
+
+
+def test_cheaper_equipment_question_is_a_price_side_question() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Tem algum modelo mais em conta?"
+    )
+
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
