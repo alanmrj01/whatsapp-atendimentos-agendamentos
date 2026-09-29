@@ -3177,3 +3177,57 @@ async def test_duplicate_hardening_event_keeps_outbox_idempotent() -> None:
     assert await engine.process(event) is False
     assert len(repository.outbounds) == 1
 
+
+
+@mark.asyncio
+async def test_compound_greeting_during_slot_does_not_consume_retry() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "repair_attempts": {"address": 1},
+        },
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(980, body="Bom dia, tudo bem?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["repair_attempts"] == {"address": 1}
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_old_quantity_button_confirms_change_and_invalidates_schedule() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "quantity": 1,
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "candidate_booking": {"service_id": str(SERVICE_ID)},
+        },
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(
+        inbound(981, action="quantity:2", body="2")
+    )
+    assert repository.context["pending_change_action"] == "quantity:2"
+    assert "quer mudar" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+    await engine.process(
+        inbound(982, action="change.confirm", body="Sim, mudar")
+    )
+
+    assert repository.context["quantity"] == 2
+    assert "selected_time" not in repository.context
+    assert "candidate_booking" not in repository.context
+    assert "pending_change_action" not in repository.context
+    assert repository.automation_enabled is True
