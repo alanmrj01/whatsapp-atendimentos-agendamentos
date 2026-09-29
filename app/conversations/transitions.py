@@ -365,14 +365,27 @@ async def _route_named_conversation(
     if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
 
-    question_answer = (
+    equipment_question_answer = (
         None
         if action in {QUOTE_FINISH, QUOTE_SCHEDULE}
-        else await _service_question_answer(
+        else await _equipment_question_answer(
             inbound,
             context,
             interpretation,
             booking_port,
+        )
+    )
+    question_answer = (
+        equipment_question_answer
+        or (
+            None
+            if action in {QUOTE_FINISH, QUOTE_SCHEDULE}
+            else await _service_question_answer(
+                inbound,
+                context,
+                interpretation,
+                booking_port,
+            )
         )
     )
     if (
@@ -387,14 +400,29 @@ async def _route_named_conversation(
         and not interpretation.has(ConversationIntent.AVAILABILITY)
         and context.get("request_mode") != "quote"
     ):
+        if state is ConversationState.COMPLETED:
+            return _transition(
+                ConversationState.POST_BOOKING_HELP,
+                context,
+                _text_message(question_answer),
+                follow_ups=(post_booking_help_message(),),
+            )
         follow_up = (
             f"{question_answer}\n\n"
-            f"Se quiser, {customer_lead(customer_name)}posso continuar com o agendamento."
+            f"Se quiser, {customer_lead(customer_name)}posso continuar com o atendimento."
         )
         return _transition(
             ConversationState.MENU,
-            {},
+            context,
             _text_message(follow_up),
+        )
+
+    if state is ConversationState.POST_BOOKING_HELP and question_answer is not None:
+        return _transition(
+            ConversationState.POST_BOOKING_HELP,
+            context,
+            _text_message(question_answer),
+            follow_ups=(post_booking_help_message(),),
         )
 
     booking_states = {
@@ -456,7 +484,10 @@ async def _route_named_conversation(
     if (
         state in booking_states
         and question_answer is not None
-        and interpretation.has_act(ConversationAct.SIDE_QUESTION)
+        and (
+            interpretation.has_act(ConversationAct.SIDE_QUESTION)
+            or equipment_question_answer is not None
+        )
         and not _message_can_answer_pending_state(
             state,
             inbound,
@@ -857,6 +888,194 @@ def _has_service_question(interpretation: Interpretation) -> bool:
             ConversationIntent.CANCEL_QUESTION,
             ConversationIntent.RESCHEDULE_QUESTION,
         )
+    )
+
+
+async def _equipment_question_answer(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+) -> str | None:
+    normalized = normalize_portuguese(inbound.body or "")
+    equipment_terms = (
+        "ar condicionado",
+        "aparelho",
+        "equipamento",
+        "modelo",
+        "btu",
+        "wifi",
+        "alexa",
+        "bluetooth",
+        "inverter",
+        "mais barato",
+        "mais em conta",
+    )
+    if not any(term in normalized for term in equipment_terms):
+        return None
+    try:
+        port = _require_booking_port(booking_port)
+        catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
+    except (BookingPortUnavailable, BookingRequiresHandoff):
+        return None
+    if not catalog:
+        return "No momento não há equipamentos ativos cadastrados para eu comparar."
+
+    candidates = list(catalog)
+    requested_capacity = re.search(r"\b(\d{4,5})\s*btu\b", normalized)
+    if requested_capacity:
+        capacity = int(requested_capacity.group(1))
+        candidates = [item for item in candidates if item.capacity_btu == capacity]
+
+    cycle = _context_string(context, "equipment_cycle")
+    if "quente frio" in normalized or "quente e frio" in normalized:
+        cycle = "heat_cool"
+    elif "so frio" in normalized or "somente frio" in normalized:
+        cycle = "cold"
+    if cycle == "heat_cool":
+        candidates = [item for item in candidates if "heat_cool" in item.cycles]
+    elif cycle == "cold":
+        candidates = [
+            item for item in candidates
+            if "cold" in item.cycles and "heat_cool" not in item.cycles
+        ]
+
+    recommendation = context.get("recommended_equipment")
+    required_btu = (
+        recommendation.get("required_btu_reference")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    if (
+        not requested_capacity
+        and isinstance(required_btu, int)
+        and not isinstance(required_btu, bool)
+    ):
+        minimum = required_btu * 0.90
+        candidates = [item for item in candidates if item.capacity_btu >= minimum]
+
+    feature_aliases = {
+        "alexa": ("alexa", "amazon alexa"),
+        "wifi": ("wifi", "wi fi"),
+        "bluetooth": ("bluetooth",),
+        "inverter": ("inverter",),
+    }
+    requested_features = [
+        key
+        for key, aliases in feature_aliases.items()
+        if any(alias in normalized for alias in aliases)
+    ]
+    for feature in requested_features:
+        aliases = feature_aliases[feature]
+        candidates = [
+            item
+            for item in candidates
+            if any(
+                any(alias in normalize_portuguese(value) for alias in aliases)
+                for value in item.features
+            )
+            or (
+                feature == "inverter"
+                and "inverter" in normalize_portuguese(item.line)
+            )
+        ]
+
+    budget = (
+        interpretation.equipment_budget_max
+        or (
+            interpretation.total_budget_max
+            if context.get("purchase_mode") != "both"
+            else None
+        )
+        or (
+            float(context["equipment_budget_max"])
+            if isinstance(context.get("equipment_budget_max"), (int, float))
+            and not isinstance(context.get("equipment_budget_max"), bool)
+            else None
+        )
+    )
+    current_price = (
+        recommendation.get("price")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    if (
+        budget is None
+        and ("mais barato" in normalized or "mais em conta" in normalized)
+        and isinstance(current_price, (int, float))
+        and not isinstance(current_price, bool)
+    ):
+        budget = float(current_price) - 0.01
+
+    compatible = list(candidates)
+    if budget is not None:
+        candidates = [
+            item
+            for item in candidates
+            if item.price is not None and item.price <= float(budget)
+        ]
+
+    if not candidates:
+        if requested_features:
+            feature_label = ", ".join(requested_features)
+            if compatible and budget is not None:
+                priced = [item for item in compatible if item.price is not None]
+                if priced:
+                    nearest = min(priced, key=lambda item: item.price or float("inf"))
+                    return (
+                        f"Não encontrei uma opção com {feature_label} dentro de "
+                        f"{_format_brl(Decimal(str(budget)))}. "
+                        f"A alternativa compatível mais próxima cadastrada é "
+                        f"{nearest.brand} {nearest.line} {nearest.capacity_btu:,} BTU"
+                        .replace(",", ".")
+                        + f", por {_format_brl(Decimal(str(nearest.price)))}."
+                    )
+            return (
+                f"Não tenho compatibilidade com {feature_label} explicitamente "
+                "cadastrada em uma opção que atenda aos demais requisitos. "
+                "Prefiro não assumir essa função sem confirmação no catálogo."
+            )
+        if budget is not None and compatible:
+            priced = [item for item in compatible if item.price is not None]
+            if priced:
+                nearest = min(priced, key=lambda item: item.price or float("inf"))
+                return (
+                    f"Não encontrei uma opção compatível dentro de "
+                    f"{_format_brl(Decimal(str(budget)))}. "
+                    f"A alternativa mais próxima cadastrada é {nearest.brand} "
+                    f"{nearest.line} {nearest.capacity_btu:,} BTU"
+                    .replace(",", ".")
+                    + f", por {_format_brl(Decimal(str(nearest.price)))}."
+                )
+        return "Não encontrei no catálogo ativo uma opção compatível com esses critérios."
+
+    priced_candidates = [item for item in candidates if item.price is not None]
+    selected = min(
+        priced_candidates or candidates,
+        key=lambda item: (
+            item.price if item.price is not None else float("inf"),
+            item.capacity_btu,
+            item.brand,
+            item.line,
+        ),
+    )
+    cycle_label = (
+        "quente/frio"
+        if "heat_cool" in selected.cycles
+        else "só frio"
+    )
+    price_text = (
+        _format_brl(Decimal(str(selected.price)))
+        if selected.price is not None
+        else "valor a confirmar"
+    )
+    feature_text = ""
+    if requested_features:
+        feature_text = " com " + ", ".join(requested_features)
+    return (
+        f"Uma opção compatível é {selected.brand} {selected.line} "
+        f"{selected.capacity_btu:,} BTU".replace(",", ".")
+        + f", {cycle_label}{feature_text}, por {price_text}."
     )
 
 
