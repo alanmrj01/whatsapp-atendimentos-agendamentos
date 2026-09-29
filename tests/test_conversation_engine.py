@@ -3065,9 +3065,18 @@ async def test_completed_equipment_question_answers_catalog_without_generic_fall
         )
     )
 
-    await ConversationEngine(repository, booking_port).process(
+    engine = ConversationEngine(repository, booking_port)
+    await engine.process(
+        inbound(969, body="Na verdade eu tenho uma dúvida")
+    )
+    assert repository.state == ConversationState.COMPLETED
+    assert repository.context["recommended_equipment"]["item_id"] == (
+        "catalog-gree-9000-cold"
+    )
+
+    await engine.process(
         inbound(
-            969,
+            970,
             body=(
                 "Tem algum modelo de ar-condicionado mais em conta "
                 "que eu ainda consiga conectar com Alexa?"
