@@ -981,6 +981,29 @@ async def _equipment_question_answer(
             )
         ]
 
+    stated_budget = (
+        interpretation.equipment_budget_max
+        or interpretation.total_budget_max
+    )
+    if (
+        interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
+        and not requested_capacity
+        and not isinstance(required_btu, int)
+        and stated_budget is not None
+    ):
+        constraints: list[str] = []
+        if requested_features:
+            constraints.append(", ".join(requested_features))
+        constraints.append(
+            f"o limite de {_format_brl(Decimal(str(stated_budget)))}"
+        )
+        return (
+            "Certo. Vou considerar "
+            + " e ".join(constraints)
+            + " na recomendação. Primeiro preciso confirmar o perfil do ambiente "
+            "para não indicar uma capacidade inadequada."
+        )
+
     budget = (
         interpretation.equipment_budget_max
         or (
