@@ -2982,8 +2982,8 @@ async def _handle_equipment_model(
 
     if action == EQUIPMENT_MODEL_KNOWN and context.get("equipment_model_known") is not True:
         body = (
-            "Qual é a marca e o modelo do ar-condicionado? "
-            "Se não souber, responda “não sei” e eu peço uma foto."
+            "Qual é a marca e o modelo do seu ar-condicionado? "
+            "Se não souber, pode me mandar uma foto."
             if existing_equipment
             else "Qual é a marca e o modelo do ar-condicionado?"
         )
@@ -4826,8 +4826,8 @@ async def _advance_intake(
                 ConversationState.BOOKING_EQUIPMENT_MODEL,
                 updated,
                 equipment_model_request_message(
-                    "Qual é a marca e o modelo do ar-condicionado? "
-                    "Se não souber, responda “não sei” e eu peço uma foto."
+                    "Qual é a marca e o modelo do seu ar-condicionado? "
+                    "Se não souber, pode me mandar uma foto."
                 ),
             )
 
@@ -4887,8 +4887,8 @@ async def _advance_intake(
                     ConversationState.BOOKING_EQUIPMENT_MODEL,
                     updated,
                     equipment_model_request_message(
-                        "Qual é a marca e o modelo do ar-condicionado? "
-                        "Se não souber, responda “não sei” e eu peço uma foto."
+                        "Qual é a marca e o modelo do seu ar-condicionado? "
+                        "Se não souber, pode me mandar uma foto."
                     ),
                 )
         else:
