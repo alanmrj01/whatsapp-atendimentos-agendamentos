@@ -15,7 +15,9 @@
         "Wi-Fi",
         "IA",
         "WindFree",
-        "Auto Clean"
+        "Auto Clean",
+        "Alexa",
+        "Google Assistente"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/windfree/",
       "active": true,
@@ -47,7 +49,9 @@
         "Wi-Fi",
         "IA",
         "WindFree",
-        "Auto Clean"
+        "Auto Clean",
+        "Alexa",
+        "Google Assistente"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/wall-mount/kit-air-conditioner-split-inverter-windfree-connect-ai-12000-btus-cold-white-220v-f-ar12dyfaawk/",
       "active": true,
@@ -87,7 +91,9 @@
         "Wi-Fi",
         "IA",
         "WindFree",
-        "Auto Clean"
+        "Auto Clean",
+        "Alexa",
+        "Google Assistente"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/wall-mount/kit-air-conditioner-split-inverter-windfree-connect-ai-12-000-btus-hot-and-cold-white-220v-f-ar12dxfaawk/",
       "active": true,
@@ -128,7 +134,9 @@
         "IA",
         "WindFree",
         "PowerVolt",
-        "Auto Clean"
+        "Auto Clean",
+        "Alexa",
+        "Google Assistente"
       ],
       "source_url": "https://www.samsung.com/br/air-conditioners/wall-mount/air-conditioner-split-inverter-windfree-ai-powervolt-12-000-btus-f-ar60h12d1vw/",
       "active": true,
@@ -169,7 +177,9 @@
         "Wi-Fi",
         "IA",
         "Dual Inverter",
-        "controle de energia"
+        "controle de energia",
+        "Alexa",
+        "Google Assistente"
       ],
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
       "active": true,
@@ -209,7 +219,9 @@
         "Wi-Fi",
         "IA",
         "Dual Inverter",
-        "controle de energia"
+        "controle de energia",
+        "Alexa",
+        "Google Assistente"
       ],
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
       "active": true,
@@ -249,7 +261,9 @@
         "Wi-Fi",
         "IA",
         "Dual Inverter",
-        "controle de energia"
+        "controle de energia",
+        "Alexa",
+        "Google Assistente"
       ],
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
       "active": true,
@@ -289,7 +303,9 @@
         "Wi-Fi",
         "IA",
         "Dual Inverter",
-        "controle de energia"
+        "controle de energia",
+        "Alexa",
+        "Google Assistente"
       ],
       "source_url": "https://www.lg.com/br/ar-condicionado-residencial/",
       "active": true,
@@ -329,7 +345,10 @@
         "Wi-Fi",
         "IA",
         "Smart Turbo",
-        "Air Magic"
+        "Air Magic",
+        "Alexa",
+        "Google Assistente",
+        "Siri"
       ],
       "source_url": "https://www.midea.com.br/ar-condicionado",
       "active": true,
@@ -369,7 +388,10 @@
         "Wi-Fi",
         "IA",
         "Smart Turbo",
-        "Air Magic"
+        "Air Magic",
+        "Alexa",
+        "Google Assistente",
+        "Siri"
       ],
       "source_url": "https://www.midea.com.br/ar-condicionado",
       "active": true,
@@ -409,7 +431,10 @@
         "Wi-Fi",
         "IA",
         "Smart Turbo",
-        "Air Magic"
+        "Air Magic",
+        "Alexa",
+        "Google Assistente",
+        "Siri"
       ],
       "source_url": "https://www.midea.com.br/ar-condicionado",
       "active": true,
@@ -449,7 +474,10 @@
         "Wi-Fi",
         "IA",
         "Smart Turbo",
-        "Air Magic"
+        "Air Magic",
+        "Alexa",
+        "Google Assistente",
+        "Siri"
       ],
       "source_url": "https://www.midea.com.br/ar-condicionado",
       "active": true,
@@ -489,7 +517,10 @@
         "Wi-Fi",
         "IA",
         "Smart Turbo",
-        "Air Magic"
+        "Air Magic",
+        "Alexa",
+        "Google Assistente",
+        "Siri"
       ],
       "source_url": "https://www.midea.com.br/ar-condicionado",
       "active": true,
@@ -529,7 +560,10 @@
         "Wi-Fi",
         "IA",
         "Smart Turbo",
-        "Air Magic"
+        "Air Magic",
+        "Alexa",
+        "Google Assistente",
+        "Siri"
       ],
       "source_url": "https://www.midea.com.br/ar-condicionado",
       "active": true,
