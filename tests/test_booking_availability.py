@@ -562,7 +562,7 @@ class MutationSession:
 
 class MutationPort(PostgresBookingAvailabilityPort):
     def __init__(self, session: MutationSession, existing: Appointment | None = None):
-        super().__init__(session)  # type: ignore[arg-type]
+        super().__init__(session, now_provider=lambda: NOW)  # type: ignore[arg-type]
         self.company = business()
         self.catalog_service = service()
         self.booking_plan = plan(duration=90, before=20, after=25)
@@ -579,7 +579,7 @@ class MutationPort(PostgresBookingAvailabilityPort):
         return self.booking_plan
 
     async def _employees_for_exact_start(self, *args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
-        return (EMPLOYEE_A,), datetime(2026, 9, 2, 12, tzinfo=timezone.utc)
+        return (EMPLOYEE_A,), datetime(2026, 9, 9, 12, tzinfo=timezone.utc)
 
     async def _find_idempotent_appointment(
         self, _: uuid.UUID, __: uuid.UUID, ___: str
@@ -610,7 +610,7 @@ async def test_confirmation_freezes_duration_travel_price_and_address() -> None:
         BUSINESS_ID,
         CUSTOMER_ID,
         SERVICE_ID,
-        "2026-09-02",
+        "2026-09-09",
         "09:00",
         requirements,
     )
