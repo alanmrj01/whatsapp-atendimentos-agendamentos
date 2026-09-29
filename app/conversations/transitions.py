@@ -398,6 +398,7 @@ async def _route_named_conversation(
         }
         and not interpretation.has(ConversationIntent.BOOK)
         and not interpretation.has(ConversationIntent.AVAILABILITY)
+        and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
         and context.get("request_mode") != "quote"
     ):
         if state is ConversationState.COMPLETED:
@@ -600,7 +601,7 @@ async def _route_named_conversation(
     ):
         transition = _transition(
             ConversationState.COMPLETED,
-            {},
+            context,
             reaction_message(inbound.provider_message_id),
         )
     elif state in {
@@ -5885,7 +5886,7 @@ async def _handle_quote_decision(
     if action == QUOTE_FINISH:
         return _transition(
             ConversationState.COMPLETED,
-            {},
+            context,
             _text_message(
                 "Perfeito. A cotação fica registrada nesta conversa. "
                 "Quando quiser avançar, é só me chamar."
