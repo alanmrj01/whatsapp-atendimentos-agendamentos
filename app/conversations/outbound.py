@@ -22,6 +22,7 @@ from app.conversations.constants import (
     EQUIPMENT_SPACE_NO_LIMIT,
     EQUIPMENT_DELIVERY_PICKUP,
     EQUIPMENT_DELIVERY_ADDRESS,
+    EQUIPMENT_DELIVERY_WITH_INSTALLATION,
     EQUIPMENT_INSTALLATION_SAME_ADDRESS,
     EQUIPMENT_INSTALLATION_OTHER_ADDRESS,
     CHANGE_CONFIRM,
@@ -331,17 +332,31 @@ def equipment_image_message(
     )
 
 
-def equipment_delivery_message() -> OutboundMessage:
+def equipment_delivery_message(
+    *,
+    include_installation: bool = False,
+) -> OutboundMessage:
+    options = [
+        BookingOption(EQUIPMENT_DELIVERY_PICKUP, "Retirar"),
+        BookingOption(EQUIPMENT_DELIVERY_ADDRESS, "Receber"),
+    ]
+    body = "Você prefere retirar o aparelho ou receber no seu endereço?"
+    if include_installation:
+        options.append(
+            BookingOption(
+                EQUIPMENT_DELIVERY_WITH_INSTALLATION,
+                "Junto da instalação",
+            )
+        )
+        body = (
+            "Você prefere retirar o aparelho, receber no seu endereço "
+            "ou recebê-lo junto da instalação?"
+        )
     return OutboundMessage(
         message_type="interactive_button",
-        body="Você prefere retirar o aparelho ou receber no seu endereço?",
+        body=body,
         interactive_id="equipment.delivery",
-        outbound_payload=_button_payload(
-            (
-                BookingOption(EQUIPMENT_DELIVERY_PICKUP, "Retirar"),
-                BookingOption(EQUIPMENT_DELIVERY_ADDRESS, "Receber"),
-            )
-        ),
+        outbound_payload=_button_payload(tuple(options)),
     )
 
 
@@ -419,7 +434,10 @@ def media_received_message(kind: str) -> OutboundMessage:
     label = labels.get(kind, "arquivo")
     return OutboundMessage(
         message_type="text",
-        body=f"Recebi o {label}. Ele ficará registrado nesta conversa.",
+        body=(
+            f"Recebi o {label}. Vou deixá-lo registrado para análise da equipe técnica. "
+            "Se quiser continuar o atendimento automático, me responda por texto."
+        ),
     )
 
 
@@ -448,14 +466,13 @@ def farewell_message() -> OutboundMessage:
 
 
 def unsupported_media_message(kind: str) -> OutboundMessage:
-    label = "áudios" if kind == "audio" else "esse tipo de mídia"
+    label = "áudio" if kind == "audio" else "arquivo"
     return OutboundMessage(
         message_type="interactive_button",
         body=(
-            f"Recebi seu {kind == 'audio' and 'áudio' or 'arquivo'}. "
-            f"Eu não consigo analisar {label}. Se precisar que alguém avalie o conteúdo, "
-            "posso passar o atendimento para uma pessoa da equipe. Se preferir, "
-            "continue por texto e eu sigo daqui."
+            f"Recebi seu {label}. Vou deixá-lo registrado para análise da equipe técnica. "
+            "Se quiser continuar o atendimento automático agora, responda por texto; "
+            "se preferir, também posso encaminhar para uma pessoa da equipe."
         ),
         interactive_id="media.unsupported",
         outbound_payload=_button_payload(
