@@ -129,6 +129,9 @@ _SOCIAL_ONLY = frozenset(
         "certo",
         "valeu",
         "perfeito",
+        "tudo bem",
+        "so uma duvida",
+        "uma duvida",
     }
 )
 
@@ -280,6 +283,8 @@ class DeterministicConversationInterpreter:
             acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_greeting(normalized):
             intents.add(ConversationIntent.GREETING)
+        if intents == {ConversationIntent.GREETING}:
+            acts.add(ConversationAct.SOCIAL)
 
         customer_name = extract_customer_name(original, allow_bare=False)
 
