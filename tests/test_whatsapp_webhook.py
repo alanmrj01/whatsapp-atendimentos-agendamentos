@@ -977,6 +977,38 @@ async def test_post_normalizes_distinct_message_statuses(
 
 
 @mark.asyncio
+async def test_failed_status_retains_sanitized_meta_error_code(
+    client: AsyncClient, monkeypatch: MonkeyPatch
+) -> None:
+    processor = AsyncMock()
+    monkeypatch.setattr(webhook_api, "process_webhook_events", processor)
+    payload = messages_payload(
+        statuses=[
+            {
+                "id": "provider-status-failed-code",
+                "status": "failed",
+                "errors": [
+                    {
+                        "code": 131026,
+                        "title": "Message undeliverable",
+                        "error_data": {"details": "private provider detail"},
+                    }
+                ],
+            }
+        ]
+    )
+
+    _, response = await post_signed(client, payload)
+    events = processor.await_args.args[1]
+
+    assert response.status_code == 200
+    assert len(events) == 1
+    assert isinstance(events[0], MessageStatusEvent)
+    assert events[0].message_status == "failed"
+    assert events[0].failure_code == "131026"
+
+
+@mark.asyncio
 async def test_sequential_duplicate_is_processed_once() -> None:
     repository = FakeWebhookRepository()
     event = InboundMessageEvent(

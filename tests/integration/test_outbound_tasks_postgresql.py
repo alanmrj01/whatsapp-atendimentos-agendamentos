@@ -254,11 +254,27 @@ async def test_transient_failure_stays_pending_then_success_is_terminal(
     assert success_sender.calls == 1
 
 
-async def test_permanent_failure_is_persisted_and_never_retried(
+async def test_permanent_provider_rejection_is_capped_and_retryable(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     message_id, _ = await seed_pending_outbound(sessions, suffix="permanent")
     sender = CountingSender(WhatsAppPermanentError("rejected"))
+
+    for expected_attempt in (1, 2, 3):
+        async with sessions() as session:
+            assert await process_outbound_message(
+                session,
+                message_id,
+                lambda: sender,
+            ) == "retry"
+        async with sessions() as session:
+            message = await session.scalar(
+                select(Message).where(Message.id == message_id)
+            )
+        assert message is not None
+        assert message.status == "pending"
+        assert message.outbound_payload is not None
+        assert message.outbound_payload["_alovia_retry_attempt"] == expected_attempt
 
     async with sessions() as session:
         assert await process_outbound_message(
@@ -266,12 +282,6 @@ async def test_permanent_failure_is_persisted_and_never_retried(
             message_id,
             lambda: sender,
         ) == "failed"
-    async with sessions() as session:
-        assert await process_outbound_message(
-            session,
-            message_id,
-            lambda: sender,
-        ) == "skipped"
 
     async with sessions() as session:
         message = await session.scalar(
@@ -280,4 +290,4 @@ async def test_permanent_failure_is_persisted_and_never_retried(
     assert message is not None
     assert message.status == "failed"
     assert message.provider_message_id is None
-    assert sender.calls == 1
+    assert sender.calls == 4

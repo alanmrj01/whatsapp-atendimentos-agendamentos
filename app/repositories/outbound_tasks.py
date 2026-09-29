@@ -16,6 +16,11 @@ from app.models import (
     Message,
     ProcessedWebhook,
 )
+from app.whatsapp.retry_policy import (
+    MAX_OUTBOUND_RETRY_ATTEMPTS,
+    OUTBOUND_RETRY_ATTEMPT_KEY,
+    current_outbound_retry_attempt,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +256,76 @@ class OutboundTaskRepository:
             .limit(1)
         )
         return next_id
+
+    async def mark_retry_pending(
+        self,
+        message_id: uuid.UUID,
+    ) -> int | None:
+        message = await self.session.scalar(
+            select(Message)
+            .where(Message.id == message_id, Message.direction == "outbound")
+            .with_for_update()
+        )
+        if message is None:
+            return None
+        payload = dict(message.outbound_payload or {})
+        retry_attempt = current_outbound_retry_attempt(payload)
+        if retry_attempt >= MAX_OUTBOUND_RETRY_ATTEMPTS:
+            message.status = "failed"
+            return None
+        retry_attempt += 1
+        payload[OUTBOUND_RETRY_ATTEMPT_KEY] = retry_attempt
+        message.outbound_payload = payload
+        message.status = "pending"
+        return retry_attempt
+
+    async def retry_candidate_for_event_key(
+        self,
+        event_key: str,
+    ) -> tuple[uuid.UUID, int] | None:
+        row = (
+            await self.session.execute(
+                select(Message.id, Message.outbound_payload)
+                .join(
+                    ProcessedWebhook,
+                    ProcessedWebhook.provider_message_id
+                    == Message.provider_message_id,
+                )
+                .where(
+                    ProcessedWebhook.event_key == event_key,
+                    ProcessedWebhook.event_type == "message.status.failed",
+                    Message.direction == "outbound",
+                    Message.status == "pending",
+                )
+                .limit(1)
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        retry_attempt = current_outbound_retry_attempt(row.outbound_payload)
+        if retry_attempt <= 0:
+            return None
+        return row.id, retry_attempt
+
+    async def retry_candidate_for_message_id(
+        self,
+        message_id: uuid.UUID,
+    ) -> tuple[uuid.UUID, int] | None:
+        row = (
+            await self.session.execute(
+                select(Message.id, Message.outbound_payload).where(
+                    Message.id == message_id,
+                    Message.direction == "outbound",
+                    Message.status == "pending",
+                )
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        retry_attempt = current_outbound_retry_attempt(row.outbound_payload)
+        if retry_attempt <= 0:
+            return None
+        return row.id, retry_attempt
 
     async def mark_sent(
         self,

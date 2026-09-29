@@ -178,6 +178,11 @@ async def process_webhook_events(
     )
 
     for event in events:
+        if isinstance(event, MessageStatusEvent) and event.message_status == "failed":
+            logger.warning(
+                "whatsapp_delivery_failed",
+                extra={"provider_error_code": event.failure_code or "unknown"},
+            )
         if isinstance(
             event, (InboundMessageEvent, BusinessMessageEchoEvent)
         ) and not is_individual_whatsapp_id(event.whatsapp_id):
@@ -316,6 +321,11 @@ async def persist_webhook_events_for_tasks(
     )
 
     for event in events:
+        if isinstance(event, MessageStatusEvent) and event.message_status == "failed":
+            logger.warning(
+                "whatsapp_delivery_failed",
+                extra={"provider_error_code": event.failure_code or "unknown"},
+            )
         if isinstance(
             event, (InboundMessageEvent, BusinessMessageEchoEvent)
         ) and not is_individual_whatsapp_id(event.whatsapp_id):

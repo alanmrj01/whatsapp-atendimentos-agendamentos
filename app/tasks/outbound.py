@@ -30,7 +30,7 @@ from app.whatsapp.webhook import (
 )
 
 TERMINAL_OUTBOUND_STATUSES = {"sent", "delivered", "read", "failed"}
-OutboundTaskResult = Literal["sent", "failed", "skipped"]
+OutboundTaskResult = Literal["sent", "failed", "skipped", "retry"]
 
 
 class OutboundTaskTransientError(RuntimeError):
@@ -48,6 +48,10 @@ class OutboundRepository(Protocol):
 
     async def mark_failed(self, message_id: uuid.UUID) -> None: ...
 
+    async def mark_retry_pending(
+        self, message_id: uuid.UUID
+    ) -> int | None: ...
+
 
 class PendingOutboundRepository(Protocol):
     async def list_pending_for_provider_message_ids(
@@ -61,6 +65,24 @@ class PendingOutboundRepository(Protocol):
     async def next_sequence_message_id(
         self, message_id: uuid.UUID
     ) -> uuid.UUID | None: ...
+
+    async def retry_candidate_for_event_key(
+        self, event_key: str
+    ) -> tuple[uuid.UUID, int] | None: ...
+
+    async def retry_candidate_for_message_id(
+        self, message_id: uuid.UUID
+    ) -> tuple[uuid.UUID, int] | None: ...
+
+
+class RetryOutboundTaskEnqueuer(OutboundTaskEnqueuer, Protocol):
+    async def enqueue_retry(
+        self,
+        message_id: uuid.UUID,
+        retry_attempt: int,
+        *,
+        delay_seconds: float = ...,
+    ) -> None: ...
 
 
 class TransactionSession(Protocol):
@@ -166,6 +188,44 @@ async def enqueue_outbound_message_ids(
         await enqueuer.enqueue(message_id)
 
 
+async def enqueue_outbound_retry_for_event(
+    session: AsyncSession | TransactionSession,
+    event_key: str,
+    enqueuer: RetryOutboundTaskEnqueuer,
+    repository: PendingOutboundRepository | None = None,
+) -> tuple[uuid.UUID, int] | None:
+    pending_repository = repository or OutboundTaskRepository(
+        cast(AsyncSession, session)
+    )
+    async with session.begin():
+        candidate = await pending_repository.retry_candidate_for_event_key(
+            event_key
+        )
+    if candidate is not None:
+        message_id, retry_attempt = candidate
+        await enqueuer.enqueue_retry(message_id, retry_attempt)
+    return candidate
+
+
+async def enqueue_outbound_retry_for_message(
+    session: AsyncSession | TransactionSession,
+    message_id: uuid.UUID,
+    enqueuer: RetryOutboundTaskEnqueuer,
+    repository: PendingOutboundRepository | None = None,
+) -> tuple[uuid.UUID, int] | None:
+    pending_repository = repository or OutboundTaskRepository(
+        cast(AsyncSession, session)
+    )
+    async with session.begin():
+        candidate = await pending_repository.retry_candidate_for_message_id(
+            message_id
+        )
+    if candidate is not None:
+        retry_message_id, retry_attempt = candidate
+        await enqueuer.enqueue_retry(retry_message_id, retry_attempt)
+    return candidate
+
+
 async def enqueue_next_sequence_outbound(
     session: AsyncSession | TransactionSession,
     message_id: uuid.UUID,
@@ -231,7 +291,12 @@ async def process_outbound_message(
             raise OutboundTaskTransientError(
                 "WhatsApp outbound delivery is temporarily unavailable"
             ) from None
-        except (WhatsAppPermanentError, WhatsAppValidationError):
+        except WhatsAppPermanentError:
+            retry_attempt = await outbound_repository.mark_retry_pending(
+                message.message_id
+            )
+            return "retry" if retry_attempt is not None else "failed"
+        except WhatsAppValidationError:
             await outbound_repository.mark_failed(message.message_id)
             return "failed"
         finally:

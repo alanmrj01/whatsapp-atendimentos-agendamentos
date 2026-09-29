@@ -142,3 +142,84 @@ async def test_concurrent_workers_fetch_db_event_and_create_one_outbox(
     assert processed.attempts == 2
     assert outbound_count == 1
     assert conversation_state == "MENU"
+
+
+async def test_failed_delivery_status_reopens_outbound_for_retry(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = uuid.uuid4()
+    customer_id = uuid.uuid4()
+    conversation_id = uuid.uuid4()
+    message_id = uuid.uuid4()
+    provider_message_id = "wamid.failed-delivery"
+    event_key = build_event_key("status", provider_message_id, "failed")
+
+    async with sessions() as session:
+        async with session.begin():
+            session.add(Business(id=business_id, name="Delivery retry physical test"))
+            await session.flush()
+            session.add(
+                Customer(
+                    id=customer_id,
+                    business_id=business_id,
+                    whatsapp_id="5511999990098",
+                )
+            )
+            await session.flush()
+            session.add(
+                Conversation(
+                    id=conversation_id,
+                    business_id=business_id,
+                    customer_id=customer_id,
+                    state="EQUIPMENT_DELIVERY",
+                    context={},
+                    automation_enabled=True,
+                    handoff_status="none",
+                    last_interaction_at=datetime.now(timezone.utc),
+                )
+            )
+            await session.flush()
+            session.add_all(
+                [
+                    Message(
+                        id=message_id,
+                        business_id=business_id,
+                        conversation_id=conversation_id,
+                        provider_message_id=provider_message_id,
+                        direction="outbound",
+                        message_type="text",
+                        body="Como você prefere receber o aparelho?",
+                        status="sent",
+                        outbound_payload=None,
+                    ),
+                    ProcessedWebhook(
+                        id=uuid.uuid4(),
+                        event_key=event_key,
+                        provider_message_id=provider_message_id,
+                        event_type="message.status.failed",
+                        status="queued",
+                        attempts=1,
+                    ),
+                ]
+            )
+
+    async with sessions() as session:
+        assert await process_cloud_task_event(session, event_key) is True
+
+    async with sessions() as session:
+        message = await session.scalar(
+            select(Message).where(Message.id == message_id)
+        )
+        event = await session.scalar(
+            select(ProcessedWebhook).where(
+                ProcessedWebhook.event_key == event_key
+            )
+        )
+
+    assert message is not None
+    assert message.status == "pending"
+    assert message.provider_message_id == provider_message_id
+    assert message.outbound_payload is not None
+    assert message.outbound_payload["_alovia_retry_attempt"] == 1
+    assert event is not None
+    assert event.status == "processed"

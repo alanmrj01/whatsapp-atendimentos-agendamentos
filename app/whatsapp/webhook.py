@@ -66,6 +66,7 @@ class MessageStatusEvent:
     meta_phone_number_id: str
     provider_message_id: str
     message_status: str
+    failure_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +204,7 @@ def _normalize_statuses(
             or message_status not in SUPPORTED_MESSAGE_STATUSES
         ):
             continue
+        failure_code = _status_failure_code(raw_status)
         events.append(
             MessageStatusEvent(
                 event_key=build_event_key(
@@ -212,9 +214,27 @@ def _normalize_statuses(
                 meta_phone_number_id=meta_phone_number_id,
                 provider_message_id=provider_message_id,
                 message_status=message_status,
+                failure_code=failure_code,
             )
         )
     return events
+
+
+def _status_failure_code(raw_status: dict[str, Any]) -> str | None:
+    errors = raw_status.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return None
+    first = errors[0]
+    if not isinstance(first, dict):
+        return None
+    raw_code = first.get("code")
+    if isinstance(raw_code, int):
+        return str(raw_code)
+    if isinstance(raw_code, str):
+        normalized = raw_code.strip()
+        if normalized and len(normalized) <= 64 and normalized.isascii():
+            return normalized
+    return None
 
 
 def _normalize_business_message_echoes(
