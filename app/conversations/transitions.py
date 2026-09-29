@@ -51,6 +51,7 @@ from app.conversations.constants import (
     EQUIPMENT_SPACE_NO_LIMIT,
     EQUIPMENT_DELIVERY_PICKUP,
     EQUIPMENT_DELIVERY_ADDRESS,
+    EQUIPMENT_DELIVERY_WITH_INSTALLATION,
     EQUIPMENT_INSTALLATION_SAME_ADDRESS,
     EQUIPMENT_INSTALLATION_OTHER_ADDRESS,
     EQUIPMENT_PURCHASE,
@@ -360,6 +361,7 @@ async def _route_named_conversation(
         and state in {
             ConversationState.START,
             ConversationState.MENU,
+            ConversationState.POST_BOOKING_HELP,
             ConversationState.COMPLETED,
             ConversationState.HUMAN_HANDOFF,
         }
@@ -367,13 +369,22 @@ async def _route_named_conversation(
         and not interpretation.has(ConversationIntent.AVAILABILITY)
         and context.get("request_mode") != "quote"
     ):
+        if state in {
+            ConversationState.POST_BOOKING_HELP,
+            ConversationState.COMPLETED,
+        }:
+            return _transition(
+                state,
+                context,
+                _text_message(question_answer),
+            )
         follow_up = (
             f"{question_answer}\n\n"
             f"Se quiser, {customer_lead(customer_name)}posso continuar com o agendamento."
         )
         return _transition(
             ConversationState.MENU,
-            {},
+            context,
             _text_message(follow_up),
         )
 
@@ -834,6 +845,7 @@ def _has_service_question(interpretation: Interpretation) -> bool:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.EQUIPMENT_QUESTION,
             ConversationIntent.CANCEL_QUESTION,
             ConversationIntent.RESCHEDULE_QUESTION,
         )
@@ -848,6 +860,13 @@ async def _service_question_answer(
 ) -> str | None:
     if not _has_service_question(interpretation):
         return None
+    if interpretation.has(ConversationIntent.EQUIPMENT_QUESTION):
+        return await _equipment_question_answer(
+            inbound,
+            context,
+            interpretation,
+            booking_port,
+        )
     if interpretation.has(ConversationIntent.CANCEL_QUESTION):
         return (
             "Você pode cancelar um agendamento futuro por aqui quando quiser. "
@@ -904,6 +923,10 @@ async def _service_question_answer(
             parts.append(
                 f"O valor de {target.label} depende de uma avaliação da equipe."
             )
+        elif _is_maintenance_service(target.label):
+            parts.append(
+                _maintenance_base_fee_message(plan.service.estimated_price)
+            )
         else:
             qualifier = (
                 "é"
@@ -945,6 +968,214 @@ async def _service_question_answer(
             )
 
     return " ".join(parts) if parts else None
+
+
+async def _equipment_question_answer(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+) -> str | None:
+    try:
+        port = _require_booking_port(booking_port)
+        catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
+    except (BookingPortUnavailable, BookingRequiresHandoff):
+        return None
+    if not catalog:
+        return None
+
+    normalized = interpretation.normalized_text
+    recommendation = context.get("recommended_equipment")
+    current = recommendation if isinstance(recommendation, dict) else {}
+    current_item_id = current.get("item_id")
+    current_entry = next(
+        (item for item in catalog if item.item_id == current_item_id),
+        None,
+    )
+
+    requested_feature: str | None = None
+    feature_aliases = (
+        ("alexa", ("alexa",)),
+        ("Google Assistente", ("google assistant", "google assistente", "google home")),
+        ("Siri", ("siri",)),
+        ("Wi-Fi", ("wifi", "wi fi")),
+    )
+    for label, aliases in feature_aliases:
+        if any(alias in normalized for alias in aliases):
+            requested_feature = label
+            break
+
+    wants_cheaper = any(
+        phrase in normalized
+        for phrase in ("mais barato", "mais barata", "mais em conta")
+    )
+    wants_dimensions = any(
+        token in normalized
+        for token in ("dimensao", "dimensoes", "medida", "medidas", "tamanho")
+    )
+
+    if wants_dimensions and current_entry is not None:
+        parts: list[str] = []
+        if current_entry.indoor_dimensions_cm:
+            dims = current_entry.indoor_dimensions_cm
+            parts.append(
+                "unidade interna "
+                f"{_format_dimensions(dims)}"
+            )
+        if current_entry.outdoor_dimensions_cm:
+            dims = current_entry.outdoor_dimensions_cm
+            parts.append(
+                "unidade externa "
+                f"{_format_dimensions(dims)}"
+            )
+        if parts:
+            return (
+                f"As medidas cadastradas do {current_entry.brand} "
+                f"{current_entry.line} são: " + "; ".join(parts) + "."
+            )
+        return (
+            "As dimensões desse modelo não estão cadastradas com segurança "
+            "no catálogo da empresa."
+        )
+
+    if requested_feature is not None and not wants_cheaper and current_entry is not None:
+        supported = _equipment_has_feature(current_entry.features, requested_feature)
+        if supported:
+            return (
+                f"Sim. O {current_entry.brand} {current_entry.line} está cadastrado "
+                f"com compatibilidade com {requested_feature}."
+            )
+        return (
+            f"No catálogo atual, a compatibilidade desse modelo com "
+            f"{requested_feature} não está confirmada. "
+            "Posso comparar com outro modelo que tenha esse recurso cadastrado."
+        )
+
+    capacity = current.get("capacity_btu")
+    selected_cycle = current.get("selected_cycle")
+    baseline_price = _equipment_price(current)
+    candidates = list(catalog)
+    if isinstance(capacity, int):
+        candidates = [item for item in candidates if item.capacity_btu == capacity]
+    if selected_cycle in {"cold", "heat_cool"}:
+        candidates = [
+            item for item in candidates if selected_cycle in item.cycles
+        ]
+    if requested_feature is not None:
+        candidates = [
+            item
+            for item in candidates
+            if _equipment_has_feature(item.features, requested_feature)
+        ]
+    if wants_cheaper and baseline_price is not None:
+        candidates = [
+            item
+            for item in candidates
+            if item.price is not None
+            and Decimal(str(item.price)) < baseline_price
+        ]
+
+    priced = [item for item in candidates if item.price is not None]
+    if wants_cheaper and priced:
+        candidates = sorted(
+            priced,
+            key=lambda item: (float(item.price or 0), item.brand, item.line),
+        )
+    else:
+        candidates = sorted(
+            candidates,
+            key=lambda item: (
+                item.price is None,
+                float(item.price or 0),
+                item.brand,
+                item.line,
+            ),
+        )
+
+    if candidates and (requested_feature is not None or wants_cheaper):
+        option = candidates[0]
+        cycle = (
+            "Só Frio"
+            if selected_cycle == "cold"
+            else "Quente/Frio"
+            if selected_cycle == "heat_cool"
+            else None
+        )
+        description = (
+            f"{option.brand} {option.line} "
+            f"{option.capacity_btu:,} BTU".replace(",", ".")
+        )
+        if cycle:
+            description += f" — {cycle}"
+        price_text = (
+            f", por {_format_brl(Decimal(str(option.price)))}"
+            if option.price is not None
+            else ", com valor a confirmar"
+        )
+        feature_text = (
+            f", com {requested_feature} cadastrado"
+            if requested_feature is not None
+            else ""
+        )
+        return f"Tenho esta opção no catálogo: {description}{feature_text}{price_text}."
+
+    if requested_feature is not None and wants_cheaper:
+        return (
+            f"No catálogo atual, não encontrei uma opção tecnicamente compatível "
+            f"mais em conta com {requested_feature} confirmado. "
+            "Prefiro não indicar um aparelho fora da capacidade ou do ciclo necessários."
+        )
+
+    if current:
+        details: list[str] = []
+        label = current.get("label")
+        if isinstance(label, str) and label:
+            details.append(label)
+        price = _equipment_price(current)
+        if price is not None:
+            details.append(f"valor {_format_brl(price)}")
+        features = current.get("features")
+        if isinstance(features, list) and features:
+            details.append("recursos: " + ", ".join(str(item) for item in features[:5]))
+        if details:
+            return "Sobre o equipamento indicado: " + "; ".join(details) + "."
+
+    return (
+        "Consigo responder detalhes dos equipamentos cadastrados, mas para indicar "
+        "um modelo com segurança preciso manter capacidade, ciclo e restrições "
+        "de instalação compatíveis com o ambiente."
+    )
+
+
+def _equipment_has_feature(
+    features: Sequence[str],
+    requested: str,
+) -> bool:
+    requested_key = normalize_portuguese(requested)
+    aliases = {
+        "alexa": ("alexa", "amazon alexa"),
+        "google assistente": ("google assistente", "google assistant", "google home"),
+        "siri": ("siri",),
+        "wi fi": ("wi fi", "wifi"),
+    }
+    accepted = aliases.get(requested_key, (requested_key,))
+    normalized_features = {
+        normalize_portuguese(feature)
+        for feature in features
+    }
+    return any(alias in normalized_features for alias in accepted)
+
+
+def _format_dimensions(dimensions: dict[str, float]) -> str:
+    width = dimensions.get("width")
+    height = dimensions.get("height")
+    depth = dimensions.get("depth")
+    values = [
+        f"{width:g} cm de largura" if isinstance(width, (int, float)) else None,
+        f"{height:g} cm de altura" if isinstance(height, (int, float)) else None,
+        f"{depth:g} cm de profundidade" if isinstance(depth, (int, float)) else None,
+    ]
+    return " × ".join(value for value in values if value)
 
 
 def _prepend_transition_body(
