@@ -566,7 +566,7 @@ class MutationPort(PostgresBookingAvailabilityPort):
     minimum_full_booking_lead_days = -1
 
     def __init__(self, session: MutationSession, existing: Appointment | None = None):
-        super().__init__(session)  # type: ignore[arg-type]
+        super().__init__(session, now_provider=lambda: NOW)  # type: ignore[arg-type]
         self.company = business()
         self.catalog_service = service()
         self.booking_plan = plan(duration=90, before=20, after=25)
