@@ -3458,8 +3458,21 @@ async def test_completed_budget_question_returns_catalog_option_and_post_help() 
     assert repository.state == ConversationState.POST_BOOKING_HELP
     assert "Gree" in body
     assert "R$ 2.500,00" in body
+    assert repository.context["equipment_suggestion"]["item_id"] == "catalog-gree-9000-cold"
     assert transition.follow_ups
     assert transition.follow_ups[0].interactive_id == "post_booking.help"
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1161, body="Quero esse")
+    )
+
+    accepted = repository.outbounds[-1].transition
+    assert repository.state == ConversationState.POST_BOOKING_HELP
+    assert repository.context["recommended_equipment"]["item_id"] == "catalog-gree-9000-cold"
+    assert "equipment_suggestion" not in repository.context
+    assert "atualizei sua escolha" in (accepted.outbound.body or "").casefold()
+    assert accepted.follow_ups
+    assert accepted.follow_ups[0].interactive_id == "post_booking.help"
 
 
 @mark.asyncio
