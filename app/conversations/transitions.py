@@ -960,6 +960,38 @@ async def _equipment_question_answer(
         return "No momento não há equipamentos ativos cadastrados para eu comparar."
 
     candidates = list(catalog)
+    canonical_input = re.sub(r"[^a-z0-9]+", " ", normalized)
+    mentioned_candidates = [
+        item
+        for item in candidates
+        if (
+            re.sub(
+                r"[^a-z0-9]+",
+                " ",
+                normalize_portuguese(item.brand),
+            ).strip()
+            in canonical_input
+            or (
+                len(
+                    re.sub(
+                        r"[^a-z0-9]+",
+                        " ",
+                        normalize_portuguese(item.line),
+                    ).strip()
+                )
+                >= 4
+                and re.sub(
+                    r"[^a-z0-9]+",
+                    " ",
+                    normalize_portuguese(item.line),
+                ).strip()
+                in canonical_input
+            )
+        )
+    ]
+    if mentioned_candidates:
+        candidates = mentioned_candidates
+
     requested_capacity = re.search(r"\b(\d{4,5})\s*btu\b", normalized)
     if requested_capacity:
         capacity = int(requested_capacity.group(1))
@@ -1011,7 +1043,6 @@ async def _equipment_question_answer(
         "bluetooth": ("bluetooth",),
         "inverter": ("inverter",),
     }
-    canonical_input = re.sub(r"[^a-z0-9]+", " ", normalized)
     requested_features = [
         key
         for key, aliases in feature_aliases.items()
