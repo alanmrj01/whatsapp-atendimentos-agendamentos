@@ -25,7 +25,11 @@ from app.auth.dependencies import require_origin, require_principal
 from app.auth.schemas import MembershipResponse, MembershipRole
 from app.conversations.constants import ConversationState
 from app.main import app
-from app.operations.service import OperationalService, _message_view
+from app.operations.service import (
+    OperationalService,
+    _message_history_sort_key,
+    _message_view,
+)
 from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
@@ -492,3 +496,64 @@ def test_message_view_exposes_supported_media_to_alovia(message_type: str) -> No
     )
     assert view.media_mime_type == item.media_mime_type
 
+
+
+def test_message_view_exposes_outbound_equipment_image_url_to_alovia() -> None:
+    message_id = uuid4()
+    conversation_id = uuid4()
+    image_url = "https://example.com/equipment.jpg"
+    item = SimpleNamespace(
+        id=message_id,
+        conversation_id=conversation_id,
+        media_id=None,
+        message_type="image",
+        direction="outbound",
+        body="Foto de referência",
+        status="sent",
+        created_at=datetime.now(UTC),
+        media_mime_type=None,
+        media_filename=None,
+        outbound_payload={"image_url": image_url},
+    )
+
+    view = _message_view(item)
+
+    assert view.media_url == image_url
+    assert view.direction == "outbound"
+    assert view.message_type == "image"
+
+
+def test_message_history_sort_key_preserves_sequence_index_for_same_timestamp() -> None:
+    created_at = datetime.now(UTC)
+    group = "sequence-1"
+    third = SimpleNamespace(
+        id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        created_at=created_at,
+        outbound_payload={
+            "_alovia_sequence_group": group,
+            "_alovia_sequence_index": 2,
+        },
+    )
+    first = SimpleNamespace(
+        id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        created_at=created_at,
+        outbound_payload={
+            "_alovia_sequence_group": group,
+            "_alovia_sequence_index": 0,
+        },
+    )
+    second = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000001"),
+        created_at=created_at,
+        outbound_payload={
+            "_alovia_sequence_group": group,
+            "_alovia_sequence_index": 1,
+        },
+    )
+
+    ordered = sorted(
+        (third, first, second),
+        key=_message_history_sort_key,
+    )
+
+    assert ordered == [first, second, third]
