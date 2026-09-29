@@ -211,6 +211,20 @@ async def determine_transition(
             whatsapp_id=inbound.whatsapp_id,
         )
     )
+    budget_updates = {
+        key: value
+        for key, value in (
+            ("equipment_budget_max", interpretation.equipment_budget_max),
+            ("service_budget_max", interpretation.service_budget_max),
+            ("total_budget_max", interpretation.total_budget_max),
+        )
+        if value is not None
+    }
+    if budget_updates:
+        context = invalidate_changed_facts(
+            base_context,
+            {**context, **budget_updates},
+        )
 
     if action == MEDIA_HANDOFF and context.get("media_handoff_pending") is True:
         return _handoff_transition(
@@ -1970,6 +1984,37 @@ async def _with_equipment_recommendation(
     indoor_space = _space_tuple(context, "indoor")
     outdoor_space = _space_tuple(context, "outdoor")
     catalog = await port.list_equipment_catalog(inbound.business_id)
+
+    budget_max = context.get("equipment_budget_max")
+    if not isinstance(budget_max, (int, float)) or isinstance(budget_max, bool):
+        budget_max = None
+    total_budget = context.get("total_budget_max")
+    if (
+        budget_max is None
+        and context.get("purchase_mode") == "both"
+        and isinstance(total_budget, (int, float))
+        and not isinstance(total_budget, bool)
+    ):
+        service_id = _context_service_id(context)
+        if service_id is not None:
+            try:
+                service_plan = await port.estimate(
+                    inbound.business_id,
+                    service_id,
+                    _requirements_from_context(context),
+                )
+            except BookingRequiresHandoff:
+                service_plan = None
+            if (
+                service_plan is not None
+                and service_plan.service.estimated_price is not None
+            ):
+                budget_max = max(
+                    0.0,
+                    float(total_budget)
+                    - float(service_plan.service.estimated_price),
+                )
+
     recommendation = recommend_equipment(
         float(area),
         people,
@@ -1978,6 +2023,7 @@ async def _with_equipment_recommendation(
         indoor_space=indoor_space,
         outdoor_space=outdoor_space,
         entries=catalog,
+        budget_max=float(budget_max) if budget_max is not None else None,
     )
     return {
         **context,
@@ -1996,6 +2042,8 @@ async def _with_equipment_recommendation(
             "condenser_form": recommendation.condenser_form,
             "price": recommendation.price,
             "required_btu_reference": recommendation.required_btu,
+            "within_budget": recommendation.within_budget,
+            "budget_max": budget_max,
         },
     }
 
@@ -3267,6 +3315,28 @@ async def _handle_equipment_profile(
         details.append("ciclo só frio" if cycle == "cold" else "ciclo quente/frio")
     intro_body = "Uma boa referência é " + ", ".join(details)
     intro_body += f", por {price_text}." if price_text else ", com valor a confirmar."
+    within_budget = (
+        recommendation.get("within_budget")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    recommendation_budget = (
+        recommendation.get("budget_max")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    if (
+        within_budget is False
+        and isinstance(recommendation_budget, (int, float))
+        and not isinstance(recommendation_budget, bool)
+    ):
+        intro_body = (
+            "Não encontrei uma opção compatível dentro de "
+            f"{_format_brl(Decimal(str(recommendation_budget)))}. "
+            "A alternativa compatível mais próxima é "
+            + ", ".join(details)
+        )
+        intro_body += f", por {price_text}." if price_text else ", com valor a confirmar."
     intro = _text_message(intro_body)
 
     followups: list[OutboundMessage] = []
