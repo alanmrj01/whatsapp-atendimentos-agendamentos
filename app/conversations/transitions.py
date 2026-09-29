@@ -1289,6 +1289,22 @@ async def _service_question_answer(
 
     if interpretation.has(ConversationIntent.PRICE_QUESTION):
         target_kind = _service_kind(services, target_id)
+        service_budget = (
+            interpretation.service_budget_max
+            or (
+                float(context["service_budget_max"])
+                if isinstance(context.get("service_budget_max"), (int, float))
+                and not isinstance(context.get("service_budget_max"), bool)
+                else None
+            )
+        )
+        if (
+            service_budget is None
+            and context.get("purchase_mode") != "both"
+            and interpretation.total_budget_max is not None
+        ):
+            service_budget = interpretation.total_budget_max
+
         if plan is None or plan.service.estimated_price is None:
             parts.append(
                 f"O valor de {target.label} depende de uma avaliação da equipe."
@@ -1310,6 +1326,21 @@ async def _service_question_answer(
                 f"O valor de {target.label} {qualifier} "
                 f"{_format_brl(plan.service.estimated_price)}."
             )
+
+        if (
+            service_budget is not None
+            and plan is not None
+            and plan.service.estimated_price is not None
+        ):
+            budget_text = _format_brl(Decimal(str(service_budget)))
+            if plan.service.estimated_price <= Decimal(str(service_budget)):
+                parts.append(
+                    f"Esse valor está dentro do limite de {budget_text} que você informou."
+                )
+            else:
+                parts.append(
+                    f"Esse valor fica acima do limite de {budget_text} que você informou."
+                )
 
     if interpretation.has(ConversationIntent.DURATION_QUESTION):
         if plan is None:
