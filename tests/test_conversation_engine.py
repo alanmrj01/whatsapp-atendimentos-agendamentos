@@ -3435,6 +3435,8 @@ async def test_completed_budget_question_returns_catalog_option_and_post_help() 
         state=ConversationState.COMPLETED,
         context={
             "equipment_cycle": "cold",
+            "room_area_m2": 16,
+            "room_people_max": 3,
             "recommended_equipment": {
                 "price": 3000.0,
                 "required_btu_reference": 9000,
