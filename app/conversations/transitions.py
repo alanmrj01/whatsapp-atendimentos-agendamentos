@@ -548,6 +548,20 @@ async def _route_named_conversation(
         )
 
     if (
+        state in {
+            ConversationState.POST_BOOKING_HELP,
+            ConversationState.COMPLETED,
+        }
+        and _is_question_preamble(inbound.body)
+    ):
+        transition = _transition(
+            state,
+            context,
+            _text_message(
+                "Claro. Pode me perguntar o que quiser sobre o serviço ou o equipamento."
+            ),
+        )
+    elif (
         state is ConversationState.BOOKING_ADDRESS
         and question_answer is not None
         and not _looks_like_address(inbound.body)
@@ -563,7 +577,7 @@ async def _route_named_conversation(
     ):
         transition = _transition(
             ConversationState.COMPLETED,
-            {},
+            context,
             reaction_message(inbound.provider_message_id),
         )
     elif state in {
@@ -3631,6 +3645,19 @@ async def _handle_equipment_delivery(
             "Vou encaminhar essa parte do atendimento."
         ),
     )
+
+
+def _is_question_preamble(value: str | None) -> bool:
+    normalized = normalize_portuguese(value or "").strip()
+    return normalized in {
+        "tenho uma duvida",
+        "eu tenho uma duvida",
+        "na verdade tenho uma duvida",
+        "na verdade eu tenho uma duvida",
+        "so tenho uma duvida",
+        "mais uma duvida",
+        "uma duvida",
+    }
 
 
 def _is_completion_acknowledgement(value: str | None) -> bool:
