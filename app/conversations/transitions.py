@@ -51,6 +51,7 @@ from app.conversations.constants import (
     EQUIPMENT_SPACE_NO_LIMIT,
     EQUIPMENT_DELIVERY_PICKUP,
     EQUIPMENT_DELIVERY_ADDRESS,
+    EQUIPMENT_DELIVERY_WITH_INSTALLATION,
     EQUIPMENT_INSTALLATION_SAME_ADDRESS,
     EQUIPMENT_INSTALLATION_OTHER_ADDRESS,
     EQUIPMENT_PURCHASE,
@@ -219,12 +220,24 @@ async def determine_transition(
     if action == MEDIA_CONTINUE_TEXT and context.get("media_handoff_pending") is True:
         updated = dict(context)
         updated.pop("media_handoff_pending", None)
+        if state not in {
+            ConversationState.START,
+            ConversationState.MENU,
+            ConversationState.COMPLETED,
+            ConversationState.HUMAN_HANDOFF,
+            ConversationState.POST_BOOKING_HELP,
+        }:
+            return await _resume_pending_question(
+                conversation,
+                inbound,
+                updated,
+                booking_port,
+                prefix="Tudo bem. Seguimos por texto.",
+            )
         return _transition(
             state,
             updated,
-            _text_message(
-                "Tudo bem. Pode me contar por texto o que você precisa e continuo daqui."
-            ),
+            _text_message("Tudo bem. Seguimos por texto. Como posso te ajudar?"),
         )
     if (
         context.get("media_handoff_pending") is True
@@ -236,21 +249,14 @@ async def determine_transition(
         context = dict(context)
         context.pop("media_handoff_pending", None)
 
-    if inbound.message_type == "audio":
-        return _transition(
-            state,
-            {**context, "media_handoff_pending": True},
-            unsupported_media_message("audio"),
-        )
-
     if (
-        inbound.message_type in {"image", "video"}
+        inbound.message_type in {"image", "audio", "video"}
         and state is not ConversationState.BOOKING_EQUIPMENT_MODEL
     ):
         return _transition(
             state,
-            context,
-            media_received_message(inbound.message_type),
+            {**context, "media_handoff_pending": True},
+            unsupported_media_message(inbound.message_type),
         )
 
     if action in {CHANGE_CONFIRM, CHANGE_KEEP} and (
@@ -900,9 +906,17 @@ async def _service_question_answer(
             plan = None
 
     if interpretation.has(ConversationIntent.PRICE_QUESTION):
+        target_kind = _service_kind(services, target_id)
         if plan is None or plan.service.estimated_price is None:
             parts.append(
                 f"O valor de {target.label} depende de uma avaliação da equipe."
+            )
+        elif target_kind == "diagnostics":
+            parts.append(
+                "O valor base do atendimento técnico é "
+                f"{_format_brl(plan.service.estimated_price)}. "
+                "O valor final é confirmado depois do diagnóstico, porque pode haver "
+                "necessidade de peças, materiais ou um reparo mais complexo."
             )
         else:
             qualifier = (
@@ -1105,7 +1119,9 @@ async def _resume_pending_question(
         ConversationState.BOOKING_EQUIPMENT_DELIVERY: (
             delivery_installation_address_message()
             if context.get("delivery_installation_match_pending") is True
-            else equipment_delivery_message()
+            else equipment_delivery_message(
+                include_with_installation=context.get("purchase_mode") == "both"
+            )
         ),
         ConversationState.BOOKING_INSTALLATION_HEIGHT: installation_height_message(),
         ConversationState.BOOKING_PROPERTY: property_type_message(),
@@ -3301,6 +3317,14 @@ async def _handle_equipment_delivery(
             action = EQUIPMENT_DELIVERY_PICKUP
         elif normalized in {"receber", "entregar", "entrega", "quero receber"}:
             action = EQUIPMENT_DELIVERY_ADDRESS
+        elif normalized in {
+            "levar com a instalacao",
+            "levar junto com a instalacao",
+            "junto com o tecnico",
+            "no dia da instalacao",
+            "com a instalacao",
+        }:
+            action = EQUIPMENT_DELIVERY_WITH_INSTALLATION
         elif normalized in {"sim", "mesmo endereco", "no mesmo endereco"}:
             action = EQUIPMENT_INSTALLATION_SAME_ADDRESS
         elif normalized in {"nao", "outro endereco", "endereco diferente"}:
@@ -3310,6 +3334,21 @@ async def _handle_equipment_delivery(
     if action == EQUIPMENT_DELIVERY_PICKUP:
         updated["delivery_method"] = "pickup"
         updated.pop("delivery_address", None)
+        updated.pop("delivery_installation_match_pending", None)
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            customer_name=customer_name,
+        )
+    if (
+        action == EQUIPMENT_DELIVERY_WITH_INSTALLATION
+        and context.get("purchase_mode") == "both"
+    ):
+        updated["delivery_method"] = "with_installation"
+        updated.pop("delivery_address", None)
+        updated.pop("address_purpose", None)
         updated.pop("delivery_installation_match_pending", None)
         return await _advance_intake(
             inbound,
@@ -3362,7 +3401,9 @@ async def _handle_equipment_delivery(
     prompt = (
         delivery_installation_address_message()
         if pending_match
-        else equipment_delivery_message()
+        else equipment_delivery_message(
+            include_with_installation=context.get("purchase_mode") == "both"
+        )
     )
     return _retry_or_handoff(
         ConversationState.BOOKING_EQUIPMENT_DELIVERY,
@@ -4419,7 +4460,7 @@ async def _handle_confirmation(
         )
     return _transition(
         ConversationState.POST_BOOKING_HELP,
-        {},
+        _clean_context(context),
         booking_completed_message(
             f"Agendamento confirmado para {date_short_label(selected_date)} "
             f"às {selected_time}."
@@ -4455,7 +4496,7 @@ async def _handle_post_booking_help(
     if no_more_help:
         return _transition(
             ConversationState.COMPLETED,
-            {},
+            _clean_context(conversation.context),
             farewell_message(),
         )
 
@@ -4993,7 +5034,9 @@ async def _advance_intake(
                 return _transition(
                     ConversationState.BOOKING_EQUIPMENT_DELIVERY,
                     context,
-                    equipment_delivery_message(),
+                    equipment_delivery_message(
+                        include_with_installation=context.get("purchase_mode") == "both"
+                    ),
                 )
             if (
                 context.get("delivery_method") == "delivery"
@@ -5013,13 +5056,26 @@ async def _advance_intake(
                     delivery_installation_address_message(),
                 )
             if context.get("purchase_only") is True:
+                recommendation = context.get("recommended_equipment")
+                purchase_lines = [
+                    "Perfeito. Segue o resumo da compra:",
+                ]
+                if isinstance(recommendation, dict):
+                    label = recommendation.get("label")
+                    price = recommendation.get("price")
+                    if isinstance(label, str) and label:
+                        purchase_lines.append(f"• Equipamento: {label}")
+                    if isinstance(price, (int, float)) and not isinstance(price, bool):
+                        purchase_lines.append(
+                            f"• Valor do equipamento: {_format_brl(Decimal(str(price)))}"
+                        )
+                purchase_lines.append(
+                    "A equipe seguirá com a confirmação de disponibilidade e os próximos detalhes da compra."
+                )
                 return _transition(
                     ConversationState.COMPLETED,
                     context,
-                    _text_message(
-                        "Perfeito. A equipe seguirá com a confirmação de disponibilidade "
-                        "do aparelho e os próximos detalhes da compra."
-                    ),
+                    _text_message("\n".join(purchase_lines)),
                 )
 
         if (
