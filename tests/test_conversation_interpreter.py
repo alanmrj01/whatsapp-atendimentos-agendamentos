@@ -184,3 +184,18 @@ def test_additional_request_is_explicitly_classified() -> None:
 
     assert result.has_act(ConversationAct.ADDITIONAL_REQUEST)
     assert result.service_key == "cleaning"
+
+
+def test_compound_greeting_only_is_social() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Bom dia, tudo bem?"
+    )
+
+    assert result.has(ConversationIntent.GREETING)
+    assert result.has_act(ConversationAct.SOCIAL)
+
+
+def test_discourse_marker_is_social_without_consuming_a_slot() -> None:
+    result = DeterministicConversationInterpreter().interpret("Só uma dúvida")
+
+    assert result.has_act(ConversationAct.SOCIAL)
