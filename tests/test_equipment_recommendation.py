@@ -9,6 +9,7 @@ from app.booking.equipment_recommender import (
     required_capacity_btu,
 )
 from app.conversations.facts import enrich_context_from_message
+from app.conversations.context_policy import invalidate_changed_facts
 
 
 def test_equipment_catalog_has_exactly_thirty_reference_configurations() -> None:
@@ -264,3 +265,114 @@ def test_recommendation_fails_closed_when_dimensions_are_unknown_under_restricti
             entries=(unknown,),
         )
 
+
+def test_latest_profile_corrections_win_and_invalidate_recommendation() -> None:
+    context = {
+        "room_people_max": 4,
+        "room_area_m2": 20,
+        "equipment_cycle": "heat_cool",
+        "recommended_equipment": {"item_id": "old"},
+        "recommendation_presented": True,
+    }
+
+    context = enrich_context_from_message(
+        context,
+        "Eram 4 pessoas, na verdade são 2",
+    )
+    context = enrich_context_from_message(
+        context,
+        "Eram 20 m², corrigindo, 15",
+    )
+    context = enrich_context_from_message(
+        context,
+        "Não quero quente/frio, quero só frio",
+    )
+
+    assert context["room_people_max"] == 2
+    assert context["room_area_m2"] == 15
+    assert context["equipment_cycle"] == "cold"
+    assert "recommended_equipment" not in context
+    assert "recommendation_presented" not in context
+
+
+def test_cycle_correction_can_switch_back_to_heat_cool() -> None:
+    context = enrich_context_from_message(
+        {"equipment_cycle": "cold"},
+        "Não quero só frio, quero quente/frio",
+    )
+
+    assert context["equipment_cycle"] == "heat_cool"
+
+
+def test_house_correction_removes_building_only_context() -> None:
+    context = enrich_context_from_message(
+        {
+            "property_type": "building",
+            "building_hours_start": "08:00",
+            "building_hours_end": "17:00",
+            "gate_instructions": "Interfone 2",
+        },
+        "É casa, não apartamento",
+    )
+
+    assert context["property_type"] == "house"
+    assert "building_hours_start" not in context
+    assert "building_hours_end" not in context
+    assert "gate_instructions" not in context
+
+
+def test_new_date_invalidates_selected_time_only() -> None:
+    updated = invalidate_changed_facts(
+        {
+            "service_id": "service-1",
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "candidate_booking": {"id": "candidate"},
+        },
+        {
+            "service_id": "service-1",
+            "selected_date": "2026-09-03",
+            "selected_time": "09:00",
+            "candidate_booking": {"id": "candidate"},
+        },
+    )
+
+    assert updated["service_id"] == "service-1"
+    assert updated["selected_date"] == "2026-09-03"
+    assert "selected_time" not in updated
+    assert "candidate_booking" not in updated
+
+
+def test_address_with_block_and_apartment_does_not_become_gate_instruction() -> None:
+    context = enrich_context_from_message(
+        {"property_type": "building"},
+        "Rua X, 100, bloco 2, apto 31",
+    )
+
+    assert "gate_instructions" not in context
+
+
+
+def test_changed_planning_fact_invalidates_quote_and_schedule() -> None:
+    updated = invalidate_changed_facts(
+        {
+            "quantity": 1,
+            "quote_presented": True,
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "candidate_booking": {"id": "candidate"},
+        },
+        {
+            "quantity": 2,
+            "quote_presented": True,
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "candidate_booking": {"id": "candidate"},
+        },
+    )
+
+    assert updated["quantity"] == 2
+    assert "quote_presented" not in updated
+    assert "selected_date" not in updated
+    assert "selected_time" not in updated
+    assert "candidate_booking" not in updated

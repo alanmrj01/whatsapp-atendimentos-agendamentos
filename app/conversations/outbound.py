@@ -20,6 +20,12 @@ from app.conversations.constants import (
     EQUIPMENT_CYCLE_COLD,
     EQUIPMENT_CYCLE_HEAT_COOL,
     EQUIPMENT_SPACE_NO_LIMIT,
+    EQUIPMENT_DELIVERY_PICKUP,
+    EQUIPMENT_DELIVERY_ADDRESS,
+    EQUIPMENT_INSTALLATION_SAME_ADDRESS,
+    EQUIPMENT_INSTALLATION_OTHER_ADDRESS,
+    CHANGE_CONFIRM,
+    CHANGE_KEEP,
     MEDIA_HANDOFF,
     MEDIA_CONTINUE_TEXT,
     EQUIPMENT_PURCHASE,
@@ -68,6 +74,7 @@ class OutboundMessage:
     body: str | None
     interactive_id: str | None = None
     outbound_payload: dict[str, Any] | None = None
+    sequence_optional: bool = False
 
 
 def main_menu_message() -> OutboundMessage:
@@ -162,7 +169,10 @@ def equipment_model_known_message() -> OutboundMessage:
 
 
 def equipment_model_request_message(
-    body: str = "Qual é a marca e o modelo do ar-condicionado?",
+    body: str = (
+        "Qual é a marca e o modelo do seu ar-condicionado? "
+        "Se não souber, pode me mandar uma foto."
+    ),
 ) -> OutboundMessage:
     return OutboundMessage(message_type="text", body=body)
 
@@ -317,6 +327,66 @@ def equipment_image_message(
         body=caption,
         interactive_id=None,
         outbound_payload={"image_url": image_url},
+        sequence_optional=True,
+    )
+
+
+def equipment_delivery_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="Você prefere retirar o aparelho ou receber no seu endereço?",
+        interactive_id="equipment.delivery",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_DELIVERY_PICKUP, "Retirar"),
+                BookingOption(EQUIPMENT_DELIVERY_ADDRESS, "Receber"),
+            )
+        ),
+    )
+
+
+def delivery_installation_address_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body="A instalação será nesse mesmo endereço?",
+        interactive_id="equipment.installation_address",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_INSTALLATION_SAME_ADDRESS, "Sim"),
+                BookingOption(EQUIPMENT_INSTALLATION_OTHER_ADDRESS, "Outro endereço"),
+            )
+        ),
+    )
+
+
+def change_confirmation_message(label: str) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=f"Você quer mudar sua escolha para {label}?",
+        interactive_id="conversation.change_confirmation",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(CHANGE_CONFIRM, "Sim, mudar"),
+                BookingOption(CHANGE_KEEP, "Não, continuar"),
+            )
+        ),
+    )
+
+
+def additional_request_message(label: str) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            f"Você também mencionou {label}. Quer concluir este atendimento "
+            "primeiro ou mudar para esse serviço?"
+        ),
+        interactive_id="conversation.additional_request",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(CHANGE_KEEP, "Concluir este"),
+                BookingOption(CHANGE_CONFIRM, "Mudar serviço"),
+            )
+        ),
     )
 
 
@@ -324,8 +394,8 @@ def equipment_photo_request_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="text",
         body=(
-            "Sem problema. Tire uma foto do ar-condicionado e envie aqui. "
-            "A foto ficará anexada para a equipe identificar o aparelho."
+            "Sem problema. Pode me mandar uma foto do ar-condicionado "
+            "para a equipe identificar o aparelho."
         ),
     )
 
@@ -335,8 +405,7 @@ def diagnostic_noise_video_request_message() -> OutboundMessage:
         message_type="text",
         body=(
             "Como o aparelho está fazendo barulho, grave um vídeo curto dele funcionando "
-            "e envie aqui. Não vou analisar o vídeo; ele ficará anexado para o técnico "
-            "consultar antes do atendimento."
+            "e envie aqui para o técnico conferir antes do atendimento."
         ),
     )
 

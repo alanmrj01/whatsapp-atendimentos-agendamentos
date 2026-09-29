@@ -18,7 +18,17 @@ class ConversationIntent(StrEnum):
     PRICE_QUESTION = "price_question"
     DURATION_QUESTION = "duration_question"
     SERVICE_QUESTION = "service_question"
+    CANCEL_QUESTION = "cancel_question"
+    RESCHEDULE_QUESTION = "reschedule_question"
     UNKNOWN = "unknown"
+
+
+class ConversationAct(StrEnum):
+    SOCIAL = "social"
+    CORRECTION = "correction"
+    SIDE_QUESTION = "side_question"
+    ADDITIONAL_REQUEST = "additional_request"
+    NEGATED_ACTION = "negated_action"
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,9 +38,13 @@ class Interpretation:
     service_key: str | None = None
     intents: frozenset[ConversationIntent] = frozenset()
     customer_name: str | None = None
+    acts: frozenset[ConversationAct] = frozenset()
 
     def has(self, intent: ConversationIntent) -> bool:
         return intent in self.intents or self.intent is intent
+
+    def has_act(self, act: ConversationAct) -> bool:
+        return act in self.acts
 
 
 SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
@@ -100,6 +114,34 @@ _SERVICE_QUESTION_PHRASES = (
     "faz parte",
 )
 
+_SOCIAL_ONLY = frozenset(
+    {
+        "bom dia",
+        "boa tarde",
+        "boa noite",
+        "ok",
+        "okay",
+        "entendi",
+        "beleza",
+        "obrigado",
+        "obrigada",
+        "show",
+        "certo",
+        "valeu",
+        "perfeito",
+        "tudo bem",
+        "so uma duvida",
+        "uma duvida",
+    }
+)
+
+_CORRECTION_MARKERS = (
+    "na verdade",
+    "quis dizer",
+    "corrigindo",
+    "melhor dizendo",
+)
+
 _BARE_NAME_REJECT_PREFIXES = (
     "oi",
     "ola",
@@ -146,32 +188,84 @@ class DeterministicConversationInterpreter:
             )
 
         intents: set[ConversationIntent] = set()
+        acts: set[ConversationAct] = set()
         service_key: str | None = None
+        assertion = correction_focus(original)
 
-        if _contains_any(
+        if normalized in _SOCIAL_ONLY:
+            acts.add(ConversationAct.SOCIAL)
+        if assertion != normalized or any(
+            marker in normalized for marker in _CORRECTION_MARKERS
+        ):
+            acts.add(ConversationAct.CORRECTION)
+        if re.search(r"\b(?:tambem|alem disso)\s+(?:quero|preciso|gostaria)\b", normalized):
+            acts.add(ConversationAct.ADDITIONAL_REQUEST)
+        if re.search(
+            r"\bnao\s+(?:quero\s+|vou\s+|pretendo\s+|desejo\s+)?"
+            r"(?:cancelar|cancelamento|desmarcar|remarcar|reagendar|"
+            r"reagendamento|comprar|falar\s+com|(?:um\s+)?atendente)\b",
             normalized,
-            (
-                "falar com atendente",
-                "falar com alguem",
-                "falar com uma pessoa",
-                "quero um atendente",
-                "atendente humano",
-                "pessoa da equipe",
-            ),
+        ):
+            acts.add(ConversationAct.NEGATED_ACTION)
+
+        handoff_aliases = (
+            "falar com atendente",
+            "falar com alguem",
+            "falar com uma pessoa",
+            "quero um atendente",
+            "atendente humano",
+            "pessoa da equipe",
+        )
+        if _contains_any(assertion, handoff_aliases) and not any(
+            _phrase_is_negated(normalized, alias) for alias in handoff_aliases
         ):
             intents.add(ConversationIntent.HUMAN_HANDOFF)
-        if _contains_any(normalized, ("remarcar", "reagendar", "mudar horario", "trocar horario")):
-            intents.add(ConversationIntent.RESCHEDULE)
-        if _contains_any(normalized, ("cancelar", "cancela", "desmarcar")):
-            intents.add(ConversationIntent.CANCEL)
+        reschedule_signal = _contains_any(
+            assertion,
+            (
+                "remarcar",
+                "reagendar",
+                "reagendamento",
+                "mudar horario",
+                "trocar horario",
+            ),
+        )
+        cancel_signal = _contains_any(
+            assertion,
+            ("cancelar", "cancelamento", "cancela", "desmarcar"),
+        )
+        reschedule_aliases = (
+            "remarcar",
+            "reagendar",
+            "reagendamento",
+            "mudar horario",
+            "trocar horario",
+        )
+        if reschedule_signal and not any(
+            _phrase_is_negated(assertion, alias) for alias in reschedule_aliases
+        ):
+            if _is_action_request(assertion, reschedule_aliases):
+                intents.add(ConversationIntent.RESCHEDULE)
+            else:
+                intents.add(ConversationIntent.RESCHEDULE_QUESTION)
+                acts.add(ConversationAct.SIDE_QUESTION)
+        cancel_aliases = ("cancelar", "cancelamento", "cancela", "desmarcar")
+        if cancel_signal and not any(
+            _phrase_is_negated(assertion, alias) for alias in cancel_aliases
+        ):
+            if _is_action_request(assertion, cancel_aliases):
+                intents.add(ConversationIntent.CANCEL)
+            else:
+                intents.add(ConversationIntent.CANCEL_QUESTION)
+                acts.add(ConversationAct.SIDE_QUESTION)
 
         for candidate_key, aliases in SERVICE_ALIASES.items():
-            if _contains_any(normalized, aliases):
+            if _contains_any(assertion, aliases):
                 service_key = candidate_key
                 intents.add(ConversationIntent.SERVICE_INTENT)
                 break
 
-        if _contains_equipment_purchase(normalized):
+        if _contains_equipment_purchase(assertion) and not _purchase_is_negated(normalized):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
 
         if _contains_any(normalized, ("tem horario", "disponibilidade", "quando pode", "qual horario")):
@@ -180,12 +274,17 @@ class DeterministicConversationInterpreter:
             intents.add(ConversationIntent.BOOK)
         if _contains_any(normalized, _PRICE_PHRASES):
             intents.add(ConversationIntent.PRICE_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_any(normalized, _DURATION_PHRASES):
             intents.add(ConversationIntent.DURATION_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_any(normalized, _SERVICE_QUESTION_PHRASES):
             intents.add(ConversationIntent.SERVICE_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_greeting(normalized):
             intents.add(ConversationIntent.GREETING)
+        if intents == {ConversationIntent.GREETING}:
+            acts.add(ConversationAct.SOCIAL)
 
         customer_name = extract_customer_name(original, allow_bare=False)
 
@@ -200,6 +299,8 @@ class DeterministicConversationInterpreter:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.CANCEL_QUESTION,
+            ConversationIntent.RESCHEDULE_QUESTION,
             ConversationIntent.GREETING,
         )
         primary = next(
@@ -214,7 +315,72 @@ class DeterministicConversationInterpreter:
             service_key,
             frozenset(intents),
             customer_name,
+            frozenset(acts),
         )
+
+
+def correction_focus(value: str) -> str:
+    """Return the most recent asserted clause, favoring explicit corrections."""
+
+    normalized = normalize_portuguese(value)
+    if not normalized:
+        return normalized
+    for marker in _CORRECTION_MARKERS:
+        token = f" {marker} "
+        if token in f" {normalized} ":
+            return normalized.rsplit(marker, maxsplit=1)[-1].strip()
+
+    raw_parts = re.split(r"[,;]", value)
+    if len(raw_parts) > 1 and normalize_portuguese(raw_parts[-1]).startswith("nao "):
+        head = normalize_portuguese(raw_parts[0])
+        head = re.sub(r"^(?:e|eh)\s+", "", head)
+        if head:
+            return head
+    if len(raw_parts) > 1 and normalize_portuguese(raw_parts[0]).startswith("nao "):
+        tail = normalize_portuguese(raw_parts[-1])
+        tail = re.sub(r"^(?:mas\s+)?(?:e\s+)?(?:quero\s+|prefiro\s+)?", "", tail)
+        if tail:
+            return tail
+    return normalized
+
+
+def _phrase_is_negated(value: str, phrase: str) -> bool:
+    escaped = r"\s+".join(re.escape(token) for token in phrase.split())
+    return bool(
+        re.search(
+            rf"\bnao(?:\s+(?:quero|vou|pretendo|desejo|preciso|e|eh))?\s+{escaped}\b",
+            value,
+        )
+    )
+
+
+def _purchase_is_negated(value: str) -> bool:
+    return bool(
+        re.search(
+            r"\bnao\s+(?:quero\s+|vou\s+|pretendo\s+)?(?:comprar|compra|adquirir)\b",
+            value,
+        )
+    )
+
+
+def _is_action_request(value: str, aliases: tuple[str, ...]) -> bool:
+    if any(_phrase_is_negated(value, alias) for alias in aliases):
+        return False
+    question_leads = (
+        "como funciona",
+        "posso",
+        "pode",
+        "e possivel",
+        "depois posso",
+        "se eu quiser",
+        "quando posso",
+    )
+    if any(lead in value for lead in question_leads) and not any(
+        token in value
+        for token in ("quero", "preciso", "gostaria", "vou", "pode cancelar", "pode remarcar")
+    ):
+        return False
+    return True
 
 
 def normalize_portuguese(value: str) -> str:

@@ -153,3 +153,45 @@ def test_follow_up_outbox_messages_are_ordered_and_idempotent() -> None:
     assert second_payload["_alovia_sequence_index"] == 1
     assert first_payload["_alovia_sequence_count"] == 2
     assert second_payload["_alovia_sequence_count"] == 2
+
+
+def test_optional_follow_up_is_marked_without_making_sequence_optional() -> None:
+    idempotency_key = "conversation:outbound:optional-image"
+    sequenced = ConversationTransition(
+        state=ConversationState.BOOKING_EQUIPMENT_DELIVERY,
+        context={},
+        automation_enabled=True,
+        handoff_status="none",
+        outbound=OutboundMessage(message_type="text", body="Recomendação"),
+        follow_ups=(
+            OutboundMessage(
+                message_type="image",
+                body="Foto do equipamento",
+                outbound_payload={"image_url": "https://example.com/image.jpg"},
+                sequence_optional=True,
+            ),
+            OutboundMessage(message_type="text", body="Próxima pergunta"),
+        ),
+    )
+
+    first = build_outbound_insert_statement(
+        snapshot(),
+        sequenced,
+        idempotency_key,
+    ).compile(dialect=postgresql_dialect())
+    image = build_follow_up_insert_statement(
+        snapshot(),
+        sequenced,
+        idempotency_key,
+        1,
+    ).compile(dialect=postgresql_dialect())
+    question = build_follow_up_insert_statement(
+        snapshot(),
+        sequenced,
+        idempotency_key,
+        2,
+    ).compile(dialect=postgresql_dialect())
+
+    assert first.params["outbound_payload"].get("_alovia_optional") is None
+    assert image.params["outbound_payload"]["_alovia_optional"] is True
+    assert question.params["outbound_payload"].get("_alovia_optional") is None

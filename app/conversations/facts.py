@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.conversations.interpreter import normalize_portuguese
+from app.conversations.context_policy import invalidate_changed_facts
+from app.conversations.interpreter import correction_focus, normalize_portuguese
 
 _BRANDS = (
     "lg",
@@ -136,51 +137,80 @@ def enrich_context_from_message(
     such as "sim"/"não" using the question currently being asked.
     """
 
+    updated = dict(context)
+    if whatsapp_id and "contact_phone" not in updated:
+        normalized_phone = _normalize_whatsapp_phone(whatsapp_id)
+        if normalized_phone is not None:
+            updated["whatsapp_contact_phone"] = normalized_phone
+
     raw = " ".join((body or "").strip().split())
     if not raw:
-        return dict(context)
+        return updated
 
     normalized = normalize_portuguese(raw)
-    updated = dict(context)
-
+    assertion = correction_focus(raw)
+    is_correction = assertion != normalized or any(
+        marker in normalized
+        for marker in ("na verdade", "quis dizer", "corrigindo", "melhor dizendo")
+    )
     if any(phrase in normalized for phrase in _QUOTE_PHRASES):
         updated["request_mode"] = "quote"
 
-    ownership = _equipment_ownership(normalized)
+    ownership = _equipment_ownership(assertion)
     if ownership is not None:
-        updated["equipment_ownership"] = ownership
+        _assign_fact(updated, "equipment_ownership", ownership, is_correction)
 
-    model = _equipment_model(raw, normalized)
+    model = _equipment_model(raw, assertion)
     if model is not None:
-        updated["equipment_model"] = model
+        _assign_fact(updated, "equipment_model", model, is_correction)
         updated["equipment_model_known"] = True
 
-    quantity = _equipment_quantity(normalized)
+    quantity = _equipment_quantity(assertion)
     if quantity is not None:
-        updated["equipment_quantity"] = quantity
+        _assign_fact(updated, "equipment_quantity", quantity, is_correction)
         if "quantity" not in updated:
             updated["quantity"] = quantity
 
-    profile_changed = False
-    area = _room_area(normalized)
+    area = _room_area(assertion)
+    if (
+        area is None
+        and is_correction
+        and any(
+            token in normalized
+            for token in ("m2", "metros quadrados", "area", "tamanho", "ambiente")
+        )
+    ):
+        corrected_area = parse_number_answer(assertion)
+        if corrected_area is not None and 1 <= corrected_area <= 1000:
+            area = corrected_area
     if area is not None:
-        profile_changed = updated.get("room_area_m2") != area or profile_changed
-        updated["room_area_m2"] = area
+        _assign_fact(updated, "room_area_m2", area, is_correction)
 
-    people = _people_count(normalized)
+    people = _people_count(assertion)
+    if (
+        people is None
+        and is_correction
+        and any(token in normalized for token in ("pessoa", "pessoas", "ocupantes"))
+    ):
+        corrected_number = parse_number_answer(assertion)
+        if (
+            corrected_number is not None
+            and corrected_number.is_integer()
+            and 1 <= corrected_number <= 100
+        ):
+            people = int(corrected_number)
     if people is not None:
-        profile_changed = updated.get("room_people_max") != people or profile_changed
-        updated["room_people_max"] = people
+        _assign_fact(updated, "room_people_max", people, is_correction)
 
-    preference = _preference(normalized)
+    preference = _preference(assertion)
     if preference is not None:
-        updated["equipment_preference"] = preference
+        _assign_fact(updated, "equipment_preference", preference, is_correction)
 
-    cycle = _climate_mode(normalized)
+    cycle = _climate_mode(assertion)
     if cycle is not None:
-        updated["equipment_cycle"] = cycle
+        _assign_fact(updated, "equipment_cycle", cycle, is_correction)
 
-    space = _installation_space(raw, normalized)
+    space = _installation_space(raw, assertion)
     if space is not None:
         target, values = space
         if values == "unrestricted":
@@ -193,14 +223,14 @@ def enrich_context_from_message(
                 updated[f"{target}_space_depth_cm"] = depth
             updated[f"{target}_space_unrestricted"] = False
 
-    height = _height_over_three_meters(normalized)
+    height = _height_over_three_meters(assertion)
     if height is not None:
         updated["installation_height_over_3m"] = height
         updated["work_at_height"] = height
 
-    property_type = _property_type(normalized)
+    property_type = _property_type(assertion)
     if property_type is not None:
-        updated["property_type"] = property_type
+        _assign_fact(updated, "property_type", property_type, is_correction)
 
     hours = _hours_window(raw)
     if hours is not None:
@@ -217,16 +247,6 @@ def enrich_context_from_message(
         if name is not None:
             updated["onsite_contact_name"] = name
 
-    if (
-        updated.get("property_type") in {"building", "condominium"}
-        and any(
-            token in normalized
-            for token in ("portaria", "bloco", "apto", "apartamento", "torre")
-        )
-    ):
-        if len(raw) <= 300:
-            updated["gate_instructions"] = raw
-
     phone = _phone(raw)
     if phone is not None and any(
         token in normalized
@@ -239,7 +259,18 @@ def enrich_context_from_message(
         if normalized_phone is not None:
             updated["whatsapp_contact_phone"] = normalized_phone
 
-    return updated
+    return invalidate_changed_facts(context, updated)
+
+
+def _assign_fact(
+    context: dict[str, Any],
+    key: str,
+    value: Any,
+    is_correction: bool,
+) -> None:
+    existing = context.get(key)
+    if existing is None or existing == value or is_correction:
+        context[key] = value
 
 
 def missing_equipment_profile_fields(context: dict[str, Any]) -> tuple[str, ...]:

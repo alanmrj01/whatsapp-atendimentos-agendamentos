@@ -203,10 +203,22 @@ class OutboundTaskRepository:
                 )
             )
         ).one_or_none()
-        if row is None or row.status not in {"sent", "delivered", "read"}:
+        if row is None:
             return None
         payload = row.outbound_payload
         if not isinstance(payload, dict):
+            return None
+        delivered = row.status in {"sent", "delivered", "read"}
+        optional_failure = (
+            row.status == "failed"
+            and (
+                payload.get("_alovia_optional") is True
+                # Compatibilidade transitória com mensagens já persistidas
+                # durante o desenvolvimento desta política.
+                or payload.get("_alovia_sequence_optional") is True
+            )
+        )
+        if not delivered and not optional_failure:
             return None
         group = payload.get("_alovia_sequence_group")
         index = payload.get("_alovia_sequence_index")

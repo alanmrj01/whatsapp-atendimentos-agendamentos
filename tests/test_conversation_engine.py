@@ -434,6 +434,8 @@ async def test_natural_service_request_advances_without_permission_question() ->
     assert repository.context["equipment_ownership"] == "has_equipment"
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "marca e o modelo" in body.casefold()
+    assert "pode me mandar uma foto" in body.casefold()
+    assert "responda" not in body.casefold()
     assert "Quer que eu" not in body
 
 
@@ -1415,7 +1417,8 @@ async def test_stale_booking_button_is_never_saved_as_customer_name() -> None:
     assert repository.customer_name is None
     assert repository.state == ConversationState.CUSTOMER_NAME
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "etapa anterior" in body
+    assert "etapa anterior" not in body
+    assert "qual é o seu nome" in body
     assert "nome" in body
     assert "prazer, voltar" not in body
 
@@ -1892,7 +1895,7 @@ async def test_same_city_question_is_never_asked_more_than_twice() -> None:
 
     assert repository.state == ConversationState.HUMAN_HANDOFF
     assert repository.automation_enabled is False
-    assert "duas tentativas" in (
+    assert "com segurança" in (
         repository.outbounds[-1].transition.outbound.body or ""
     ).casefold()
 
@@ -2355,7 +2358,7 @@ async def test_profile_rephrases_once_then_handoffs_after_second_invalid_answer(
     assert repository.state == ConversationState.HUMAN_HANDOFF
     assert repository.automation_enabled is False
     handoff = (second.outbound.body or "").casefold()
-    assert "redirecionando" in handoff
+    assert "vou chamar" in handoff
     assert "pessoa da nossa equipe" in handoff
     assert "aguarde" in handoff
 
@@ -2443,7 +2446,7 @@ async def test_building_hours_rephrases_once_before_handoff() -> None:
     assert repository.state == ConversationState.HUMAN_HANDOFF
     assert repository.automation_enabled is False
     body = (second.outbound.body or "").casefold()
-    assert "redirecionando" in body
+    assert "vou chamar" in body
     assert "pessoa da nossa equipe" in body
     assert "aguarde" in body
 
@@ -2877,3 +2880,354 @@ async def test_post_booking_unrelated_subject_goes_to_human_team() -> None:
     assert repository.state == ConversationState.HUMAN_HANDOFF
     assert repository.automation_enabled is False
 
+
+@mark.parametrize(
+    ("state", "context"),
+    [
+        (
+            ConversationState.BOOKING_ADDRESS,
+            {"service_id": str(SERVICE_ID)},
+        ),
+        (
+            ConversationState.BOOKING_DATE,
+            {"service_id": str(SERVICE_ID)},
+        ),
+        (
+            ConversationState.BOOKING_TIME,
+            {
+                "service_id": str(SERVICE_ID),
+                "selected_date": "2026-09-02",
+            },
+        ),
+    ],
+)
+@mark.asyncio
+async def test_lateral_question_resumes_active_slot_without_repair_attempt(
+    state: ConversationState,
+    context: dict[str, Any],
+) -> None:
+    repository = FakeConversationRepository(state=state, context=context)
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=state is ConversationState.BOOKING_ADDRESS,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(960, body="Quanto custa esse serviço?")
+    )
+
+    assert repository.state == state
+    assert "repair_attempts" not in repository.context
+    assert "R$ 100,00" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    )
+
+
+@mark.asyncio
+async def test_two_lateral_questions_and_social_reply_never_force_handoff() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "repair_attempts": {"address": 1},
+        },
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(961, body="Quanto custa?"))
+    await engine.process(inbound(962, body="Quanto tempo demora?"))
+    await engine.process(inbound(963, body="Obrigado"))
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.automation_enabled is True
+    assert repository.context["repair_attempts"] == {"address": 1}
+
+
+@mark.asyncio
+async def test_old_button_requires_confirmation_and_keep_preserves_current_slot() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+        },
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(
+        inbound(964, action="property.house", body="Casa")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["pending_change_action"] == "property.house"
+    assert "quer mudar" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+    await engine.process(
+        inbound(965, action="change.keep", body="Não, continuar")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert "pending_change_action" not in repository.context
+    assert "property_type" not in repository.context
+
+
+@mark.asyncio
+async def test_old_button_confirm_applies_change_without_clearing_service() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+        },
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(
+        inbound(966, action="property.house", body="Casa")
+    )
+    await engine.process(
+        inbound(967, action="change.confirm", body="Sim, mudar")
+    )
+
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["property_type"] == "house"
+    assert "pending_change_action" not in repository.context
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_additional_service_request_does_not_replace_active_request() -> None:
+    maintenance_id = uuid.UUID("41000000-0000-0000-0000-000000000004")
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_DATE,
+        context={"service_id": str(SERVICE_ID)},
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização"),
+        BookingOption(
+            str(maintenance_id),
+            "Diagnóstico e manutenção corretiva",
+        ),
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(968, body="Também quero manutenção")
+    )
+
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["pending_service_change_id"] == str(
+        maintenance_id
+    )
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert "concluir este atendimento" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+
+async def _complete_equipment_profile(
+    engine: ConversationEngine,
+    *,
+    sequence: int,
+) -> None:
+    steps = (
+        ("equipment.model.recommend", "Não tenho modelo"),
+        (None, "3 pessoas"),
+        (None, "16 m2"),
+        ("equipment.preference.cost_benefit", "Custo-benefício"),
+        ("equipment.cycle.cold", "Só frio"),
+        ("equipment.space.no_limit", "Sem restrição"),
+    )
+    for offset, (action, body) in enumerate(steps):
+        await engine.process(
+            inbound(sequence + offset, action=action, body=body)
+        )
+
+
+@mark.asyncio
+async def test_purchase_only_recommends_once_and_pickup_finishes_without_handoff() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        context={"service_clarification": "equipment_purchase"},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(970, action="equipment.purchase", body="Só comprar")
+    )
+    await _complete_equipment_profile(engine, sequence=971)
+
+    recommendation = repository.outbounds[-1].transition
+    messages = (recommendation.outbound, *recommendation.follow_ups)
+    combined = " ".join(message.body or "" for message in messages)
+    assert combined.casefold().count("uma boa referência") == 1
+    assert "9.000 BTU" in combined
+    assert "Só Frio" in combined
+    assert "R$ 2.500,00" in combined
+    images = [message for message in messages if message.message_type == "image"]
+    assert len(images) == 1
+    assert images[0].sequence_optional is True
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_DELIVERY
+
+    await engine.process(
+        inbound(978, action="equipment.delivery.pickup", body="Retirar")
+    )
+
+    assert repository.state == ConversationState.COMPLETED
+    assert repository.automation_enabled is True
+    assert repository.context["purchase_mode"] == "purchase"
+    assert "service_address" not in repository.context
+
+
+@mark.asyncio
+async def test_purchase_and_install_keeps_delivery_and_service_addresses_separate() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        context={"service_clarification": "equipment_purchase"},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(980, action="equipment.both", body="Comprar e instalar")
+    )
+    await _complete_equipment_profile(engine, sequence=981)
+    await engine.process(
+        inbound(987, action="equipment.delivery.address", body="Receber")
+    )
+    await engine.process(
+        inbound(
+            988,
+            body="Rua A, 10, Centro, São José dos Campos - SP",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_DELIVERY
+    assert "delivery_address" in repository.context
+    assert "service_address" not in repository.context
+
+    await engine.process(
+        inbound(
+            989,
+            action="equipment.installation.same_address",
+            body="Mesmo endereço",
+        )
+    )
+
+    assert repository.context["purchase_mode"] == "both"
+    assert repository.context["service_address"] == repository.context[
+        "delivery_address"
+    ]
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_requested_equipment_photo_is_recorded_and_flow_continues() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "equipment_ownership": "has_equipment",
+            "equipment_photo_requested": True,
+        },
+    )
+
+    await ConversationEngine(repository, FakeBookingPort()).process(
+        inbound(990, message_type="image")
+    )
+
+    assert repository.context["equipment_photo_received"] is True
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_duplicate_hardening_event_keeps_outbox_idempotent() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+    event = inbound(991, body="Obrigado")
+
+    assert await engine.process(event) is True
+    assert await engine.process(event) is False
+    assert len(repository.outbounds) == 1
+
+
+
+@mark.asyncio
+async def test_compound_greeting_during_slot_does_not_consume_retry() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "repair_attempts": {"address": 1},
+        },
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(980, body="Bom dia, tudo bem?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["repair_attempts"] == {"address": 1}
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_old_quantity_button_confirms_change_and_invalidates_schedule() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "quantity": 1,
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "candidate_booking": {"service_id": str(SERVICE_ID)},
+        },
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(
+        inbound(981, action="quantity:2", body="2")
+    )
+    assert repository.context["pending_change_action"] == "quantity:2"
+    assert "quer mudar" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
+
+    await engine.process(
+        inbound(982, action="change.confirm", body="Sim, mudar")
+    )
+
+    assert repository.context["quantity"] == 2
+    assert "selected_time" not in repository.context
+    assert "candidate_booking" not in repository.context
+    assert "pending_change_action" not in repository.context
+    assert repository.automation_enabled is True
