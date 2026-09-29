@@ -12,6 +12,7 @@ from google.cloud import tasks_v2
 from google.protobuf import timestamp_pb2
 
 from app.core.config import CloudTasksConfiguration
+from app.whatsapp.retry_policy import OUTBOUND_RETRY_DELAY_SECONDS
 
 
 EVENT_TURN_DEBOUNCE_SECONDS = 3.0
@@ -86,6 +87,31 @@ class CloudTasksOutboundEnqueuer:
             error_message="WhatsApp outbound could not be enqueued",
         )
 
+    async def enqueue_retry(
+        self,
+        message_id: uuid.UUID,
+        retry_attempt: int,
+        *,
+        delay_seconds: float = OUTBOUND_RETRY_DELAY_SECONDS,
+    ) -> None:
+        if retry_attempt <= 0:
+            raise ValueError("retry_attempt must be positive")
+        client = _resolve_client(
+            self.client,
+            "WhatsApp outbound retry could not be enqueued",
+        )
+        await _create_task(
+            client,
+            self.configuration,
+            task_id=deterministic_outbound_retry_task_id(
+                message_id,
+                retry_attempt,
+            ),
+            payload={"message_id": str(message_id)},
+            error_message="WhatsApp outbound retry could not be enqueued",
+            delay_seconds=delay_seconds,
+        )
+
 
 def deterministic_task_id(event_key: str) -> str:
     fingerprint = hashlib.sha256(event_key.encode("utf-8")).hexdigest()
@@ -95,6 +121,16 @@ def deterministic_task_id(event_key: str) -> str:
 def deterministic_outbound_task_id(message_id: uuid.UUID) -> str:
     fingerprint = hashlib.sha256(str(message_id).encode("ascii")).hexdigest()
     return f"whatsapp-outbound-{fingerprint}"
+
+
+def deterministic_outbound_retry_task_id(
+    message_id: uuid.UUID,
+    retry_attempt: int,
+) -> str:
+    fingerprint = hashlib.sha256(
+        f"{message_id}:{retry_attempt}".encode("ascii")
+    ).hexdigest()
+    return f"whatsapp-outbound-retry-{fingerprint}"
 
 
 def _resolve_client(
