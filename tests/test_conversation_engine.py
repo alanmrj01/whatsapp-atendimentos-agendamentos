@@ -434,6 +434,8 @@ async def test_natural_service_request_advances_without_permission_question() ->
     assert repository.context["equipment_ownership"] == "has_equipment"
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "marca e o modelo" in body.casefold()
+    assert "pode me mandar uma foto" in body.casefold()
+    assert "responda" not in body.casefold()
     assert "Quer que eu" not in body
 
 
