@@ -367,7 +367,10 @@ async def _route_named_conversation(
         }
         and not interpretation.has(ConversationIntent.BOOK)
         and not interpretation.has(ConversationIntent.AVAILABILITY)
-        and context.get("request_mode") != "quote"
+        and (
+            context.get("request_mode") != "quote"
+            or interpretation.has(ConversationIntent.EQUIPMENT_QUESTION)
+        )
     ):
         if state in {
             ConversationState.POST_BOOKING_HELP,
@@ -4708,7 +4711,7 @@ async def _handle_post_booking_help(
     if no_more_help:
         return _transition(
             ConversationState.COMPLETED,
-            {},
+            _clean_context(conversation.context),
             farewell_message(),
         )
 
@@ -4734,6 +4737,7 @@ async def _handle_post_booking_help(
         ConversationIntent.PRICE_QUESTION,
         ConversationIntent.DURATION_QUESTION,
         ConversationIntent.SERVICE_QUESTION,
+        ConversationIntent.EQUIPMENT_QUESTION,
         ConversationIntent.RESCHEDULE,
         ConversationIntent.CANCEL,
     }
@@ -5774,7 +5778,7 @@ async def _handle_quote_decision(
     if action == QUOTE_FINISH:
         return _transition(
             ConversationState.COMPLETED,
-            {},
+            context,
             _text_message(
                 "Perfeito. A cotação fica registrada nesta conversa. "
                 "Quando quiser avançar, é só me chamar."
