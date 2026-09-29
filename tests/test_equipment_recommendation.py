@@ -351,3 +351,28 @@ def test_address_with_block_and_apartment_does_not_become_gate_instruction() -> 
 
     assert "gate_instructions" not in context
 
+
+
+def test_changed_planning_fact_invalidates_quote_and_schedule() -> None:
+    updated = invalidate_changed_facts(
+        {
+            "quantity": 1,
+            "quote_presented": True,
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "candidate_booking": {"id": "candidate"},
+        },
+        {
+            "quantity": 2,
+            "quote_presented": True,
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "candidate_booking": {"id": "candidate"},
+        },
+    )
+
+    assert updated["quantity"] == 2
+    assert "quote_presented" not in updated
+    assert "selected_date" not in updated
+    assert "selected_time" not in updated
+    assert "candidate_booking" not in updated
