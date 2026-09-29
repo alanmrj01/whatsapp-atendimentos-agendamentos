@@ -741,13 +741,17 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
 
     assert await engine.process(inbound(8, action="booking.confirm")) is True
     assert repository.state == ConversationState.POST_BOOKING_HELP
-    assert repository.context == {}
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
 
     assert await engine.process(
         inbound(9, action="post_booking.help.no", body="Não, obrigado")
     ) is True
     assert repository.state == ConversationState.COMPLETED
-    assert repository.context == {}
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
     assert booking_port.confirmations == [
         (
             BUSINESS_ID,
@@ -2607,7 +2611,7 @@ async def test_quote_price_does_not_repeat_tubing_disclaimer_and_invites_schedul
     transition = repository.outbounds[-1].transition
     messages = (transition.outbound, *transition.follow_ups)
     joined = " ".join(message.body or "" for message in messages).casefold()
-    assert "instalação/serviço" in joined
+    assert "valor do serviço" in joined
     assert "metragem incluída de tubulação" not in joined
     assert "material adicional pode alterar o valor" not in joined
     decision = next(
