@@ -121,6 +121,31 @@ def test_equipment_purchase_is_distinguished_from_installation(body: str) -> Non
     assert result.has(ConversationIntent.EQUIPMENT_PURCHASE)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Quanto custa um ar condicionado?",
+        "Qual o valor de um aparelho?",
+        "Gostaria de uma cotação de um ar condicionado",
+    ],
+)
+def test_generic_equipment_price_request_enters_purchase_flow(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.EQUIPMENT_PURCHASE)
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+
+
+def test_service_price_question_is_not_stolen_by_equipment_purchase() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Quanto custa a manutenção do ar condicionado?"
+    )
+
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+    assert result.service_key == "diagnostics"
+    assert not result.has(ConversationIntent.EQUIPMENT_PURCHASE)
+
+
 def test_social_reply_is_not_accepted_as_bare_customer_name() -> None:
     assert extract_customer_name("suave", allow_bare=True) is None
     assert extract_customer_name("beleza", allow_bare=True) is None
