@@ -1270,6 +1270,31 @@ async def _handle_pending_change(
             booking_port,
             customer_name=conversation.customer_name,
         )
+    if pending_action is not None and pending_action.startswith("quantity:"):
+        return await _handle_quantity(
+            inbound,
+            cleaned,
+            pending_action,
+            booking_port,
+            customer_name=conversation.customer_name,
+        )
+    if pending_action in {ACCESS_NORMAL, ACCESS_DIFFICULT, ACCESS_UNKNOWN}:
+        return await _handle_access(
+            inbound,
+            cleaned,
+            pending_action,
+            booking_port,
+            customer_name=conversation.customer_name,
+        )
+    if pending_action in {HEIGHT_AT_MOST_3M, HEIGHT_OVER_3M}:
+        return await _handle_installation_height(
+            inbound,
+            cleaned,
+            pending_action,
+            booking_port,
+            customer_name=conversation.customer_name,
+        )
+
     property_by_action = {
         PROPERTY_HOUSE: "house",
         PROPERTY_BUILDING: "building",
@@ -1323,8 +1348,15 @@ def _stale_interactive_transition(
         return None
     if state is ConversationState.BOOKING_TIME and action.startswith("time:"):
         return None
+    if state is ConversationState.BOOKING_QUANTITY and action.startswith("quantity:"):
+        return None
 
     expected_actions: dict[ConversationState, set[str]] = {
+        ConversationState.BOOKING_ACCESS: {
+            ACCESS_NORMAL,
+            ACCESS_DIFFICULT,
+            ACCESS_UNKNOWN,
+        },
         ConversationState.BOOKING_EQUIPMENT_OWNERSHIP: {
             EQUIPMENT_HAS,
             EQUIPMENT_NEEDS,
@@ -1381,7 +1413,19 @@ def _stale_interactive_transition(
     if action in expected_actions.get(state, set()):
         return None
 
+    if action.startswith("quantity:"):
+        quantity = _quantity(action, None)
+        if quantity is not None:
+            return _request_change_confirmation(
+                state, context, action, f"{quantity} aparelho(s)"
+            )
+
     change_labels = {
+        ACCESS_NORMAL: "acesso normal",
+        ACCESS_DIFFICULT: "acesso difícil",
+        ACCESS_UNKNOWN: "condição de acesso ainda não confirmada",
+        HEIGHT_AT_MOST_3M: "instalação em até 3 metros",
+        HEIGHT_OVER_3M: "instalação acima de 3 metros",
         EQUIPMENT_INSTALLATION: "somente instalação",
         EQUIPMENT_PURCHASE: "comprar o aparelho",
         EQUIPMENT_BOTH: "compra + instalação",
@@ -1825,7 +1869,7 @@ def _address_success_context(
     updated.pop("pending_service_address", None)
     updated.pop("pending_address_city_guess", None)
     updated.pop("awaiting_address_city", None)
-    return updated
+    return invalidate_changed_facts(context, updated)
 
 
 def _installation_service_option(
@@ -2483,6 +2527,7 @@ async def _handle_quantity(
     }
     if context.get("request_mode") == "quote":
         updated["equipment_quantity"] = quantity
+    updated = invalidate_changed_facts(context, updated)
     return await _advance_intake(
         inbound,
         port,
@@ -2528,15 +2573,19 @@ async def _handle_access(
             ),
         )
     context = _clear_repair_attempt(context, "access")
-    return await _advance_intake(
-        inbound,
-        port,
-        intake,
+    updated = invalidate_changed_facts(
+        context,
         {
             **context,
             "service_id": str(service_id),
             "access_condition": access.value,
         },
+    )
+    return await _advance_intake(
+        inbound,
+        port,
+        intake,
+        updated,
         customer_name=customer_name,
     )
 
@@ -3612,6 +3661,7 @@ async def _handle_installation_height(
         "work_at_height": height,
         "tubing_length_answered": True,
     }
+    updated = invalidate_changed_facts(context, updated)
     return await _advance_intake(
         inbound,
         port,
