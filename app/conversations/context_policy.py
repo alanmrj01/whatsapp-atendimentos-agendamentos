@@ -17,6 +17,8 @@ _RECOMMENDATION_INPUTS = frozenset(
         "outdoor_space_height_cm",
         "outdoor_space_depth_cm",
         "outdoor_space_unrestricted",
+        "equipment_budget_max",
+        "total_budget_max",
     }
 )
 
@@ -54,6 +56,8 @@ _PLANNING_INPUTS = frozenset(
         "tubing_meters",
         "site_allowed_end",
         "site_limit_answered",
+        "service_budget_max",
+        "total_budget_max",
     }
 ) | _RECOMMENDATION_INPUTS
 
