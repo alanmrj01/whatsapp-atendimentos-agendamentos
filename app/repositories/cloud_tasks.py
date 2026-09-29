@@ -9,6 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.conversations.types import ConversationInput
 from app.models import Conversation, Customer, Message, ProcessedWebhook
+from app.whatsapp.retry_policy import (
+    MAX_OUTBOUND_RETRY_ATTEMPTS,
+    OUTBOUND_RETRY_ATTEMPT_KEY,
+    RETRYABLE_OUTBOUND_MESSAGE_TYPES,
+    current_outbound_retry_attempt,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,11 +222,33 @@ class CloudTaskEventRepository:
         provider_message_id: str,
         message_status: str,
     ) -> None:
-        await self.session.execute(
-            update(Message)
+        message = await self.session.scalar(
+            select(Message)
             .where(Message.provider_message_id == provider_message_id)
-            .values(status=message_status)
+            .with_for_update()
         )
+        if message is None:
+            return
+
+        # Never turn an already delivered/read message back into a retry because
+        # of a late or out-of-order failure webhook.
+        if message_status == "failed" and message.status in {"delivered", "read"}:
+            return
+
+        if (
+            message_status == "failed"
+            and message.direction == "outbound"
+            and message.message_type in RETRYABLE_OUTBOUND_MESSAGE_TYPES
+        ):
+            payload = dict(message.outbound_payload or {})
+            retry_attempt = current_outbound_retry_attempt(payload)
+            if retry_attempt < MAX_OUTBOUND_RETRY_ATTEMPTS:
+                payload[OUTBOUND_RETRY_ATTEMPT_KEY] = retry_attempt + 1
+                message.outbound_payload = payload
+                message.status = "pending"
+                return
+
+        message.status = message_status
 
     async def complete_event(self, event_key: str, event_status: str) -> None:
         await self.session.execute(
