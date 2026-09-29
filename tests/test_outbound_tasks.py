@@ -29,11 +29,14 @@ from app.tasks import auth as task_auth
 from app.tasks.auth import require_cloud_tasks_oidc, require_outbound_tasks_oidc
 from app.tasks.cloud_tasks import (
     CloudTasksOutboundEnqueuer,
+    deterministic_outbound_retry_task_id,
     deterministic_outbound_task_id,
 )
 from app.tasks.outbound import (
     OutboundTaskTransientError,
     enqueue_next_sequence_outbound,
+    enqueue_outbound_retry_for_event,
+    enqueue_outbound_retry_for_message,
     enqueue_pending_outbounds_for_events,
     process_outbound_message,
 )
@@ -149,6 +152,24 @@ async def test_outbound_enqueue_treats_already_exists_as_success() -> None:
 
     await enqueuer.enqueue(MESSAGE_ID)
 
+@pytest.mark.asyncio
+async def test_outbound_retry_enqueue_is_delayed_unique_and_minimal() -> None:
+    client = FakeCloudTasksClient()
+    enqueuer = CloudTasksOutboundEnqueuer(
+        outbound_settings().require_outbound_tasks_configuration(),
+        client=client,  # type: ignore[arg-type]
+    )
+
+    await enqueuer.enqueue_retry(MESSAGE_ID, 2)
+
+    task = client.requests[0].task
+    assert task.name.endswith(
+        f"/tasks/{deterministic_outbound_retry_task_id(MESSAGE_ID, 2)}"
+    )
+    assert json.loads(task.http_request.body) == {"message_id": str(MESSAGE_ID)}
+    assert task.schedule_time is not None
+
+
 
 @pytest.mark.asyncio
 async def test_outbound_oidc_reuses_audience_and_identity(
@@ -192,6 +213,7 @@ class FakeOutboundRepository:
         self.message = message
         self.sent: list[tuple[uuid.UUID, str]] = []
         self.failed: list[uuid.UUID] = []
+        self.retry_attempts: list[uuid.UUID] = []
 
     async def lock_message(
         self, _: uuid.UUID
@@ -205,6 +227,10 @@ class FakeOutboundRepository:
 
     async def mark_failed(self, message_id: uuid.UUID) -> None:
         self.failed.append(message_id)
+
+    async def mark_retry_pending(self, message_id: uuid.UUID) -> int | None:
+        self.retry_attempts.append(message_id)
+        return len(self.retry_attempts)
 
 
 class FakeWhatsAppSender:
@@ -389,7 +415,7 @@ async def test_transient_failures_remain_pending_for_cloud_tasks_retry(
 
 
 @pytest.mark.asyncio
-async def test_permanent_4xx_marks_message_failed() -> None:
+async def test_permanent_provider_rejection_is_scheduled_for_retry() -> None:
     repository = FakeOutboundRepository(stored_message())
     sender = FakeWhatsAppSender(WhatsAppPermanentError("rejected"))
 
@@ -397,8 +423,9 @@ async def test_permanent_4xx_marks_message_failed() -> None:
         FakeSession(), MESSAGE_ID, lambda: sender, repository
     )
 
-    assert result == "failed"
-    assert repository.failed == [MESSAGE_ID]
+    assert result == "retry"
+    assert repository.retry_attempts == [MESSAGE_ID]
+    assert repository.failed == []
     assert repository.sent == []
 
 
@@ -491,6 +518,7 @@ class FakePendingRepository:
         self.provider_message_ids: list[str] = []
         self.next_message_id = next_message_id
         self.sequence_lookups: list[uuid.UUID] = []
+        self.retry_candidate: tuple[uuid.UUID, int] | None = None
 
     async def list_pending_for_provider_message_ids(
         self, provider_message_ids: list[str]
@@ -507,13 +535,33 @@ class FakePendingRepository:
         self.sequence_lookups.append(message_id)
         return self.next_message_id
 
+    async def retry_candidate_for_event_key(
+        self, _: str
+    ) -> tuple[uuid.UUID, int] | None:
+        return self.retry_candidate
+
+    async def retry_candidate_for_message_id(
+        self, _: uuid.UUID
+    ) -> tuple[uuid.UUID, int] | None:
+        return self.retry_candidate
+
 
 class FakeOutboundEnqueuer:
     def __init__(self) -> None:
         self.message_ids: list[uuid.UUID] = []
+        self.retries: list[tuple[uuid.UUID, int]] = []
 
     async def enqueue(self, message_id: uuid.UUID) -> None:
         self.message_ids.append(message_id)
+
+    async def enqueue_retry(
+        self,
+        message_id: uuid.UUID,
+        retry_attempt: int,
+        *,
+        delay_seconds: float = 120.0,
+    ) -> None:
+        self.retries.append((message_id, retry_attempt))
 
 
 @pytest.mark.asyncio
@@ -612,6 +660,11 @@ async def test_inbound_worker_enqueues_pending_outbound_after_processing(
         "enqueue_pending_outbounds_for_event",
         enqueue,
     )
+    monkeypatch.setattr(
+        internal_tasks,
+        "enqueue_outbound_retry_for_event",
+        AsyncMock(return_value=None),
+    )
     app.dependency_overrides[require_cloud_tasks_oidc] = lambda: None
     app.dependency_overrides[internal_tasks.get_settings] = (
         inbound_and_outbound_settings
@@ -643,6 +696,40 @@ def test_outbound_payload_forbids_pii_and_raw_content() -> None:
             }
         )
 
+
+
+@pytest.mark.asyncio
+async def test_failed_status_event_enqueues_delayed_retry_candidate() -> None:
+    repository = FakePendingRepository([])
+    repository.retry_candidate = (MESSAGE_ID, 1)
+    enqueuer = FakeOutboundEnqueuer()
+
+    candidate = await enqueue_outbound_retry_for_event(
+        FakeSession(),
+        "whatsapp:status:test",
+        enqueuer,
+        repository,
+    )
+
+    assert candidate == (MESSAGE_ID, 1)
+    assert enqueuer.retries == [(MESSAGE_ID, 1)]
+
+
+@pytest.mark.asyncio
+async def test_provider_rejection_enqueues_delayed_retry_candidate() -> None:
+    repository = FakePendingRepository([])
+    repository.retry_candidate = (MESSAGE_ID, 2)
+    enqueuer = FakeOutboundEnqueuer()
+
+    candidate = await enqueue_outbound_retry_for_message(
+        FakeSession(),
+        MESSAGE_ID,
+        enqueuer,
+        repository,
+    )
+
+    assert candidate == (MESSAGE_ID, 2)
+    assert enqueuer.retries == [(MESSAGE_ID, 2)]
 
 
 @pytest.mark.asyncio
