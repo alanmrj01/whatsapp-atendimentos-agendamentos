@@ -350,8 +350,9 @@ async def test_dates_have_portuguese_labels_without_os_locale() -> None:
 
     dates = await port.list_dates(BUSINESS_ID, SERVICE_ID)
 
-    assert dates[0].id == "2026-09-02"
-    assert dates[0].label == "quarta, 2 de setembro"
+    assert dates[0].id == "2026-09-09"
+    assert dates[0].label == "quarta, 9 de setembro"
+    assert all(date.fromisoformat(option.id) >= date(2026, 9, 4) for option in dates)
 
 
 def appointment(
