@@ -237,7 +237,6 @@ async def determine_transition(
         if state not in {
             ConversationState.START,
             ConversationState.MENU,
-            ConversationState.COMPLETED,
             ConversationState.HUMAN_HANDOFF,
             ConversationState.POST_BOOKING_HELP,
         }:
@@ -390,6 +389,19 @@ async def _route_named_conversation(
     )
     if (
         question_answer is not None
+        and state is ConversationState.COMPLETED
+        and not interpretation.has(ConversationIntent.BOOK)
+        and not interpretation.has(ConversationIntent.AVAILABILITY)
+    ):
+        return _transition(
+            ConversationState.POST_BOOKING_HELP,
+            context,
+            _text_message(question_answer),
+            follow_ups=(post_booking_help_message(),),
+        )
+
+    if (
+        question_answer is not None
         and state in {
             ConversationState.START,
             ConversationState.MENU,
@@ -401,13 +413,6 @@ async def _route_named_conversation(
         and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
         and context.get("request_mode") != "quote"
     ):
-        if state is ConversationState.COMPLETED:
-            return _transition(
-                ConversationState.POST_BOOKING_HELP,
-                context,
-                _text_message(question_answer),
-                follow_ups=(post_booking_help_message(),),
-            )
         follow_up = (
             f"{question_answer}\n\n"
             f"Se quiser, {customer_lead(customer_name)}posso continuar com o atendimento."
@@ -615,6 +620,20 @@ async def _route_named_conversation(
             interpretation,
             booking_port,
         )
+        retained_budget = {
+            key: context[key]
+            for key in (
+                "equipment_budget_max",
+                "service_budget_max",
+                "total_budget_max",
+            )
+            if key in context
+        }
+        if retained_budget:
+            transition = replace(
+                transition,
+                context={**transition.context, **retained_budget},
+            )
     elif state is ConversationState.MENU:
         transition = await _handle_menu(
             inbound,
@@ -913,6 +932,21 @@ async def _equipment_question_answer(
         "mais em conta",
     )
     if not any(term in normalized for term in equipment_terms):
+        return None
+    technical_terms = (
+        "modelo",
+        "btu",
+        "wifi",
+        "alexa",
+        "bluetooth",
+        "inverter",
+        "mais barato",
+        "mais em conta",
+    )
+    if (
+        not interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and not any(term in normalized for term in technical_terms)
+    ):
         return None
     try:
         port = _require_booking_port(booking_port)
