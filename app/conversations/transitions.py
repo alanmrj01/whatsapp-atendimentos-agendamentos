@@ -5725,13 +5725,46 @@ async def _quote_transition(
     if model:
         equipment_lines.append(f"Equipamento informado: {model}.")
 
-    if plan.service.estimated_price is not None:
-        service_price = (
-            f"Instalação/serviço: {_format_brl(plan.service.estimated_price)}."
+    service_kind = _service_kind(services, service_id)
+    service_amount = plan.service.estimated_price
+    equipment_amount: Decimal | None = None
+    if isinstance(recommendation, dict):
+        raw_equipment_price = recommendation.get("price")
+        if isinstance(raw_equipment_price, (int, float)) and not isinstance(
+            raw_equipment_price, bool
+        ):
+            equipment_amount = Decimal(str(raw_equipment_price))
+
+    financial_lines: list[str] = []
+    if service_amount is not None:
+        service_price_label = (
+            "Valor base do serviço técnico"
+            if service_kind == "diagnostics"
+            else "Valor do serviço"
+        )
+        financial_lines.append(
+            f"{service_price_label}: {_format_brl(service_amount)}."
         )
     else:
-        service_price = (
-            "Instalação/serviço: valor a confirmar após validar a configuração."
+        financial_lines.append(
+            "Valor do serviço: a confirmar após validar a configuração."
+        )
+    if context.get("purchase_mode") in {"purchase", "both"} and equipment_amount is not None:
+        financial_lines.append(
+            f"Valor do equipamento: {_format_brl(equipment_amount)}."
+        )
+    if (
+        context.get("purchase_mode") == "both"
+        and service_amount is not None
+        and equipment_amount is not None
+    ):
+        financial_lines.append(
+            f"Total: {_format_brl(service_amount + equipment_amount)}."
+        )
+    if service_kind == "diagnostics" and service_amount is not None:
+        financial_lines.append(
+            "O valor final será confirmado após o diagnóstico e pode variar "
+            "se houver necessidade de peças, materiais ou um reparo mais complexo."
         )
 
     first_body = (
@@ -5739,7 +5772,7 @@ async def _quote_transition(
         if equipment_lines
         else f"Cotação para {service_label}."
     )
-    service_body = service_price
+    service_body = "\n".join(financial_lines)
 
     updated = {
         **context,
@@ -5812,6 +5845,7 @@ async def _confirmation_body(
         None,
     )
     service_label = service.label if service is not None else "Serviço selecionado"
+    service_kind = _service_kind(services, service_id)
     lines = [
         (
             f"Perfeito, {customer_name}.\n\nSó para confirmar:"
@@ -5867,9 +5901,56 @@ async def _confirmation_body(
     except BookingRequiresHandoff:
         plan = None
     if plan is not None:
-        if plan.service.estimated_price is not None:
-            prefix = "Valor" if plan.service.pricing_type is PricingType.FIXED else "Valor estimado"
-            lines.append(f"• {prefix}: {_format_brl(plan.service.estimated_price)}")
+        service_price = plan.service.estimated_price
+        equipment_price: Decimal | None = None
+        if isinstance(recommendation, dict):
+            raw_equipment_price = recommendation.get("price")
+            if isinstance(raw_equipment_price, (int, float)) and not isinstance(
+                raw_equipment_price, bool
+            ):
+                equipment_price = Decimal(str(raw_equipment_price))
+
+        purchase_mode = _context_string(context, "purchase_mode")
+        if purchase_mode == "both":
+            if service_price is not None:
+                service_label_price = (
+                    "Valor base do serviço técnico"
+                    if service_kind == "diagnostics"
+                    else "Valor do serviço"
+                )
+                lines.append(
+                    f"• {service_label_price}: {_format_brl(service_price)}"
+                )
+            if equipment_price is not None:
+                lines.append(
+                    f"• Valor do equipamento: {_format_brl(equipment_price)}"
+                )
+            if service_price is not None and equipment_price is not None:
+                lines.append(
+                    f"• Total: {_format_brl(service_price + equipment_price)}"
+                )
+        elif purchase_mode == "purchase":
+            if equipment_price is not None:
+                lines.append(
+                    f"• Valor do equipamento: {_format_brl(equipment_price)}"
+                )
+        elif service_price is not None:
+            price_label = (
+                "Valor base do serviço técnico"
+                if service_kind == "diagnostics"
+                else (
+                    "Valor do serviço"
+                    if plan.service.pricing_type is PricingType.FIXED
+                    else "Valor estimado do serviço"
+                )
+            )
+            lines.append(f"• {price_label}: {_format_brl(service_price)}")
+
+        if service_kind == "diagnostics" and service_price is not None:
+            lines.append(
+                "• O valor final será confirmado após o diagnóstico e pode variar "
+                "se houver necessidade de peças, materiais ou um reparo mais complexo."
+            )
         lines.append(
             "• Duração estimada: "
             f"{_format_duration(plan.service.estimated_duration_minutes)}"
