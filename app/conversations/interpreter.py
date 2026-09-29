@@ -591,6 +591,20 @@ def _contains_equipment_purchase(value: str) -> bool:
     if _contains_any(value, purchase_verbs):
         return True
 
+    installation_phrases = (
+        "instalacao",
+        "instalar",
+        "colocar um split",
+        "colocar o ar",
+    )
+    direct_need = re.search(
+        r"\b(?:preciso|quero|gostaria)\s+(?:de\s+)?(?:um|uma)\s+"
+        r"(?:ar\s+condicionado|split|aparelho|equipamento)\b",
+        value,
+    )
+    if direct_need and not _contains_any(value, installation_phrases):
+        return True
+
     quote_phrases = (
         "cotacao",
         "orcamento",
@@ -603,12 +617,6 @@ def _contains_equipment_purchase(value: str) -> bool:
     if not _contains_any(value, quote_phrases):
         return False
 
-    installation_phrases = (
-        "instalacao",
-        "instalar",
-        "colocar um split",
-        "colocar o ar",
-    )
     return not _contains_any(value, installation_phrases)
 
 
