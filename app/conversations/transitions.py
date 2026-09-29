@@ -362,6 +362,54 @@ async def _route_named_conversation(
     action = inbound.interactive_id
     customer_name = conversation.customer_name
 
+    suggestion = context.get("equipment_suggestion")
+    normalized_turn = normalize_portuguese(inbound.body or "")
+    if (
+        isinstance(suggestion, dict)
+        and action is None
+        and normalized_turn in {
+            "quero esse",
+            "quero esse mesmo",
+            "esse",
+            "esse mesmo",
+            "pode ser esse",
+            "fico com esse",
+            "vou ficar com esse",
+            "troca por esse",
+            "quero trocar por esse",
+        }
+    ):
+        updated = {
+            **context,
+            "recommended_equipment": dict(suggestion),
+            "recommendation_presented": True,
+        }
+        updated.pop("equipment_suggestion", None)
+        updated.pop("quote_presented", None)
+        label = suggestion.get("label")
+        confirmation_text = (
+            f"Perfeito. Atualizei sua escolha para {label}."
+            if isinstance(label, str) and label
+            else "Perfeito. Atualizei sua escolha de equipamento."
+        )
+        if state in {
+            ConversationState.COMPLETED,
+            ConversationState.POST_BOOKING_HELP,
+        }:
+            return _transition(
+                ConversationState.POST_BOOKING_HELP,
+                updated,
+                _text_message(confirmation_text),
+                follow_ups=(post_booking_help_message(),),
+            )
+        return await _resume_pending_question(
+            conversation,
+            inbound,
+            updated,
+            booking_port,
+            prefix=confirmation_text,
+        )
+
     if interpretation.intent is ConversationIntent.RESCHEDULE and state is not ConversationState.RESCHEDULE:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
     if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
@@ -914,6 +962,42 @@ def _has_service_question(interpretation: Interpretation) -> bool:
     )
 
 
+def _equipment_suggestion_snapshot(
+    item: Any,
+    *,
+    required_btu: int | None,
+    selected_cycle: str | None,
+) -> dict[str, Any]:
+    cycle = selected_cycle
+    if cycle not in {"cold", "heat_cool"}:
+        cycle = "heat_cool" if "heat_cool" in item.cycles else "cold"
+    base_label = (
+        f"{item.brand} {item.line} {item.capacity_btu:,} BTU"
+        .replace(",", ".")
+    )
+    label = (
+        f"{base_label} — Quente/Frio"
+        if cycle == "heat_cool"
+        else f"{base_label} — Só Frio"
+    )
+    return {
+        "item_id": item.item_id,
+        "label": label,
+        "brand": item.brand,
+        "line": item.line,
+        "capacity_btu": item.capacity_btu,
+        "preference": item.segment,
+        "cycles": list(item.cycles),
+        "selected_cycle": cycle,
+        "features": list(item.features),
+        "source_url": item.source_url,
+        "image_url": item.image_url,
+        "condenser_form": item.condenser_form,
+        "price": item.price,
+        "required_btu_reference": required_btu,
+    }
+
+
 async def _equipment_question_answer(
     inbound: ConversationInput,
     context: dict[str, Any],
@@ -1171,6 +1255,13 @@ async def _equipment_question_answer(
                 priced = [item for item in compatible if item.price is not None]
                 if priced:
                     nearest = min(priced, key=lambda item: item.price or float("inf"))
+                    context["equipment_suggestion"] = _equipment_suggestion_snapshot(
+                        nearest,
+                        required_btu=(
+                            required_btu if isinstance(required_btu, int) else None
+                        ),
+                        selected_cycle=cycle,
+                    )
                     return (
                         f"Não encontrei uma opção com {feature_label} dentro de "
                         f"{_format_brl(Decimal(str(budget)))}. "
@@ -1188,6 +1279,13 @@ async def _equipment_question_answer(
             priced = [item for item in compatible if item.price is not None]
             if priced:
                 nearest = min(priced, key=lambda item: item.price or float("inf"))
+                context["equipment_suggestion"] = _equipment_suggestion_snapshot(
+                    nearest,
+                    required_btu=(
+                        required_btu if isinstance(required_btu, int) else None
+                    ),
+                    selected_cycle=cycle,
+                )
                 return (
                     f"Não encontrei uma opção compatível dentro de "
                     f"{_format_brl(Decimal(str(budget)))}. "
@@ -1221,6 +1319,11 @@ async def _equipment_question_answer(
     feature_text = ""
     if requested_features:
         feature_text = " com " + ", ".join(requested_features)
+    context["equipment_suggestion"] = _equipment_suggestion_snapshot(
+        selected,
+        required_btu=(required_btu if isinstance(required_btu, int) else None),
+        selected_cycle=cycle,
+    )
     return (
         f"Uma opção compatível é {selected.brand} {selected.line} "
         f"{selected.capacity_btu:,} BTU".replace(",", ".")
