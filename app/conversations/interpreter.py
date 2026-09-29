@@ -39,6 +39,9 @@ class Interpretation:
     intents: frozenset[ConversationIntent] = frozenset()
     customer_name: str | None = None
     acts: frozenset[ConversationAct] = frozenset()
+    equipment_budget_max: float | None = None
+    service_budget_max: float | None = None
+    total_budget_max: float | None = None
 
     def has(self, intent: ConversationIntent) -> bool:
         return intent in self.intents or self.intent is intent
@@ -92,6 +95,11 @@ _PRICE_PHRASES = (
     "cotacao",
     "orcamento",
     "pesquisa de preco",
+    "mais barato",
+    "mais em conta",
+    "posso gastar",
+    "so posso gastar",
+    "ate r",
 )
 
 _DURATION_PHRASES = (
@@ -287,6 +295,15 @@ class DeterministicConversationInterpreter:
             acts.add(ConversationAct.SOCIAL)
 
         customer_name = extract_customer_name(original, allow_bare=False)
+        equipment_budget, service_budget, total_budget = extract_budget_constraints(
+            original
+        )
+        if any(
+            value is not None
+            for value in (equipment_budget, service_budget, total_budget)
+        ):
+            intents.add(ConversationIntent.PRICE_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
 
         precedence = (
             ConversationIntent.HUMAN_HANDOFF,
@@ -316,7 +333,103 @@ class DeterministicConversationInterpreter:
             frozenset(intents),
             customer_name,
             frozenset(acts),
+            equipment_budget_max=equipment_budget,
+            service_budget_max=service_budget,
+            total_budget_max=total_budget,
         )
+
+
+def extract_budget_constraints(
+    value: str | None,
+) -> tuple[float | None, float | None, float | None]:
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return None, None, None
+    normalized = normalize_portuguese(raw)
+    budget_markers = (
+        "ate ",
+        "no maximo",
+        "orcamento",
+        "posso gastar",
+        "so posso gastar",
+        "tenho r",
+        "limite",
+    )
+    if not any(marker in normalized for marker in budget_markers):
+        return None, None, None
+
+    amount = _budget_amount(raw)
+    if amount is None or amount <= 0:
+        return None, None, None
+
+    if any(
+        marker in normalized
+        for marker in (
+            "orcamento total",
+            "valor total",
+            "com instalacao",
+            "incluindo instalacao",
+            "tudo incluso",
+            "resolver tudo",
+        )
+    ):
+        return None, None, amount
+
+    equipment_terms = (
+        "ar condicionado",
+        "aparelho",
+        "equipamento",
+        "modelo",
+        "btu",
+        "wifi",
+        "alexa",
+        "inverter",
+    )
+    service_terms = (
+        "servico",
+        "instalacao",
+        "manutencao",
+        "limpeza",
+        "recarga",
+        "tecnico",
+    )
+    has_equipment = any(term in normalized for term in equipment_terms)
+    has_service = any(term in normalized for term in service_terms)
+    if has_service and not has_equipment:
+        return None, amount, None
+    return amount, None, None
+
+
+def _budget_amount(value: str) -> float | None:
+    patterns = (
+        r"(?:até|ate|no\s+máximo|no\s+maximo|orçamento|orcamento|gastar|limite)"
+        r"[^0-9]{0,30}(?:r\$\s*)?([0-9][0-9.,]*)\s*(mil)?",
+        r"(?:r\$\s*)?([0-9][0-9.,]*)\s*(mil)?"
+        r"[^a-zA-ZÀ-ÿ]{0,5}(?:de\s+)?(?:orçamento|orcamento|maximo|máximo)",
+    )
+    match = next(
+        (
+            candidate
+            for pattern in patterns
+            if (candidate := re.search(pattern, value, flags=re.IGNORECASE))
+        ),
+        None,
+    )
+    if match is None:
+        return None
+    token = match.group(1)
+    thousands = bool(match.group(2))
+    if "," in token:
+        token = token.replace(".", "").replace(",", ".")
+    elif token.count(".") >= 1:
+        groups = token.split(".")
+        if all(len(group) == 3 for group in groups[1:]):
+            token = "".join(groups)
+    try:
+        amount = float(token)
+    except ValueError:
+        return None
+    return amount * 1000 if thousands else amount
 
 
 def correction_focus(value: str) -> str:
