@@ -9,7 +9,10 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
-from app.booking.equipment_recommender import recommend_equipment
+from app.booking.equipment_recommender import (
+    recommend_equipment,
+    required_capacity_btu,
+)
 from app.booking.domain import (
     AccessCondition,
     BookingPlan,
@@ -51,6 +54,7 @@ from app.conversations.constants import (
     EQUIPMENT_SPACE_NO_LIMIT,
     EQUIPMENT_DELIVERY_PICKUP,
     EQUIPMENT_DELIVERY_ADDRESS,
+    EQUIPMENT_DELIVERY_WITH_INSTALLATION,
     EQUIPMENT_INSTALLATION_SAME_ADDRESS,
     EQUIPMENT_INSTALLATION_OTHER_ADDRESS,
     EQUIPMENT_PURCHASE,
@@ -210,6 +214,20 @@ async def determine_transition(
             whatsapp_id=inbound.whatsapp_id,
         )
     )
+    budget_updates = {
+        key: value
+        for key, value in (
+            ("equipment_budget_max", interpretation.equipment_budget_max),
+            ("service_budget_max", interpretation.service_budget_max),
+            ("total_budget_max", interpretation.total_budget_max),
+        )
+        if value is not None
+    }
+    if budget_updates:
+        context = invalidate_changed_facts(
+            base_context,
+            {**context, **budget_updates},
+        )
 
     if action == MEDIA_HANDOFF and context.get("media_handoff_pending") is True:
         return _handoff_transition(
@@ -219,12 +237,23 @@ async def determine_transition(
     if action == MEDIA_CONTINUE_TEXT and context.get("media_handoff_pending") is True:
         updated = dict(context)
         updated.pop("media_handoff_pending", None)
+        if state not in {
+            ConversationState.START,
+            ConversationState.MENU,
+            ConversationState.HUMAN_HANDOFF,
+            ConversationState.POST_BOOKING_HELP,
+        }:
+            return await _resume_pending_question(
+                conversation,
+                inbound,
+                updated,
+                booking_port,
+                prefix="Tudo bem. Seguimos por texto.",
+            )
         return _transition(
             state,
             updated,
-            _text_message(
-                "Tudo bem. Pode me contar por texto o que você precisa e continuo daqui."
-            ),
+            _text_message("Tudo bem. Seguimos por texto. Como posso te ajudar?"),
         )
     if (
         context.get("media_handoff_pending") is True
@@ -236,21 +265,14 @@ async def determine_transition(
         context = dict(context)
         context.pop("media_handoff_pending", None)
 
-    if inbound.message_type == "audio":
-        return _transition(
-            state,
-            {**context, "media_handoff_pending": True},
-            unsupported_media_message("audio"),
-        )
-
     if (
-        inbound.message_type in {"image", "video"}
+        inbound.message_type in {"image", "audio", "video"}
         and state is not ConversationState.BOOKING_EQUIPMENT_MODEL
     ):
         return _transition(
             state,
-            context,
-            media_received_message(inbound.message_type),
+            {**context, "media_handoff_pending": True},
+            unsupported_media_message(inbound.message_type),
         )
 
     if action in {CHANGE_CONFIRM, CHANGE_KEEP} and (
@@ -340,21 +362,95 @@ async def _route_named_conversation(
     action = inbound.interactive_id
     customer_name = conversation.customer_name
 
+    suggestion = context.get("equipment_suggestion")
+    normalized_turn = normalize_portuguese(inbound.body or "")
+    if (
+        isinstance(suggestion, dict)
+        and action is None
+        and normalized_turn in {
+            "quero esse",
+            "quero esse mesmo",
+            "esse",
+            "esse mesmo",
+            "pode ser esse",
+            "fico com esse",
+            "vou ficar com esse",
+            "troca por esse",
+            "quero trocar por esse",
+        }
+    ):
+        updated = {
+            **context,
+            "recommended_equipment": dict(suggestion),
+            "recommendation_presented": True,
+        }
+        updated.pop("equipment_suggestion", None)
+        updated.pop("quote_presented", None)
+        label = suggestion.get("label")
+        confirmation_text = (
+            f"Perfeito. Atualizei sua escolha para {label}."
+            if isinstance(label, str) and label
+            else "Perfeito. Atualizei sua escolha de equipamento."
+        )
+        if state in {
+            ConversationState.COMPLETED,
+            ConversationState.POST_BOOKING_HELP,
+        }:
+            return _transition(
+                ConversationState.POST_BOOKING_HELP,
+                updated,
+                _text_message(confirmation_text),
+                follow_ups=(post_booking_help_message(),),
+            )
+        return await _resume_pending_question(
+            conversation,
+            inbound,
+            updated,
+            booking_port,
+            prefix=confirmation_text,
+        )
+
     if interpretation.intent is ConversationIntent.RESCHEDULE and state is not ConversationState.RESCHEDULE:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
     if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
 
-    question_answer = (
+    equipment_question_answer = (
         None
         if action in {QUOTE_FINISH, QUOTE_SCHEDULE}
-        else await _service_question_answer(
+        else await _equipment_question_answer(
             inbound,
             context,
             interpretation,
             booking_port,
         )
     )
+    question_answer = (
+        equipment_question_answer
+        or (
+            None
+            if action in {QUOTE_FINISH, QUOTE_SCHEDULE}
+            else await _service_question_answer(
+                inbound,
+                context,
+                interpretation,
+                booking_port,
+            )
+        )
+    )
+    if (
+        question_answer is not None
+        and state is ConversationState.COMPLETED
+        and not interpretation.has(ConversationIntent.BOOK)
+        and not interpretation.has(ConversationIntent.AVAILABILITY)
+    ):
+        return _transition(
+            ConversationState.POST_BOOKING_HELP,
+            context,
+            _text_message(question_answer),
+            follow_ups=(post_booking_help_message(),),
+        )
+
     if (
         question_answer is not None
         and state in {
@@ -365,16 +461,25 @@ async def _route_named_conversation(
         }
         and not interpretation.has(ConversationIntent.BOOK)
         and not interpretation.has(ConversationIntent.AVAILABILITY)
+        and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
         and context.get("request_mode") != "quote"
     ):
         follow_up = (
             f"{question_answer}\n\n"
-            f"Se quiser, {customer_lead(customer_name)}posso continuar com o agendamento."
+            f"Se quiser, {customer_lead(customer_name)}posso continuar com o atendimento."
         )
         return _transition(
             ConversationState.MENU,
-            {},
+            context,
             _text_message(follow_up),
+        )
+
+    if state is ConversationState.POST_BOOKING_HELP and question_answer is not None:
+        return _transition(
+            ConversationState.POST_BOOKING_HELP,
+            context,
+            _text_message(question_answer),
+            follow_ups=(post_booking_help_message(),),
         )
 
     booking_states = {
@@ -436,7 +541,10 @@ async def _route_named_conversation(
     if (
         state in booking_states
         and question_answer is not None
-        and interpretation.has_act(ConversationAct.SIDE_QUESTION)
+        and (
+            interpretation.has_act(ConversationAct.SIDE_QUESTION)
+            or equipment_question_answer is not None
+        )
         and not _message_can_answer_pending_state(
             state,
             inbound,
@@ -549,7 +657,7 @@ async def _route_named_conversation(
     ):
         transition = _transition(
             ConversationState.COMPLETED,
-            {},
+            context,
             reaction_message(inbound.provider_message_id),
         )
     elif state in {
@@ -563,6 +671,20 @@ async def _route_named_conversation(
             interpretation,
             booking_port,
         )
+        retained_budget = {
+            key: context[key]
+            for key in (
+                "equipment_budget_max",
+                "service_budget_max",
+                "total_budget_max",
+            )
+            if key in context
+        }
+        if retained_budget:
+            transition = replace(
+                transition,
+                context={**transition.context, **retained_budget},
+            )
     elif state is ConversationState.MENU:
         transition = await _handle_menu(
             inbound,
@@ -840,6 +962,375 @@ def _has_service_question(interpretation: Interpretation) -> bool:
     )
 
 
+def _equipment_suggestion_snapshot(
+    item: Any,
+    *,
+    required_btu: int | None,
+    selected_cycle: str | None,
+) -> dict[str, Any]:
+    cycle = selected_cycle
+    if cycle not in {"cold", "heat_cool"}:
+        cycle = "heat_cool" if "heat_cool" in item.cycles else "cold"
+    base_label = (
+        f"{item.brand} {item.line} {item.capacity_btu:,} BTU"
+        .replace(",", ".")
+    )
+    label = (
+        f"{base_label} — Quente/Frio"
+        if cycle == "heat_cool"
+        else f"{base_label} — Só Frio"
+    )
+    return {
+        "item_id": item.item_id,
+        "label": label,
+        "brand": item.brand,
+        "line": item.line,
+        "capacity_btu": item.capacity_btu,
+        "preference": item.segment,
+        "cycles": list(item.cycles),
+        "selected_cycle": cycle,
+        "features": list(item.features),
+        "source_url": item.source_url,
+        "image_url": item.image_url,
+        "condenser_form": item.condenser_form,
+        "price": item.price,
+        "required_btu_reference": required_btu,
+    }
+
+
+async def _equipment_question_answer(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+) -> str | None:
+    normalized = normalize_portuguese(inbound.body or "")
+    equipment_terms = (
+        "ar condicionado",
+        "aparelho",
+        "equipamento",
+        "modelo",
+        "btu",
+        "wifi",
+        "alexa",
+        "bluetooth",
+        "inverter",
+        "mais barato",
+        "mais em conta",
+    )
+    if not any(term in normalized for term in equipment_terms):
+        return None
+    technical_terms = (
+        "modelo",
+        "btu",
+        "wifi",
+        "alexa",
+        "bluetooth",
+        "inverter",
+        "mais barato",
+        "mais em conta",
+    )
+    if (
+        not interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and not any(term in normalized for term in technical_terms)
+    ):
+        return None
+    try:
+        port = _require_booking_port(booking_port)
+        catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
+    except (BookingPortUnavailable, BookingRequiresHandoff):
+        return None
+    if not catalog:
+        return "No momento não há equipamentos ativos cadastrados para eu comparar."
+
+    candidates = list(catalog)
+    canonical_input = re.sub(r"[^a-z0-9]+", " ", normalized)
+    mentioned_candidates = [
+        item
+        for item in candidates
+        if (
+            re.sub(
+                r"[^a-z0-9]+",
+                " ",
+                normalize_portuguese(item.brand),
+            ).strip()
+            in canonical_input
+            or (
+                len(
+                    re.sub(
+                        r"[^a-z0-9]+",
+                        " ",
+                        normalize_portuguese(item.line),
+                    ).strip()
+                )
+                >= 4
+                and re.sub(
+                    r"[^a-z0-9]+",
+                    " ",
+                    normalize_portuguese(item.line),
+                ).strip()
+                in canonical_input
+            )
+        )
+    ]
+    if mentioned_candidates:
+        candidates = mentioned_candidates
+
+    requested_capacity = re.search(r"\b(\d{4,5})\s*btu\b", normalized)
+    if requested_capacity:
+        capacity = int(requested_capacity.group(1))
+        candidates = [item for item in candidates if item.capacity_btu == capacity]
+
+    cycle = _context_string(context, "equipment_cycle")
+    if "quente frio" in normalized or "quente e frio" in normalized:
+        cycle = "heat_cool"
+    elif "so frio" in normalized or "somente frio" in normalized:
+        cycle = "cold"
+    if cycle == "heat_cool":
+        candidates = [item for item in candidates if "heat_cool" in item.cycles]
+    elif cycle == "cold":
+        candidates = [
+            item for item in candidates
+            if "cold" in item.cycles and "heat_cool" not in item.cycles
+        ]
+
+    recommendation = context.get("recommended_equipment")
+    required_btu = (
+        recommendation.get("required_btu_reference")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    if not isinstance(required_btu, int) or isinstance(required_btu, bool):
+        area = context.get("room_area_m2")
+        people = context.get("room_people_max")
+        if (
+            isinstance(area, (int, float))
+            and not isinstance(area, bool)
+            and isinstance(people, int)
+            and not isinstance(people, bool)
+        ):
+            try:
+                required_btu = required_capacity_btu(float(area), people)
+            except ValueError:
+                required_btu = None
+    if (
+        not requested_capacity
+        and isinstance(required_btu, int)
+        and not isinstance(required_btu, bool)
+    ):
+        minimum = required_btu * 0.90
+        candidates = [item for item in candidates if item.capacity_btu >= minimum]
+
+    feature_aliases = {
+        "alexa": ("alexa", "amazon alexa"),
+        "wifi": ("wifi", "wi fi", "wi-fi"),
+        "bluetooth": ("bluetooth",),
+        "inverter": ("inverter",),
+    }
+    requested_features = [
+        key
+        for key, aliases in feature_aliases.items()
+        if any(
+            re.sub(r"[^a-z0-9]+", " ", alias) in canonical_input
+            for alias in aliases
+        )
+    ]
+    for feature in requested_features:
+        aliases = tuple(
+            re.sub(r"[^a-z0-9]+", " ", alias)
+            for alias in feature_aliases[feature]
+        )
+        candidates = [
+            item
+            for item in candidates
+            if any(
+                any(
+                    alias in re.sub(
+                        r"[^a-z0-9]+",
+                        " ",
+                        normalize_portuguese(value),
+                    )
+                    for alias in aliases
+                )
+                for value in item.features
+            )
+            or (
+                feature == "inverter"
+                and "inverter" in normalize_portuguese(item.line)
+            )
+        ]
+
+    stated_budget = (
+        interpretation.equipment_budget_max
+        or interpretation.total_budget_max
+    )
+    if (
+        interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
+        and not requested_capacity
+        and not isinstance(required_btu, int)
+        and stated_budget is not None
+    ):
+        constraints: list[str] = []
+        if requested_features:
+            constraints.append(", ".join(requested_features))
+        constraints.append(
+            f"o limite de {_format_brl(Decimal(str(stated_budget)))}"
+        )
+        return (
+            "Certo. Vou considerar "
+            + " e ".join(constraints)
+            + " na recomendação. Primeiro preciso confirmar o perfil do ambiente "
+            "para não indicar uma capacidade inadequada."
+        )
+
+    explicit_equipment_budget = (
+        interpretation.equipment_budget_max
+        or (
+            float(context["equipment_budget_max"])
+            if isinstance(context.get("equipment_budget_max"), (int, float))
+            and not isinstance(context.get("equipment_budget_max"), bool)
+            else None
+        )
+    )
+    total_budget = (
+        interpretation.total_budget_max
+        or (
+            float(context["total_budget_max"])
+            if isinstance(context.get("total_budget_max"), (int, float))
+            and not isinstance(context.get("total_budget_max"), bool)
+            else None
+        )
+    )
+    budget = explicit_equipment_budget
+    total_service_amount: Decimal | None = None
+    if budget is None and total_budget is not None:
+        if context.get("purchase_mode") == "both":
+            service_id = _context_service_id(context)
+            if service_id is not None:
+                try:
+                    service_plan = await port.estimate(
+                        inbound.business_id,
+                        service_id,
+                        _requirements_from_context(context),
+                    )
+                except BookingRequiresHandoff:
+                    service_plan = None
+                if (
+                    service_plan is not None
+                    and service_plan.service.estimated_price is not None
+                ):
+                    total_service_amount = service_plan.service.estimated_price
+                    budget = max(
+                        0.0,
+                        float(total_budget) - float(total_service_amount),
+                    )
+        else:
+            budget = float(total_budget)
+
+    current_price = (
+        recommendation.get("price")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    if (
+        budget is None
+        and ("mais barato" in normalized or "mais em conta" in normalized)
+        and isinstance(current_price, (int, float))
+        and not isinstance(current_price, bool)
+    ):
+        budget = float(current_price) - 0.01
+
+    compatible = list(candidates)
+    if budget is not None:
+        candidates = [
+            item
+            for item in candidates
+            if item.price is not None and item.price <= float(budget)
+        ]
+
+    if not candidates:
+        if requested_features:
+            feature_label = ", ".join(requested_features)
+            if compatible and budget is not None:
+                priced = [item for item in compatible if item.price is not None]
+                if priced:
+                    nearest = min(priced, key=lambda item: item.price or float("inf"))
+                    context["equipment_suggestion"] = _equipment_suggestion_snapshot(
+                        nearest,
+                        required_btu=(
+                            required_btu if isinstance(required_btu, int) else None
+                        ),
+                        selected_cycle=cycle,
+                    )
+                    return (
+                        f"Não encontrei uma opção com {feature_label} dentro de "
+                        f"{_format_brl(Decimal(str(budget)))}. "
+                        f"A alternativa compatível mais próxima cadastrada é "
+                        f"{nearest.brand} {nearest.line} {nearest.capacity_btu:,} BTU"
+                        .replace(",", ".")
+                        + f", por {_format_brl(Decimal(str(nearest.price)))}."
+                    )
+            return (
+                f"Não tenho compatibilidade com {feature_label} explicitamente "
+                "cadastrada em uma opção que atenda aos demais requisitos. "
+                "Prefiro não assumir essa função sem confirmação no catálogo."
+            )
+        if budget is not None and compatible:
+            priced = [item for item in compatible if item.price is not None]
+            if priced:
+                nearest = min(priced, key=lambda item: item.price or float("inf"))
+                context["equipment_suggestion"] = _equipment_suggestion_snapshot(
+                    nearest,
+                    required_btu=(
+                        required_btu if isinstance(required_btu, int) else None
+                    ),
+                    selected_cycle=cycle,
+                )
+                return (
+                    f"Não encontrei uma opção compatível dentro de "
+                    f"{_format_brl(Decimal(str(budget)))}. "
+                    f"A alternativa mais próxima cadastrada é {nearest.brand} "
+                    f"{nearest.line} {nearest.capacity_btu:,} BTU"
+                    .replace(",", ".")
+                    + f", por {_format_brl(Decimal(str(nearest.price)))}."
+                )
+        return "Não encontrei no catálogo ativo uma opção compatível com esses critérios."
+
+    priced_candidates = [item for item in candidates if item.price is not None]
+    selected = min(
+        priced_candidates or candidates,
+        key=lambda item: (
+            item.price if item.price is not None else float("inf"),
+            item.capacity_btu,
+            item.brand,
+            item.line,
+        ),
+    )
+    cycle_label = (
+        "quente/frio"
+        if "heat_cool" in selected.cycles
+        else "só frio"
+    )
+    price_text = (
+        _format_brl(Decimal(str(selected.price)))
+        if selected.price is not None
+        else "valor a confirmar"
+    )
+    feature_text = ""
+    if requested_features:
+        feature_text = " com " + ", ".join(requested_features)
+    context["equipment_suggestion"] = _equipment_suggestion_snapshot(
+        selected,
+        required_btu=(required_btu if isinstance(required_btu, int) else None),
+        selected_cycle=cycle,
+    )
+    return (
+        f"Uma opção compatível é {selected.brand} {selected.line} "
+        f"{selected.capacity_btu:,} BTU".replace(",", ".")
+        + f", {cycle_label}{feature_text}, por {price_text}."
+    )
+
+
 async def _service_question_answer(
     inbound: ConversationInput,
     context: dict[str, Any],
@@ -900,9 +1391,33 @@ async def _service_question_answer(
             plan = None
 
     if interpretation.has(ConversationIntent.PRICE_QUESTION):
+        target_kind = _service_kind(services, target_id)
+        service_budget = (
+            interpretation.service_budget_max
+            or (
+                float(context["service_budget_max"])
+                if isinstance(context.get("service_budget_max"), (int, float))
+                and not isinstance(context.get("service_budget_max"), bool)
+                else None
+            )
+        )
+        if (
+            service_budget is None
+            and context.get("purchase_mode") != "both"
+            and interpretation.total_budget_max is not None
+        ):
+            service_budget = interpretation.total_budget_max
+
         if plan is None or plan.service.estimated_price is None:
             parts.append(
                 f"O valor de {target.label} depende de uma avaliação da equipe."
+            )
+        elif target_kind == "diagnostics":
+            parts.append(
+                "O valor base do atendimento técnico é "
+                f"{_format_brl(plan.service.estimated_price)}. "
+                "O valor final é confirmado depois do diagnóstico, porque pode haver "
+                "necessidade de peças, materiais ou um reparo mais complexo."
             )
         else:
             qualifier = (
@@ -914,6 +1429,21 @@ async def _service_question_answer(
                 f"O valor de {target.label} {qualifier} "
                 f"{_format_brl(plan.service.estimated_price)}."
             )
+
+        if (
+            service_budget is not None
+            and plan is not None
+            and plan.service.estimated_price is not None
+        ):
+            budget_text = _format_brl(Decimal(str(service_budget)))
+            if plan.service.estimated_price <= Decimal(str(service_budget)):
+                parts.append(
+                    f"Esse valor está dentro do limite de {budget_text} que você informou."
+                )
+            else:
+                parts.append(
+                    f"Esse valor fica acima do limite de {budget_text} que você informou."
+                )
 
     if interpretation.has(ConversationIntent.DURATION_QUESTION):
         if plan is None:
@@ -1105,7 +1635,9 @@ async def _resume_pending_question(
         ConversationState.BOOKING_EQUIPMENT_DELIVERY: (
             delivery_installation_address_message()
             if context.get("delivery_installation_match_pending") is True
-            else equipment_delivery_message()
+            else equipment_delivery_message(
+                include_with_installation=context.get("purchase_mode") == "both"
+            )
         ),
         ConversationState.BOOKING_INSTALLATION_HEIGHT: installation_height_message(),
         ConversationState.BOOKING_PROPERTY: property_type_message(),
@@ -1294,6 +1826,20 @@ async def _handle_pending_change(
             booking_port,
             customer_name=conversation.customer_name,
         )
+    if pending_action in {
+        EQUIPMENT_DELIVERY_PICKUP,
+        EQUIPMENT_DELIVERY_ADDRESS,
+        EQUIPMENT_DELIVERY_WITH_INSTALLATION,
+        EQUIPMENT_INSTALLATION_SAME_ADDRESS,
+        EQUIPMENT_INSTALLATION_OTHER_ADDRESS,
+    }:
+        return await _handle_equipment_delivery(
+            inbound,
+            cleaned,
+            pending_action,
+            booking_port,
+            customer_name=conversation.customer_name,
+        )
 
     property_by_action = {
         PROPERTY_HOUSE: "house",
@@ -1381,6 +1927,7 @@ def _stale_interactive_transition(
         ConversationState.BOOKING_EQUIPMENT_DELIVERY: {
             EQUIPMENT_DELIVERY_PICKUP,
             EQUIPMENT_DELIVERY_ADDRESS,
+            EQUIPMENT_DELIVERY_WITH_INSTALLATION,
             EQUIPMENT_INSTALLATION_SAME_ADDRESS,
             EQUIPMENT_INSTALLATION_OTHER_ADDRESS,
         },
@@ -1434,6 +1981,9 @@ def _stale_interactive_transition(
         EQUIPMENT_PREF_ECONOMY: "maior economia",
         EQUIPMENT_CYCLE_COLD: "só frio",
         EQUIPMENT_CYCLE_HEAT_COOL: "quente/frio",
+        EQUIPMENT_DELIVERY_PICKUP: "retirar o aparelho",
+        EQUIPMENT_DELIVERY_ADDRESS: "receber o aparelho no endereço",
+        EQUIPMENT_DELIVERY_WITH_INSTALLATION: "levar o aparelho junto com a instalação",
         PROPERTY_HOUSE: "casa",
         PROPERTY_BUILDING: "prédio/apartamento",
         PROPERTY_CONDOMINIUM: "condomínio",
@@ -1954,6 +2504,37 @@ async def _with_equipment_recommendation(
     indoor_space = _space_tuple(context, "indoor")
     outdoor_space = _space_tuple(context, "outdoor")
     catalog = await port.list_equipment_catalog(inbound.business_id)
+
+    budget_max = context.get("equipment_budget_max")
+    if not isinstance(budget_max, (int, float)) or isinstance(budget_max, bool):
+        budget_max = None
+    total_budget = context.get("total_budget_max")
+    if (
+        budget_max is None
+        and context.get("purchase_mode") == "both"
+        and isinstance(total_budget, (int, float))
+        and not isinstance(total_budget, bool)
+    ):
+        service_id = _context_service_id(context)
+        if service_id is not None:
+            try:
+                service_plan = await port.estimate(
+                    inbound.business_id,
+                    service_id,
+                    _requirements_from_context(context),
+                )
+            except BookingRequiresHandoff:
+                service_plan = None
+            if (
+                service_plan is not None
+                and service_plan.service.estimated_price is not None
+            ):
+                budget_max = max(
+                    0.0,
+                    float(total_budget)
+                    - float(service_plan.service.estimated_price),
+                )
+
     recommendation = recommend_equipment(
         float(area),
         people,
@@ -1962,6 +2543,7 @@ async def _with_equipment_recommendation(
         indoor_space=indoor_space,
         outdoor_space=outdoor_space,
         entries=catalog,
+        budget_max=float(budget_max) if budget_max is not None else None,
     )
     return {
         **context,
@@ -1980,6 +2562,8 @@ async def _with_equipment_recommendation(
             "condenser_form": recommendation.condenser_form,
             "price": recommendation.price,
             "required_btu_reference": recommendation.required_btu,
+            "within_budget": recommendation.within_budget,
+            "budget_max": budget_max,
         },
     }
 
@@ -3251,6 +3835,28 @@ async def _handle_equipment_profile(
         details.append("ciclo só frio" if cycle == "cold" else "ciclo quente/frio")
     intro_body = "Uma boa referência é " + ", ".join(details)
     intro_body += f", por {price_text}." if price_text else ", com valor a confirmar."
+    within_budget = (
+        recommendation.get("within_budget")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    recommendation_budget = (
+        recommendation.get("budget_max")
+        if isinstance(recommendation, dict)
+        else None
+    )
+    if (
+        within_budget is False
+        and isinstance(recommendation_budget, (int, float))
+        and not isinstance(recommendation_budget, bool)
+    ):
+        intro_body = (
+            "Não encontrei uma opção compatível dentro de "
+            f"{_format_brl(Decimal(str(recommendation_budget)))}. "
+            "A alternativa compatível mais próxima é "
+            + ", ".join(details)
+        )
+        intro_body += f", por {price_text}." if price_text else ", com valor a confirmar."
     intro = _text_message(intro_body)
 
     followups: list[OutboundMessage] = []
@@ -3301,6 +3907,14 @@ async def _handle_equipment_delivery(
             action = EQUIPMENT_DELIVERY_PICKUP
         elif normalized in {"receber", "entregar", "entrega", "quero receber"}:
             action = EQUIPMENT_DELIVERY_ADDRESS
+        elif normalized in {
+            "levar com a instalacao",
+            "levar junto com a instalacao",
+            "junto com o tecnico",
+            "no dia da instalacao",
+            "com a instalacao",
+        }:
+            action = EQUIPMENT_DELIVERY_WITH_INSTALLATION
         elif normalized in {"sim", "mesmo endereco", "no mesmo endereco"}:
             action = EQUIPMENT_INSTALLATION_SAME_ADDRESS
         elif normalized in {"nao", "outro endereco", "endereco diferente"}:
@@ -3310,6 +3924,21 @@ async def _handle_equipment_delivery(
     if action == EQUIPMENT_DELIVERY_PICKUP:
         updated["delivery_method"] = "pickup"
         updated.pop("delivery_address", None)
+        updated.pop("delivery_installation_match_pending", None)
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            customer_name=customer_name,
+        )
+    if (
+        action == EQUIPMENT_DELIVERY_WITH_INSTALLATION
+        and context.get("purchase_mode") == "both"
+    ):
+        updated["delivery_method"] = "with_installation"
+        updated.pop("delivery_address", None)
+        updated.pop("address_purpose", None)
         updated.pop("delivery_installation_match_pending", None)
         return await _advance_intake(
             inbound,
@@ -3362,7 +3991,9 @@ async def _handle_equipment_delivery(
     prompt = (
         delivery_installation_address_message()
         if pending_match
-        else equipment_delivery_message()
+        else equipment_delivery_message(
+            include_with_installation=context.get("purchase_mode") == "both"
+        )
     )
     return _retry_or_handoff(
         ConversationState.BOOKING_EQUIPMENT_DELIVERY,
@@ -4419,7 +5050,7 @@ async def _handle_confirmation(
         )
     return _transition(
         ConversationState.POST_BOOKING_HELP,
-        {},
+        _clean_context(context),
         booking_completed_message(
             f"Agendamento confirmado para {date_short_label(selected_date)} "
             f"às {selected_time}."
@@ -4455,7 +5086,7 @@ async def _handle_post_booking_help(
     if no_more_help:
         return _transition(
             ConversationState.COMPLETED,
-            {},
+            _clean_context(conversation.context),
             farewell_message(),
         )
 
@@ -4993,7 +5624,9 @@ async def _advance_intake(
                 return _transition(
                     ConversationState.BOOKING_EQUIPMENT_DELIVERY,
                     context,
-                    equipment_delivery_message(),
+                    equipment_delivery_message(
+                        include_with_installation=context.get("purchase_mode") == "both"
+                    ),
                 )
             if (
                 context.get("delivery_method") == "delivery"
@@ -5013,13 +5646,26 @@ async def _advance_intake(
                     delivery_installation_address_message(),
                 )
             if context.get("purchase_only") is True:
+                recommendation = context.get("recommended_equipment")
+                purchase_lines = [
+                    "Perfeito. Segue o resumo da compra:",
+                ]
+                if isinstance(recommendation, dict):
+                    label = recommendation.get("label")
+                    price = recommendation.get("price")
+                    if isinstance(label, str) and label:
+                        purchase_lines.append(f"• Equipamento: {label}")
+                    if isinstance(price, (int, float)) and not isinstance(price, bool):
+                        purchase_lines.append(
+                            f"• Valor do equipamento: {_format_brl(Decimal(str(price)))}"
+                        )
+                purchase_lines.append(
+                    "A equipe seguirá com a confirmação de disponibilidade e os próximos detalhes da compra."
+                )
                 return _transition(
                     ConversationState.COMPLETED,
                     context,
-                    _text_message(
-                        "Perfeito. A equipe seguirá com a confirmação de disponibilidade "
-                        "do aparelho e os próximos detalhes da compra."
-                    ),
+                    _text_message("\n".join(purchase_lines)),
                 )
 
         if (
@@ -5522,7 +6168,7 @@ async def _handle_quote_decision(
     if action == QUOTE_FINISH:
         return _transition(
             ConversationState.COMPLETED,
-            {},
+            context,
             _text_message(
                 "Perfeito. A cotação fica registrada nesta conversa. "
                 "Quando quiser avançar, é só me chamar."
@@ -5669,13 +6315,46 @@ async def _quote_transition(
     if model:
         equipment_lines.append(f"Equipamento informado: {model}.")
 
-    if plan.service.estimated_price is not None:
-        service_price = (
-            f"Instalação/serviço: {_format_brl(plan.service.estimated_price)}."
+    service_kind = _service_kind(services, service_id)
+    service_amount = plan.service.estimated_price
+    equipment_amount: Decimal | None = None
+    if isinstance(recommendation, dict):
+        raw_equipment_price = recommendation.get("price")
+        if isinstance(raw_equipment_price, (int, float)) and not isinstance(
+            raw_equipment_price, bool
+        ):
+            equipment_amount = Decimal(str(raw_equipment_price))
+
+    financial_lines: list[str] = []
+    if service_amount is not None:
+        service_price_label = (
+            "Valor base do serviço técnico"
+            if service_kind == "diagnostics"
+            else "Valor do serviço"
+        )
+        financial_lines.append(
+            f"{service_price_label}: {_format_brl(service_amount)}."
         )
     else:
-        service_price = (
-            "Instalação/serviço: valor a confirmar após validar a configuração."
+        financial_lines.append(
+            "Valor do serviço: a confirmar após validar a configuração."
+        )
+    if context.get("purchase_mode") in {"purchase", "both"} and equipment_amount is not None:
+        financial_lines.append(
+            f"Valor do equipamento: {_format_brl(equipment_amount)}."
+        )
+    if (
+        context.get("purchase_mode") == "both"
+        and service_amount is not None
+        and equipment_amount is not None
+    ):
+        financial_lines.append(
+            f"Total: {_format_brl(service_amount + equipment_amount)}."
+        )
+    if service_kind == "diagnostics" and service_amount is not None:
+        financial_lines.append(
+            "O valor final será confirmado após o diagnóstico e pode variar "
+            "se houver necessidade de peças, materiais ou um reparo mais complexo."
         )
 
     first_body = (
@@ -5683,7 +6362,7 @@ async def _quote_transition(
         if equipment_lines
         else f"Cotação para {service_label}."
     )
-    service_body = service_price
+    service_body = "\n".join(financial_lines)
 
     updated = {
         **context,
@@ -5756,6 +6435,7 @@ async def _confirmation_body(
         None,
     )
     service_label = service.label if service is not None else "Serviço selecionado"
+    service_kind = _service_kind(services, service_id)
     lines = [
         (
             f"Perfeito, {customer_name}.\n\nSó para confirmar:"
@@ -5811,9 +6491,56 @@ async def _confirmation_body(
     except BookingRequiresHandoff:
         plan = None
     if plan is not None:
-        if plan.service.estimated_price is not None:
-            prefix = "Valor" if plan.service.pricing_type is PricingType.FIXED else "Valor estimado"
-            lines.append(f"• {prefix}: {_format_brl(plan.service.estimated_price)}")
+        service_price = plan.service.estimated_price
+        equipment_price: Decimal | None = None
+        if isinstance(recommendation, dict):
+            raw_equipment_price = recommendation.get("price")
+            if isinstance(raw_equipment_price, (int, float)) and not isinstance(
+                raw_equipment_price, bool
+            ):
+                equipment_price = Decimal(str(raw_equipment_price))
+
+        purchase_mode = _context_string(context, "purchase_mode")
+        if purchase_mode == "both":
+            if service_price is not None:
+                service_label_price = (
+                    "Valor base do serviço técnico"
+                    if service_kind == "diagnostics"
+                    else "Valor do serviço"
+                )
+                lines.append(
+                    f"• {service_label_price}: {_format_brl(service_price)}"
+                )
+            if equipment_price is not None:
+                lines.append(
+                    f"• Valor do equipamento: {_format_brl(equipment_price)}"
+                )
+            if service_price is not None and equipment_price is not None:
+                lines.append(
+                    f"• Total: {_format_brl(service_price + equipment_price)}"
+                )
+        elif purchase_mode == "purchase":
+            if equipment_price is not None:
+                lines.append(
+                    f"• Valor do equipamento: {_format_brl(equipment_price)}"
+                )
+        elif service_price is not None:
+            price_label = (
+                "Valor base do serviço técnico"
+                if service_kind == "diagnostics"
+                else (
+                    "Valor do serviço"
+                    if plan.service.pricing_type is PricingType.FIXED
+                    else "Valor estimado do serviço"
+                )
+            )
+            lines.append(f"• {price_label}: {_format_brl(service_price)}")
+
+        if service_kind == "diagnostics" and service_price is not None:
+            lines.append(
+                "• O valor final será confirmado após o diagnóstico e pode variar "
+                "se houver necessidade de peças, materiais ou um reparo mais complexo."
+            )
         lines.append(
             "• Duração estimada: "
             f"{_format_duration(plan.service.estimated_duration_minutes)}"

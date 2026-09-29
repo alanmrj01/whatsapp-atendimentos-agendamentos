@@ -376,3 +376,91 @@ def test_changed_planning_fact_invalidates_quote_and_schedule() -> None:
     assert "selected_date" not in updated
     assert "selected_time" not in updated
     assert "candidate_booking" not in updated
+
+
+def test_recommendation_respects_customer_equipment_budget() -> None:
+    affordable = EquipmentCatalogEntry(
+        item_id="affordable",
+        brand="Marca A",
+        line="Linha Econômica",
+        capacity_btu=12000,
+        segment="economy",
+        cycles=("cold",),
+        price=1900.0,
+    )
+    expensive = EquipmentCatalogEntry(
+        item_id="expensive",
+        brand="Marca B",
+        line="Linha Premium",
+        capacity_btu=12000,
+        segment="modern",
+        cycles=("cold",),
+        price=2600.0,
+    )
+
+    result = recommend_equipment(
+        area_m2=16,
+        people=3,
+        preference="modern",
+        climate_mode="cold",
+        entries=(expensive, affordable),
+        budget_max=2000.0,
+    )
+
+    assert result.item_id == "affordable"
+    assert result.within_budget is True
+
+
+def test_recommendation_returns_nearest_compatible_option_when_budget_is_too_low() -> None:
+    cheaper = EquipmentCatalogEntry(
+        item_id="cheaper",
+        brand="Marca A",
+        line="Linha A",
+        capacity_btu=12000,
+        segment="cost_benefit",
+        cycles=("cold",),
+        price=2100.0,
+    )
+    expensive = EquipmentCatalogEntry(
+        item_id="expensive",
+        brand="Marca B",
+        line="Linha B",
+        capacity_btu=12000,
+        segment="economy",
+        cycles=("cold",),
+        price=2400.0,
+    )
+
+    result = recommend_equipment(
+        area_m2=16,
+        people=3,
+        preference="economy",
+        climate_mode="cold",
+        entries=(expensive, cheaper),
+        budget_max=1500.0,
+    )
+
+    assert result.item_id == "cheaper"
+    assert result.within_budget is False
+
+
+def test_budget_change_invalidates_existing_equipment_recommendation() -> None:
+    updated = invalidate_changed_facts(
+        {
+            "equipment_budget_max": 2500.0,
+            "recommended_equipment": {"item_id": "old"},
+            "recommendation_presented": True,
+            "quote_presented": True,
+        },
+        {
+            "equipment_budget_max": 1800.0,
+            "recommended_equipment": {"item_id": "old"},
+            "recommendation_presented": True,
+            "quote_presented": True,
+        },
+    )
+
+    assert updated["equipment_budget_max"] == 1800.0
+    assert "recommended_equipment" not in updated
+    assert "recommendation_presented" not in updated
+    assert "quote_presented" not in updated

@@ -25,7 +25,11 @@ from app.auth.dependencies import require_origin, require_principal
 from app.auth.schemas import MembershipResponse, MembershipRole
 from app.conversations.constants import ConversationState
 from app.main import app
-from app.operations.service import OperationalService, _message_view
+from app.operations.service import (
+    OperationalService,
+    _message_history_sort_key,
+    _message_view,
+)
 from app.operations.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
@@ -492,3 +496,165 @@ def test_message_view_exposes_supported_media_to_alovia(message_type: str) -> No
     )
     assert view.media_mime_type == item.media_mime_type
 
+
+
+def test_message_view_exposes_outbound_equipment_image_url_to_alovia() -> None:
+    message_id = uuid4()
+    conversation_id = uuid4()
+    image_url = "https://example.com/equipment.jpg"
+    item = SimpleNamespace(
+        id=message_id,
+        conversation_id=conversation_id,
+        media_id=None,
+        message_type="image",
+        direction="outbound",
+        body="Foto de referência",
+        status="sent",
+        created_at=datetime.now(UTC),
+        media_mime_type=None,
+        media_filename=None,
+        outbound_payload={"image_url": image_url},
+    )
+
+    view = _message_view(item)
+
+    assert view.media_url == image_url
+    assert view.direction == "outbound"
+    assert view.message_type == "image"
+
+
+def test_message_history_sort_key_preserves_sequence_index_for_same_timestamp() -> None:
+    created_at = datetime.now(UTC)
+    group = "sequence-1"
+    third = SimpleNamespace(
+        id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        created_at=created_at,
+        outbound_payload={
+            "_alovia_sequence_group": group,
+            "_alovia_sequence_index": 2,
+        },
+    )
+    first = SimpleNamespace(
+        id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        created_at=created_at,
+        outbound_payload={
+            "_alovia_sequence_group": group,
+            "_alovia_sequence_index": 0,
+        },
+    )
+    second = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000001"),
+        created_at=created_at,
+        outbound_payload={
+            "_alovia_sequence_group": group,
+            "_alovia_sequence_index": 1,
+        },
+    )
+
+    ordered = sorted(
+        (third, first, second),
+        key=_message_history_sort_key,
+    )
+
+    assert ordered == [first, second, third]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message_type", "stored_mime", "downloaded_mime", "expected_mime"),
+    [
+        ("image", "image/jpeg", "image/jpeg", "image/jpeg"),
+        ("audio", "audio/ogg", "application/octet-stream", "audio/ogg"),
+        ("video", "video/mp4", "video/mp4", "video/mp4"),
+    ],
+)
+async def test_conversation_media_endpoint_returns_playable_bytes_and_mime(
+    monkeypatch,
+    message_type: str,
+    stored_mime: str,
+    downloaded_mime: str,
+    expected_mime: str,
+) -> None:
+    conversation_id = uuid4()
+    message_id = uuid4()
+    payload = b"real-media-bytes"
+    message = SimpleNamespace(
+        id=message_id,
+        business_id=BUSINESS_A,
+        conversation_id=conversation_id,
+        media_id="media-123",
+        message_type=message_type,
+        media_mime_type=stored_mime,
+    )
+    db = SimpleNamespace(scalar=AsyncMock(return_value=message))
+    sender = SimpleNamespace(
+        download_media=AsyncMock(return_value=(payload, downloaded_mime)),
+        aclose=AsyncMock(),
+    )
+    resolver = SimpleNamespace(resolve=AsyncMock(return_value=sender))
+    monkeypatch.setattr(
+        operational_api,
+        "build_business_sender_resolver",
+        lambda *_args, **_kwargs: resolver,
+    )
+    monkeypatch.setattr(
+        operational_api,
+        "get_settings",
+        lambda: SimpleNamespace(),
+    )
+
+    response = await operational_api.get_conversation_message_media(
+        conversation_id,
+        message_id,
+        principal(BUSINESS_A),
+        db,
+    )
+
+    assert response.body == payload
+    assert response.media_type == expected_mime
+    assert response.headers["x-content-type-options"] == "nosniff"
+    sender.download_media.assert_awaited_once_with("media-123")
+    sender.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_conversation_media_endpoint_rejects_empty_download(
+    monkeypatch,
+) -> None:
+    conversation_id = uuid4()
+    message_id = uuid4()
+    message = SimpleNamespace(
+        id=message_id,
+        business_id=BUSINESS_A,
+        conversation_id=conversation_id,
+        media_id="media-123",
+        message_type="audio",
+        media_mime_type="audio/ogg",
+    )
+    db = SimpleNamespace(scalar=AsyncMock(return_value=message))
+    sender = SimpleNamespace(
+        download_media=AsyncMock(return_value=(b"", "audio/ogg")),
+        aclose=AsyncMock(),
+    )
+    resolver = SimpleNamespace(resolve=AsyncMock(return_value=sender))
+    monkeypatch.setattr(
+        operational_api,
+        "build_business_sender_resolver",
+        lambda *_args, **_kwargs: resolver,
+    )
+    monkeypatch.setattr(
+        operational_api,
+        "get_settings",
+        lambda: SimpleNamespace(),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await operational_api.get_conversation_message_media(
+            conversation_id,
+            message_id,
+            principal(BUSINESS_A),
+            db,
+        )
+
+    assert exc.value.status_code == 503
+    sender.aclose.assert_awaited_once()

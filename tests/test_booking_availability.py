@@ -141,6 +141,9 @@ def working(
 
 
 class StubAvailability(PostgresBookingAvailabilityPort):
+    # Keep legacy scheduling-mechanics tests focused on slot math, not lead time.
+    minimum_full_booking_lead_days = -1
+
     def __init__(
         self,
         *,
@@ -560,8 +563,10 @@ class MutationSession:
 
 
 class MutationPort(PostgresBookingAvailabilityPort):
+    minimum_full_booking_lead_days = -1
+
     def __init__(self, session: MutationSession, existing: Appointment | None = None):
-        super().__init__(session)  # type: ignore[arg-type]
+        super().__init__(session, now_provider=lambda: NOW)  # type: ignore[arg-type]
         self.company = business()
         self.catalog_service = service()
         self.booking_plan = plan(duration=90, before=20, after=25)
@@ -1096,3 +1101,97 @@ def test_automatic_snapshot_writes_operational_notes_for_height_and_contact() ->
     assert "+5512981359722" in appointment.notes
     assert "Bloco B" in appointment.notes
     assert appointment.estimate_details["operational_details"]["work_at_height"] is True
+
+
+@pytest.mark.asyncio
+async def test_full_three_day_lead_time_starts_on_october_third_from_september_29() -> None:
+    port = StubAvailability(
+        capacity=capacity(
+            working(EMPLOYEE_A, time(8), time(12), weekday=5)
+        ),
+        booking_plan=plan(),
+    )
+    port.minimum_full_booking_lead_days = 3
+    port.now_provider = lambda: datetime(
+        2026, 9, 29, 12, tzinfo=timezone.utc
+    )
+
+    dates = await port.list_dates(BUSINESS_ID, SERVICE_ID)
+
+    assert dates
+    assert dates[0].id == "2026-10-03"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selected_date",
+    ("2026-09-30", "2026-10-01", "2026-10-02"),
+)
+async def test_full_three_day_lead_time_hides_times_before_october_third(
+    selected_date: str,
+) -> None:
+    port = StubAvailability(
+        capacity=capacity(
+            working(EMPLOYEE_A, time(8), time(12), weekday=5)
+        ),
+        booking_plan=plan(),
+    )
+    port.minimum_full_booking_lead_days = 3
+    port.now_provider = lambda: datetime(
+        2026, 9, 29, 12, tzinfo=timezone.utc
+    )
+
+    assert await port.list_times(
+        BUSINESS_ID,
+        SERVICE_ID,
+        selected_date,
+    ) == ()
+
+
+@pytest.mark.asyncio
+async def test_confirm_rejects_date_inside_full_three_day_lead_time() -> None:
+    session = MutationSession()
+    port = MutationPort(session)
+    port.minimum_full_booking_lead_days = 3
+    port.now_provider = lambda: datetime(
+        2026, 9, 29, 12, tzinfo=timezone.utc
+    )
+
+    with pytest.raises(SlotUnavailable):
+        await port.confirm(
+            BUSINESS_ID,
+            CUSTOMER_ID,
+            SERVICE_ID,
+            "2026-10-02",
+            "09:00",
+            BookingRequirements(),
+        )
+
+    assert session.added == []
+
+
+@pytest.mark.asyncio
+async def test_reschedule_rejects_date_inside_full_three_day_lead_time() -> None:
+    existing = appointment(
+        starts_at=datetime(2026, 10, 10, 12, tzinfo=timezone.utc),
+        status="confirmed",
+    )
+    port = MutationPort(MutationSession(), existing)
+    port.minimum_full_booking_lead_days = 3
+    port.now_provider = lambda: datetime(
+        2026, 9, 29, 12, tzinfo=timezone.utc
+    )
+
+    with pytest.raises(SlotUnavailable):
+        await port.reschedule_booking_atomic(
+            BUSINESS_ID,
+            CUSTOMER_ID,
+            existing.id,
+            "2026-10-02",
+            "10:00",
+            BookingRequirements(),
+        )
+
+    assert existing.starts_at == datetime(
+        2026, 10, 10, 12, tzinfo=timezone.utc
+    )

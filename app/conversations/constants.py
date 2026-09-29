@@ -63,6 +63,7 @@ EQUIPMENT_CYCLE_HEAT_COOL = "equipment.cycle.heat_cool"
 EQUIPMENT_SPACE_NO_LIMIT = "equipment.space.no_limit"
 EQUIPMENT_DELIVERY_PICKUP = "equipment.delivery.pickup"
 EQUIPMENT_DELIVERY_ADDRESS = "equipment.delivery.address"
+EQUIPMENT_DELIVERY_WITH_INSTALLATION = "equipment.delivery.with_installation"
 EQUIPMENT_INSTALLATION_SAME_ADDRESS = "equipment.installation.same_address"
 EQUIPMENT_INSTALLATION_OTHER_ADDRESS = "equipment.installation.other_address"
 CHANGE_CONFIRM = "change.confirm"
@@ -133,8 +134,12 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "outdoor_space_depth_cm",
         "outdoor_space_unrestricted",
         "recommended_equipment",
+        "equipment_suggestion",
         "recommendation_presented",
         "delivery_method",
+        "equipment_budget_max",
+        "service_budget_max",
+        "total_budget_max",
         "delivery_address",
         "address_purpose",
         "delivery_installation_match_pending",

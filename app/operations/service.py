@@ -295,12 +295,13 @@ class OperationalService:
         if not rows:
             raise HTTPException(404, "Conversation not found")
         view = _conversation_view(rows[0])
-        messages = (await self.session.scalars(
+        messages = list((await self.session.scalars(
             select(Message).where(
                 Message.business_id == business_id,
                 Message.conversation_id == conversation_id,
             ).order_by(Message.created_at, Message.id)
-        )).all()
+        )).all())
+        messages.sort(key=_message_history_sort_key)
         last_inbound_at = await self.session.scalar(
             select(func.max(Message.created_at)).where(
                 Message.business_id == business_id,
@@ -1774,12 +1775,31 @@ def _employee_view(item: Employee, service_ids: list[UUID]) -> EmployeeView:
     )
 
 
+def _message_history_sort_key(item: Message) -> tuple[datetime, str, int, str]:
+    raw_payload = getattr(item, "outbound_payload", None)
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    group = payload.get("_alovia_sequence_group")
+    index = payload.get("_alovia_sequence_index")
+    return (
+        item.created_at,
+        group if isinstance(group, str) else "",
+        index if isinstance(index, int) else 1_000_000,
+        str(item.id),
+    )
+
+
 def _message_view(item: Message) -> MessageView:
     media_url = (
         f"/api/v1/conversations/{item.conversation_id}/messages/{item.id}/media"
         if item.media_id and item.message_type in {"image", "audio", "video"}
         else None
     )
+    if media_url is None and item.direction == "outbound" and item.message_type == "image":
+        raw_payload = getattr(item, "outbound_payload", None)
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+        image_url = payload.get("image_url")
+        if isinstance(image_url, str) and image_url.startswith("https://"):
+            media_url = image_url
     return MessageView(
         id=item.id,
         direction=item.direction,

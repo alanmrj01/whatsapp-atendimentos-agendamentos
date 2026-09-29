@@ -42,6 +42,7 @@ class EquipmentRecommendation:
     price: float | None
     required_btu: int
     selected_cycle: ClimateMode
+    within_budget: bool | None = None
 
     @property
     def label(self) -> str:
@@ -100,6 +101,7 @@ def recommend_equipment(
     indoor_space: tuple[float, float, float | None] | None = None,
     outdoor_space: tuple[float, float, float | None] | None = None,
     entries: Sequence[EquipmentCatalogEntry] | None = None,
+    budget_max: float | None = None,
 ) -> EquipmentRecommendation:
     required = required_capacity_btu(area_m2, people)
     catalog = tuple(entries or default_catalog_entries())
@@ -125,6 +127,19 @@ def recommend_equipment(
     if capacity_candidates:
         candidates = capacity_candidates
 
+    within_budget: bool | None = None
+    if budget_max is not None:
+        affordable = [
+            item
+            for item in candidates
+            if item.price is not None and item.price <= budget_max
+        ]
+        if affordable:
+            candidates = affordable
+            within_budget = True
+        else:
+            within_budget = False
+
     preferred_capacity = min(item.capacity_btu for item in candidates)
     same_capacity = [
         item for item in candidates if item.capacity_btu == preferred_capacity
@@ -141,7 +156,11 @@ def recommend_equipment(
     chosen = min(
         same_capacity,
         key=lambda item: (
-            segment_rank.get(item.segment, 99),
+            (
+                item.price if item.price is not None else float("inf")
+            )
+            if within_budget is False
+            else segment_rank.get(item.segment, 99),
             item.price if item.price is not None else float("inf"),
             item.brand,
             item.line,
@@ -161,6 +180,7 @@ def recommend_equipment(
         price=chosen.price,
         required_btu=required,
         selected_cycle=climate_mode,
+        within_budget=within_budget,
     )
 
 
