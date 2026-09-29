@@ -341,12 +341,6 @@ class PostgresBookingAvailabilityPort:
         )
         plan = await self._build_plan(business, service, requirements)
         self._require_automatic_plan(plan)
-        minimum_date = (
-            self._local_now(business.timezone).date()
-            + timedelta(days=MIN_BOOKING_LEAD_DAYS)
-        )
-        if parsed_date < minimum_date:
-            return ()
         starts = await self._available_starts(
             business,
             service,
