@@ -1189,6 +1189,19 @@ async def _equipment_question_answer(
         and not isinstance(required_btu, bool)
     )
     if not explicit_catalog_lookup and not has_sizing_basis:
+        if requested_features:
+            feature_label = ", ".join(requested_features)
+            if not candidates:
+                return (
+                    f"Não tenho compatibilidade com {feature_label} explicitamente "
+                    "cadastrada em uma opção do catálogo. Prefiro não assumir essa "
+                    "função sem confirmação."
+                )
+            return (
+                f"Encontrei opções com {feature_label} cadastradas, mas antes de "
+                "indicar um modelo preciso confirmar o perfil do ambiente e a "
+                "capacidade necessária em BTU."
+            )
         if interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE):
             # Generic purchase/quote requests must enter the commercial flow
             # first. Do not let the catalog sorter manufacture a "compatible"
