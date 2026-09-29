@@ -57,6 +57,7 @@ from app.models import (
 )
 
 AVAILABILITY_HORIZON_DAYS = 30
+MIN_BOOKING_LEAD_DAYS = 3
 APPOINTMENT_EXCLUSION_CONSTRAINT = (
     "excl_appointments_employee_confirmed_overlap"
 )
@@ -308,7 +309,7 @@ class PostgresBookingAvailabilityPort:
         plan = await self._build_plan(business, service, requirements)
         self._require_automatic_plan(plan)
         local_now = self._local_now(business.timezone)
-        first_date = local_now.date()
+        first_date = local_now.date() + timedelta(days=MIN_BOOKING_LEAD_DAYS)
         last_date = first_date + timedelta(days=AVAILABILITY_HORIZON_DAYS - 1)
         starts = await self._available_starts(
             business,
@@ -340,6 +341,12 @@ class PostgresBookingAvailabilityPort:
         )
         plan = await self._build_plan(business, service, requirements)
         self._require_automatic_plan(plan)
+        minimum_date = (
+            self._local_now(business.timezone).date()
+            + timedelta(days=MIN_BOOKING_LEAD_DAYS)
+        )
+        if parsed_date < minimum_date:
+            return ()
         starts = await self._available_starts(
             business,
             service,
@@ -374,6 +381,12 @@ class PostgresBookingAvailabilityPort:
         business, service = await self._load_business_service(
             business_id, service_id
         )
+        minimum_date = (
+            self._local_now(business.timezone).date()
+            + timedelta(days=MIN_BOOKING_LEAD_DAYS)
+        )
+        if parsed_date < minimum_date:
+            raise SlotUnavailable("Selected date is inside the booking lead window")
         plan = await self._build_plan(business, service, requirements)
         self._require_automatic_plan(plan)
         employee_ids, starts_at = await self._employees_for_exact_start(
