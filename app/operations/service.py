@@ -1648,11 +1648,18 @@ def _appointment_view(row: Any) -> AppointmentView:
             service_name = "Entrega de equipamento"
         elif fulfillment_type == "equipment_pickup":
             service_name = "Retirada de equipamento"
+    display_service_name = service_name
+    if getattr(item, "appointment_kind", "service") == "equipment_delivery":
+        display_service_name = "Entrega de equipamento"
+    elif getattr(item, "appointment_kind", "service") == "equipment_pickup":
+        display_service_name = "Retirada de equipamento"
     return AppointmentView(
         id=item.id, customer_id=item.customer_id, customer_name=customer_name or "Cliente",
-        customer_phone=customer_phone, service_id=item.service_id, service_name=service_name,
+        customer_phone=customer_phone, service_id=item.service_id, service_name=display_service_name,
         employee_id=item.employee_id, employee_name=employee_name, starts_at=item.starts_at,
-        ends_at=item.ends_at, status=item.status, notes=item.notes,
+        ends_at=item.ends_at, status=item.status,
+        appointment_kind=getattr(item, "appointment_kind", "service"),
+        notes=item.notes,
     )
 
 
