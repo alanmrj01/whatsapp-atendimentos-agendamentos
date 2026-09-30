@@ -1739,6 +1739,7 @@ def _business_view(item: Business) -> BusinessView:
         preparation_minutes=item.preparation_minutes,
         finishing_minutes=item.finishing_minutes,
         minimum_booking_notice_minutes=item.minimum_booking_notice_minutes,
+        equipment_delivery_fee_per_km=Decimal(item.equipment_delivery_fee_per_km),
         materials_catalog_reviewed=item.materials_catalog_reviewed,
         agenda_preferences_reviewed=item.agenda_preferences_reviewed,
         onboarding_completed_at=item.onboarding_completed_at,
