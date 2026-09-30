@@ -1185,10 +1185,18 @@ async def _equipment_question_answer(
         "alexa",
         "bluetooth",
         "inverter",
-        "mais barato",
-        "mais em conta",
     )
-    if not any(term in normalized for term in equipment_terms):
+    cheaper_terms = ("mais barato", "mais em conta")
+    has_equipment_context = (
+        context.get("purchase_mode") in {"purchase", "both"}
+        or context.get("purchase_only") is True
+        or context.get("equipment_ownership") == "needs_equipment"
+        or isinstance(context.get("recommended_equipment"), dict)
+    )
+    if not any(term in normalized for term in equipment_terms) and not (
+        has_equipment_context
+        and any(term in normalized for term in cheaper_terms)
+    ):
         return None
     technical_terms = (
         "modelo",
