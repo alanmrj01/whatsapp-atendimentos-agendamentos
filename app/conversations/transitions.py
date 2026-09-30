@@ -201,6 +201,19 @@ async def determine_transition(
     interpretation = interpreter.interpret(inbound.body)
     action = inbound.interactive_id
     base_context = _clean_context(conversation.context)
+
+    commercial_handoff = await _commercial_negotiation_handoff_if_applicable(
+        conversation,
+        inbound,
+        state,
+        base_context,
+        interpretation,
+        booking_port,
+        action,
+    )
+    if commercial_handoff is not None:
+        return commercial_handoff
+
     context = (
         enrich_context_from_message(
             base_context,
@@ -972,6 +985,150 @@ def _has_service_question(interpretation: Interpretation) -> bool:
             ConversationIntent.CANCEL_QUESTION,
             ConversationIntent.RESCHEDULE_QUESTION,
         )
+    )
+
+
+def _looks_like_commercial_negotiation(
+    body: str | None,
+    *,
+    state: ConversationState,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+) -> bool:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+
+    negotiation_phrases = (
+        "mais barato",
+        "mais em conta",
+        "valor menor",
+        "preco menor",
+        "melhor preco",
+        "melhorar o valor",
+        "melhorar esse valor",
+        "melhorar esse preco",
+        "tem como melhorar",
+        "consegue melhorar",
+        "da para melhorar",
+        "dar desconto",
+        "tem desconto",
+        "consegue desconto",
+        "abaixar o valor",
+        "baixar o valor",
+        "reduzir o valor",
+        "reduzir o preco",
+        "negociar o valor",
+        "negociar o preco",
+        "ficou caro",
+        "esta caro",
+        "ta caro",
+        "muito caro",
+        "achei caro",
+        "passou do meu orcamento",
+        "fora do meu orcamento",
+        "nao cabe no meu orcamento",
+        "nao consigo pagar",
+        "consegue fazer por",
+        "da para fazer por",
+        "tem como fazer por",
+    )
+    if any(phrase in normalized for phrase in negotiation_phrases):
+        return True
+
+    price_already_presented = (
+        state in {
+            ConversationState.BOOKING_CONFIRM,
+            ConversationState.QUOTE_DECISION,
+        }
+        or context.get("quote_presented") is True
+        or context.get("recommendation_presented") is True
+    )
+    return (
+        price_already_presented
+        and interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and any(
+            token in normalized
+            for token in ("preco", "valor", "quanto", "orcamento", "custa")
+        )
+    )
+
+
+async def _is_ac_purchase_or_installation_context(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+) -> bool:
+    if context.get("purchase_mode") in {"purchase", "both"}:
+        return True
+    if context.get("purchase_only") is True:
+        return True
+    if context.get("equipment_ownership") in {"needs_equipment", "has_equipment"}:
+        return True
+    if isinstance(context.get("recommended_equipment"), dict):
+        return True
+    if interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE):
+        return True
+    if (
+        interpretation.has(ConversationIntent.SERVICE_INTENT)
+        and interpretation.service_key == "split-installation"
+    ):
+        return True
+
+    service_id = _context_service_id(context)
+    if service_id is None:
+        return False
+    try:
+        port = _require_booking_port(booking_port)
+        services = _snapshot_options(await port.list_services(inbound.business_id))
+    except (BookingPortUnavailable, BookingRequiresHandoff):
+        return False
+    return _service_kind(services, service_id) == "installation"
+
+
+async def _commercial_negotiation_handoff_if_applicable(
+    conversation: ConversationSnapshot,
+    inbound: ConversationInput,
+    state: ConversationState,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+    action: str | None,
+) -> ConversationTransition | None:
+    # Interactive navigation (confirmar/voltar/cancelar) must keep its normal
+    # deterministic path. Commercial negotiation is recognized from free text.
+    if action is not None:
+        return None
+    if not _looks_like_commercial_negotiation(
+        inbound.body,
+        state=state,
+        context=context,
+        interpretation=interpretation,
+    ):
+        return None
+    if not await _is_ac_purchase_or_installation_context(
+        inbound,
+        context,
+        interpretation,
+        booking_port,
+    ):
+        return None
+
+    body = (
+        "Entendi. Para compra ou instalação de ar-condicionado, existe a "
+        "possibilidade de avaliarmos um aparelho seminovo para tentar chegar "
+        "a um valor mais em conta, conforme a disponibilidade da empresa. "
+        "Eu não consigo garantir estoque nem valor por aqui, então essa condição "
+        "precisa ser verificada pela nossa equipe. Vou encaminhar seu atendimento "
+        "para que eles confiram as opções e os valores com você."
+    )
+    return _transition(
+        ConversationState.HUMAN_HANDOFF,
+        _clean_context(context),
+        _text_message(body),
+        automation_enabled=False,
+        handoff_status="waiting",
     )
 
 
