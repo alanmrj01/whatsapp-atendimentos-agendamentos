@@ -339,9 +339,9 @@ async def bulk_update_conversations(
 async def get_conversation_message_media(
     conversation_id: UUID,
     message_id: UUID,
+    request: Request,
     principal: Identity,
     db: Db,
-    request: Request | None = None,
 ):
     membership = _membership(principal)
     message = await db.scalar(
@@ -411,7 +411,7 @@ async def get_conversation_message_media(
         "X-Content-Type-Options": "nosniff",
         "Accept-Ranges": "bytes",
     }
-    range_header = request.headers.get("range") if request is not None else None
+    range_header = request.headers.get("range")
     if range_header and message.message_type in {"audio", "video"}:
         range_value = range_header.strip().casefold()
         if not range_value.startswith("bytes=") or "," in range_value:
