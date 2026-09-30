@@ -305,3 +305,46 @@ def test_price_objection_language_is_recognized_as_price_question(body: str) -> 
     assert result.has(ConversationIntent.PRICE_QUESTION)
     assert result.has_act(ConversationAct.SIDE_QUESTION)
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Meu ar-condicionado está com problema",
+        "Estou com problema no ar",
+    ],
+)
+def test_generic_ac_problem_maps_to_corrective_diagnostics(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+    assert result.service_key == "diagnostics"
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Vocês fazem manutenção?",
+        "Tem manutenção corretiva?",
+        "Vocês trabalham com limpeza?",
+    ],
+)
+def test_service_inquiry_is_side_question_not_implicit_workflow_change(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+    assert result.has(ConversationIntent.SERVICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Qual a voltagem desse aparelho?",
+        "Esse modelo tem Wi-Fi?",
+        "Qual a garantia do serviço?",
+        "Quais as medidas da condensadora?",
+    ],
+)
+def test_technical_questions_are_side_questions(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.TECHNICAL_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+

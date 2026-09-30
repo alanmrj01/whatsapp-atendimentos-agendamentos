@@ -161,7 +161,10 @@ def enrich_context_from_message(
         _assign_fact(updated, "equipment_ownership", ownership, is_correction)
 
     model = _equipment_model(raw, assertion)
-    if model is not None:
+    if (
+        model is not None
+        and updated.get("equipment_ownership") != "needs_equipment"
+    ):
         _assign_fact(updated, "equipment_model", model, is_correction)
         updated["equipment_model_known"] = True
 

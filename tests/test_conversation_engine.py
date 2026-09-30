@@ -3934,3 +3934,693 @@ async def test_cheaper_question_on_non_installation_service_does_not_erase_confi
 
     assert repository.state == ConversationState.POST_BOOKING_HELP
 
+@mark.asyncio
+async def test_specific_unavailable_equipment_lookup_enters_purchase_clarification_instead_of_menu() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.MENU,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1201, body="Tem ar condicionado de 150000 btu?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert repository.context["service_clarification"] == "equipment_purchase"
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "catálogo ativo" in combined or "catalogo ativo" in combined
+    assert "comprar" in combined
+    assert "instalação" in combined or "instalacao" in combined
+    assert "posso continuar com o atendimento" not in combined
+
+
+@mark.asyncio
+async def test_off_catalog_purchase_model_never_becomes_customer_equipment_and_profiles_environment() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "purchase_mode": "purchase",
+            "purchase_only": True,
+            "equipment_ownership": "needs_equipment",
+            "equipment_model_known": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1202, body="Midea 50000btu quente frio")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    assert repository.context["equipment_model_known"] is False
+    assert repository.context["catalog_mismatch_attempts"] == 1
+    assert "equipment_model" not in repository.context
+    assert "recommended_equipment" not in repository.context
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "não encontrei" in combined
+    assert "catálogo ativo" in combined or "catalogo ativo" in combined
+    assert "perfil do ambiente" in combined
+
+
+@mark.asyncio
+async def test_repeated_off_catalog_purchase_request_handoffs_without_inventing_product() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_PROFILE,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "purchase_mode": "purchase",
+            "purchase_only": True,
+            "equipment_ownership": "needs_equipment",
+            "equipment_model_known": False,
+            "catalog_mismatch_attempts": 1,
+            "equipment_profile_intro_sent": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1203, body="Eu quero mesmo o Midea 50000 btu")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+    assert "equipment_model" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "fora do catálogo ativo" in body.casefold() or "fora do catalogo ativo" in body.casefold()
+    assert "equipe" in body.casefold()
+
+
+@mark.asyncio
+async def test_generic_ac_problem_is_diagnostics_and_never_turns_into_installation_purchase() -> None:
+    repository = FakeConversationRepository(customer_name="Joao")
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Diagnóstico / manutenção corretiva")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(1204, body="Bom dia! Meu ar condicionado está com problema")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "purchase_mode" not in repository.context
+
+    await engine.process(
+        inbound(1205, body="Rua A, 10, Centro, Jacareí")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["equipment_ownership"] == "has_equipment"
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "marca e o modelo" in body.casefold()
+    assert "cotar o aparelho" not in body.casefold()
+
+
+@mark.asyncio
+async def test_switching_from_purchase_context_to_maintenance_clears_commercial_equipment_state() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        context={
+            "request_mode": "quote",
+            "purchase_mode": "purchase",
+            "purchase_only": True,
+            "equipment_ownership": "needs_equipment",
+            "recommended_equipment": {"item_id": "stale", "price": 9999.0},
+            "recommendation_presented": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Diagnóstico / manutenção corretiva")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1206, body="E manutenção?")
+    )
+
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["equipment_ownership"] == "has_equipment"
+    assert "purchase_mode" not in repository.context
+    assert "purchase_only" not in repository.context
+    assert "recommended_equipment" not in repository.context
+    assert "recommendation_presented" not in repository.context
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+
+
+@mark.asyncio
+async def test_unknown_comment_during_schedule_keeps_checkpoint_and_repeats_pending_question() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1207, body="isso está ficando complicado")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-09-02"
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "seguir exatamente do ponto" in body.casefold()
+    assert "09:00" in body
+
+@mark.asyncio
+async def test_service_inquiry_during_booking_answers_and_returns_to_same_checkpoint() -> None:
+    maintenance_id = uuid.UUID("41000000-0000-0000-0000-000000000004")
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização"),
+        BookingOption(str(maintenance_id), "Diagnóstico / manutenção corretiva"),
+    ]
+    booking_port.get_service_details = AsyncMock(
+        return_value=ServiceDetails(
+            id=maintenance_id,
+            name="Diagnóstico / manutenção corretiva",
+            description="Atendimento técnico para diagnóstico e correção de falhas.",
+        )
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1210, body="Vocês fazem manutenção?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["selected_date"] == "2026-09-02"
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "manutenção" in body.casefold() or "manutencao" in body.casefold()
+    assert "09:00" in body
+
+
+@mark.asyncio
+async def test_service_question_from_menu_answers_then_shows_real_service_choices() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.MENU,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Diagnóstico / manutenção corretiva")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1211, body="Vocês fazem manutenção?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "manutenção" in combined or "manutencao" in combined
+    assert "escolha o serviço" in combined or "escolha o servico" in combined
+    assert "posso continuar com o atendimento" not in combined
+
+@mark.asyncio
+async def test_access_step_accepts_free_text_without_forcing_button() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ACCESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        considers_difficult_access=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1212, body="O acesso é normal, sem dificuldade")
+    )
+
+    assert repository.context["access_condition"] == "normal"
+    assert repository.state == ConversationState.BOOKING_DATE
+
+
+@mark.asyncio
+async def test_quote_decision_accepts_natural_yes_and_goes_to_agenda() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.QUOTE_DECISION,
+        context={
+            "service_id": str(SERVICE_ID),
+            "quote_presented": True,
+            "request_mode": "quote",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1213, body="Sim, vamos seguir")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "request_mode" not in repository.context
+
+
+@mark.asyncio
+async def test_repeated_arbitrary_off_catalog_name_is_handed_off_on_second_attempt() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "purchase_mode": "purchase",
+            "purchase_only": True,
+            "equipment_ownership": "needs_equipment",
+            "equipment_model_known": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1214, body="FrostMaster X Ultra"))
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    assert repository.context["catalog_mismatch_attempts"] == 1
+    assert repository.context["catalog_mismatch_query"] == "frostmaster x ultra"
+    assert "equipment_model" not in repository.context
+
+    await engine.process(inbound(1215, body="Quero mesmo o FrostMaster X Ultra"))
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.context["catalog_mismatch_attempts"] == 2
+
+@mark.asyncio
+async def test_unavailable_brand_is_never_substituted_by_same_capacity_from_another_brand() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.equipment_catalog = [
+        EquipmentCatalogEntry(
+            item_id="gree-only",
+            brand="Gree",
+            line="G-Top Auto Inverter",
+            capacity_btu=9000,
+            segment="cost_benefit",
+            cycles=("cold",),
+            price=2500.0,
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1216, body="Tem Samsung 9000 BTU?")
+    )
+
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "gree" not in combined
+    assert "não encontrei" in combined or "nao encontrei" in combined
+
+
+@mark.asyncio
+async def test_purchase_model_brand_and_capacity_must_match_same_catalog_item() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "purchase_mode": "purchase",
+            "purchase_only": True,
+            "equipment_ownership": "needs_equipment",
+            "equipment_model_known": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    booking_port.equipment_catalog = [
+        EquipmentCatalogEntry(
+            item_id="gree-only",
+            brand="Gree",
+            line="G-Top Auto Inverter",
+            capacity_btu=9000,
+            segment="cost_benefit",
+            cycles=("cold",),
+            price=2500.0,
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1217, body="Quero Samsung 9000 BTU")
+    )
+
+    assert repository.context["catalog_mismatch_attempts"] == 1
+    assert "equipment_model" not in repository.context
+    assert "recommended_equipment" not in repository.context
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "gree" not in combined
+    assert "catálogo ativo" in combined or "catalogo ativo" in combined
+
+@mark.asyncio
+async def test_known_equipment_technical_question_answers_from_catalog_and_resumes_time() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "purchase_mode": "both",
+            "equipment_ownership": "needs_equipment",
+            "recommended_equipment": {
+                "item_id": "catalog-gree-9000-cold",
+                "label": "Gree G-Top Auto Inverter 9.000 BTU — Só Frio",
+                "capacity_btu": 9000,
+            },
+            "recommendation_presented": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1218, body="Esse modelo tem Wi-Fi?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-09-02"
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "wi-fi" in body.casefold()
+    assert "gree" in body.casefold()
+    assert "09:00" in body
+
+
+@mark.asyncio
+async def test_unknown_equipment_spec_is_not_invented_and_resumes_checkpoint() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "purchase_mode": "both",
+            "equipment_ownership": "needs_equipment",
+            "recommended_equipment": {
+                "item_id": "catalog-gree-9000-cold",
+                "label": "Gree G-Top Auto Inverter 9.000 BTU — Só Frio",
+            },
+            "recommendation_presented": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1219, body="Qual a voltagem desse aparelho?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "não está cadastrado" in body.casefold() or "nao esta cadastrado" in body.casefold()
+    assert "prefiro não inventar" in body.casefold() or "prefiro nao inventar" in body.casefold()
+    assert "09:00" in body
+
+
+@mark.asyncio
+async def test_service_technical_question_is_safe_and_returns_to_pending_booking_step() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1220, body="Qual a garantia do serviço?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "prefiro não inventar" in body.casefold() or "prefiro nao inventar" in body.casefold()
+    assert "endereço" in body.casefold() or "endereco" in body.casefold()
+
+@mark.asyncio
+async def test_arbitrary_comment_in_structured_checkpoint_does_not_consume_slot_or_increment_retry() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1221, body="Meu cachorro se chama Rex")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert "repair_attempts" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "preservar o que já foi preenchido" in body.casefold()
+    assert "09:00" in body
+
+
+@mark.asyncio
+async def test_arbitrary_comment_during_equipment_ownership_keeps_purchase_checkpoint() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1222, body="Hoje está muito quente por aqui")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_OWNERSHIP
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "repair_attempts" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "preservar o que já foi preenchido" in body.casefold()
+
+@mark.asyncio
+async def test_unknown_comment_at_gate_details_does_not_become_gate_instruction() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_GATE_DETAILS,
+        context={"service_id": str(SERVICE_ID), "property_type": "building"},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1220, body="acho que vou pensar mais um pouco")
+    )
+
+    assert repository.state == ConversationState.BOOKING_GATE_DETAILS
+    assert "gate_instructions" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "continuar exatamente" in body.casefold() or "etapa em que estávamos" in body.casefold()
+    assert "portaria" in body.casefold() or "acesso" in body.casefold()
+
+
+@mark.asyncio
+async def test_real_gate_instruction_is_still_consumed() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_GATE_DETAILS,
+        context={"service_id": str(SERVICE_ID), "property_type": "building"},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1221, body="Na portaria, chamar no interfone do bloco B")
+    )
+
+    assert repository.context["gate_instructions"] == "Na portaria, chamar no interfone do bloco B"
+
+
+@mark.asyncio
+async def test_unknown_comment_at_attendee_name_does_not_increment_repair_or_handoff() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ATTENDEE_NAME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "onsite_contact_mode": "other",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1222, body="essa conversa está meio confusa")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ATTENDEE_NAME
+    assert repository.automation_enabled is True
+    assert "onsite_contact_name" not in repository.context
+    attempts = repository.context.get("repair_attempts") or {}
+    assert "attendee_name" not in attempts
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "nome" in body.casefold()
+
+
+@mark.asyncio
+async def test_site_limit_accepts_natural_no_restriction_text() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SITE_LIMIT,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(booking_port.intake, asks_site_time_limit=True)
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1223, body="Não há limite de horário no local")
+    )
+
+    assert repository.context["site_limit_answered"] is True
+    assert "site_allowed_end" not in repository.context
+    assert repository.state == ConversationState.BOOKING_DATE
+
+
+@mark.asyncio
+async def test_phone_confirmation_accepts_typed_new_number_without_button() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_PHONE_CONFIRM,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "onsite_contact_mode": "customer",
+            "onsite_contact_name": "Alan",
+            "whatsapp_contact_phone": "+5512999999999",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1224, body="Pode usar +5512988887777")
+    )
+
+    assert repository.context["contact_phone"] == "+5512988887777"
+    assert repository.context["contact_phone_confirmed"] is True
+    assert repository.state == ConversationState.BOOKING_CONFIRM
+
+
+@mark.asyncio
+async def test_final_confirmation_accepts_natural_everything_is_correct() -> None:
+    candidate = {
+        "service_id": str(SERVICE_ID),
+        "selected_date": "2026-09-02",
+        "selected_time": "09:00",
+    }
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={
+            **candidate,
+            "candidate_booking": candidate,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1225, body="Está tudo certo, pode finalizar")
+    )
+
+    assert repository.state == ConversationState.POST_BOOKING_HELP
+    assert booking_port.confirmations
+
+
+@mark.asyncio
+async def test_technical_question_during_time_step_answers_then_returns_to_same_time_checkpoint() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "equipment_ownership": "needs_equipment",
+            "recommended_equipment": {
+                "item_id": "catalog-gree-9000-cold",
+                "label": "Gree G-Top Auto Inverter 9.000 BTU",
+            },
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1226, body="Qual a medida da condensadora?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-09-02"
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "unidade externa" in body.casefold() or "condensadora" in body.casefold()
+    assert "09:00" in body
+

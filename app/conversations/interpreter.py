@@ -18,6 +18,7 @@ class ConversationIntent(StrEnum):
     PRICE_QUESTION = "price_question"
     DURATION_QUESTION = "duration_question"
     SERVICE_QUESTION = "service_question"
+    TECHNICAL_QUESTION = "technical_question"
     CANCEL_QUESTION = "cancel_question"
     RESCHEDULE_QUESTION = "reschedule_question"
     UNKNOWN = "unknown"
@@ -71,6 +72,9 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
         "diagnostico",
         "conserto",
         "arrumar",
+        "com problema",
+        "esta com problema",
+        "problema no ar",
     ),
     "gas-recharge": ("gas", "sem gas", "recarga", "vazamento"),
 }
@@ -128,6 +132,40 @@ _SERVICE_QUESTION_PHRASES = (
     "o que voces fazem",
     "o que e feito",
     "faz parte",
+)
+
+_TECHNICAL_TERMS = (
+    "voltagem",
+    "tensao",
+    "consumo",
+    "energia",
+    "garantia",
+    "dimensao",
+    "dimensoes",
+    "medida",
+    "medidas",
+    "largura",
+    "altura",
+    "profundidade",
+    "refrigerante",
+    "serpentina",
+    "cobre",
+    "nivel de ruido",
+    "potencia",
+    "amperagem",
+    "corrente",
+    "tubulacao",
+    "tubo",
+    "dreno",
+    "condensadora",
+    "evaporadora",
+    "controle",
+    "wifi",
+    "wi fi",
+    "alexa",
+    "bluetooth",
+    "inverter",
+    "btu",
 )
 
 _SOCIAL_ONLY = frozenset(
@@ -281,6 +319,13 @@ class DeterministicConversationInterpreter:
                 intents.add(ConversationIntent.SERVICE_INTENT)
                 break
 
+        if service_key is not None and re.search(
+            r"\b(?:voces\s+)?(?:fazem|tem|trabalham\s+com|realizam|atendem|oferecem)\b",
+            assertion,
+        ):
+            intents.add(ConversationIntent.SERVICE_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
+
         if _contains_equipment_purchase(assertion) and not _purchase_is_negated(normalized):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
         elif (
@@ -302,6 +347,25 @@ class DeterministicConversationInterpreter:
             acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_any(normalized, _SERVICE_QUESTION_PHRASES):
             intents.add(ConversationIntent.SERVICE_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
+        technical_question_shape = (
+            "?" in original
+            or normalized.startswith(
+                (
+                    "qual ",
+                    "quais ",
+                    "quanto ",
+                    "como ",
+                    "tem ",
+                    "possui ",
+                    "usa ",
+                    "e ",
+                    "eh ",
+                )
+            )
+        )
+        if technical_question_shape and _contains_any(normalized, _TECHNICAL_TERMS):
+            intents.add(ConversationIntent.TECHNICAL_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_greeting(normalized):
             intents.add(ConversationIntent.GREETING)
@@ -330,6 +394,7 @@ class DeterministicConversationInterpreter:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.TECHNICAL_QUESTION,
             ConversationIntent.CANCEL_QUESTION,
             ConversationIntent.RESCHEDULE_QUESTION,
             ConversationIntent.GREETING,

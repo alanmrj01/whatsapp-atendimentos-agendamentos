@@ -435,6 +435,39 @@ async def _route_named_conversation(
             prefix=confirmation_text,
         )
 
+    if (
+        action is None
+        and _context_string(context, "equipment_ownership") == "needs_equipment"
+        and int(context.get("catalog_mismatch_attempts") or 0) >= 1
+        and (
+            _looks_like_specific_equipment_request(inbound.body)
+            or _repeats_catalog_mismatch(inbound.body, context)
+        )
+    ):
+        try:
+            port = _require_booking_port(booking_port)
+            catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
+        except (BookingPortUnavailable, BookingRequiresHandoff):
+            catalog = ()
+        if _catalog_entry_matching_customer_request(inbound.body, catalog) is None:
+            updated = {
+                **context,
+                "catalog_mismatch_attempts": int(
+                    context.get("catalog_mismatch_attempts") or 0
+                ) + 1,
+            }
+            return _transition(
+                ConversationState.HUMAN_HANDOFF,
+                updated,
+                _text_message(
+                    "Esse equipamento continua fora do catálogo ativo, então vou encaminhar "
+                    "seu atendimento para uma pessoa da equipe confirmar modelo, preço e "
+                    "disponibilidade."
+                ),
+                automation_enabled=False,
+                handoff_status="waiting",
+            )
+
     if interpretation.intent is ConversationIntent.RESCHEDULE and state is not ConversationState.RESCHEDULE:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
     if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
@@ -477,11 +510,27 @@ async def _route_named_conversation(
         )
 
     if (
+        equipment_question_answer is not None
+        and state in {ConversationState.START, ConversationState.MENU}
+        and action is None
+        and _looks_like_specific_equipment_request(inbound.body)
+    ):
+        return _transition(
+            ConversationState.BOOKING_SERVICE,
+            {
+                **context,
+                "service_clarification": "equipment_purchase",
+                "request_mode": "quote",
+            },
+            _text_message(equipment_question_answer),
+            follow_ups=(equipment_purchase_clarification_message(),),
+        )
+
+    if (
         question_answer is not None
         and state in {
             ConversationState.START,
             ConversationState.MENU,
-            ConversationState.COMPLETED,
             ConversationState.HUMAN_HANDOFF,
         }
         and not interpretation.has(ConversationIntent.BOOK)
@@ -489,14 +538,30 @@ async def _route_named_conversation(
         and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
         and context.get("request_mode") != "quote"
     ):
-        follow_up = (
-            f"{question_answer}\n\n"
-            f"Se quiser, {customer_lead(customer_name)}posso continuar com o atendimento."
-        )
+        try:
+            port = _require_booking_port(booking_port)
+            services = _snapshot_options(await port.list_services(inbound.business_id))
+        except BookingPortUnavailable:
+            services = ()
+        if services:
+            return _transition(
+                ConversationState.BOOKING_SERVICE,
+                context,
+                _text_message(question_answer),
+                follow_ups=(
+                    service_selection_message(
+                        services,
+                        body=(
+                            "Para seguir com o atendimento, escolha o serviço que "
+                            "corresponde ao que você precisa."
+                        ),
+                    ),
+                ),
+            )
         return _transition(
             ConversationState.MENU,
             context,
-            _text_message(follow_up),
+            _text_message(question_answer),
         )
 
     if state is ConversationState.POST_BOOKING_HELP and question_answer is not None:
@@ -647,6 +712,102 @@ async def _route_named_conversation(
                 interpretation=interpretation,
                 fallback_message=conversation.fallback_message,
                 customer_name=customer_name,
+            )
+
+    if (
+        state in booking_states
+        and action is None
+        and interpretation.intent is ConversationIntent.UNKNOWN
+        and isinstance(inbound.body, str)
+        and inbound.body.strip()
+    ):
+        normalized_unknown = normalize_portuguese(inbound.body)
+        looks_like_parallel_question = (
+            "?" in inbound.body
+            or normalized_unknown.startswith(
+                (
+                    "como ",
+                    "qual ",
+                    "quais ",
+                    "quanto ",
+                    "por que ",
+                    "porque ",
+                    "tem como ",
+                    "pode ",
+                    "posso ",
+                    "sera que ",
+                    "e se ",
+                )
+            )
+        )
+        is_conversation_feedback = any(
+            phrase in normalized_unknown
+            for phrase in (
+                "isso esta ficando complicado",
+                "esta complicado",
+                "nao estou entendendo",
+                "nao entendi nada",
+                "esta confuso",
+                "que confuso",
+                "nao faz sentido",
+            )
+        )
+        structured_checkpoint = state in {
+            ConversationState.BOOKING_QUANTITY,
+            ConversationState.BOOKING_ACCESS,
+            ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
+            ConversationState.BOOKING_EQUIPMENT_PROFILE,
+            ConversationState.BOOKING_EQUIPMENT_DELIVERY,
+            ConversationState.BOOKING_INSTALLATION_HEIGHT,
+            ConversationState.BOOKING_PROPERTY,
+            ConversationState.BOOKING_BUILDING_HOURS,
+            ConversationState.BOOKING_GATE_DETAILS,
+            ConversationState.BOOKING_TUBING,
+            ConversationState.BOOKING_SITE_LIMIT,
+            ConversationState.BOOKING_WEEKDAY,
+            ConversationState.BOOKING_DATE,
+            ConversationState.BOOKING_TIME,
+            ConversationState.BOOKING_ATTENDEE,
+            ConversationState.BOOKING_ATTENDEE_NAME,
+            ConversationState.BOOKING_PHONE_CONFIRM,
+            ConversationState.BOOKING_CONFIRM,
+            ConversationState.QUOTE_DECISION,
+        }
+        if (
+            (
+                looks_like_parallel_question
+                or is_conversation_feedback
+                or structured_checkpoint
+            )
+            and not _message_can_answer_pending_state(
+                state,
+                inbound,
+                context,
+                interpretation,
+            )
+        ):
+            prefix = (
+                "Entendi. Vou manter tudo o que já foi preenchido e seguir exatamente "
+                "do ponto em que estávamos."
+                if is_conversation_feedback
+                else (
+                    (
+                        "Não tenho essa informação cadastrada com segurança e prefiro não "
+                        "inventar. Seu atendimento continua exatamente de onde parou."
+                    )
+                    if looks_like_parallel_question
+                    else (
+                        "Entendi. Vou preservar o que já foi preenchido e continuar "
+                        "exatamente da etapa em que estávamos."
+                    )
+                )
+            )
+            return await _resume_pending_question(
+                conversation,
+                inbound,
+                context,
+                booking_port,
+                prefix=prefix,
             )
 
     greeting_prefix: str | None = None
@@ -982,6 +1143,7 @@ def _has_service_question(interpretation: Interpretation) -> bool:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.TECHNICAL_QUESTION,
             ConversationIntent.CANCEL_QUESTION,
             ConversationIntent.RESCHEDULE_QUESTION,
         )
@@ -1165,6 +1327,261 @@ def _equipment_suggestion_snapshot(
     }
 
 
+_KNOWN_EQUIPMENT_BRANDS = (
+    "samsung",
+    "lg",
+    "midea",
+    "gree",
+    "electrolux",
+    "philco",
+    "tcl",
+    "agratto",
+    "daikin",
+    "elgin",
+    "hisense",
+    "carrier",
+    "springer",
+    "consul",
+)
+
+
+def _requested_equipment_brand(body: str | None) -> str | None:
+    normalized = normalize_portuguese(body or "")
+    padded = f" {normalized} "
+    return next(
+        (brand for brand in _KNOWN_EQUIPMENT_BRANDS if f" {brand} " in padded),
+        None,
+    )
+
+
+def _catalog_entry_matching_customer_request(
+    body: str | None,
+    catalog: Sequence[Any],
+) -> Any | None:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return None
+
+    capacity_match = re.search(r"\b(\d{4,6})\s*btu\b", normalized)
+    capacity = int(capacity_match.group(1)) if capacity_match else None
+    requested_brand = _requested_equipment_brand(body)
+
+    explicitly_mentioned_lines = {
+        normalize_portuguese(item.line)
+        for item in catalog
+        if (
+            len(normalize_portuguese(item.line)) >= 4
+            and normalize_portuguese(item.line) in normalized
+        )
+    }
+
+    matches: list[Any] = []
+    for item in catalog:
+        item_brand = normalize_portuguese(item.brand)
+        item_line = normalize_portuguese(item.line)
+
+        if requested_brand is not None and requested_brand not in item_brand:
+            continue
+        if explicitly_mentioned_lines and item_line not in explicitly_mentioned_lines:
+            continue
+        if capacity is not None and item.capacity_btu != capacity:
+            continue
+        if (
+            requested_brand is None
+            and not explicitly_mentioned_lines
+            and capacity is None
+        ):
+            continue
+        matches.append(item)
+
+    return matches[0] if len(matches) == 1 else None
+
+
+def _looks_like_specific_equipment_request(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    return bool(
+        re.search(r"\b\d{4,6}\s*btu\b", normalized)
+        or any(
+            token in normalized
+            for token in (
+                "midea", "gree", "lg", "samsung", "electrolux", "philco",
+                "tcl", "agratto", "daikin", "elgin", "hisense", "carrier",
+                "springer",
+            )
+        )
+    )
+
+
+def _repeats_catalog_mismatch(
+    body: str | None,
+    context: dict[str, Any],
+) -> bool:
+    current = normalize_portuguese(body or "")
+    previous = _context_string(context, "catalog_mismatch_query")
+    if not current or previous is None:
+        return False
+    previous = normalize_portuguese(previous)
+    if not previous:
+        return False
+    return (
+        current == previous
+        or previous in current
+        or current in previous
+    )
+
+
+def _catalog_item_from_context(
+    context: dict[str, Any],
+    catalog: Sequence[Any],
+) -> Any | None:
+    for key in ("recommended_equipment", "equipment_suggestion"):
+        snapshot = context.get(key)
+        if not isinstance(snapshot, dict):
+            continue
+        item_id = snapshot.get("item_id")
+        if isinstance(item_id, str) and item_id:
+            matched = next(
+                (item for item in catalog if item.item_id == item_id),
+                None,
+            )
+            if matched is not None:
+                return matched
+
+    model = _context_string(context, "equipment_model")
+    if model is not None:
+        return _catalog_entry_matching_customer_request(model, catalog)
+    return None
+
+
+def _catalog_equipment_label(item: Any) -> str:
+    return (
+        f"{item.brand} {item.line} {item.capacity_btu:,} BTU"
+        .replace(",", ".")
+    )
+
+
+def _dimension_text(dimensions: dict[str, float] | None) -> str | None:
+    if not isinstance(dimensions, dict):
+        return None
+    width = dimensions.get("width")
+    height = dimensions.get("height")
+    depth = dimensions.get("depth")
+    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+        return None
+    text = f"{width:g} × {height:g} cm (largura × altura)"
+    if isinstance(depth, (int, float)):
+        text = f"{width:g} × {height:g} × {depth:g} cm (largura × altura × profundidade)"
+    return text
+
+
+def _technical_equipment_answer(
+    normalized: str,
+    item: Any,
+) -> str | None:
+    label = _catalog_equipment_label(item)
+
+    if "btu" in normalized or "capacidade" in normalized:
+        return f"No catálogo ativo, {label} tem capacidade de {item.capacity_btu:,} BTU.".replace(",", ".")
+
+    feature_aliases = {
+        "Wi-Fi": ("wifi", "wi fi"),
+        "Alexa": ("alexa",),
+        "Bluetooth": ("bluetooth",),
+        "Inverter": ("inverter",),
+    }
+    normalized_features = tuple(
+        normalize_portuguese(value)
+        for value in item.features
+        if isinstance(value, str)
+    )
+    for feature_label, aliases in feature_aliases.items():
+        if not any(alias in normalized for alias in aliases):
+            continue
+        supported = any(
+            any(alias in feature for alias in aliases)
+            for feature in normalized_features
+        ) or (
+            feature_label == "Inverter"
+            and "inverter" in normalize_portuguese(item.line)
+        )
+        if supported:
+            return f"No catálogo ativo, {label} consta com {feature_label}."
+        return (
+            f"No catálogo ativo, {feature_label} não aparece explicitamente cadastrado "
+            f"para {label}. Prefiro não afirmar compatibilidade sem essa confirmação."
+        )
+
+    asks_dimensions = any(
+        token in normalized
+        for token in (
+            "dimensao",
+            "dimensoes",
+            "medida",
+            "medidas",
+            "largura",
+            "profundidade",
+            "evaporadora",
+            "condensadora",
+        )
+    )
+    if asks_dimensions:
+        asks_outdoor = any(
+            token in normalized
+            for token in ("condensadora", "externa", "unidade externa")
+        )
+        asks_indoor = any(
+            token in normalized
+            for token in ("evaporadora", "interna", "unidade interna")
+        )
+        indoor = _dimension_text(item.indoor_dimensions_cm)
+        outdoor = _dimension_text(item.outdoor_dimensions_cm)
+        if asks_outdoor:
+            return (
+                f"No catálogo ativo, a unidade externa de {label} mede {outdoor}."
+                if outdoor
+                else f"As medidas da unidade externa de {label} não estão cadastradas."
+            )
+        if asks_indoor:
+            return (
+                f"No catálogo ativo, a unidade interna de {label} mede {indoor}."
+                if indoor
+                else f"As medidas da unidade interna de {label} não estão cadastradas."
+            )
+        if indoor and outdoor:
+            return (
+                f"No catálogo ativo, {label} tem unidade interna de {indoor} "
+                f"e unidade externa de {outdoor}."
+            )
+        return (
+            f"As dimensões completas de {label} não estão cadastradas com segurança "
+            "no catálogo ativo."
+        )
+
+    if any(
+        token in normalized
+        for token in (
+            "voltagem",
+            "tensao",
+            "consumo",
+            "energia",
+            "garantia",
+            "refrigerante",
+            "serpentina",
+            "nivel de ruido",
+            "potencia",
+            "amperagem",
+            "corrente",
+            "dreno",
+            "controle",
+        )
+    ):
+        return (
+            f"Esse detalhe técnico não está cadastrado com segurança para {label}. "
+            "Prefiro não inventar uma especificação."
+        )
+    return None
+
+
 async def _equipment_question_answer(
     inbound: ConversationInput,
     context: dict[str, Any],
@@ -1182,6 +1599,8 @@ async def _equipment_question_answer(
         "alexa",
         "bluetooth",
         "inverter",
+        "evaporadora",
+        "condensadora",
     )
     cheaper_terms = ("mais barato", "mais em conta")
     has_equipment_context = (
@@ -1190,9 +1609,36 @@ async def _equipment_question_answer(
         or context.get("equipment_ownership") == "needs_equipment"
         or isinstance(context.get("recommended_equipment"), dict)
     )
+    technical_equipment_terms = (
+        "voltagem",
+        "tensao",
+        "consumo",
+        "energia",
+        "garantia",
+        "dimensao",
+        "dimensoes",
+        "medida",
+        "medidas",
+        "largura",
+        "profundidade",
+        "refrigerante",
+        "serpentina",
+        "nivel de ruido",
+        "potencia",
+        "amperagem",
+        "corrente",
+        "dreno",
+        "controle",
+    )
     if not any(term in normalized for term in equipment_terms) and not (
         has_equipment_context
-        and any(term in normalized for term in cheaper_terms)
+        and (
+            any(term in normalized for term in cheaper_terms)
+            or (
+                interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
+                and any(term in normalized for term in technical_equipment_terms)
+            )
+        )
     ):
         return None
     technical_terms = (
@@ -1207,6 +1653,7 @@ async def _equipment_question_answer(
     )
     if (
         not interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and not interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
         and not any(term in normalized for term in technical_terms)
     ):
         return None
@@ -1218,40 +1665,62 @@ async def _equipment_question_answer(
     if not catalog:
         return "No momento não há equipamentos ativos cadastrados para eu comparar."
 
+    if (
+        interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
+        and not interpretation.has(ConversationIntent.PRICE_QUESTION)
+    ):
+        current_item = _catalog_item_from_context(context, catalog)
+        if current_item is not None:
+            technical_answer = _technical_equipment_answer(normalized, current_item)
+            if technical_answer is not None:
+                return technical_answer
+        if has_equipment_context and any(
+            term in normalized
+            for term in technical_equipment_terms
+        ):
+            return (
+                "Para responder esse detalhe técnico com segurança, preciso primeiro "
+                "confirmar qual modelo do catálogo estamos tratando."
+            )
+
     candidates = list(catalog)
     canonical_input = re.sub(r"[^a-z0-9]+", " ", normalized)
-    mentioned_candidates = [
+    requested_brand = _requested_equipment_brand(inbound.body)
+    if requested_brand is not None:
+        candidates = [
+            item
+            for item in candidates
+            if requested_brand in normalize_portuguese(item.brand)
+        ]
+
+    mentioned_lines = [
         item
         for item in candidates
         if (
-            re.sub(
-                r"[^a-z0-9]+",
-                " ",
-                normalize_portuguese(item.brand),
-            ).strip()
-            in canonical_input
-            or (
-                len(
-                    re.sub(
-                        r"[^a-z0-9]+",
-                        " ",
-                        normalize_portuguese(item.line),
-                    ).strip()
-                )
-                >= 4
-                and re.sub(
+            len(
+                re.sub(
                     r"[^a-z0-9]+",
                     " ",
                     normalize_portuguese(item.line),
                 ).strip()
-                in canonical_input
             )
+            >= 4
+            and re.sub(
+                r"[^a-z0-9]+",
+                " ",
+                normalize_portuguese(item.line),
+            ).strip()
+            in canonical_input
         )
     ]
-    if mentioned_candidates:
-        candidates = mentioned_candidates
+    if mentioned_lines:
+        candidates = mentioned_lines
 
-    requested_capacity = re.search(r"\b(\d{4,5})\s*btu\b", normalized)
+    mentioned_candidates = list(candidates) if (
+        requested_brand is not None or mentioned_lines
+    ) else []
+
+    requested_capacity = re.search(r"\b(\d{4,6})\s*btu\b", normalized)
     if requested_capacity:
         capacity = int(requested_capacity.group(1))
         candidates = [item for item in candidates if item.capacity_btu == capacity]
@@ -1668,7 +2137,30 @@ async def _service_question_answer(
                 f"{_format_duration(plan.service.estimated_duration_minutes)}."
             )
 
+    if (
+        interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
+        and not interpretation.has(ConversationIntent.SERVICE_QUESTION)
+    ):
+        parts.append(
+            f"Esse detalhe técnico específico não está estruturado no cadastro de {target.label}. "
+            "Prefiro não inventar uma informação; a equipe pode confirmar esse ponto sem alterar "
+            "o andamento do seu atendimento."
+        )
+
     if interpretation.has(ConversationIntent.SERVICE_QUESTION):
+        inquiry_language = bool(
+            re.search(
+                r"\b(?:voces\s+)?(?:fazem|tem|trabalham\s+com|realizam|atendem|oferecem)\b",
+                interpretation.normalized_text,
+            )
+        )
+        parts.append(
+            (
+                f"Sim, trabalhamos com {target.label}."
+                if inquiry_language
+                else f"Sobre {target.label}:"
+            )
+        )
         details_loader = getattr(port, "get_service_details", None)
         details = None
         if callable(details_loader):
@@ -1720,7 +2212,15 @@ def _message_can_answer_pending_state(
     if state is ConversationState.BOOKING_SERVICE:
         return interpretation.has(ConversationIntent.SERVICE_INTENT)
     if state is ConversationState.BOOKING_QUANTITY:
-        return parse_number_answer(body) is not None
+        return (
+            parse_number_answer(body) is not None
+            or normalized in {
+                "nao sei",
+                "nao sei informar",
+                "nao faco ideia",
+                "complicado",
+            }
+        )
     if state is ConversationState.BOOKING_ADDRESS:
         return _looks_like_address(body)
     if state in {
@@ -1735,10 +2235,16 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_TIME:
+        parsed_hour = parse_number_answer(body)
         return bool(
             re.search(
                 r"\b(?:[01]?\d|2[0-3])(?::[0-5]\d|h)\b",
-                normalized,
+                body.casefold(),
+            )
+            or (
+                parsed_hour is not None
+                and parsed_hour.is_integer()
+                and 0 <= parsed_hour <= 23
             )
         )
     if state is ConversationState.BOOKING_PROPERTY:
@@ -1756,11 +2262,258 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
-        return _has_profile_fact(enrich_context_from_message({}, body))
-    if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        if _has_profile_fact(enrich_context_from_message({}, body)):
+            return True
+        if parse_number_answer(body) is not None:
+            return True
+        if any(
+            phrase in normalized
+            for phrase in (
+                "sem restricao",
+                "sem limitacao",
+                "nao tem limitacao",
+                "nao tenho limitacao",
+                "nao ha limitacao",
+                "nao sei",
+                "nao sei dizer",
+                "nao faco ideia",
+            )
+        ):
+            return True
         return bool(
-            context.get("equipment_model")
-            or re.search(r"\b\d{4,5}\s*btu", normalized)
+            re.search(
+                r"\b\d+(?:[.,]\d+)?\s*(?:cm|m|metro|metros)\b",
+                normalized,
+            )
+        )
+    if state is ConversationState.BOOKING_ACCESS:
+        return any(
+            phrase in normalized
+            for phrase in (
+                "acesso normal",
+                "normal",
+                "facil",
+                "sem dificuldade",
+                "tranquilo",
+                "acesso dificil",
+                "dificil",
+                "complicado",
+                "escada",
+                "local apertado",
+                "nao sei",
+                "nao tenho certeza",
+            )
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
+        return any(
+            phrase in normalized
+            for phrase in (
+                "ja tenho",
+                "tenho o aparelho",
+                "ja possuo",
+                "possuo o aparelho",
+                "so instalacao",
+                "somente instalacao",
+                "apenas instalar",
+                "quero cotar",
+                "quero comprar",
+                "preciso comprar",
+                "preciso de um aparelho",
+                "preciso de um ar",
+                "nao tenho",
+            )
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_DELIVERY:
+        return normalized in {
+            "retirar",
+            "buscar",
+            "vou retirar",
+            "retirada",
+            "receber",
+            "entregar",
+            "entrega",
+            "quero receber",
+            "levar com a instalacao",
+            "levar junto com a instalacao",
+            "junto com o tecnico",
+            "no dia da instalacao",
+            "com a instalacao",
+            "sim",
+            "mesmo endereco",
+            "no mesmo endereco",
+            "nao",
+            "outro endereco",
+            "endereco diferente",
+        }
+    if state is ConversationState.BOOKING_INSTALLATION_HEIGHT:
+        return (
+            any(
+                phrase in normalized
+                for phrase in (
+                    "mais de 3",
+                    "acima de 3",
+                    "passa de 3",
+                    "ate 3",
+                    "menos de 3",
+                    "abaixo de 3",
+                    "nao passa de 3",
+                )
+            )
+            or _decimal_from_text(body) is not None
+        )
+    if state is ConversationState.BOOKING_BUILDING_HOURS:
+        return (
+            _time_window_from_text(body) is not None
+            or any(
+                phrase in normalized
+                for phrase in (
+                    "durante o dia",
+                    "horario comercial",
+                    "nao sei",
+                    "nao sei dizer",
+                    "nao faco ideia",
+                )
+            )
+        )
+    if state is ConversationState.BOOKING_GATE_DETAILS:
+        return _looks_like_gate_instruction(body)
+    if state is ConversationState.BOOKING_ATTENDEE_NAME:
+        return extract_customer_name(body, allow_bare=True) is not None
+    if state is ConversationState.BOOKING_TUBING:
+        meters = _decimal_from_text(body)
+        return (
+            _tubing_unknown_text(normalized)
+            or (
+                meters is not None
+                and Decimal("0") < meters <= Decimal("100")
+            )
+        )
+    if state is ConversationState.BOOKING_SITE_LIMIT:
+        return _site_limit(None, body) is not False
+    if state is ConversationState.BOOKING_ATTENDEE:
+        return (
+            normalized in {
+                "sim",
+                "sou eu",
+                "eu vou estar",
+                "eu estarei",
+                "eu mesmo",
+                "eu mesma",
+            }
+            or any(
+                phrase in normalized
+                for phrase in ("outra pessoa", "nao", "nao vou estar")
+            )
+        )
+    if state is ConversationState.BOOKING_PHONE_CONFIRM:
+        return (
+            normalized in {
+                "sim",
+                "pode",
+                "correto",
+                "isso",
+                "outro",
+                "outro numero",
+                "nao",
+            }
+            or _phone_from_text(body) is not None
+        )
+    if state is ConversationState.BOOKING_CONFIRM:
+        return (
+            normalized in {
+                "confirmar",
+                "confirmo",
+                "sim",
+                "pode confirmar",
+                "pode",
+                "esta certo",
+                "esta tudo certo",
+                "tudo certo",
+                "pode finalizar",
+                "pode fechar",
+                "fechado",
+                "voltar",
+                "outro horario",
+                "trocar horario",
+                "cancelar",
+                "cancela",
+                "nao",
+            }
+            or any(
+                phrase in normalized
+                for phrase in (
+                    "esta tudo certo",
+                    "tudo certo pode",
+                    "pode finalizar",
+                    "pode confirmar",
+                    "pode fechar",
+                )
+            )
+        )
+    if state is ConversationState.QUOTE_DECISION:
+        return (
+            normalized in {
+                "sim",
+                "sim vamos seguir",
+                "sim pode",
+                "pode",
+                "vamos",
+                "vamos seguir",
+                "quero seguir",
+                "pode seguir",
+                "ok vamos seguir",
+                "certo vamos seguir",
+                "nao",
+                "agora nao",
+                "depois",
+            }
+            or any(
+                phrase in normalized
+                for phrase in (
+                    "consultar agenda",
+                    "agendar",
+                    "quero marcar",
+                    "ver horario",
+                    "pode agendar",
+                    "vamos agendar",
+                    "so cotacao",
+                    "so queria cotacao",
+                    "obrigado",
+                    "era isso",
+                    "nao quero agendar agora",
+                )
+            )
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        if normalized in {
+            "nao",
+            "nao tenho",
+            "nao sei",
+            "nao sei o modelo",
+            "nao conheco",
+            "sem preferencia",
+            "pode recomendar",
+        }:
+            return True
+        if any(
+            phrase in normalized
+            for phrase in (
+                "esta complicado",
+                "esta confuso",
+                "nao estou entendendo",
+                "nao faz sentido",
+                "obrigado",
+                "obrigada",
+            )
+        ):
+            return False
+        return bool(
+            _looks_like_specific_equipment_request(body)
+            or (
+                context.get("equipment_model_known") is True
+                and 1 <= len(normalized.split()) <= 10
+                and "?" not in body
+            )
         )
     return False
 
@@ -2355,6 +3108,7 @@ def _has_substantive_intent(interpretation: Interpretation) -> bool:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.TECHNICAL_QUESTION,
         )
     )
 
@@ -2404,6 +3158,7 @@ def _without_greeting(interpretation: Interpretation) -> Interpretation:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.TECHNICAL_QUESTION,
         )
         primary = next(
             (intent for intent in precedence if intent in intents),
@@ -3361,7 +4116,28 @@ async def _handle_service(
         "service_id": str(service_id),
     }
     updated_context.pop("service_clarification", None)
-    if _service_kind(services, service_id) == "diagnostics":
+    selected_service_kind = _service_kind(services, service_id)
+    if selected_service_kind in {
+        "cleaning",
+        "gas_recharge",
+        "diagnostics",
+        "preventive",
+    }:
+        updated_context["equipment_ownership"] = "has_equipment"
+        for key in (
+            "purchase_mode",
+            "purchase_only",
+            "request_mode",
+            "recommended_equipment",
+            "recommendation_presented",
+            "equipment_suggestion",
+            "catalog_mismatch_attempts",
+            "delivery_method",
+            "delivery_address",
+            "delivery_installation_match_pending",
+        ):
+            updated_context.pop(key, None)
+    if selected_service_kind == "diagnostics":
         raw_issue = " ".join((inbound.body or "").strip().split())
         if raw_issue:
             updated_context["reported_issue"] = raw_issue[:300]
@@ -3460,6 +4236,36 @@ async def _handle_access(
         ACCESS_DIFFICULT: AccessCondition.DIFFICULT,
         ACCESS_UNKNOWN: AccessCondition.UNKNOWN,
     }.get(action)
+    if access is None:
+        normalized = normalize_portuguese(inbound.body or "")
+        if any(
+            phrase in normalized
+            for phrase in (
+                "acesso normal",
+                "normal",
+                "facil",
+                "sem dificuldade",
+                "tranquilo",
+            )
+        ):
+            access = AccessCondition.NORMAL
+        elif any(
+            phrase in normalized
+            for phrase in (
+                "acesso dificil",
+                "dificil",
+                "complicado",
+                "escada",
+                "local apertado",
+            )
+        ):
+            access = AccessCondition.DIFFICULT
+        elif normalized in {
+            "nao sei",
+            "nao tenho certeza",
+            "nao consigo informar",
+        }:
+            access = AccessCondition.UNKNOWN
     if access is None:
         return _retry_or_handoff(
             ConversationState.BOOKING_ACCESS,
@@ -3756,7 +4562,10 @@ async def _handle_equipment_ownership(
         phrase in normalized
         for phrase in (
             "ja tenho",
+            "tenho",
             "tenho o aparelho",
+            "ja possuo",
+            "possuo o aparelho",
             "so instalacao",
             "somente instalacao",
             "apenas instalar",
@@ -3769,6 +4578,9 @@ async def _handle_equipment_ownership(
             "quero cotar",
             "quero comprar",
             "preciso comprar",
+            "preciso de um aparelho",
+            "preciso de um ar",
+            "nao tenho",
             "nao tenho aparelho",
             "nao tenho o ar",
         )
@@ -3883,7 +4695,10 @@ async def _handle_equipment_model(
             "Recebi a foto do aparelho para a equipe conferir.",
         )
 
-    if _context_string(context, "equipment_model") is not None:
+    if (
+        _context_string(context, "equipment_model") is not None
+        and _context_string(context, "equipment_ownership") != "needs_equipment"
+    ):
         return await _advance_intake(
             inbound,
             port,
@@ -3942,6 +4757,102 @@ async def _handle_equipment_model(
         )
 
     raw = " ".join((inbound.body or "").strip().split())
+    if (
+        raw
+        and _context_string(context, "equipment_ownership") == "needs_equipment"
+        and normalized not in {
+            "sim",
+            "isso",
+            "tenho",
+            "ok",
+            "certo",
+            "nao",
+            "nao sei",
+        }
+    ):
+        try:
+            catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
+        except BookingRequiresHandoff as exc:
+            return _handoff_for_reason(str(exc))
+        matched_catalog = _catalog_entry_matching_customer_request(raw, catalog)
+        if matched_catalog is None:
+            attempts = int(context.get("catalog_mismatch_attempts") or 0) + 1
+            if attempts >= 2:
+                preserved = {
+                    **context,
+                    "catalog_mismatch_attempts": attempts,
+                }
+                preserved.pop("equipment_model", None)
+                preserved.pop("recommended_equipment", None)
+                preserved.pop("recommendation_presented", None)
+                return _transition(
+                    ConversationState.HUMAN_HANDOFF,
+                    preserved,
+                    _text_message(
+                        "Esse equipamento não está no catálogo ativo, então vou encaminhar "
+                        "seu atendimento para a equipe confirmar modelo, preço e disponibilidade."
+                    ),
+                    automation_enabled=False,
+                    handoff_status="waiting",
+                )
+            updated = {
+                **context,
+                "equipment_model_known": False,
+                "catalog_mismatch_attempts": attempts,
+                "catalog_mismatch_query": normalize_portuguese(raw),
+            }
+            updated.pop("equipment_model", None)
+            updated.pop("recommended_equipment", None)
+            updated.pop("recommendation_presented", None)
+            transition = await _advance_intake(
+                inbound,
+                port,
+                intake,
+                updated,
+                services=services,
+                customer_name=customer_name,
+            )
+            return _prepend_transition_body(
+                transition,
+                (
+                    f"Não encontrei “{raw}” no catálogo ativo. Para não inventar um aparelho "
+                    "ou indicar uma capacidade inadequada, vou confirmar o perfil do ambiente "
+                    "e te oferecer uma opção realmente cadastrada."
+                ),
+            )
+
+        selected_cycle = (
+            "heat_cool"
+            if "quente frio" in normalized or "quente e frio" in normalized
+            else "cold"
+        )
+        recommendation = _equipment_suggestion_snapshot(
+            matched_catalog,
+            required_btu=None,
+            selected_cycle=selected_cycle,
+        )
+        updated = {
+            **_clear_repair_attempt(context, "equipment_model"),
+            "equipment_model_known": True,
+            "equipment_model": recommendation["label"],
+            "recommended_equipment": recommendation,
+            "recommendation_presented": True,
+            "catalog_mismatch_attempts": 0,
+        }
+        updated.pop("catalog_mismatch_query", None)
+        transition = await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            services=services,
+            customer_name=customer_name,
+        )
+        return _prepend_transition_body(
+            transition,
+            f"Encontrei esse equipamento no catálogo ativo: {recommendation['label']}.",
+        )
+
     if (
         2 <= len(raw) <= 180
         and normalized not in {
@@ -4734,6 +5645,41 @@ async def _handle_building_hours(
     )
 
 
+def _looks_like_gate_instruction(body: str | None) -> bool:
+    value = " ".join((body or "").strip().split())
+    if not 2 <= len(value) <= 300:
+        return False
+    normalized = normalize_portuguese(value)
+    if normalized in {
+        "nao tem",
+        "nao tem portaria",
+        "sem portaria",
+        "nao ha portaria",
+        "livre acesso",
+        "acesso livre",
+    }:
+        return True
+    return any(
+        token in normalized
+        for token in (
+            "portaria",
+            "porteiro",
+            "interfone",
+            "bloco",
+            "torre",
+            "apartamento",
+            "apto",
+            "senha",
+            "guarita",
+            "entrada",
+            "acesso",
+            "falar com",
+            "chamar",
+            "autorizar",
+        )
+    )
+
+
 async def _handle_gate_details(
     inbound: ConversationInput,
     context: dict[str, Any],
@@ -4754,7 +5700,7 @@ async def _handle_gate_details(
         return _handoff_for_reason(str(exc))
 
     value = " ".join((inbound.body or "").strip().split())
-    if len(value) < 2 or len(value) > 300:
+    if not _looks_like_gate_instruction(value):
         return _retry_or_handoff(
             ConversationState.BOOKING_GATE_DETAILS,
             context,
@@ -5259,7 +6205,28 @@ async def _handle_confirmation(
 ) -> ConversationTransition:
     if action is None:
         normalized = normalize_portuguese(inbound.body or "")
-        if normalized in {"confirmar", "confirmo", "sim", "pode confirmar", "pode"}:
+        if normalized in {
+            "confirmar",
+            "confirmo",
+            "sim",
+            "pode confirmar",
+            "pode",
+            "esta certo",
+            "esta tudo certo",
+            "tudo certo",
+            "pode finalizar",
+            "pode fechar",
+            "fechado",
+        } or any(
+            phrase in normalized
+            for phrase in (
+                "esta tudo certo",
+                "tudo certo pode",
+                "pode finalizar",
+                "pode confirmar",
+                "pode fechar",
+            )
+        ):
             action = BOOKING_CONFIRM
         elif normalized in {"voltar", "outro horario", "trocar horario"}:
             action = BOOKING_BACK
@@ -6374,6 +7341,20 @@ async def _handle_phone_confirmation(
 
     normalized = normalize_portuguese(inbound.body or "")
     whatsapp_phone = _context_string(context, "whatsapp_contact_phone")
+    typed_phone = _phone_from_text(inbound.body)
+    if typed_phone is not None:
+        updated = {
+            **_clear_repair_attempt(context, "phone"),
+            "contact_phone": typed_phone,
+            "contact_phone_confirmed": True,
+        }
+        updated.pop("awaiting_other_phone", None)
+        return await _resume_final_confirmation(
+            inbound,
+            port,
+            updated,
+            customer_name=customer_name,
+        )
     if action == PHONE_CONFIRM or normalized in {"sim", "pode", "correto", "isso"}:
         if whatsapp_phone is None:
             return _transition(
@@ -6469,14 +7450,42 @@ async def _handle_quote_decision(
         )
     normalized = normalize_portuguese(inbound.body or "")
     if action is None:
-        if any(
+        if normalized in {
+            "sim",
+            "sim vamos seguir",
+            "sim pode",
+            "pode",
+            "vamos",
+            "vamos seguir",
+            "quero seguir",
+            "pode seguir",
+            "ok vamos seguir",
+            "certo vamos seguir",
+        } or any(
             phrase in normalized
-            for phrase in ("consultar agenda", "agendar", "quero marcar", "ver horario")
+            for phrase in (
+                "consultar agenda",
+                "agendar",
+                "quero marcar",
+                "ver horario",
+                "pode agendar",
+                "vamos agendar",
+            )
         ):
             action = QUOTE_SCHEDULE
-        elif any(
+        elif normalized in {
+            "nao",
+            "agora nao",
+            "depois",
+        } or any(
             phrase in normalized
-            for phrase in ("so cotacao", "so queria cotacao", "obrigado", "era isso")
+            for phrase in (
+                "so cotacao",
+                "so queria cotacao",
+                "obrigado",
+                "era isso",
+                "nao quero agendar agora",
+            )
         ):
             action = QUOTE_FINISH
 
@@ -7507,6 +8516,18 @@ def _site_limit(
     body: str | None,
 ) -> time | None | bool:
     if action == SITE_LIMIT_NONE:
+        return None
+    normalized = normalize_portuguese(body or "")
+    if any(
+        phrase in normalized
+        for phrase in (
+            "sem limite",
+            "nao tem limite",
+            "nao ha limite",
+            "sem restricao de horario",
+            "qualquer horario",
+        )
+    ):
         return None
     mapped = {SITE_LIMIT_17: "17:00", SITE_LIMIT_18: "18:00"}.get(action)
     raw_value = mapped or (body or "").strip()
