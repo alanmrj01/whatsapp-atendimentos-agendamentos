@@ -102,6 +102,34 @@ class NotificationList(StrictModel):
     items: list[NotificationView]
 
 
+class CustomerOutreachView(StrictModel):
+    id: UUID
+    customer_id: UUID
+    customer_name: str
+    customer_phone: str | None
+    outreach_type: Literal["incomplete_24h", "cleaning_6m"]
+    status: Literal[
+        "pending",
+        "sent",
+        "skipped",
+        "responded",
+        "accepted",
+        "declined",
+        "failed",
+    ]
+    service_label: str | None
+    due_at: datetime
+    sent_at: datetime | None
+    responded_at: datetime | None
+    source_appointment_id: UUID | None
+    result_appointment_id: UUID | None
+    result_appointment_path: str | None
+
+
+class CustomerOutreachList(StrictModel):
+    items: list[CustomerOutreachView]
+
+
 class MessageView(StrictModel):
     id: UUID
     direction: Literal["inbound", "outbound"]
