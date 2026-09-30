@@ -3540,6 +3540,173 @@ async def test_diagnostics_confirmation_marks_service_amount_as_base() -> None:
 
 
 @mark.asyncio
+async def test_height_button_label_never_becomes_three_reais_budget() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_INSTALLATION_HEIGHT,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "equipment_ownership": "has_equipment",
+            "equipment_model": "Electrolux Color Adapt",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            1181,
+            action="height.at_most_3m",
+            body="Até 3 metros",
+        )
+    )
+
+    assert "equipment_budget_max" not in repository.context
+    assert "service_budget_max" not in repository.context
+    assert "total_budget_max" not in repository.context
+    combined = " ".join(
+        message.body or ""
+        for stored in repository.outbounds
+        for message in (
+            stored.transition.outbound,
+            *stored.transition.follow_ups,
+        )
+    )
+    assert "R$ 3,00" not in combined
+
+
+@mark.asyncio
+async def test_quote_finish_then_ok_vamos_seguir_resumes_same_quote() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.QUOTE_DECISION,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "quote_presented": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(1182, action="quote.finish", body="Só queria a cotação")
+    )
+
+    assert repository.state == ConversationState.COMPLETED
+    assert repository.context["quote_paused"] is True
+    assert repository.context["service_id"] == str(SERVICE_ID)
+
+    await engine.process(
+        inbound(1183, body="Ok, vamos seguir")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "quote_paused" not in repository.context
+    assert "request_mode" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "disponibilidade" in body.casefold()
+    assert "posso ajudar com limpeza" not in body.casefold()
+
+
+@mark.asyncio
+async def test_quote_finish_then_text_or_old_button_consults_same_agenda() -> None:
+    for sequence, action, body in (
+        (1184, None, "Quero consultar a agenda"),
+        (1185, "quote.schedule", "Consultar agenda"),
+    ):
+        repository = FakeConversationRepository(
+            state=ConversationState.COMPLETED,
+            context={
+                "service_id": str(SERVICE_ID),
+                "request_mode": "quote",
+                "quote_presented": True,
+                "quote_paused": True,
+            },
+            customer_name="Alan",
+        )
+        booking_port = FakeBookingPort()
+        booking_port.services = [
+            BookingOption(
+                str(SERVICE_ID),
+                "Instalação de ar-condicionado split",
+            )
+        ]
+
+        await ConversationEngine(repository, booking_port).process(
+            inbound(sequence, action=action, body=body)
+        )
+
+        assert repository.state == ConversationState.BOOKING_DATE
+        assert repository.context["service_id"] == str(SERVICE_ID)
+        response = repository.outbounds[-1].transition.outbound.body or ""
+        assert "disponibilidade" in response.casefold()
+        assert "como podemos ajudar" not in response.casefold()
+
+
+@mark.asyncio
+async def test_paused_quote_menu_agendar_resumes_instead_of_restarting_service() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.MENU,
+        context={
+            "service_id": str(SERVICE_ID),
+            "quote_presented": True,
+            "quote_paused": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1186, action="menu.book", body="Agendar")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "disponibilidade" in body.casefold()
+    assert "escolha um serviço" not in body.casefold()
+
+
+@mark.asyncio
+async def test_repeated_generic_fallback_is_rephrased_on_second_turn() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.START,
+        customer_name="Alan",
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(1187, body="quero resolver uma coisa"))
+    first = repository.outbounds[-1].transition.outbound.body or ""
+
+    await engine.process(inbound(1188, body="quero resolver uma coisa"))
+    second = repository.outbounds[-1].transition.outbound.body or ""
+
+    assert first != second
+    assert "posso ajudar" in first.casefold()
+    assert "posso continuar" in second.casefold()
+
+
+@mark.asyncio
 async def test_generic_equipment_quote_never_recommends_model_before_sizing() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.START,
