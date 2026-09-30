@@ -233,7 +233,14 @@ async def determine_transition(
         interpretation,
     )
     question_without_slot_answer = (
-        action is None
+        state not in {
+            ConversationState.START,
+            ConversationState.MENU,
+            ConversationState.COMPLETED,
+            ConversationState.HUMAN_HANDOFF,
+            ConversationState.POST_BOOKING_HELP,
+        }
+        and action is None
         and inbound.message_type == "text"
         and isinstance(inbound.body, str)
         and inbound.body.strip()
