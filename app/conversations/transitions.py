@@ -528,7 +528,6 @@ async def _route_named_conversation(
         and state in {
             ConversationState.START,
             ConversationState.MENU,
-            ConversationState.COMPLETED,
             ConversationState.HUMAN_HANDOFF,
         }
         and not interpretation.has(ConversationIntent.BOOK)
@@ -536,14 +535,30 @@ async def _route_named_conversation(
         and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
         and context.get("request_mode") != "quote"
     ):
-        follow_up = (
-            f"{question_answer}\n\n"
-            f"Se quiser, {customer_lead(customer_name)}posso continuar com o atendimento."
-        )
+        try:
+            port = _require_booking_port(booking_port)
+            services = _snapshot_options(await port.list_services(inbound.business_id))
+        except BookingPortUnavailable:
+            services = ()
+        if services:
+            return _transition(
+                ConversationState.BOOKING_SERVICE,
+                context,
+                _text_message(question_answer),
+                follow_ups=(
+                    service_selection_message(
+                        services,
+                        body=(
+                            "Para seguir com o atendimento, escolha o serviço que "
+                            "corresponde ao que você precisa."
+                        ),
+                    ),
+                ),
+            )
         return _transition(
             ConversationState.MENU,
             context,
-            _text_message(follow_up),
+            _text_message(question_answer),
         )
 
     if state is ConversationState.POST_BOOKING_HELP and question_answer is not None:
