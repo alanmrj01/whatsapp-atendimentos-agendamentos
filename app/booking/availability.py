@@ -788,7 +788,12 @@ class PostgresBookingAvailabilityPort:
             if distance_km is None:
                 delivery_distance_unavailable = True
             else:
-                fee_per_km = Decimal(business.equipment_delivery_fee_per_km)
+                configured_fee = business.equipment_delivery_fee_per_km
+                fee_per_km = (
+                    Decimal(configured_fee)
+                    if configured_fee is not None
+                    else Decimal("2.40")
+                )
                 delivery_fee = (distance_km * fee_per_km).quantize(
                     Decimal("0.01")
                 )
