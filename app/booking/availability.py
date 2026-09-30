@@ -1471,6 +1471,42 @@ def _operational_notes(details: dict[str, object]) -> str | None:
     model = details.get("equipment_model")
     if isinstance(model, str) and model.strip():
         lines.append(f"Equipamento/modelo informado: {model.strip()}")
+    indoor_width = details.get("indoor_space_width_cm")
+    indoor_height = details.get("indoor_space_height_cm")
+    indoor_depth = details.get("indoor_space_depth_cm")
+    outdoor_width = details.get("outdoor_space_width_cm")
+    outdoor_height = details.get("outdoor_space_height_cm")
+    outdoor_depth = details.get("outdoor_space_depth_cm")
+
+    reported_space_lines: list[str] = []
+    if isinstance(indoor_width, (int, float)) and isinstance(
+        indoor_height, (int, float)
+    ):
+        indoor_text = f"{indoor_width:g} × {indoor_height:g} cm"
+        if isinstance(indoor_depth, (int, float)):
+            indoor_text = (
+                f"{indoor_width:g} × {indoor_height:g} × {indoor_depth:g} cm"
+            )
+        reported_space_lines.append(f"unidade interna: {indoor_text}")
+    if isinstance(outdoor_width, (int, float)) and isinstance(
+        outdoor_height, (int, float)
+    ):
+        outdoor_text = f"{outdoor_width:g} × {outdoor_height:g} cm"
+        if isinstance(outdoor_depth, (int, float)):
+            outdoor_text = (
+                f"{outdoor_width:g} × {outdoor_height:g} × {outdoor_depth:g} cm"
+            )
+        reported_space_lines.append(f"unidade externa: {outdoor_text}")
+    if reported_space_lines:
+        lines.append(
+            "Medidas disponíveis informadas pelo cliente — "
+            + "; ".join(reported_space_lines)
+            + "."
+        )
+        lines.append(
+            "⚠ Técnico: conferir as medidas no local antes de instalar o equipamento."
+        )
+
     recommendation = details.get("recommended_equipment")
     if isinstance(recommendation, dict):
         label = recommendation.get("label")

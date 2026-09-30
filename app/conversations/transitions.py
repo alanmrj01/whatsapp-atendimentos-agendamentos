@@ -866,7 +866,7 @@ async def _route_named_conversation(
             )
             if key in context
         }
-        if retained_budget:
+        if retained_budget and state is not ConversationState.COMPLETED:
             transition = replace(
                 transition,
                 context={**transition.context, **retained_budget},
@@ -1222,31 +1222,24 @@ async def _is_ac_purchase_or_installation_context(
     interpretation: Interpretation,
     booking_port: BookingAvailabilityPort | None,
 ) -> bool:
+    """Return whether equipment purchase is part of the active commercial journey.
+
+    A pure installation/service quote must not trigger the semi-new equipment
+    offer just because the selected service is installation or the customer
+    already owns an appliance.
+    """
+
     if context.get("purchase_mode") in {"purchase", "both"}:
         return True
     if context.get("purchase_only") is True:
         return True
-    if context.get("equipment_ownership") in {"needs_equipment", "has_equipment"}:
+    if context.get("equipment_ownership") == "needs_equipment":
         return True
     if isinstance(context.get("recommended_equipment"), dict):
         return True
-    if interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE):
+    if isinstance(context.get("equipment_suggestion"), dict):
         return True
-    if (
-        interpretation.has(ConversationIntent.SERVICE_INTENT)
-        and interpretation.service_key == "split-installation"
-    ):
-        return True
-
-    service_id = _context_service_id(context)
-    if service_id is None:
-        return False
-    try:
-        port = _require_booking_port(booking_port)
-        services = _snapshot_options(await port.list_services(inbound.business_id))
-    except (BookingPortUnavailable, BookingRequiresHandoff):
-        return False
-    return _service_kind(services, service_id) == "installation"
+    return interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
 
 
 async def _commercial_negotiation_handoff_if_applicable(
@@ -5005,9 +4998,15 @@ async def _handle_equipment_profile(
             updated,
         )
     except ValueError:
-        return _handoff_transition(
-            "Não encontrei no catálogo ativo um equipamento que atenda "
-            "ao ciclo e ao espaço informados. Vou chamar a equipe para validar uma opção."
+        return _transition(
+            ConversationState.HUMAN_HANDOFF,
+            _clean_context(updated),
+            _text_message(
+                "Não encontrei no catálogo ativo um equipamento que atenda "
+                "ao ciclo e ao espaço informados. Vou chamar a equipe para validar uma opção."
+            ),
+            automation_enabled=False,
+            handoff_status="waiting",
         )
 
     recommendation = recommended.get("recommended_equipment")
@@ -6349,6 +6348,24 @@ async def _handle_post_booking_help(
     booking_port: BookingAvailabilityPort | None,
 ) -> ConversationTransition:
     normalized = normalize_portuguese(inbound.body or "")
+    if (
+        interpretation.has(ConversationIntent.GREETING)
+        and not _has_substantive_intent(interpretation)
+        and action is None
+    ):
+        return _transition(
+            ConversationState.MENU,
+            {},
+            _text_message(
+                conversational_greeting(
+                    inbound.body,
+                    conversation.business_timezone,
+                    customer_name=conversation.customer_name,
+                    include_help=True,
+                )
+            ),
+        )
+
     no_more_help = (
         action == POST_BOOKING_HELP_NO
         or normalized in {
