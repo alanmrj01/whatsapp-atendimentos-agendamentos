@@ -65,15 +65,6 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
         "gela pouco",
         "gelando pouco",
         "nao esfria",
-        "nao funciona",
-        "parou de funcionar",
-        "parou",
-        "nao liga",
-        "liga e desliga",
-        "com problema",
-        "problema",
-        "quebrou",
-        "falha",
         "barulho",
         "ruido",
         "pingando",
@@ -82,7 +73,6 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
         "corretiva",
         "diagnostico",
         "conserto",
-        "arrumar",
         "cheiro estranho",
     ),
     "gas-recharge": ("gas", "sem gas", "recarga", "vazamento"),
@@ -293,6 +283,9 @@ class DeterministicConversationInterpreter:
                 service_key = candidate_key
                 intents.add(ConversationIntent.SERVICE_INTENT)
                 break
+        if service_key is None and _looks_like_equipment_problem(assertion):
+            service_key = "diagnostics"
+            intents.add(ConversationIntent.SERVICE_INTENT)
 
         if _contains_equipment_purchase(assertion) and not _purchase_is_negated(normalized):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
@@ -364,6 +357,32 @@ class DeterministicConversationInterpreter:
             service_budget_max=service_budget,
             total_budget_max=total_budget,
         )
+
+
+def _looks_like_equipment_problem(normalized: str) -> bool:
+    equipment_terms = (
+        "ar condicionado",
+        "aparelho",
+        "split",
+        "evaporadora",
+        "condensadora",
+    )
+    problem_terms = (
+        "nao funciona",
+        "parou de funcionar",
+        "parou",
+        "nao liga",
+        "liga e desliga",
+        "com problema",
+        "problema",
+        "quebrou",
+        "falha",
+        "arrumar",
+    )
+    return (
+        any(term in normalized for term in equipment_terms)
+        and any(term in normalized for term in problem_terms)
+    )
 
 
 def extract_budget_constraints(
