@@ -4465,3 +4465,162 @@ async def test_arbitrary_comment_during_equipment_ownership_keeps_purchase_check
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "preservar o que já foi preenchido" in body.casefold()
 
+@mark.asyncio
+async def test_unknown_comment_at_gate_details_does_not_become_gate_instruction() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_GATE_DETAILS,
+        context={"service_id": str(SERVICE_ID), "property_type": "building"},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1220, body="acho que vou pensar mais um pouco")
+    )
+
+    assert repository.state == ConversationState.BOOKING_GATE_DETAILS
+    assert "gate_instructions" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "continuar exatamente" in body.casefold() or "etapa em que estávamos" in body.casefold()
+    assert "portaria" in body.casefold() or "acesso" in body.casefold()
+
+
+@mark.asyncio
+async def test_real_gate_instruction_is_still_consumed() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_GATE_DETAILS,
+        context={"service_id": str(SERVICE_ID), "property_type": "building"},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1221, body="Na portaria, chamar no interfone do bloco B")
+    )
+
+    assert repository.context["gate_instructions"] == "Na portaria, chamar no interfone do bloco B"
+
+
+@mark.asyncio
+async def test_unknown_comment_at_attendee_name_does_not_increment_repair_or_handoff() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ATTENDEE_NAME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "onsite_contact_mode": "other",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1222, body="essa conversa está meio confusa")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ATTENDEE_NAME
+    assert repository.automation_enabled is True
+    assert "onsite_contact_name" not in repository.context
+    attempts = repository.context.get("repair_attempts") or {}
+    assert "attendee_name" not in attempts
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "nome" in body.casefold()
+
+
+@mark.asyncio
+async def test_site_limit_accepts_natural_no_restriction_text() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SITE_LIMIT,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(booking_port.intake, asks_site_time_limit=True)
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1223, body="Não há limite de horário no local")
+    )
+
+    assert repository.context["site_limit_answered"] is True
+    assert "site_allowed_end" not in repository.context
+    assert repository.state == ConversationState.BOOKING_DATE
+
+
+@mark.asyncio
+async def test_phone_confirmation_accepts_typed_new_number_without_button() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_PHONE_CONFIRM,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "onsite_contact_mode": "customer",
+            "onsite_contact_name": "Alan",
+            "whatsapp_contact_phone": "+5512999999999",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1224, body="Pode usar +5512988887777")
+    )
+
+    assert repository.context["contact_phone"] == "+5512988887777"
+    assert repository.context["contact_phone_confirmed"] is True
+    assert repository.state == ConversationState.BOOKING_CONFIRM
+
+
+@mark.asyncio
+async def test_final_confirmation_accepts_natural_everything_is_correct() -> None:
+    candidate = {
+        "service_id": str(SERVICE_ID),
+        "selected_date": "2026-09-02",
+        "selected_time": "09:00",
+    }
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={
+            **candidate,
+            "candidate_booking": candidate,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1225, body="Está tudo certo, pode finalizar")
+    )
+
+    assert repository.state == ConversationState.POST_BOOKING_HELP
+    assert booking_port.confirmations
+
+
+@mark.asyncio
+async def test_technical_question_during_time_step_answers_then_returns_to_same_time_checkpoint() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "equipment_ownership": "needs_equipment",
+            "recommended_equipment": {
+                "item_id": "catalog-gree-9000-cold",
+                "label": "Gree G-Top Auto Inverter 9.000 BTU",
+            },
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1226, body="Qual a medida da condensadora?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-09-02"
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "unidade externa" in body.casefold() or "condensadora" in body.casefold()
+    assert "09:00" in body
+
