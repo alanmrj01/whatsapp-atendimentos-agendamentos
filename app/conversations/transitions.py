@@ -460,9 +460,9 @@ async def _route_named_conversation(
                 ConversationState.HUMAN_HANDOFF,
                 updated,
                 _text_message(
-                    "Esse equipamento continua fora do catálogo ativo. Para não inventar "
-                    "modelo, preço ou disponibilidade e como você quer seguir com essa opção, "
-                    "vou encaminhar o atendimento para uma pessoa da equipe."
+                    "Esse equipamento continua fora do catálogo ativo, então vou encaminhar "
+                    "seu atendimento para uma pessoa da equipe confirmar modelo, preço e "
+                    "disponibilidade."
                 ),
                 automation_enabled=False,
                 handoff_status="waiting",
@@ -4236,9 +4236,8 @@ async def _handle_equipment_model(
                     ConversationState.HUMAN_HANDOFF,
                     preserved,
                     _text_message(
-                        "Esse equipamento não está no catálogo ativo e você confirmou que "
-                        "quer seguir com ele. Para não informar modelo, preço ou disponibilidade "
-                        "sem confirmação, vou encaminhar seu atendimento para a equipe."
+                        "Esse equipamento não está no catálogo ativo, então vou encaminhar "
+                        "seu atendimento para a equipe confirmar modelo, preço e disponibilidade."
                     ),
                     automation_enabled=False,
                     handoff_status="waiting",
