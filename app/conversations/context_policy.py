@@ -45,6 +45,10 @@ _PLANNING_INPUTS = frozenset(
         "quantity",
         "access_condition",
         "service_address",
+        "delivery_address",
+        "delivery_method",
+        "fulfillment_type",
+        "pickup_address",
         "equipment_ownership",
         "equipment_model",
         "installation_height_over_3m",
@@ -113,6 +117,9 @@ def invalidate_changed_facts(
     if changed & {"purchase_mode", "purchase_only", "request_mode"}:
         for field in (
             "delivery_method",
+            "fulfillment_type",
+            "pickup_address",
+            "delivery_fee_per_km",
             "delivery_address",
             "address_purpose",
             "delivery_installation_match_pending",
