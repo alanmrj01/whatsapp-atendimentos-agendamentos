@@ -388,18 +388,28 @@ def _looks_like_service_capability_question(
     original: str,
     normalized: str,
 ) -> bool:
-    if "?" in original:
-        return True
     leads = (
         "voces fazem ",
         "voces trabalham com ",
-        "tem ",
         "tem servico de ",
         "fazem ",
         "trabalham com ",
         "oferecem ",
     )
-    return any(normalized.startswith(lead) for lead in leads)
+    if any(normalized.startswith(lead) for lead in leads):
+        return True
+    if "?" not in original:
+        return False
+    return any(
+        marker in normalized
+        for marker in (
+            "voces fazem ",
+            "fazem ",
+            "trabalham com ",
+            "oferecem ",
+            "tem servico de ",
+        )
+    )
 
 
 def _looks_like_equipment_problem(normalized: str) -> bool:
