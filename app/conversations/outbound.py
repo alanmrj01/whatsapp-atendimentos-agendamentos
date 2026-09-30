@@ -67,6 +67,7 @@ from app.conversations.ports import BookingOption
 
 LIST_BUTTON_TEXT = "Ver opções"
 MAX_LIST_ROWS = 10
+WHATSAPP_REPLY_BUTTON_TITLE_MAX = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,7 +343,7 @@ def equipment_delivery_message(*, include_with_installation: bool = False) -> Ou
         options.append(
             BookingOption(
                 EQUIPMENT_DELIVERY_WITH_INSTALLATION,
-                "Levar com a instalação",
+                "Com a instalação",
             )
         )
         body = (
@@ -988,10 +989,17 @@ def _append_hidden_options_hint(
     return expanded[:1024]
 
 
+def _safe_button_title(value: str) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= WHATSAPP_REPLY_BUTTON_TITLE_MAX:
+        return normalized
+    return normalized[: WHATSAPP_REPLY_BUTTON_TITLE_MAX - 1].rstrip() + "…"
+
+
 def _button_payload(options: Sequence[BookingOption]) -> dict[str, Any]:
     return {
         "buttons": [
-            {"id": option.id, "title": option.label}
+            {"id": option.id, "title": _safe_button_title(option.label)}
             for option in options
         ]
     }
