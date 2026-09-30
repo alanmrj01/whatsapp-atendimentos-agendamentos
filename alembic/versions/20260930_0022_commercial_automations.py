@@ -71,23 +71,23 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["business_id", "customer_id"],
             ["customers.business_id", "customers.id"],
-            name="fk_commercial_automation_events_business_customer_customers",
+            name="fk_comm_auto_business_customer",
         ),
         sa.ForeignKeyConstraint(
             ["business_id", "conversation_id"],
             ["conversations.business_id", "conversations.id"],
-            name="fk_commercial_automation_events_business_conversation_conversations",
+            name="fk_comm_auto_business_conversation",
         ),
         sa.ForeignKeyConstraint(
             ["business_id", "appointment_id"],
             ["appointments.business_id", "appointments.id"],
-            name="fk_commercial_automation_events_business_appointment_appointments",
+            name="fk_comm_auto_business_appointment",
         ),
         sa.ForeignKeyConstraint(
             ["business_id", "result_appointment_id"],
             ["appointments.business_id", "appointments.id"],
             name=(
-                "fk_commercial_automation_events_business_result_appointment_appointments"
+                "fk_comm_auto_business_result_appt"
             ),
         ),
         sa.ForeignKeyConstraint(
