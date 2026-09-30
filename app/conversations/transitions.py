@@ -672,8 +672,12 @@ async def _route_named_conversation(
     if (
         state in booking_states
         and action is None
+        and inbound.message_type == "text"
+        and isinstance(inbound.body, str)
+        and inbound.body.strip()
         and interpretation.intent is ConversationIntent.UNKNOWN
         and not pending_state_answer
+        and _looks_like_parallel_digression(inbound.body)
     ):
         return await _resume_pending_question(
             conversation,
@@ -1163,6 +1167,44 @@ async def _commercial_negotiation_handoff_if_applicable(
     )
 
 
+def _looks_like_parallel_digression(body: str | None) -> bool:
+    raw = " ".join((body or "").strip().split())
+    normalized = normalize_portuguese(raw)
+    if not normalized:
+        return False
+    if "?" in raw:
+        return True
+    question_leads = (
+        "como ",
+        "qual ",
+        "quais ",
+        "quanto ",
+        "quando ",
+        "onde ",
+        "por que ",
+        "porque ",
+        "posso ",
+        "pode ",
+        "podem ",
+        "voces ",
+        "tem como ",
+        "sera que ",
+        "existe ",
+    )
+    if any(normalized.startswith(lead.strip()) for lead in question_leads):
+        return True
+    comment_markers = (
+        "so comentando",
+        "so queria comentar",
+        "so queria dizer",
+        "aproveitando",
+        "uma observacao",
+        "acho isso",
+        "na minha opiniao",
+    )
+    return any(marker in normalized for marker in comment_markers)
+
+
 def _closed_loop_digression_reply(body: str | None) -> str:
     normalized = normalize_portuguese(body or "")
     question_markers = (
@@ -1370,8 +1412,8 @@ async def _purchase_catalog_guard_if_needed(
             _clean_context(updated),
             _text_message(
                 "Essa configuração continua fora do catálogo ativo. Para não inventar "
-                "um aparelho ou indicar algo inadequado, vou encaminhar seu atendimento "
-                "à equipe para verificarem disponibilidade e alternativas com você."
+                "um aparelho, vou encaminhar à equipe para verificar disponibilidade "
+                "e alternativas."
             ),
             automation_enabled=False,
             handoff_status="waiting",
