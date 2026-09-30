@@ -264,15 +264,27 @@ async def determine_transition(
     if (
         base_context.get("cleaning_outreach_pending_response") is True
         and action is None
-        and normalized_inbound in {
-            "sim",
-            "quero",
-            "tenho interesse",
-            "pode ser",
-            "vamos",
-            "vamos agendar",
-            "quero agendar",
-        }
+        and (
+            normalized_inbound in {
+                "sim",
+                "quero",
+                "tenho interesse",
+                "pode ser",
+                "vamos",
+                "vamos agendar",
+                "quero agendar",
+            }
+            or any(
+                phrase in normalized_inbound
+                for phrase in (
+                    "sim quero",
+                    "sim pode",
+                    "tenho interesse",
+                    "quero marcar",
+                    "quero fazer a limpeza",
+                )
+            )
+        )
     ):
         try:
             port = _require_booking_port(booking_port)
