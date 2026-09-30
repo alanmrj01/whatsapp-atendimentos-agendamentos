@@ -515,8 +515,8 @@ class CommercialAutomationRepository:
             message_type="template",
             body=(
                 f"Olá, {candidate.customer_name}! Aqui é a {candidate.business_name}. "
-                f"Atendemos você em {service_date} e queríamos saber como está seu "
-                "ar-condicionado."
+                f"Em {service_date}, fizemos o serviço de {candidate.service_name} "
+                "para você e queríamos saber como está seu ar-condicionado."
             ),
             outbound_payload={
                 "template_name": CLEANING_GREETING_TEMPLATE,
@@ -524,6 +524,7 @@ class CommercialAutomationRepository:
                 "body_parameters": [
                     candidate.customer_name,
                     candidate.business_name,
+                    candidate.service_name,
                     service_date,
                 ],
                 "_alovia_automation_kind": "cleaning_reminder_6m",
