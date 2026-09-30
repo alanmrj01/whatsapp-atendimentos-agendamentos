@@ -653,51 +653,70 @@ class PostgresBookingAvailabilityPort:
         service: Service,
         requirements: BookingRequirements,
     ) -> BookingPlan:
-        try:
-            configuration = ServiceConfiguration(
-                duration_minutes=service.duration_minutes,
-                base_price=(
-                    Decimal(service.base_price)
-                    if service.base_price is not None
-                    else None
-                ),
-                pricing_type=PricingType(service.pricing_type),
-                automatic_booking=service.automatic_booking,
-                included_quantity=service.included_quantity,
-                additional_unit_duration_minutes=(
-                    service.additional_unit_duration_minutes
-                ),
-                additional_unit_price=(
-                    Decimal(service.additional_unit_price)
-                    if service.additional_unit_price is not None
-                    else None
-                ),
-                requires_address=service.requires_address,
-                requires_quantity=service.requires_quantity,
-                considers_difficult_access=service.considers_difficult_access,
-                difficult_access_duration_minutes=(
-                    service.difficult_access_duration_minutes
-                ),
-                difficult_access_price=(
-                    Decimal(service.difficult_access_price)
-                    if service.difficult_access_price is not None
-                    else None
-                ),
-                unknown_access_policy=UnknownAccessPolicy(
-                    service.unknown_access_policy
-                ),
-                duration_margin_minutes=service.duration_margin_minutes,
-            )
-        except (TypeError, ValueError):
-            raise BookingRequiresHandoff("Invalid service configuration") from None
+        fulfillment_type = requirements.operational_details.get("fulfillment_type")
+        is_fulfillment = fulfillment_type in {
+            "equipment_delivery",
+            "equipment_pickup",
+        }
 
-        service_estimate = self.estimator.estimate(configuration, requirements)
-        service_estimate = await self._apply_catalog_additions(
-            business.id,
-            service,
-            requirements,
-            service_estimate,
-        )
+        if is_fulfillment:
+            service_estimate = ServiceEstimate(
+                estimated_duration_minutes=max(
+                    15,
+                    int(business.slot_interval_minutes or 30),
+                ),
+                estimated_price=Decimal("0.00"),
+                pricing_type=PricingType.FIXED,
+                requires_human_quote=False,
+                applied_rules=(str(fulfillment_type),),
+                qualifier="fixed",
+            )
+        else:
+            try:
+                configuration = ServiceConfiguration(
+                    duration_minutes=service.duration_minutes,
+                    base_price=(
+                        Decimal(service.base_price)
+                        if service.base_price is not None
+                        else None
+                    ),
+                    pricing_type=PricingType(service.pricing_type),
+                    automatic_booking=service.automatic_booking,
+                    included_quantity=service.included_quantity,
+                    additional_unit_duration_minutes=(
+                        service.additional_unit_duration_minutes
+                    ),
+                    additional_unit_price=(
+                        Decimal(service.additional_unit_price)
+                        if service.additional_unit_price is not None
+                        else None
+                    ),
+                    requires_address=service.requires_address,
+                    requires_quantity=service.requires_quantity,
+                    considers_difficult_access=service.considers_difficult_access,
+                    difficult_access_duration_minutes=(
+                        service.difficult_access_duration_minutes
+                    ),
+                    difficult_access_price=(
+                        Decimal(service.difficult_access_price)
+                        if service.difficult_access_price is not None
+                        else None
+                    ),
+                    unknown_access_policy=UnknownAccessPolicy(
+                        service.unknown_access_policy
+                    ),
+                    duration_margin_minutes=service.duration_margin_minutes,
+                )
+            except (TypeError, ValueError):
+                raise BookingRequiresHandoff("Invalid service configuration") from None
+
+            service_estimate = self.estimator.estimate(configuration, requirements)
+            service_estimate = await self._apply_catalog_additions(
+                business.id,
+                service,
+                requirements,
+                service_estimate,
+            )
         if service_estimate.requires_human_quote:
             travel = _zero_travel_estimate()
         elif requirements.address is None:
@@ -760,10 +779,33 @@ class PostgresBookingAvailabilityPort:
                         requirements.address,
                     )
 
+        delivery_distance_unavailable = False
+        if fulfillment_type == "equipment_delivery":
+            if travel.method == "same_address":
+                distance_km = Decimal("0")
+            else:
+                distance_km = travel.distance_km
+            if distance_km is None:
+                delivery_distance_unavailable = True
+            else:
+                fee_per_km = Decimal(business.equipment_delivery_fee_per_km)
+                delivery_fee = (distance_km * fee_per_km).quantize(
+                    Decimal("0.01")
+                )
+                service_estimate = replace(
+                    service_estimate,
+                    estimated_price=delivery_fee,
+                    applied_rules=(
+                        *service_estimate.applied_rules,
+                        "equipment_delivery_fee_per_km",
+                    ),
+                )
+
         requires_handoff = (
             service_estimate.requires_human_quote
             or not travel.available
             or not travel.within_service_area
+            or delivery_distance_unavailable
         )
         reason = None
         if service_estimate.requires_human_quote:
@@ -772,6 +814,8 @@ class PostgresBookingAvailabilityPort:
             reason = "travel_estimate_unavailable"
         elif not travel.within_service_area:
             reason = "address_outside_service_area"
+        elif delivery_distance_unavailable:
+            reason = "delivery_distance_unavailable"
         preparation, finishing, interval = _operational_buffers(
             business,
             requirements,
