@@ -31,6 +31,7 @@ def upgrade() -> None:
         sa.Column("idempotency_key", sa.String(length=255), nullable=False),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("responded_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("result_appointment_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.CheckConstraint(
@@ -38,7 +39,7 @@ def upgrade() -> None:
             name="ck_customer_outreach_outreach_type_allowed",
         ),
         sa.CheckConstraint(
-            "status IN ('pending', 'sent', 'skipped', 'responded', 'declined')",
+            "status IN ('pending', 'sent', 'skipped', 'responded', 'accepted', 'declined', 'failed')",
             name="ck_customer_outreach_status_allowed",
         ),
         sa.ForeignKeyConstraint(
@@ -55,6 +56,11 @@ def upgrade() -> None:
             ["source_appointment_id"],
             ["appointments.id"],
             name="fk_customer_outreach_source_appointment_id_appointments",
+        ),
+        sa.ForeignKeyConstraint(
+            ["result_appointment_id"],
+            ["appointments.id"],
+            name="fk_customer_outreach_result_appointment_id_appointments",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_customer_outreach"),
     )
