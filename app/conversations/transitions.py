@@ -283,7 +283,10 @@ async def determine_transition(
             (
                 item
                 for item in services
-                if _service_kind(services, uuid.UUID(item.id)) == "cleaning"
+                if any(
+                    token in normalize_portuguese(item.label)
+                    for token in ("limpeza", "higien", "lavagem")
+                )
             ),
             None,
         )
