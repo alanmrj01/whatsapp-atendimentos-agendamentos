@@ -596,8 +596,18 @@ class CommercialAutomationRepository:
     async def pending_dispatch_ids(
         self,
         *,
+        automation_kinds: set[str] | None = None,
         limit: int = MAX_SWEEP_ITEMS,
     ) -> list[uuid.UUID]:
+        kind_filters = (
+            ()
+            if not automation_kinds
+            else (
+                Message.outbound_payload.op("->>")(
+                    "_alovia_automation_kind"
+                ).in_(sorted(automation_kinds)),
+            )
+        )
         result = await self.session.scalars(
             select(Message.id)
             .where(
@@ -608,6 +618,7 @@ class CommercialAutomationRepository:
                 Message.outbound_payload.op("->>")(
                     "_alovia_automation_kind"
                 ).is_not(None),
+                *kind_filters,
                 or_(
                     Message.outbound_payload.op("->>")(
                         "_alovia_sequence_index"
