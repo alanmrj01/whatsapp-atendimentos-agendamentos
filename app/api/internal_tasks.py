@@ -11,6 +11,7 @@ from app.conversations.ports import BookingAvailabilityPort
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.schemas.cloud_tasks import (
+    LifecycleOutreachSweepPayload,
     TaskAcknowledgement,
     WhatsAppEventTaskPayload,
     WhatsAppOutboundTaskPayload,
@@ -21,6 +22,7 @@ from app.tasks.auth import (
 )
 from app.tasks.outbound import (
     build_outbound_task_enqueuer,
+    enqueue_outbound_message_ids,
     enqueue_next_sequence_outbound,
     enqueue_outbound_retry_for_event,
     enqueue_outbound_retry_for_message,
@@ -28,6 +30,7 @@ from app.tasks.outbound import (
     process_outbound_message,
 )
 from app.tasks.worker import process_cloud_task_event
+from app.automation.lifecycle import create_due_lifecycle_outreach
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.sender import build_business_sender_resolver
 
@@ -121,3 +124,36 @@ async def process_whatsapp_outbound_task(
             detail="Task processing failed",
         ) from None
     return TaskAcknowledgement(status="accepted")
+
+@router.post(
+    "/lifecycle-outreach",
+    response_model=TaskAcknowledgement,
+    dependencies=[Depends(require_cloud_tasks_oidc)],
+)
+async def process_lifecycle_outreach_task(
+    payload: LifecycleOutreachSweepPayload,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TaskAcknowledgement:
+    try:
+        async with session.begin():
+            message_ids = await create_due_lifecycle_outreach(
+                session,
+                limit=payload.limit,
+            )
+        if message_ids and settings.outbound_tasks_enabled:
+            await enqueue_outbound_message_ids(
+                message_ids,
+                build_outbound_task_enqueuer(settings),
+            )
+    except Exception as exc:
+        logger.warning(
+            "lifecycle_outreach_task_failed",
+            extra={"error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Lifecycle outreach task failed",
+        ) from None
+    return TaskAcknowledgement(status="accepted")
+
