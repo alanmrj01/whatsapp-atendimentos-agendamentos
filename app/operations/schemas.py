@@ -31,6 +31,7 @@ class AppointmentView(StrictModel):
     starts_at: datetime
     ends_at: datetime
     status: AppointmentStatus
+    appointment_kind: Literal["service", "equipment_delivery", "equipment_pickup"] = "service"
     notes: str | None
 
 
