@@ -2419,25 +2419,37 @@ def _message_can_answer_pending_state(
             or _phone_from_text(body) is not None
         )
     if state is ConversationState.BOOKING_CONFIRM:
-        return normalized in {
-            "confirmar",
-            "confirmo",
-            "sim",
-            "pode confirmar",
-            "pode",
-            "esta certo",
-            "esta tudo certo",
-            "tudo certo",
-            "pode finalizar",
-            "pode fechar",
-            "fechado",
-            "voltar",
-            "outro horario",
-            "trocar horario",
-            "cancelar",
-            "cancela",
-            "nao",
-        }
+        return (
+            normalized in {
+                "confirmar",
+                "confirmo",
+                "sim",
+                "pode confirmar",
+                "pode",
+                "esta certo",
+                "esta tudo certo",
+                "tudo certo",
+                "pode finalizar",
+                "pode fechar",
+                "fechado",
+                "voltar",
+                "outro horario",
+                "trocar horario",
+                "cancelar",
+                "cancela",
+                "nao",
+            }
+            or any(
+                phrase in normalized
+                for phrase in (
+                    "esta tudo certo",
+                    "tudo certo pode",
+                    "pode finalizar",
+                    "pode confirmar",
+                    "pode fechar",
+                )
+            )
+        )
     if state is ConversationState.QUOTE_DECISION:
         return (
             normalized in {
@@ -6205,7 +6217,16 @@ async def _handle_confirmation(
             "pode finalizar",
             "pode fechar",
             "fechado",
-        }:
+        } or any(
+            phrase in normalized
+            for phrase in (
+                "esta tudo certo",
+                "tudo certo pode",
+                "pode finalizar",
+                "pode confirmar",
+                "pode fechar",
+            )
+        ):
             action = BOOKING_CONFIRM
         elif normalized in {"voltar", "outro horario", "trocar horario"}:
             action = BOOKING_BACK
