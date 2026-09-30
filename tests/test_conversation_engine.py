@@ -4114,7 +4114,7 @@ async def test_unknown_comment_during_schedule_keeps_checkpoint_and_repeats_pend
     assert repository.state == ConversationState.BOOKING_TIME
     assert repository.context["selected_date"] == "2026-09-02"
     body = repository.outbounds[-1].transition.outbound.body or ""
-    assert "continua exatamente de onde parou" in body.casefold()
+    assert "seguir exatamente do ponto" in body.casefold()
     assert "09:00" in body
 
 @mark.asyncio
@@ -4170,4 +4170,80 @@ async def test_service_question_from_menu_answers_then_shows_real_service_choice
     assert "manutenção" in combined or "manutencao" in combined
     assert "escolha o serviço" in combined or "escolha o servico" in combined
     assert "posso continuar com o atendimento" not in combined
+
+@mark.asyncio
+async def test_access_step_accepts_free_text_without_forcing_button() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ACCESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        considers_difficult_access=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1212, body="O acesso é normal, sem dificuldade")
+    )
+
+    assert repository.context["access_condition"] == "normal"
+    assert repository.state == ConversationState.BOOKING_DATE
+
+
+@mark.asyncio
+async def test_quote_decision_accepts_natural_yes_and_goes_to_agenda() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.QUOTE_DECISION,
+        context={
+            "service_id": str(SERVICE_ID),
+            "quote_presented": True,
+            "request_mode": "quote",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1213, body="Sim, vamos seguir")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "request_mode" not in repository.context
+
+
+@mark.asyncio
+async def test_repeated_arbitrary_off_catalog_name_is_handed_off_on_second_attempt() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "purchase_mode": "purchase",
+            "purchase_only": True,
+            "equipment_ownership": "needs_equipment",
+            "equipment_model_known": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1214, body="FrostMaster X Ultra"))
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    assert repository.context["catalog_mismatch_attempts"] == 1
+    assert repository.context["catalog_mismatch_query"] == "frostmaster x ultra"
+    assert "equipment_model" not in repository.context
+
+    await engine.process(inbound(1215, body="Quero mesmo o FrostMaster X Ultra"))
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.context["catalog_mismatch_attempts"] == 2
 
