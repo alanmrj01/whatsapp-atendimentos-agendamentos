@@ -2268,15 +2268,80 @@ async def _service_question_answer(
                 details = await details_loader(inbound.business_id, target_id)
             except BookingRequiresHandoff:
                 details = None
-        description = getattr(details, "description", None)
-        if isinstance(description, str) and description.strip():
-            parts.append(description.strip())
+
+        normalized = normalize_portuguese(inbound.body or "")
+        target_kind = _service_kind(services, target_id)
+        evidence_question = any(
+            term in normalized
+            for term in ("foto", "video", "imagem", "gravar")
+        )
+        tubing_question = any(
+            term in normalized
+            for term in ("tubulacao", "metragem", "quantos metros", "metro incluso")
+        )
+        warranty_question = "garantia" in normalized
+
+        if target_kind == "diagnostics" and evidence_question:
+            evidence_parts = [
+                "Na manutenção/diagnóstico, as evidências ajudam o técnico antes do atendimento."
+            ]
+            if context.get("equipment_photo_received") is True:
+                evidence_parts.append("A foto do aparelho já ficou registrada.")
+            elif _context_string(context, "equipment_model") is None:
+                evidence_parts.append(
+                    "Se você não souber a marca/modelo, pode enviar uma foto do aparelho."
+                )
+            if context.get("issue_video_received") is True:
+                evidence_parts.append("O vídeo do funcionamento também já ficou registrado.")
+            elif context.get("issue_video_required") is True:
+                evidence_parts.append(
+                    "Como foi relatado barulho/ruído, também é útil enviar um vídeo curto dele funcionando."
+                )
+            parts.append(" ".join(evidence_parts))
+        elif tubing_question:
+            included = getattr(details, "included_tubing_meters", None)
+            extra_price = getattr(details, "extra_tubing_price", None)
+            if isinstance(included, Decimal):
+                answer = f"O serviço cadastrado inclui {included:g} m de tubulação."
+                if isinstance(extra_price, Decimal):
+                    answer += (
+                        " Acima disso, o metro adicional cadastrado é "
+                        f"{_format_brl(extra_price)}."
+                    )
+                else:
+                    answer += (
+                        " O valor de metragem adicional precisa ser confirmado "
+                        "conforme a configuração do serviço."
+                    )
+                parts.append(answer)
+            else:
+                parts.append(
+                    "A metragem de tubulação incluída não está cadastrada com segurança "
+                    "para esse serviço. Prefiro não assumir um valor."
+                )
+        elif warranty_question:
+            description = getattr(details, "description", None)
+            if (
+                isinstance(description, str)
+                and "garantia" in normalize_portuguese(description)
+            ):
+                parts.append(description.strip())
+            else:
+                parts.append(
+                    "A garantia específica desse serviço não está detalhada no cadastro "
+                    "que tenho aqui. Prefiro não inventar prazo ou cobertura; a equipe "
+                    "pode confirmar esse ponto."
+                )
         else:
-            parts.append(
-                "Esse detalhe específico não está descrito no catálogo do serviço. "
-                "Para não te passar uma informação incorreta, prefiro confirmar "
-                "somente o que está cadastrado."
-            )
+            description = getattr(details, "description", None)
+            if isinstance(description, str) and description.strip():
+                parts.append(description.strip())
+            else:
+                parts.append(
+                    "Esse detalhe específico não está descrito no catálogo do serviço. "
+                    "Para não te passar uma informação incorreta, prefiro confirmar "
+                    "somente o que está cadastrado."
+                )
 
     return " ".join(parts) if parts else None
 
