@@ -464,3 +464,24 @@ def test_budget_change_invalidates_existing_equipment_recommendation() -> None:
     assert "recommended_equipment" not in updated
     assert "recommendation_presented" not in updated
     assert "quote_presented" not in updated
+
+def test_recommendation_fails_closed_when_required_capacity_exceeds_catalog() -> None:
+    only_small = EquipmentCatalogEntry(
+        item_id="small",
+        brand="Marca",
+        line="Linha",
+        capacity_btu=24000,
+        segment="cost_benefit",
+        cycles=("cold",),
+        price=3000.0,
+    )
+
+    with raises(ValueError, match="enough capacity"):
+        recommend_equipment(
+            area_m2=50,
+            people=4,
+            preference="cost_benefit",
+            climate_mode="cold",
+            entries=(only_small,),
+        )
+
