@@ -387,6 +387,20 @@ async def _route_named_conversation(
     action = inbound.interactive_id
     customer_name = conversation.customer_name
 
+    if state is ConversationState.BOOKING_CONFIRM and action is None:
+        normalized_confirmation = normalize_portuguese(inbound.body or "")
+        if any(
+            phrase in normalized_confirmation
+            for phrase in (
+                "esta tudo certo",
+                "tudo certo pode",
+                "pode finalizar",
+                "pode confirmar",
+                "pode fechar",
+            )
+        ):
+            action = BOOKING_CONFIRM
+
     suggestion = context.get("equipment_suggestion")
     normalized_turn = normalize_portuguese(inbound.body or "")
     if (
