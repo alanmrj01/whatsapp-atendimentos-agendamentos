@@ -35,7 +35,10 @@ from app.operations.schemas import (
     ConversationDetail,
     ConversationActionUpdate,
     ConversationAutomationUpdate,
+    ConversationBulkAction,
+    ConversationBulkResult,
     ConversationList,
+    ConversationMessageDelta,
     CustomerCreate,
     CustomerNameUpdate,
     CustomerOutreachList,
@@ -268,6 +271,45 @@ async def list_conversations(
         page_size=page_size,
     )
     return ConversationList(items=items, page=page, page_size=page_size, total=total)
+
+
+@router.post(
+    "/conversations/bulk",
+    response_model=ConversationBulkResult,
+    dependencies=[Depends(require_origin)],
+)
+async def bulk_conversation_action(
+    payload: ConversationBulkAction,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.bulk_conversation_action(
+        membership.business_id,
+        payload,
+    )
+
+
+@router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=ConversationMessageDelta,
+)
+async def list_conversation_messages(
+    conversation_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+    after: datetime | None = None,
+    limit: int = Query(default=100, ge=1, le=200),
+):
+    membership = _membership(principal)
+    if after is not None and after.tzinfo is None:
+        raise HTTPException(422, "after must include timezone")
+    return await service.list_conversation_messages(
+        membership.business_id,
+        conversation_id,
+        after=after,
+        limit=limit,
+    )
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
