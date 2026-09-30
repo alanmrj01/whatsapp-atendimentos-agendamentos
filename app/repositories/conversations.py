@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from copy import deepcopy
 from contextlib import asynccontextmanager
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.postgresql.dml import Insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,7 @@ from app.conversations.types import (
     ConversationSnapshot,
     ConversationTransition,
 )
-from app.models import Business, Conversation, Customer, Message
+from app.models import Business, CommercialAutomationEvent, Conversation, Customer, Message
 
 
 def build_lock_conversation_statement(
@@ -219,6 +219,78 @@ class ConversationRepository:
                 )
             )
 
+        persisted_context = dict(transition.context)
+        commercial_resolution = persisted_context.pop(
+            "_commercial_offer_resolution",
+            None,
+        )
+
+        def _context_uuid(key: str) -> uuid.UUID | None:
+            value = persisted_context.get(key)
+            if not isinstance(value, str):
+                return None
+            try:
+                return uuid.UUID(value)
+            except ValueError:
+                return None
+
+        offer_event_id = _context_uuid("commercial_offer_event_id")
+        followup_event_id = _context_uuid("commercial_followup_event_id")
+        confirmed_appointment_id = _context_uuid("appointment_id")
+
+        if (
+            offer_event_id is not None
+            and commercial_resolution in {"declined", "handoff"}
+        ):
+            await self.session.execute(
+                update(CommercialAutomationEvent)
+                .where(CommercialAutomationEvent.id == offer_event_id)
+                .values(
+                    status=commercial_resolution,
+                    resolved_at=func.now(),
+                )
+            )
+            for key in (
+                "commercial_offer_event_id",
+                "commercial_offer_kind",
+                "commercial_offer_pending",
+            ):
+                persisted_context.pop(key, None)
+        elif (
+            offer_event_id is not None
+            and persisted_context.get("commercial_offer_kind")
+            == "cleaning_reminder_6m"
+            and confirmed_appointment_id is not None
+            and transition.state is ConversationState.POST_BOOKING_HELP
+        ):
+            await self.session.execute(
+                update(CommercialAutomationEvent)
+                .where(CommercialAutomationEvent.id == offer_event_id)
+                .values(
+                    status="accepted",
+                    result_appointment_id=confirmed_appointment_id,
+                    resolved_at=func.now(),
+                )
+            )
+            for key in (
+                "commercial_offer_event_id",
+                "commercial_offer_kind",
+                "commercial_offer_pending",
+            ):
+                persisted_context.pop(key, None)
+
+        if (
+            followup_event_id is not None
+            and transition.state is ConversationState.HUMAN_HANDOFF
+        ):
+            await self.session.execute(
+                update(CommercialAutomationEvent)
+                .where(CommercialAutomationEvent.id == followup_event_id)
+                .values(status="handoff", resolved_at=func.now())
+            )
+            persisted_context.pop("commercial_followup_event_id", None)
+            persisted_context.pop("commercial_followup_pending", None)
+
         await self.session.execute(
             update(Conversation)
             .where(
@@ -227,7 +299,7 @@ class ConversationRepository:
             )
             .values(
                 state=transition.state.value,
-                context=transition.context,
+                context=persisted_context,
                 automation_enabled=transition.automation_enabled,
                 handoff_status=transition.handoff_status,
             )
