@@ -147,6 +147,7 @@ class ConversationView(StrictModel):
     customer_id: UUID
     customer_name: str
     customer_phone: str | None
+    whatsapp_number: str | None = None
     last_content: str | None
     last_message_at: datetime | None
     status: ConversationStatus
@@ -170,6 +171,15 @@ class ConversationDetail(ConversationView):
     automation_suppressed_until: datetime | None
     free_form_window_open: bool
     free_form_window_expires_at: datetime | None
+
+
+class MessageDelta(StrictModel):
+    items: list[MessageView]
+    cursor: str | None
+
+
+class UnreadNotificationCount(StrictModel):
+    unread_count: int
 
 
 class CustomerNameUpdate(StrictModel):
@@ -213,6 +223,29 @@ class ConversationActionUpdate(StrictModel):
         if not self.model_fields_set:
             raise ValueError("At least one conversation action is required")
         return self
+
+
+class ConversationBulkUpdate(StrictModel):
+    conversation_ids: list[UUID] = Field(min_length=1, max_length=200)
+    pinned: bool | None = None
+    read: bool | None = None
+    assistant_enabled: bool | None = None
+
+    @field_validator("conversation_ids")
+    @classmethod
+    def unique_conversation_ids(cls, value: list[UUID]) -> list[UUID]:
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ConversationBulkUpdate":
+        if not {"pinned", "read", "assistant_enabled"} & self.model_fields_set:
+            raise ValueError("At least one bulk conversation action is required")
+        return self
+
+
+class ConversationBulkResult(StrictModel):
+    updated_count: int
+    items: list[ConversationView]
 
 
 class PostalAddressView(StrictModel):
@@ -409,10 +442,10 @@ class AutomationSettingsView(StrictModel):
     assistant_enabled: bool = True
     greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?"
     fallback_message: str = (
-        "Não entendi. Conte em poucas palavras o serviço que você precisa."
+        "Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa."
     )
     handoff_message: str = (
-        "Seu atendimento foi encaminhado para uma pessoa da equipe."
+        "Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes."
     )
     supported_options: tuple[str, ...] = (
         "assistant_enabled",

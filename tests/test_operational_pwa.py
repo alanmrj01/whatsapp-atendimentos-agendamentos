@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from httpx import AsyncClient
 from pydantic import ValidationError
 
@@ -606,6 +606,7 @@ async def test_conversation_media_endpoint_returns_playable_bytes_and_mime(
     response = await operational_api.get_conversation_message_media(
         conversation_id,
         message_id,
+        Request({"type": "http", "headers": []}),
         principal(BUSINESS_A),
         db,
     )
@@ -652,9 +653,57 @@ async def test_conversation_media_endpoint_rejects_empty_download(
         await operational_api.get_conversation_message_media(
             conversation_id,
             message_id,
+            Request({"type": "http", "headers": []}),
             principal(BUSINESS_A),
             db,
         )
 
     assert exc.value.status_code == 503
     sender.aclose.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_conversation_video_media_endpoint_honors_byte_range(monkeypatch) -> None:
+    conversation_id = uuid4()
+    message_id = uuid4()
+    payload = b"0123456789"
+    message = SimpleNamespace(
+        id=message_id,
+        business_id=BUSINESS_A,
+        conversation_id=conversation_id,
+        media_id="media-123",
+        message_type="video",
+        media_mime_type="video/mp4",
+    )
+    db = SimpleNamespace(scalar=AsyncMock(return_value=message))
+    sender = SimpleNamespace(
+        download_media=AsyncMock(return_value=(payload, "video/mp4")),
+        aclose=AsyncMock(),
+    )
+    resolver = SimpleNamespace(resolve=AsyncMock(return_value=sender))
+    monkeypatch.setattr(
+        operational_api,
+        "build_business_sender_resolver",
+        lambda *_args, **_kwargs: resolver,
+    )
+    monkeypatch.setattr(
+        operational_api,
+        "get_settings",
+        lambda: SimpleNamespace(),
+    )
+
+    response = await operational_api.get_conversation_message_media(
+        conversation_id,
+        message_id,
+        Request({
+            "type": "http",
+            "headers": [(b"range", b"bytes=2-5")],
+        }),
+        principal(BUSINESS_A),
+        db,
+    )
+
+    assert response.status_code == 206
+    assert response.body == b"2345"
+    assert response.headers["content-range"] == "bytes 2-5/10"
+    assert response.headers["accept-ranges"] == "bytes"
+

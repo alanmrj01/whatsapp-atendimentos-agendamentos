@@ -35,6 +35,8 @@ from app.operations.schemas import (
     ConversationDetail,
     ConversationActionUpdate,
     ConversationAutomationUpdate,
+    ConversationBulkResult,
+    ConversationBulkUpdate,
     ConversationList,
     CustomerCreate,
     CustomerNameUpdate,
@@ -48,9 +50,11 @@ from app.operations.schemas import (
     EmployeeServicesUpdate,
     EmployeeView,
     ManualMessageCreate,
+    MessageDelta,
     MessageView,
     NotificationList,
     NotificationView,
+    UnreadNotificationCount,
     ServiceList,
     ServiceCreate,
     ServiceOption,
@@ -156,6 +160,22 @@ async def list_customer_outreach(
             outreach_type=outreach_type,
             status=outreach_status,
             limit=limit,
+        )
+    )
+
+
+@router.get(
+    "/notifications/unread-count",
+    response_model=UnreadNotificationCount,
+)
+async def unread_notification_count(
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _membership(principal)
+    return UnreadNotificationCount(
+        unread_count=await service.unread_notification_count(
+            membership.business_id
         )
     )
 
@@ -277,11 +297,49 @@ async def get_conversation(conversation_id: UUID, principal: Identity, service: 
 
 
 @router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=MessageDelta,
+)
+async def list_conversation_message_delta(
+    conversation_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+    cursor: str | None = Query(default=None, max_length=128),
+    limit: int = Query(default=100, ge=1, le=250),
+):
+    membership = _membership(principal)
+    return await service.list_message_delta(
+        membership.business_id,
+        conversation_id,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
+@router.patch(
+    "/conversations/actions/bulk",
+    response_model=ConversationBulkResult,
+    dependencies=[Depends(require_origin)],
+)
+async def bulk_update_conversations(
+    payload: ConversationBulkUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.bulk_update_conversations(
+        membership.business_id,
+        payload,
+    )
+
+
+@router.get(
     "/conversations/{conversation_id}/messages/{message_id}/media",
 )
 async def get_conversation_message_media(
     conversation_id: UUID,
     message_id: UUID,
+    request: Request,
     principal: Identity,
     db: Db,
 ):
@@ -347,13 +405,74 @@ async def get_conversation_message_media(
         ),
         default_mime,
     )
+    common_headers = {
+        "Cache-Control": "private, max-age=60",
+        "Content-Disposition": "inline",
+        "X-Content-Type-Options": "nosniff",
+        "Accept-Ranges": "bytes",
+    }
+    range_header = request.headers.get("range")
+    if range_header and message.message_type in {"audio", "video"}:
+        range_value = range_header.strip().casefold()
+        if not range_value.startswith("bytes=") or "," in range_value:
+            return Response(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                headers={
+                    **common_headers,
+                    "Content-Range": f"bytes */{len(content)}",
+                },
+            )
+        raw_range = range_value.removeprefix("bytes=")
+        start_text, separator, end_text = raw_range.partition("-")
+        try:
+            if not separator:
+                raise ValueError
+            if start_text:
+                start = int(start_text)
+                end = int(end_text) if end_text else len(content) - 1
+            elif end_text:
+                suffix_length = int(end_text)
+                if suffix_length <= 0:
+                    raise ValueError
+                start = max(0, len(content) - suffix_length)
+                end = len(content) - 1
+            else:
+                raise ValueError
+        except ValueError:
+            return Response(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                headers={
+                    **common_headers,
+                    "Content-Range": f"bytes */{len(content)}",
+                },
+            )
+        if start < 0 or start >= len(content) or end < start:
+            return Response(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                headers={
+                    **common_headers,
+                    "Content-Range": f"bytes */{len(content)}",
+                },
+            )
+        end = min(end, len(content) - 1)
+        partial = content[start : end + 1]
+        return Response(
+            content=partial,
+            media_type=media_type,
+            status_code=status.HTTP_206_PARTIAL_CONTENT,
+            headers={
+                **common_headers,
+                "Content-Range": f"bytes {start}-{end}/{len(content)}",
+                "Content-Length": str(len(partial)),
+            },
+        )
+
     return Response(
         content=content,
         media_type=media_type,
         headers={
-            "Cache-Control": "private, max-age=60",
-            "Content-Disposition": "inline",
-            "X-Content-Type-Options": "nosniff",
+            **common_headers,
+            "Content-Length": str(len(content)),
         },
     )
 

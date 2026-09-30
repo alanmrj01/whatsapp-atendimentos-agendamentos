@@ -19,10 +19,10 @@ HUMAN_CONTROL_WINDOW_PRESETS = (
 DEFAULT_HUMAN_CONTROL_WINDOW_MINUTES = 2160
 DEFAULT_ASSISTANT_GREETING = "Olá! Como posso ajudar com seu ar-condicionado?"
 DEFAULT_ASSISTANT_FALLBACK = (
-    "Não entendi. Conte em poucas palavras o serviço que você precisa."
+    "Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa."
 )
 DEFAULT_ASSISTANT_HANDOFF = (
-    "Seu atendimento foi encaminhado para uma pessoa da equipe."
+    "Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes."
 )
 ASSISTANT_MESSAGE_MAX_LENGTH = 1000
 _INDIVIDUAL_ID = re.compile(r"^[1-9][0-9]{6,14}$")

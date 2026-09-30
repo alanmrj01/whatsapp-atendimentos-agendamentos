@@ -4001,8 +4001,8 @@ async def _handle_menu(
     context: dict[str, Any] | None = None,
     interpretation: Interpretation | None = None,
     greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?",
-    fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
-    handoff_message: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
+    fallback_message: str = "Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa.",
+    handoff_message: str = "Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes.",
     customer_name: str | None = None,
     business_timezone: str = "America/Sao_Paulo",
 ) -> ConversationTransition:
@@ -4068,7 +4068,7 @@ async def _handle_service(
     booking_port: BookingAvailabilityPort | None,
     *,
     interpretation: Interpretation | None = None,
-    fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
+    fallback_message: str = "Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa.",
     customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
@@ -8843,7 +8843,7 @@ def _handoff_for_reason(reason: str | None) -> ConversationTransition:
 
 
 def _handoff_transition(
-    body: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
+    body: str = "Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes.",
 ) -> ConversationTransition:
     return _transition(
         ConversationState.HUMAN_HANDOFF,
