@@ -35,6 +35,8 @@ from app.operations.schemas import (
     ConversationDetail,
     ConversationActionUpdate,
     ConversationAutomationUpdate,
+    ConversationBulkResult,
+    ConversationBulkUpdate,
     ConversationList,
     CustomerCreate,
     CustomerNameUpdate,
@@ -48,9 +50,11 @@ from app.operations.schemas import (
     EmployeeServicesUpdate,
     EmployeeView,
     ManualMessageCreate,
+    MessageDelta,
     MessageView,
     NotificationList,
     NotificationView,
+    UnreadNotificationCount,
     ServiceList,
     ServiceCreate,
     ServiceOption,
@@ -156,6 +160,22 @@ async def list_customer_outreach(
             outreach_type=outreach_type,
             status=outreach_status,
             limit=limit,
+        )
+    )
+
+
+@router.get(
+    "/notifications/unread-count",
+    response_model=UnreadNotificationCount,
+)
+async def unread_notification_count(
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _membership(principal)
+    return UnreadNotificationCount(
+        unread_count=await service.unread_notification_count(
+            membership.business_id
         )
     )
 
@@ -274,6 +294,43 @@ async def list_conversations(
 async def get_conversation(conversation_id: UUID, principal: Identity, service: ServiceDep):
     membership = _membership(principal)
     return await service.get_conversation(membership.business_id, conversation_id)
+
+
+@router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=MessageDelta,
+)
+async def list_conversation_message_delta(
+    conversation_id: UUID,
+    principal: Identity,
+    service: ServiceDep,
+    cursor: str | None = Query(default=None, max_length=128),
+    limit: int = Query(default=100, ge=1, le=250),
+):
+    membership = _membership(principal)
+    return await service.list_message_delta(
+        membership.business_id,
+        conversation_id,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
+@router.patch(
+    "/conversations/actions/bulk",
+    response_model=ConversationBulkResult,
+    dependencies=[Depends(require_origin)],
+)
+async def bulk_update_conversations(
+    payload: ConversationBulkUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.bulk_update_conversations(
+        membership.business_id,
+        payload,
+    )
 
 
 @router.get(
