@@ -235,6 +235,7 @@ async def determine_transition(
     if base_context.get("commercial_followup_pending") is True:
         base_context = dict(base_context)
         base_context.pop("commercial_followup_pending", None)
+        base_context.pop("commercial_followup_event_id", None)
 
     context = (
         enrich_context_from_message(
