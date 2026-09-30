@@ -161,6 +161,7 @@ _TECHNICAL_TERMS = (
     "evaporadora",
     "controle",
     "wifi",
+    "wi fi",
     "alexa",
     "bluetooth",
     "inverter",
