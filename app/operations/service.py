@@ -57,6 +57,8 @@ from app.operations.schemas import (
     ConversationDetail,
     ConversationActionUpdate,
     ConversationAutomationUpdate,
+    ConversationBulkResult,
+    ConversationBulkUpdate,
     ConversationView,
     CustomerNameUpdate,
     CustomerCreate,
@@ -70,6 +72,7 @@ from app.operations.schemas import (
     EmployeeView,
     MessageView,
     ManualMessageCreate,
+    MessageDelta,
     NotificationView,
     ServiceOption,
     ServiceCreate,
@@ -359,6 +362,145 @@ class OperationalService:
         )
         items = [_conversation_view(row) for row in rows]
         return items, total
+
+    async def list_message_delta(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        *,
+        cursor: str | None,
+        limit: int = 100,
+    ) -> MessageDelta:
+        exists_conversation = await self.session.scalar(
+            select(Conversation.id).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.deleted_at.is_(None),
+            )
+        )
+        if exists_conversation is None:
+            raise HTTPException(404, "Conversation not found")
+
+        query = select(Message).where(
+            Message.business_id == business_id,
+            Message.conversation_id == conversation_id,
+        )
+        parsed_cursor = _parse_message_cursor(cursor)
+        if parsed_cursor is not None:
+            cursor_time, cursor_id = parsed_cursor
+            query = query.where(
+                or_(
+                    Message.created_at > cursor_time,
+                    and_(
+                        Message.created_at == cursor_time,
+                        Message.id > cursor_id,
+                    ),
+                )
+            )
+        messages = list(
+            (
+                await self.session.scalars(
+                    query.order_by(Message.created_at, Message.id).limit(limit)
+                )
+            ).all()
+        )
+        next_cursor = (
+            _message_cursor(messages[-1])
+            if messages
+            else cursor
+        )
+        return MessageDelta(
+            items=[_message_view(item) for item in messages],
+            cursor=next_cursor,
+        )
+
+    async def bulk_update_conversations(
+        self,
+        business_id: UUID,
+        values: ConversationBulkUpdate,
+    ) -> ConversationBulkResult:
+        ids = values.conversation_ids
+        conversations = list(
+            (
+                await self.session.scalars(
+                    select(Conversation)
+                    .where(
+                        Conversation.business_id == business_id,
+                        Conversation.id.in_(ids),
+                        Conversation.deleted_at.is_(None),
+                    )
+                    .with_for_update()
+                )
+            ).all()
+        )
+        if not conversations:
+            raise HTTPException(404, "Conversations not found")
+
+        updates = values.model_dump(
+            exclude={"conversation_ids"},
+            exclude_unset=True,
+        )
+        now = datetime.now(UTC)
+        for conversation in conversations:
+            if "pinned" in updates:
+                conversation.pinned_at = now if updates["pinned"] else None
+            if "read" in updates:
+                if updates["read"]:
+                    conversation.last_read_at = now
+                    conversation.manual_unread = False
+                else:
+                    conversation.manual_unread = True
+            if "assistant_enabled" in updates:
+                enabled = bool(updates["assistant_enabled"])
+                conversation.automation_enabled = enabled
+                if enabled:
+                    conversation.handoff_status = "none"
+                    conversation.automation_suppressed_until = None
+                    conversation.suppression_reason = None
+                    if conversation.state == ConversationState.HUMAN_HANDOFF.value:
+                        conversation.state = ConversationState.START.value
+                        conversation.context = {}
+                else:
+                    conversation.handoff_status = "waiting"
+                    await AutomationRepository(self.session).cancel_pending_outbounds(
+                        business_id,
+                        conversation.id,
+                    )
+
+        await self.session.commit()
+        items: list[ConversationView] = []
+        for conversation in conversations:
+            rows, _ = await self._conversation_rows(
+                business_id,
+                conversation_id=conversation.id,
+            )
+            if rows:
+                items.append(_conversation_view(rows[0]))
+        return ConversationBulkResult(
+            updated_count=len(items),
+            items=items,
+        )
+
+    async def unread_notification_count(self, business_id: UUID) -> int:
+        return int(
+            await self.session.scalar(
+                select(func.count())
+                .select_from(BusinessNotification)
+                .join(
+                    Appointment,
+                    and_(
+                        Appointment.business_id == BusinessNotification.business_id,
+                        Appointment.id == BusinessNotification.appointment_id,
+                    ),
+                )
+                .where(
+                    BusinessNotification.business_id == business_id,
+                    BusinessNotification.read_at.is_(None),
+                    Appointment.status != "cancelled",
+                )
+            )
+            or 0
+        )
 
     async def get_conversation(self, business_id: UUID, conversation_id: UUID) -> ConversationDetail:
         rows, _ = await self._conversation_rows(
@@ -1871,6 +2013,24 @@ def _message_history_sort_key(item: Message) -> tuple[datetime, str, int, str]:
         index if isinstance(index, int) else 1_000_000,
         str(item.id),
     )
+
+
+def _message_cursor(item: Message) -> str:
+    return f"{item.created_at.isoformat()}|{item.id}"
+
+
+def _parse_message_cursor(value: str | None) -> tuple[datetime, UUID] | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        raw_time, raw_id = value.rsplit("|", 1)
+        parsed_time = datetime.fromisoformat(raw_time)
+        parsed_id = UUID(raw_id)
+    except (ValueError, TypeError):
+        raise HTTPException(422, "Invalid message cursor") from None
+    if parsed_time.tzinfo is None:
+        raise HTTPException(422, "Invalid message cursor")
+    return parsed_time.astimezone(UTC), parsed_id
 
 
 def _message_view(item: Message) -> MessageView:
