@@ -57,6 +57,9 @@ from app.operations.schemas import (
     ConversationDetail,
     ConversationActionUpdate,
     ConversationAutomationUpdate,
+    ConversationBulkAction,
+    ConversationBulkResult,
+    ConversationMessageDelta,
     ConversationView,
     CustomerNameUpdate,
     CustomerCreate,
@@ -396,6 +399,118 @@ class OperationalService:
             ),
             free_form_window_expires_at=window_expires_at,
         )
+
+    async def list_conversation_messages(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        *,
+        after: datetime | None = None,
+        limit: int = 100,
+    ) -> ConversationMessageDelta:
+        exists = await self.session.scalar(
+            select(Conversation.id).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.deleted_at.is_(None),
+            )
+        )
+        if exists is None:
+            raise HTTPException(404, "Conversation not found")
+
+        query = select(Message).where(
+            Message.business_id == business_id,
+            Message.conversation_id == conversation_id,
+        )
+        if after is not None:
+            query = query.where(Message.created_at >= after)
+        messages = list(
+            (
+                await self.session.scalars(
+                    query.order_by(Message.created_at, Message.id).limit(limit)
+                )
+            ).all()
+        )
+        messages.sort(key=_message_history_sort_key)
+        latest_at = max(
+            (item.created_at for item in messages),
+            default=after,
+        )
+        return ConversationMessageDelta(
+            items=[_message_view(item) for item in messages],
+            latest_at=latest_at,
+        )
+
+    async def bulk_conversation_action(
+        self,
+        business_id: UUID,
+        values: ConversationBulkAction,
+    ) -> ConversationBulkResult:
+        conversation_ids = values.conversation_ids
+        conversations = list(
+            (
+                await self.session.scalars(
+                    select(Conversation)
+                    .where(
+                        Conversation.business_id == business_id,
+                        Conversation.id.in_(conversation_ids),
+                        Conversation.deleted_at.is_(None),
+                    )
+                    .with_for_update()
+                )
+            ).all()
+        )
+        if not conversations:
+            return ConversationBulkResult(affected=0)
+
+        now = datetime.now(UTC)
+        automation = AutomationRepository(self.session)
+        for conversation in conversations:
+            action = values.action
+            if action == "mark_read":
+                conversation.last_read_at = now
+                conversation.manual_unread = False
+            elif action == "mark_unread":
+                conversation.manual_unread = True
+            elif action == "pin":
+                conversation.pinned_at = now
+            elif action == "unpin":
+                conversation.pinned_at = None
+            elif action == "assistant_on":
+                conversation.automation_enabled = True
+                conversation.handoff_status = "none"
+                conversation.automation_suppressed_until = None
+                conversation.suppression_reason = None
+                if conversation.state == ConversationState.HUMAN_HANDOFF.value:
+                    conversation.state = ConversationState.START.value
+                    conversation.context = {}
+            elif action == "assistant_off":
+                conversation.automation_enabled = False
+                conversation.handoff_status = "waiting"
+                await automation.cancel_pending_outbounds(
+                    business_id,
+                    conversation.id,
+                )
+            elif action == "delete":
+                conversation.deleted_at = now
+                conversation.state = ConversationState.START.value
+                conversation.context = {}
+                conversation.automation_enabled = True
+                conversation.handoff_status = "none"
+                conversation.automation_suppressed_until = None
+                conversation.suppression_reason = None
+                conversation.human_control_started_at = None
+                conversation.last_human_message_at = None
+                conversation.pinned_at = None
+                conversation.manual_unread = False
+                await automation.cancel_pending_outbounds(
+                    business_id,
+                    conversation.id,
+                )
+
+        await self.session.commit()
+        return ConversationBulkResult(affected=len(conversations))
+
 
     async def update_customer_name(
         self,
