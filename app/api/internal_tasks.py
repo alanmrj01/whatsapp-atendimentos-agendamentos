@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.automation.commercial import CommercialAutomationService
 from app.conversations.dependencies import get_booking_availability_port
 from app.conversations.ports import BookingAvailabilityPort
 from app.core.config import Settings, get_settings
@@ -22,12 +23,14 @@ from app.tasks.auth import (
 from app.tasks.outbound import (
     build_outbound_task_enqueuer,
     enqueue_next_sequence_outbound,
+    enqueue_outbound_message_ids,
     enqueue_outbound_retry_for_event,
     enqueue_outbound_retry_for_message,
     enqueue_pending_outbounds_for_event,
     process_outbound_message,
 )
 from app.tasks.worker import process_cloud_task_event
+from app.repositories.commercial_automation import CommercialAutomationRepository
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.sender import build_business_sender_resolver
 
@@ -75,6 +78,34 @@ async def process_whatsapp_event_task(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Task processing failed",
+        ) from None
+    return TaskAcknowledgement(status="accepted")
+
+
+@router.post(
+    "/commercial-sweep",
+    response_model=TaskAcknowledgement,
+    dependencies=[Depends(require_outbound_tasks_oidc)],
+)
+async def process_commercial_sweep_task(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TaskAcknowledgement:
+    try:
+        async with session.begin():
+            message_ids = await CommercialAutomationService(
+                CommercialAutomationRepository(session)
+            ).sweep()
+        outbound_enqueuer = build_outbound_task_enqueuer(settings)
+        await enqueue_outbound_message_ids(message_ids, outbound_enqueuer)
+    except Exception as exc:
+        logger.warning(
+            "commercial_automation_sweep_failed",
+            extra={"error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Commercial automation sweep failed",
         ) from None
     return TaskAcknowledgement(status="accepted")
 
