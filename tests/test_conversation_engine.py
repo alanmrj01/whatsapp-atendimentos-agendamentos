@@ -3820,3 +3820,118 @@ async def test_new_purchase_with_budget_keeps_budget_and_enters_purchase_flow() 
     assert "R$ 1.500,00" in body
     assert "capacidade inadequada" in body.casefold()
     assert "comprar" in body.casefold() or "instalar" in body.casefold()
+
+@mark.asyncio
+async def test_price_negotiation_after_final_purchase_quote_offers_used_unit_and_handoffs() -> None:
+    candidate = {
+        "service_id": str(SERVICE_ID),
+        "selected_date": "2026-09-02",
+        "selected_time": "09:00",
+    }
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={
+            **candidate,
+            "candidate_booking": candidate,
+            "purchase_mode": "both",
+            "equipment_ownership": "needs_equipment",
+            "recommended_equipment": {
+                "label": "LG AI Dual Inverter Voice 12.000 BTU",
+                "price": 2099.0,
+            },
+            "recommendation_presented": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            1191,
+            body="será que eu consigo algum modelo com o valor mais em conta?",
+        )
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "seminovo" in body.casefold()
+    assert "disponibilidade" in body.casefold()
+    assert "equipe" in body.casefold()
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert repository.context["candidate_booking"] == candidate
+
+
+@mark.asyncio
+async def test_installation_price_negotiation_without_purchase_mode_still_handoffs() -> None:
+    candidate = {
+        "service_id": str(SERVICE_ID),
+        "selected_date": "2026-09-02",
+        "selected_time": "09:00",
+    }
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={**candidate, "candidate_booking": candidate},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1192, body="tem como melhorar o valor da instalação?")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "seminovo" in body.casefold()
+    assert repository.context["candidate_booking"] == candidate
+
+
+@mark.asyncio
+async def test_cheaper_question_on_non_installation_service_does_not_erase_confirmation() -> None:
+    candidate = {
+        "service_id": str(SERVICE_ID),
+        "selected_date": "2026-09-02",
+        "selected_time": "09:00",
+    }
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={**candidate, "candidate_booking": candidate},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Limpeza e higienização",
+        )
+    ]
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1193, body="tem como ficar mais em conta?"))
+
+    assert repository.state == ConversationState.BOOKING_CONFIRM
+    assert repository.automation_enabled is True
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert repository.context["candidate_booking"] == candidate
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "seminovo" not in body.casefold()
+
+    await engine.process(inbound(1194, body="Confirmar"))
+
+    assert repository.state == ConversationState.POST_BOOKING_HELP
+
