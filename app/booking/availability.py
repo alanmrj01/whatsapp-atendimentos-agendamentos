@@ -1464,7 +1464,10 @@ class PostgresBookingAvailabilityPort:
             "operational_details": dict(requirements.operational_details),
         }
         appointment.site_allowed_end = requirements.site_allowed_end
-        generated_notes = _operational_notes(requirements.operational_details)
+        generated_notes = _operational_notes(
+            requirements.operational_details,
+            plan,
+        )
         if generated_notes and (
             appointment.notes is None
             or appointment.notes.startswith("[ALOVIA automático]")
@@ -1507,10 +1510,32 @@ def _time_from_detail(value: object) -> time | None:
     return parsed if parsed.tzinfo is None else None
 
 
-def _operational_notes(details: dict[str, object]) -> str | None:
+def _operational_notes(
+    details: dict[str, object],
+    plan: BookingPlan | None = None,
+) -> str | None:
     if not details:
         return None
     lines = ["[ALOVIA automático]"]
+    fulfillment_type = details.get("fulfillment_type")
+    if fulfillment_type == "equipment_delivery":
+        lines.append("Tipo do compromisso: entrega de equipamento.")
+        delivery_address = ServiceAddress.from_snapshot(details.get("delivery_address"))
+        if delivery_address is not None:
+            lines.append(f"Endereço de entrega: {delivery_address.searchable_text}")
+        if plan is not None and plan.service.estimated_price is not None:
+            lines.append(
+                "Taxa de entrega calculada: "
+                f"R$ {plan.service.estimated_price:,.2f}"
+                .replace(",", "#")
+                .replace(".", ",")
+                .replace("#", ".")
+            )
+    elif fulfillment_type == "equipment_pickup":
+        lines.append("Tipo do compromisso: retirada de equipamento.")
+        pickup_address = details.get("pickup_address")
+        if isinstance(pickup_address, str) and pickup_address.strip():
+            lines.append(f"Local de retirada: {pickup_address.strip()}")
     if details.get("work_at_height") is True:
         lines.append("⚠ Trabalho em altura: SIM (instalação acima de 3 m).")
     model = details.get("equipment_model")
