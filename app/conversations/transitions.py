@@ -439,7 +439,10 @@ async def _route_named_conversation(
         action is None
         and _context_string(context, "equipment_ownership") == "needs_equipment"
         and int(context.get("catalog_mismatch_attempts") or 0) >= 1
-        and _looks_like_specific_equipment_request(inbound.body)
+        and (
+            _looks_like_specific_equipment_request(inbound.body)
+            or _repeats_catalog_mismatch(inbound.body, context)
+        )
     ):
         try:
             port = _require_booking_port(booking_port)
@@ -1309,6 +1312,24 @@ def _looks_like_specific_equipment_request(body: str | None) -> bool:
                 "springer",
             )
         )
+    )
+
+
+def _repeats_catalog_mismatch(
+    body: str | None,
+    context: dict[str, Any],
+) -> bool:
+    current = normalize_portuguese(body or "")
+    previous = _context_string(context, "catalog_mismatch_query")
+    if not current or previous is None:
+        return False
+    previous = normalize_portuguese(previous)
+    if not previous:
+        return False
+    return (
+        current == previous
+        or previous in current
+        or current in previous
     )
 
 
@@ -3629,6 +3650,36 @@ async def _handle_access(
         ACCESS_UNKNOWN: AccessCondition.UNKNOWN,
     }.get(action)
     if access is None:
+        normalized = normalize_portuguese(inbound.body or "")
+        if any(
+            phrase in normalized
+            for phrase in (
+                "acesso normal",
+                "normal",
+                "facil",
+                "sem dificuldade",
+                "tranquilo",
+            )
+        ):
+            access = AccessCondition.NORMAL
+        elif any(
+            phrase in normalized
+            for phrase in (
+                "acesso dificil",
+                "dificil",
+                "complicado",
+                "escada",
+                "local apertado",
+            )
+        ):
+            access = AccessCondition.DIFFICULT
+        elif normalized in {
+            "nao sei",
+            "nao tenho certeza",
+            "nao consigo informar",
+        }:
+            access = AccessCondition.UNKNOWN
+    if access is None:
         return _retry_or_handoff(
             ConversationState.BOOKING_ACCESS,
             context,
@@ -3924,7 +3975,10 @@ async def _handle_equipment_ownership(
         phrase in normalized
         for phrase in (
             "ja tenho",
+            "tenho",
             "tenho o aparelho",
+            "ja possuo",
+            "possuo o aparelho",
             "so instalacao",
             "somente instalacao",
             "apenas instalar",
@@ -3937,6 +3991,9 @@ async def _handle_equipment_ownership(
             "quero cotar",
             "quero comprar",
             "preciso comprar",
+            "preciso de um aparelho",
+            "preciso de um ar",
+            "nao tenho",
             "nao tenho aparelho",
             "nao tenho o ar",
         )
@@ -4153,6 +4210,7 @@ async def _handle_equipment_model(
                 **context,
                 "equipment_model_known": False,
                 "catalog_mismatch_attempts": attempts,
+                "catalog_mismatch_query": normalize_portuguese(raw),
             }
             updated.pop("equipment_model", None)
             updated.pop("recommended_equipment", None)
@@ -4192,6 +4250,7 @@ async def _handle_equipment_model(
             "recommendation_presented": True,
             "catalog_mismatch_attempts": 0,
         }
+        updated.pop("catalog_mismatch_query", None)
         transition = await _advance_intake(
             inbound,
             port,
@@ -6732,14 +6791,40 @@ async def _handle_quote_decision(
         )
     normalized = normalize_portuguese(inbound.body or "")
     if action is None:
-        if any(
+        if normalized in {
+            "sim",
+            "pode",
+            "vamos",
+            "vamos seguir",
+            "quero seguir",
+            "pode seguir",
+            "ok vamos seguir",
+            "certo vamos seguir",
+        } or any(
             phrase in normalized
-            for phrase in ("consultar agenda", "agendar", "quero marcar", "ver horario")
+            for phrase in (
+                "consultar agenda",
+                "agendar",
+                "quero marcar",
+                "ver horario",
+                "pode agendar",
+                "vamos agendar",
+            )
         ):
             action = QUOTE_SCHEDULE
-        elif any(
+        elif normalized in {
+            "nao",
+            "agora nao",
+            "depois",
+        } or any(
             phrase in normalized
-            for phrase in ("so cotacao", "so queria cotacao", "obrigado", "era isso")
+            for phrase in (
+                "so cotacao",
+                "so queria cotacao",
+                "obrigado",
+                "era isso",
+                "nao quero agendar agora",
+            )
         ):
             action = QUOTE_FINISH
 
