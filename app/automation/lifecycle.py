@@ -143,9 +143,6 @@ async def _create_incomplete_followups(
             idempotency_suffix="message",
         )
         session.add(message)
-        context["inactivity_followup_pending_response"] = True
-        context["inactivity_followup_outreach_id"] = str(outreach.id)
-        conversation.context = context
         await session.flush()
         created.append(message.id)
     return created
@@ -291,10 +288,6 @@ async def _create_cleaning_followups(
             sequence_count=2,
         )
         session.add_all((first, second))
-        context = dict(conversation.context or {})
-        context["cleaning_outreach_pending_response"] = True
-        context["cleaning_outreach_id"] = str(outreach.id)
-        conversation.context = context
         await session.flush()
         created.append(first.id)
     return created
