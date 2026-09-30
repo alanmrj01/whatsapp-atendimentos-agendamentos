@@ -3395,7 +3395,7 @@ async def test_diagnostics_price_is_presented_as_base_value_and_resumes_pending_
 
 
 @mark.asyncio
-async def test_completed_equipment_feature_question_is_answered_without_inventing_alexa() -> None:
+async def test_completed_cheaper_equipment_question_routes_to_commercial_handoff() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.COMPLETED,
         context={
@@ -3420,16 +3420,15 @@ async def test_completed_equipment_feature_question_is_answered_without_inventin
     )
 
     transition = repository.outbounds[-1].transition
-    body = transition.outbound.body or ""
-    assert repository.state == ConversationState.POST_BOOKING_HELP
-    assert "alexa" in body.casefold()
-    assert (
-        "explicitamente" in body.casefold()
-        or "não tenho compatibilidade" in body.casefold()
-    )
-    assert "posso ajudar com limpeza" not in body.casefold()
-    assert transition.follow_ups
-    assert transition.follow_ups[0].interactive_id == "post_booking.help"
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+    assert "seminovo" in combined
+    assert "equipe" in combined
 
 
 @mark.asyncio

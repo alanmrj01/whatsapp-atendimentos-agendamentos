@@ -1116,12 +1116,9 @@ async def _commercial_negotiation_handoff_if_applicable(
         return None
 
     body = (
-        "Entendi. Para compra ou instalação de ar-condicionado, existe a "
-        "possibilidade de avaliarmos um aparelho seminovo para tentar chegar "
-        "a um valor mais em conta, conforme a disponibilidade da empresa. "
-        "Eu não consigo garantir estoque nem valor por aqui, então essa condição "
-        "precisa ser verificada pela nossa equipe. Vou encaminhar seu atendimento "
-        "para que eles confiram as opções e os valores com você."
+        "Para compra ou instalação de ar-condicionado, podemos verificar um aparelho "
+        "seminovo, conforme disponibilidade. Vou encaminhar à equipe para confirmar "
+        "opções e valores."
     )
     return _transition(
         ConversationState.HUMAN_HANDOFF,
