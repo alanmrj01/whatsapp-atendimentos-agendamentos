@@ -26,6 +26,7 @@ from app.models import (
     BusinessWhatsAppConnection,
     Conversation,
     Customer,
+    CustomerOutreach,
     Employee,
     EmployeeService,
     Message,
@@ -60,6 +61,7 @@ from app.operations.schemas import (
     CustomerNameUpdate,
     CustomerCreate,
     CustomerOption,
+    CustomerOutreachView,
     DashboardMetrics,
     DashboardToday,
     EmployeeCreate,
@@ -143,6 +145,75 @@ class OperationalService:
         return [
             _notification_view(row, business.timezone)
             for row in rows.all()
+        ]
+
+    async def list_customer_outreach(
+        self,
+        business_id: UUID,
+        *,
+        outreach_type: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[CustomerOutreachView]:
+        query = (
+            select(
+                CustomerOutreach,
+                Customer.name,
+                Customer.whatsapp_profile_name,
+                Customer.phone_e164,
+                Customer.whatsapp_id,
+            )
+            .join(
+                Customer,
+                and_(
+                    Customer.business_id == CustomerOutreach.business_id,
+                    Customer.id == CustomerOutreach.customer_id,
+                ),
+            )
+            .where(CustomerOutreach.business_id == business_id)
+        )
+        if outreach_type is not None:
+            query = query.where(CustomerOutreach.outreach_type == outreach_type)
+        if status is not None:
+            query = query.where(CustomerOutreach.status == status)
+        rows = await self.session.execute(
+            query.order_by(
+                CustomerOutreach.due_at.asc(),
+                CustomerOutreach.created_at.asc(),
+            ).limit(limit)
+        )
+        return [
+            CustomerOutreachView(
+                id=item.id,
+                customer_id=item.customer_id,
+                customer_name=_display_name(
+                    customer_name,
+                    whatsapp_profile_name,
+                    customer_phone,
+                    whatsapp_id,
+                ),
+                customer_phone=customer_phone,
+                outreach_type=item.outreach_type,
+                status=item.status,
+                service_label=item.service_label,
+                due_at=item.due_at,
+                sent_at=item.sent_at,
+                responded_at=item.responded_at,
+                source_appointment_id=item.source_appointment_id,
+                result_appointment_id=item.result_appointment_id,
+                result_appointment_path=(
+                    f"/app/agenda?appointment={item.result_appointment_id}"
+                    if item.result_appointment_id is not None
+                    else None
+                ),
+            )
+            for (
+                item,
+                customer_name,
+                whatsapp_profile_name,
+                customer_phone,
+                whatsapp_id,
+            ) in rows.all()
         ]
 
     async def mark_notification_read(
