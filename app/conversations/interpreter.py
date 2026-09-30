@@ -352,6 +352,8 @@ def extract_budget_constraints(
     if not raw:
         return None, None, None
     normalized = normalize_portuguese(raw)
+    if _looks_like_nonmonetary_limit(raw, normalized):
+        return None, None, None
     budget_markers = (
         "ate ",
         "no maximo",
@@ -404,6 +406,30 @@ def extract_budget_constraints(
     if has_service and not has_equipment:
         return None, amount, None
     return amount, None, None
+
+
+def _looks_like_nonmonetary_limit(raw: str, normalized: str) -> bool:
+    financial_markers = (
+        "r$",
+        "real",
+        "reais",
+        "orcamento",
+        "gastar",
+        "valor",
+        "preco",
+    )
+    if any(marker in raw.casefold() for marker in ("r$", "real", "reais")):
+        return False
+    if any(marker in normalized for marker in financial_markers[3:]):
+        return False
+    return bool(
+        re.search(
+            r"\b\d+(?:[.,]\d+)?\s*"
+            r"(?:m|metro|metros|cm|centimetro|centimetros|m2|btu|h|hora|horas|"
+            r"pessoa|pessoas)\b",
+            normalized,
+        )
+    )
 
 
 def _budget_amount(value: str) -> float | None:

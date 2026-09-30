@@ -223,7 +223,7 @@ async def determine_transition(
         )
         if value is not None
     }
-    if budget_updates:
+    if action is None and budget_updates:
         context = invalidate_changed_facts(
             base_context,
             {**context, **budget_updates},
@@ -289,6 +289,18 @@ async def determine_transition(
 
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
         return _handoff_transition(conversation.handoff_message)
+
+    paused_quote_transition = await _resume_paused_quote_if_requested(
+        conversation,
+        inbound,
+        state,
+        context,
+        interpretation,
+        action,
+        booking_port,
+    )
+    if paused_quote_transition is not None:
+        return paused_quote_transition
 
     stale_action = _stale_interactive_transition(
         state,
@@ -690,6 +702,7 @@ async def _route_named_conversation(
             inbound,
             action,
             booking_port,
+            context=context,
             interpretation=interpretation,
             greeting_message=conversation.greeting_message,
             fallback_message=conversation.fallback_message,
@@ -2681,9 +2694,101 @@ def _context_time(
     return parsed
 
 
-def _friendly_fallback(configured: str) -> str:
+def _quote_resume_requested(
+    inbound: ConversationInput,
+    interpretation: Interpretation,
+    action: str | None,
+) -> bool:
+    if action in {QUOTE_SCHEDULE, MENU_BOOK}:
+        return True
+    normalized = normalize_portuguese(inbound.body or "")
+    continuation_phrases = (
+        "ok vamos seguir",
+        "vamos seguir",
+        "quero seguir",
+        "podemos seguir",
+        "pode seguir",
+        "vamos continuar",
+        "quero continuar",
+        "pode continuar",
+        "quero consultar a agenda",
+        "consultar agenda",
+        "ver agenda",
+        "seguir com o agendamento",
+    )
+    return (
+        any(phrase in normalized for phrase in continuation_phrases)
+        or interpretation.has(ConversationIntent.BOOK)
+        or interpretation.has(ConversationIntent.AVAILABILITY)
+    )
+
+
+async def _resume_paused_quote_if_requested(
+    conversation: ConversationSnapshot,
+    inbound: ConversationInput,
+    state: ConversationState,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    action: str | None,
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition | None:
+    if (
+        state not in {ConversationState.COMPLETED, ConversationState.MENU}
+        or context.get("quote_paused") is not True
+        or _context_service_id(context) is None
+    ):
+        return None
+
+    if _quote_resume_requested(inbound, interpretation, action):
+        try:
+            port = _require_booking_port(booking_port)
+        except BookingPortUnavailable:
+            return _transition(
+                state,
+                context,
+                booking_unavailable_message(),
+            )
+        updated = {
+            **context,
+            "quote_presented": True,
+        }
+        updated.pop("quote_paused", None)
+        updated.pop("request_mode", None)
+        return await _offer_dates(
+            inbound,
+            port,
+            updated,
+            customer_name=conversation.customer_name,
+        )
+
+    if (
+        action is None
+        and isinstance(inbound.body, str)
+        and inbound.body.strip()
+        and (
+            interpretation.intent is ConversationIntent.UNKNOWN
+            or interpretation.has_act(ConversationAct.SOCIAL)
+        )
+    ):
+        return _transition(
+            ConversationState.QUOTE_DECISION,
+            context,
+            quote_decision_message(
+                "Sua cotação continua registrada. Quer que eu consulte a agenda "
+                "para seguir com a instalação?"
+            ),
+        )
+    return None
+
+
+def _friendly_fallback(configured: str, *, variant: int = 0) -> str:
     normalized = normalize_portuguese(configured)
     if normalized.startswith("nao entendi"):
+        if variant % 2:
+            return (
+                "Claro. Posso continuar com instalação, limpeza, manutenção, "
+                "recarga de gás ou agendamento. Me diga o que você quer fazer agora."
+            )
         return (
             "Posso ajudar com limpeza, instalação, manutenção, recarga de gás, "
             "agendamento, reagendamento ou cancelamento. "
@@ -2839,10 +2944,19 @@ async def _handle_natural_start(
                 ),
             )
         return transition
+    fallback_context = _clean_context(conversation.context)
+    variant = fallback_context.get("fallback_variant")
+    variant_index = variant if isinstance(variant, int) else 0
+    fallback_context["fallback_variant"] = 1 if variant_index == 0 else 0
     return _transition(
         ConversationState.MENU,
-        {},
-        _text_message(_friendly_fallback(conversation.fallback_message)),
+        fallback_context,
+        _text_message(
+            _friendly_fallback(
+                conversation.fallback_message,
+                variant=variant_index,
+            )
+        ),
     )
 
 async def _handle_menu(
@@ -2850,6 +2964,7 @@ async def _handle_menu(
     action: str | None,
     booking_port: BookingAvailabilityPort | None,
     *,
+    context: dict[str, Any] | None = None,
     interpretation: Interpretation | None = None,
     greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?",
     fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
@@ -2860,6 +2975,7 @@ async def _handle_menu(
     interpretation = interpretation or DeterministicConversationInterpreter().interpret(
         inbound.body
     )
+    active_context = _clean_context(context or {})
     if action == MENU_BOOK:
         try:
             port = _require_booking_port(booking_port)
@@ -2897,7 +3013,7 @@ async def _handle_menu(
             customer_id=inbound.customer_id,
             conversation_id=inbound.conversation_id,
             state=ConversationState.MENU.value,
-            context={},
+            context=active_context,
             automation_enabled=True,
             handoff_status="none",
             greeting_message=greeting_message,
@@ -6203,9 +6319,14 @@ async def _handle_quote_decision(
             action = QUOTE_FINISH
 
     if action == QUOTE_FINISH:
+        updated = {
+            **context,
+            "quote_presented": True,
+            "quote_paused": True,
+        }
         return _transition(
             ConversationState.COMPLETED,
-            context,
+            updated,
             _text_message(
                 "Perfeito. A cotação fica registrada nesta conversa. "
                 "Quando quiser avançar, é só me chamar."
@@ -6216,6 +6337,8 @@ async def _handle_quote_decision(
             **context,
             "quote_presented": True,
         }
+        updated.pop("quote_paused", None)
+        updated.pop("request_mode", None)
         return await _offer_dates(
             inbound,
             port,
