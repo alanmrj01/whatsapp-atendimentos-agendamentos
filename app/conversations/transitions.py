@@ -1294,6 +1294,33 @@ def _equipment_suggestion_snapshot(
     }
 
 
+_KNOWN_EQUIPMENT_BRANDS = (
+    "samsung",
+    "lg",
+    "midea",
+    "gree",
+    "electrolux",
+    "philco",
+    "tcl",
+    "agratto",
+    "daikin",
+    "elgin",
+    "hisense",
+    "carrier",
+    "springer",
+    "consul",
+)
+
+
+def _requested_equipment_brand(body: str | None) -> str | None:
+    normalized = normalize_portuguese(body or "")
+    padded = f" {normalized} "
+    return next(
+        (brand for brand in _KNOWN_EQUIPMENT_BRANDS if f" {brand} " in padded),
+        None,
+    )
+
+
 def _catalog_entry_matching_customer_request(
     body: str | None,
     catalog: Sequence[Any],
@@ -1301,24 +1328,40 @@ def _catalog_entry_matching_customer_request(
     normalized = normalize_portuguese(body or "")
     if not normalized:
         return None
+
     capacity_match = re.search(r"\b(\d{4,6})\s*btu\b", normalized)
     capacity = int(capacity_match.group(1)) if capacity_match else None
+    requested_brand = _requested_equipment_brand(body)
+
+    explicitly_mentioned_lines = {
+        normalize_portuguese(item.line)
+        for item in catalog
+        if (
+            len(normalize_portuguese(item.line)) >= 4
+            and normalize_portuguese(item.line) in normalized
+        )
+    }
+
     matches: list[Any] = []
     for item in catalog:
-        brand = normalize_portuguese(item.brand)
-        line = normalize_portuguese(item.line)
-        brand_mentioned = bool(brand and f" {brand} " in f" {normalized} ")
-        line_mentioned = bool(line and len(line) >= 4 and line in normalized)
-        capacity_matches = capacity is None or item.capacity_btu == capacity
-        if capacity_matches and (brand_mentioned or line_mentioned or capacity is not None):
-            matches.append(item)
-    if len(matches) == 1:
-        return matches[0]
-    if capacity is not None:
-        exact_capacity = [item for item in matches if item.capacity_btu == capacity]
-        if len(exact_capacity) == 1:
-            return exact_capacity[0]
-    return None
+        item_brand = normalize_portuguese(item.brand)
+        item_line = normalize_portuguese(item.line)
+
+        if requested_brand is not None and requested_brand not in item_brand:
+            continue
+        if explicitly_mentioned_lines and item_line not in explicitly_mentioned_lines:
+            continue
+        if capacity is not None and item.capacity_btu != capacity:
+            continue
+        if (
+            requested_brand is None
+            and not explicitly_mentioned_lines
+            and capacity is None
+        ):
+            continue
+        matches.append(item)
+
+    return matches[0] if len(matches) == 1 else None
 
 
 def _looks_like_specific_equipment_request(body: str | None) -> bool:
@@ -1409,36 +1452,40 @@ async def _equipment_question_answer(
 
     candidates = list(catalog)
     canonical_input = re.sub(r"[^a-z0-9]+", " ", normalized)
-    mentioned_candidates = [
+    requested_brand = _requested_equipment_brand(inbound.body)
+    if requested_brand is not None:
+        candidates = [
+            item
+            for item in candidates
+            if requested_brand in normalize_portuguese(item.brand)
+        ]
+
+    mentioned_lines = [
         item
         for item in candidates
         if (
-            re.sub(
-                r"[^a-z0-9]+",
-                " ",
-                normalize_portuguese(item.brand),
-            ).strip()
-            in canonical_input
-            or (
-                len(
-                    re.sub(
-                        r"[^a-z0-9]+",
-                        " ",
-                        normalize_portuguese(item.line),
-                    ).strip()
-                )
-                >= 4
-                and re.sub(
+            len(
+                re.sub(
                     r"[^a-z0-9]+",
                     " ",
                     normalize_portuguese(item.line),
                 ).strip()
-                in canonical_input
             )
+            >= 4
+            and re.sub(
+                r"[^a-z0-9]+",
+                " ",
+                normalize_portuguese(item.line),
+            ).strip()
+            in canonical_input
         )
     ]
-    if mentioned_candidates:
-        candidates = mentioned_candidates
+    if mentioned_lines:
+        candidates = mentioned_lines
+
+    mentioned_candidates = list(candidates) if (
+        requested_brand is not None or mentioned_lines
+    ) else []
 
     requested_capacity = re.search(r"\b(\d{4,6})\s*btu\b", normalized)
     if requested_capacity:
