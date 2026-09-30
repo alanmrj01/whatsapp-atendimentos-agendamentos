@@ -172,6 +172,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "purchase_only",
         "awaiting_other_phone",
         "repair_attempts",
+        "commercial_journey_id",
         "commercial_followup_event_id",
         "commercial_followup_pending",
         "commercial_offer_event_id",
