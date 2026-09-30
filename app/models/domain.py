@@ -874,6 +874,86 @@ class BusinessNotification(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class CommercialAutomationEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "commercial_automation_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('abandoned_followup_24h', 'cleaning_reminder_6m')",
+            name="event_type_allowed",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'sent', 'responded', 'declined', 'accepted', "
+            "'handoff', 'skipped', 'failed')",
+            name="status_allowed",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            name="fk_commercial_automation_events_business_customer_customers",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "conversation_id"],
+            ["conversations.business_id", "conversations.id"],
+            name="fk_commercial_automation_events_business_conversation_conversations",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "appointment_id"],
+            ["appointments.business_id", "appointments.id"],
+            name="fk_commercial_automation_events_business_appointment_appointments",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "result_appointment_id"],
+            ["appointments.business_id", "appointments.id"],
+            name="fk_commercial_automation_events_business_result_appointment_appointments",
+        ),
+        UniqueConstraint(
+            "business_id",
+            "event_type",
+            "anchor_key",
+            name="uq_commercial_automation_events_business_type_anchor",
+        ),
+        Index(
+            "ix_commercial_automation_events_business_due",
+            "business_id",
+            "due_at",
+        ),
+        Index(
+            "ix_commercial_automation_events_business_status",
+            "business_id",
+            "status",
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    appointment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    result_appointment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    anchor_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="queued", server_default="queued", nullable=False
+    )
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    event_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        nullable=False,
+    )
+
+
 class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "messages"
     __table_args__ = (
