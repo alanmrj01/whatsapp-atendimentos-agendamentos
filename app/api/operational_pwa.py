@@ -339,6 +339,7 @@ async def bulk_update_conversations(
 async def get_conversation_message_media(
     conversation_id: UUID,
     message_id: UUID,
+    request: Request,
     principal: Identity,
     db: Db,
 ):
@@ -404,13 +405,74 @@ async def get_conversation_message_media(
         ),
         default_mime,
     )
+    common_headers = {
+        "Cache-Control": "private, max-age=60",
+        "Content-Disposition": "inline",
+        "X-Content-Type-Options": "nosniff",
+        "Accept-Ranges": "bytes",
+    }
+    range_header = request.headers.get("range")
+    if range_header and message.message_type in {"audio", "video"}:
+        range_value = range_header.strip().casefold()
+        if not range_value.startswith("bytes=") or "," in range_value:
+            return Response(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                headers={
+                    **common_headers,
+                    "Content-Range": f"bytes */{len(content)}",
+                },
+            )
+        raw_range = range_value.removeprefix("bytes=")
+        start_text, separator, end_text = raw_range.partition("-")
+        try:
+            if not separator:
+                raise ValueError
+            if start_text:
+                start = int(start_text)
+                end = int(end_text) if end_text else len(content) - 1
+            elif end_text:
+                suffix_length = int(end_text)
+                if suffix_length <= 0:
+                    raise ValueError
+                start = max(0, len(content) - suffix_length)
+                end = len(content) - 1
+            else:
+                raise ValueError
+        except ValueError:
+            return Response(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                headers={
+                    **common_headers,
+                    "Content-Range": f"bytes */{len(content)}",
+                },
+            )
+        if start < 0 or start >= len(content) or end < start:
+            return Response(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                headers={
+                    **common_headers,
+                    "Content-Range": f"bytes */{len(content)}",
+                },
+            )
+        end = min(end, len(content) - 1)
+        partial = content[start : end + 1]
+        return Response(
+            content=partial,
+            media_type=media_type,
+            status_code=status.HTTP_206_PARTIAL_CONTENT,
+            headers={
+                **common_headers,
+                "Content-Range": f"bytes {start}-{end}/{len(content)}",
+                "Content-Length": str(len(partial)),
+            },
+        )
+
     return Response(
         content=content,
         media_type=media_type,
         headers={
-            "Cache-Control": "private, max-age=60",
-            "Content-Disposition": "inline",
-            "X-Content-Type-Options": "nosniff",
+            **common_headers,
+            "Content-Length": str(len(content)),
         },
     )
 
