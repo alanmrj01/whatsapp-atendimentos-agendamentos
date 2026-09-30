@@ -882,7 +882,7 @@ class CustomerOutreach(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="outreach_type_allowed",
         ),
         CheckConstraint(
-            "status IN ('pending', 'sent', 'skipped', 'responded', 'declined')",
+            "status IN ('pending', 'sent', 'skipped', 'responded', 'accepted', 'declined', 'failed')",
             name="status_allowed",
         ),
         ForeignKeyConstraint(
@@ -921,6 +921,9 @@ class CustomerOutreach(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result_appointment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=True
+    )
 
 
 class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
