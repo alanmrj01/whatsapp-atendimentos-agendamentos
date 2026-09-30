@@ -752,8 +752,31 @@ async def _route_named_conversation(
                 "nao faz sentido",
             )
         )
+        structured_checkpoint = state in {
+            ConversationState.BOOKING_QUANTITY,
+            ConversationState.BOOKING_ACCESS,
+            ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
+            ConversationState.BOOKING_EQUIPMENT_PROFILE,
+            ConversationState.BOOKING_EQUIPMENT_DELIVERY,
+            ConversationState.BOOKING_INSTALLATION_HEIGHT,
+            ConversationState.BOOKING_PROPERTY,
+            ConversationState.BOOKING_BUILDING_HOURS,
+            ConversationState.BOOKING_TUBING,
+            ConversationState.BOOKING_SITE_LIMIT,
+            ConversationState.BOOKING_WEEKDAY,
+            ConversationState.BOOKING_DATE,
+            ConversationState.BOOKING_TIME,
+            ConversationState.BOOKING_ATTENDEE,
+            ConversationState.BOOKING_PHONE_CONFIRM,
+            ConversationState.BOOKING_CONFIRM,
+            ConversationState.QUOTE_DECISION,
+        }
         if (
-            (looks_like_parallel_question or is_conversation_feedback)
+            (
+                looks_like_parallel_question
+                or is_conversation_feedback
+                or structured_checkpoint
+            )
             and not _message_can_answer_pending_state(
                 state,
                 inbound,
@@ -766,8 +789,15 @@ async def _route_named_conversation(
                 "do ponto em que estávamos."
                 if is_conversation_feedback
                 else (
-                    "Não tenho essa informação cadastrada com segurança e prefiro não "
-                    "inventar. Seu atendimento continua exatamente de onde parou."
+                    (
+                        "Não tenho essa informação cadastrada com segurança e prefiro não "
+                        "inventar. Seu atendimento continua exatamente de onde parou."
+                    )
+                    if looks_like_parallel_question
+                    else (
+                        "Entendi. Vou preservar o que já foi preenchido e continuar "
+                        "exatamente da etapa em que estávamos."
+                    )
                 )
             )
             return await _resume_pending_question(
@@ -2214,10 +2244,203 @@ def _message_can_answer_pending_state(
         )
     if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
         return _has_profile_fact(enrich_context_from_message({}, body))
+    if state is ConversationState.BOOKING_ACCESS:
+        return any(
+            phrase in normalized
+            for phrase in (
+                "acesso normal",
+                "normal",
+                "facil",
+                "sem dificuldade",
+                "tranquilo",
+                "acesso dificil",
+                "dificil",
+                "complicado",
+                "escada",
+                "local apertado",
+                "nao sei",
+                "nao tenho certeza",
+            )
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
+        return any(
+            phrase in normalized
+            for phrase in (
+                "ja tenho",
+                "tenho o aparelho",
+                "ja possuo",
+                "possuo o aparelho",
+                "so instalacao",
+                "somente instalacao",
+                "apenas instalar",
+                "quero cotar",
+                "quero comprar",
+                "preciso comprar",
+                "preciso de um aparelho",
+                "preciso de um ar",
+                "nao tenho",
+            )
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_DELIVERY:
+        return normalized in {
+            "retirar",
+            "buscar",
+            "vou retirar",
+            "retirada",
+            "receber",
+            "entregar",
+            "entrega",
+            "quero receber",
+            "levar com a instalacao",
+            "levar junto com a instalacao",
+            "junto com o tecnico",
+            "no dia da instalacao",
+            "com a instalacao",
+            "sim",
+            "mesmo endereco",
+            "no mesmo endereco",
+            "nao",
+            "outro endereco",
+            "endereco diferente",
+        }
+    if state is ConversationState.BOOKING_INSTALLATION_HEIGHT:
+        return (
+            any(
+                phrase in normalized
+                for phrase in (
+                    "mais de 3",
+                    "acima de 3",
+                    "passa de 3",
+                    "ate 3",
+                    "menos de 3",
+                    "abaixo de 3",
+                    "nao passa de 3",
+                )
+            )
+            or _decimal_from_text(body) is not None
+        )
+    if state is ConversationState.BOOKING_BUILDING_HOURS:
+        return _time_window_from_text(body) is not None
+    if state is ConversationState.BOOKING_TUBING:
+        meters = _decimal_from_text(body)
+        return (
+            _tubing_unknown_text(normalized)
+            or (
+                meters is not None
+                and Decimal("0") < meters <= Decimal("100")
+            )
+        )
+    if state is ConversationState.BOOKING_SITE_LIMIT:
+        return _site_limit(None, body) is not False
+    if state is ConversationState.BOOKING_ATTENDEE:
+        return (
+            normalized in {
+                "sim",
+                "sou eu",
+                "eu vou estar",
+                "eu estarei",
+                "eu mesmo",
+                "eu mesma",
+            }
+            or any(
+                phrase in normalized
+                for phrase in ("outra pessoa", "nao", "nao vou estar")
+            )
+        )
+    if state is ConversationState.BOOKING_PHONE_CONFIRM:
+        return (
+            normalized in {
+                "sim",
+                "pode",
+                "correto",
+                "isso",
+                "outro",
+                "outro numero",
+                "nao",
+            }
+            or (
+                context.get("awaiting_other_phone") is True
+                and _phone_from_text(body) is not None
+            )
+        )
+    if state is ConversationState.BOOKING_CONFIRM:
+        return normalized in {
+            "confirmar",
+            "confirmo",
+            "sim",
+            "pode confirmar",
+            "pode",
+            "voltar",
+            "outro horario",
+            "trocar horario",
+            "cancelar",
+            "cancela",
+            "nao",
+        }
+    if state is ConversationState.QUOTE_DECISION:
+        return (
+            normalized in {
+                "sim",
+                "sim vamos seguir",
+                "sim pode",
+                "pode",
+                "vamos",
+                "vamos seguir",
+                "quero seguir",
+                "pode seguir",
+                "ok vamos seguir",
+                "certo vamos seguir",
+                "nao",
+                "agora nao",
+                "depois",
+            }
+            or any(
+                phrase in normalized
+                for phrase in (
+                    "consultar agenda",
+                    "agendar",
+                    "quero marcar",
+                    "ver horario",
+                    "pode agendar",
+                    "vamos agendar",
+                    "so cotacao",
+                    "so queria cotacao",
+                    "obrigado",
+                    "era isso",
+                    "nao quero agendar agora",
+                )
+            )
+        )
     if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        if normalized in {
+            "nao",
+            "nao tenho",
+            "nao sei",
+            "nao sei o modelo",
+            "nao conheco",
+            "sem preferencia",
+            "pode recomendar",
+        }:
+            return True
+        if any(
+            phrase in normalized
+            for phrase in (
+                "esta complicado",
+                "esta confuso",
+                "nao estou entendendo",
+                "nao faz sentido",
+                "obrigado",
+                "obrigada",
+            )
+        ):
+            return False
         return bool(
-            context.get("equipment_model")
-            or re.search(r"\b\d{4,5}\s*btu", normalized)
+            _looks_like_specific_equipment_request(body)
+            or (
+                context.get("equipment_model_known") is True
+                and 1 <= len(normalized.split()) <= 10
+                and "?" not in body
+            )
         )
     return False
 
