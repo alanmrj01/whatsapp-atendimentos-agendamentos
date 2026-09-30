@@ -131,6 +131,25 @@ _SERVICE_QUESTION_PHRASES = (
     "o que voces fazem",
     "o que e feito",
     "faz parte",
+    "quantos metros",
+    "metragem incluida",
+    "tubulacao incluida",
+    "material incluso",
+    "materiais inclusos",
+    "quais materiais",
+    "qual material",
+    "garantia do servico",
+    "garantia da instalacao",
+    "deslocamento",
+    "taxa de visita",
+    "precisa mandar foto",
+    "posso mandar foto",
+    "enviar foto",
+    "foto do aparelho",
+    "precisa mandar video",
+    "posso mandar video",
+    "enviar video",
+    "video do aparelho",
 )
 
 _SOCIAL_ONLY = frozenset(
@@ -286,6 +305,12 @@ class DeterministicConversationInterpreter:
         if service_key is None and _looks_like_equipment_problem(assertion):
             service_key = "diagnostics"
             intents.add(ConversationIntent.SERVICE_INTENT)
+        if (
+            service_key is not None
+            and _looks_like_service_capability_question(original, assertion)
+        ):
+            intents.add(ConversationIntent.SERVICE_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
 
         if _contains_equipment_purchase(assertion) and not _purchase_is_negated(normalized):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
@@ -357,6 +382,24 @@ class DeterministicConversationInterpreter:
             service_budget_max=service_budget,
             total_budget_max=total_budget,
         )
+
+
+def _looks_like_service_capability_question(
+    original: str,
+    normalized: str,
+) -> bool:
+    if "?" in original:
+        return True
+    leads = (
+        "voces fazem ",
+        "voces trabalham com ",
+        "tem ",
+        "tem servico de ",
+        "fazem ",
+        "trabalham com ",
+        "oferecem ",
+    )
+    return any(normalized.startswith(lead) for lead in leads)
 
 
 def _looks_like_equipment_problem(normalized: str) -> bool:
