@@ -291,6 +291,45 @@ class WhatsAppClient:
         response_data = await self._request("POST", payload)
         return _provider_message_id(response_data)
 
+    async def send_template(
+        self,
+        to: str,
+        template_name: str,
+        *,
+        language_code: str = "pt_BR",
+        body_parameters: Sequence[str] = (),
+    ) -> str:
+        destination = _validate_destination(to)
+        name = _validate_template_name(template_name)
+        language = _validate_template_language(language_code)
+        parameters = [
+            {
+                "type": "text",
+                "text": _validate_text(value, "template parameter", max_length=1024),
+            }
+            for value in body_parameters
+        ]
+        template: dict[str, Any] = {
+            "name": name,
+            "language": {"code": language},
+        }
+        if parameters:
+            template["components"] = [
+                {
+                    "type": "body",
+                    "parameters": parameters,
+                }
+            ]
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": destination,
+            "type": "template",
+            "template": template,
+        }
+        response_data = await self._request("POST", payload)
+        return _provider_message_id(response_data)
+
     async def mark_as_read(self, message_id: str) -> bool:
         normalized_message_id = _validate_identifier(
             message_id, "message_id", max_length=255
@@ -467,6 +506,32 @@ def _validate_sections(
             raise WhatsAppValidationError("lists support at most 10 rows")
         normalized_sections.append({"title": title, "rows": normalized_rows})
     return normalized_sections
+
+
+def _validate_template_name(value: Any) -> str:
+    if not isinstance(value, str):
+        raise WhatsAppValidationError("template name must be a string")
+    normalized = value.strip()
+    if (
+        normalized != value
+        or not normalized
+        or len(normalized) > 512
+        or re.fullmatch(r"[a-z0-9_]+", normalized) is None
+    ):
+        raise WhatsAppValidationError("template name is invalid")
+    return normalized
+
+
+def _validate_template_language(value: Any) -> str:
+    if not isinstance(value, str):
+        raise WhatsAppValidationError("template language must be a string")
+    normalized = value.strip()
+    if (
+        normalized != value
+        or re.fullmatch(r"[a-z]{2,3}(?:_[A-Z]{2})?", normalized) is None
+    ):
+        raise WhatsAppValidationError("template language is invalid")
+    return normalized
 
 
 def _validate_destination(value: Any) -> str:
