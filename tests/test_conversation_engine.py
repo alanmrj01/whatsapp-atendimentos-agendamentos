@@ -701,7 +701,8 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         inbound(3, action=f"service:{SERVICE_ID}")
     ) is True
     assert repository.state == ConversationState.BOOKING_DATE
-    assert repository.context == {"service_id": str(SERVICE_ID)}
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert uuid.UUID(repository.context["commercial_journey_id"])
 
     assert await engine.process(
         inbound(4, action="date:2026-09-02")
