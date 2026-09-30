@@ -94,7 +94,9 @@ async def process_commercial_sweep_task(
     try:
         async with session.begin():
             message_ids = await CommercialAutomationService(
-                CommercialAutomationRepository(session)
+                CommercialAutomationRepository(session),
+                followup_24h_enabled=settings.commercial_followup_24h_enabled,
+                cleaning_6m_enabled=settings.cleaning_reminder_6m_enabled,
             ).sweep()
         outbound_enqueuer = build_outbound_task_enqueuer(settings)
         await enqueue_outbound_message_ids(message_ids, outbound_enqueuer)
