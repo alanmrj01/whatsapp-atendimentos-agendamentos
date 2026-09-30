@@ -146,6 +146,24 @@ def test_service_price_question_is_not_stolen_by_equipment_purchase() -> None:
     assert not result.has(ConversationIntent.EQUIPMENT_PURCHASE)
 
 
+def test_physical_limit_is_not_parsed_as_money_budget() -> None:
+    result = DeterministicConversationInterpreter().interpret("Até 3 metros")
+
+    assert result.equipment_budget_max is None
+    assert result.service_budget_max is None
+    assert result.total_budget_max is None
+    assert not result.has(ConversationIntent.PRICE_QUESTION)
+
+
+def test_currency_budget_still_parses_after_physical_limit_guard() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Só posso gastar até R$ 1.500 no aparelho"
+    )
+
+    assert result.equipment_budget_max == 1500.0
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+
+
 def test_social_reply_is_not_accepted_as_bare_customer_name() -> None:
     assert extract_customer_name("suave", allow_bare=True) is None
     assert extract_customer_name("beleza", allow_bare=True) is None
