@@ -189,6 +189,7 @@ class PostgresBookingAvailabilityPort:
             extra_tubing_price=extra_tubing_price,
             business_city=business.service_origin_city,
             business_state=business.service_origin_state,
+            business_address=business.service_origin_address,
         )
 
     async def get_service_intake(
