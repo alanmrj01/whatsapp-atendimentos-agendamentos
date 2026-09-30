@@ -4850,3 +4850,114 @@ async def test_installation_space_flow_asks_only_missing_measurement_before_reco
     assert repository.context["outdoor_space_depth_cm"] == 50.0
     assert repository.context["recommended_equipment"]["item_id"] == "catalog-gree-9000-cold"
 
+@mark.asyncio
+async def test_24h_followup_non_price_dissatisfaction_handoffs_without_semi_new() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_DATE,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "inactivity_followup_pending_response": True,
+            "inactivity_followup_outreach_id": str(uuid.uuid4()),
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1401, body="não gostei do prazo")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "equipe" in body.casefold()
+    assert "seminovo" not in body.casefold()
+
+
+@mark.asyncio
+async def test_24h_followup_price_objection_with_equipment_offers_semi_new() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.QUOTE_DECISION,
+        context={
+            "service_id": str(SERVICE_ID),
+            "purchase_mode": "purchase",
+            "purchase_only": True,
+            "equipment_ownership": "needs_equipment",
+            "recommended_equipment": {
+                "item_id": "catalog-gree-9000-cold",
+                "label": "Gree G-Top Auto Inverter 9.000 BTU",
+                "price": 2500.0,
+            },
+            "quote_presented": True,
+            "inactivity_followup_pending_response": True,
+            "inactivity_followup_outreach_id": str(uuid.uuid4()),
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1402, body="não gostei do preço, ficou alto")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "seminovo" in body.casefold()
+    assert "disponibilidade" in body.casefold()
+
+
+@mark.asyncio
+async def test_six_month_cleaning_outreach_acceptance_enters_cleaning_workflow() -> None:
+    cleaning_id = SERVICE_ID
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={
+            "cleaning_outreach_pending_response": True,
+            "cleaning_outreach_id": str(uuid.uuid4()),
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(cleaning_id), "Limpeza e higienização"),
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=False,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1403, body="sim, quero")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["service_id"] == str(cleaning_id)
+    assert repository.context["equipment_ownership"] == "has_equipment"
+    assert "cleaning_outreach_pending_response" not in repository.context
+
+
+@mark.asyncio
+async def test_six_month_cleaning_outreach_decline_stops_without_loop() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={
+            "cleaning_outreach_pending_response": True,
+            "cleaning_outreach_id": str(uuid.uuid4()),
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1404, body="não tenho interesse")
+    )
+
+    assert repository.state == ConversationState.COMPLETED
+    assert "cleaning_outreach_pending_response" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "quando precisar" in body.casefold()
+

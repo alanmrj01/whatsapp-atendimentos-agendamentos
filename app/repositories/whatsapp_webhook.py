@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.postgresql.dml import Insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.automation.lifecycle import mark_outreach_response
 from app.models import (
     Conversation,
     Customer,
@@ -204,6 +206,13 @@ class WhatsAppWebhookRepository:
                 status="received",
                 created_at=event.occurred_at or func.now(),
             )
+        )
+        await mark_outreach_response(
+            self.session,
+            business_id=business_id,
+            conversation_id=conversation_id,
+            body=event.body,
+            occurred_at=event.occurred_at or datetime.now(timezone.utc),
         )
 
     async def update_message_status(

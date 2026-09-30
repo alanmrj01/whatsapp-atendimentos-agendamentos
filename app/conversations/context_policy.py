@@ -77,6 +77,7 @@ _SERVICE_REUSABLE_FIELDS = frozenset(
         "whatsapp_contact_phone",
         "contact_phone",
         "contact_phone_confirmed",
+        "cleaning_outreach_id",
     }
 )
 

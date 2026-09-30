@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.config import Environment
 from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionStatus
 
-EXPECTED_SCHEMA_REVISION = "20260930_0021"
+EXPECTED_SCHEMA_REVISION = "20260930_0022"
 COMPATIBLE_SCHEMA_REVISIONS = (EXPECTED_SCHEMA_REVISION,)
 SCHEMA_REVISIONS = (
     "20260901_0001", "20260901_0002", "20260901_0003",

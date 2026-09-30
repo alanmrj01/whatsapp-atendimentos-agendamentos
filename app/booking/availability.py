@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,7 @@ from app.models import (
     Business,
     BusinessCatalogItem,
     BusinessNotification,
+    CustomerOutreach,
     Employee,
     ScheduleBlock,
     Service,
@@ -422,6 +423,31 @@ class PostgresBookingAvailabilityPort:
                         )
                     )
                     await self.session.flush()
+                    raw_outreach_id = requirements.operational_details.get(
+                        "cleaning_outreach_id"
+                    )
+                    if isinstance(raw_outreach_id, str):
+                        try:
+                            outreach_id = uuid.UUID(raw_outreach_id)
+                        except ValueError:
+                            outreach_id = None
+                        if outreach_id is not None:
+                            await self.session.execute(
+                                update(CustomerOutreach)
+                                .where(
+                                    CustomerOutreach.id == outreach_id,
+                                    CustomerOutreach.business_id == business_id,
+                                    CustomerOutreach.customer_id == customer_id,
+                                    CustomerOutreach.outreach_type == "cleaning_6m",
+                                    CustomerOutreach.status.in_(
+                                        ("sent", "responded")
+                                    ),
+                                )
+                                .values(
+                                    status="accepted",
+                                    result_appointment_id=appointment.id,
+                                )
+                            )
             except IntegrityError as exc:
                 if _has_constraint(exc, APPOINTMENT_EXCLUSION_CONSTRAINT):
                     continue

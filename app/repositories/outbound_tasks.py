@@ -13,6 +13,7 @@ from app.models import (
     BusinessAutomationExclusion,
     Conversation,
     Customer,
+    CustomerOutreach,
     Message,
     ProcessedWebhook,
 )
@@ -332,6 +333,9 @@ class OutboundTaskRepository:
         message_id: uuid.UUID,
         provider_message_id: str,
     ) -> None:
+        payload = await self.session.scalar(
+            select(Message.outbound_payload).where(Message.id == message_id)
+        )
         await self.session.execute(
             update(Message)
             .where(Message.id == message_id)
@@ -340,8 +344,78 @@ class OutboundTaskRepository:
                 status="sent",
             )
         )
+        if not isinstance(payload, dict):
+            return
+        raw_outreach_id = payload.get("_alovia_outreach_id")
+        if not isinstance(raw_outreach_id, str):
+            return
+        try:
+            outreach_id = uuid.UUID(raw_outreach_id)
+        except ValueError:
+            return
+
+        outreach_type = payload.get("_alovia_outreach_type")
+        conversation = await self.session.scalar(
+            select(Conversation)
+            .join(
+                Message,
+                and_(
+                    Message.business_id == Conversation.business_id,
+                    Message.conversation_id == Conversation.id,
+                ),
+            )
+            .where(Message.id == message_id)
+            .with_for_update()
+        )
+        if conversation is not None:
+            context = dict(conversation.context or {})
+            if outreach_type == "incomplete_24h":
+                context["inactivity_followup_pending_response"] = True
+                context["inactivity_followup_outreach_id"] = str(outreach_id)
+            elif outreach_type == "cleaning_6m":
+                context["cleaning_outreach_pending_response"] = True
+                context["cleaning_outreach_id"] = str(outreach_id)
+            conversation.context = context
+
+        count = payload.get("_alovia_sequence_count")
+        index = payload.get("_alovia_sequence_index")
+        is_final = (
+            not isinstance(count, int)
+            or not isinstance(index, int)
+            or index == count - 1
+        )
+        if not is_final:
+            return
+        await self.session.execute(
+            update(CustomerOutreach)
+            .where(
+                CustomerOutreach.id == outreach_id,
+                CustomerOutreach.status == "pending",
+            )
+            .values(status="sent", sent_at=func.now())
+        )
 
     async def mark_failed(self, message_id: uuid.UUID) -> None:
+        payload = await self.session.scalar(
+            select(Message.outbound_payload).where(Message.id == message_id)
+        )
         await self.session.execute(
             update(Message).where(Message.id == message_id).values(status="failed")
+        )
+        if not isinstance(payload, dict):
+            return
+        raw_outreach_id = payload.get("_alovia_outreach_id")
+        if not isinstance(raw_outreach_id, str):
+            return
+        try:
+            outreach_id = uuid.UUID(raw_outreach_id)
+        except ValueError:
+            return
+        await self.session.execute(
+            update(CustomerOutreach)
+            .where(
+                CustomerOutreach.id == outreach_id,
+                CustomerOutreach.status == "pending",
+            )
+            .values(status="failed")
         )

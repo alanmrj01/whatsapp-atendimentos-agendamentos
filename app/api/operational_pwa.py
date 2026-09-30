@@ -38,6 +38,7 @@ from app.operations.schemas import (
     ConversationList,
     CustomerCreate,
     CustomerNameUpdate,
+    CustomerOutreachList,
     CustomerOption,
     CustomerList,
     DashboardToday,
@@ -128,6 +129,33 @@ async def list_notifications(
         items=await service.list_notifications(
             membership.business_id,
             unread_only=unread_only,
+        )
+    )
+
+
+@router.get("/customer-outreach", response_model=CustomerOutreachList)
+async def list_customer_outreach(
+    principal: Identity,
+    service: ServiceDep,
+    outreach_type: Literal["incomplete_24h", "cleaning_6m"] | None = None,
+    outreach_status: Literal[
+        "pending",
+        "sent",
+        "skipped",
+        "responded",
+        "accepted",
+        "declined",
+        "failed",
+    ] | None = Query(default=None, alias="status"),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    membership = _membership(principal)
+    return CustomerOutreachList(
+        items=await service.list_customer_outreach(
+            membership.business_id,
+            outreach_type=outreach_type,
+            status=outreach_status,
+            limit=limit,
         )
     )
 
