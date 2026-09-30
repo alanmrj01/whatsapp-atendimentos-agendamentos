@@ -378,6 +378,7 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     whatsapp_id: Mapped[str] = mapped_column(String(255), nullable=False)
     phone_e164: Mapped[str | None] = mapped_column(String(32), nullable=True)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    name_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     whatsapp_profile_name: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )
