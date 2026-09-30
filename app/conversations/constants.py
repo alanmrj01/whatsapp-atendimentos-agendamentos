@@ -161,6 +161,8 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "contact_phone",
         "contact_phone_confirmed",
         "quote_presented",
+        "quote_paused",
+        "fallback_variant",
         "purchase_mode",
         "purchase_only",
         "awaiting_other_phone",
