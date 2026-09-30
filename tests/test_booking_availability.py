@@ -1195,3 +1195,45 @@ async def test_reschedule_rejects_date_inside_full_three_day_lead_time() -> None
     assert existing.starts_at == datetime(
         2026, 10, 10, 12, tzinfo=timezone.utc
     )
+
+def test_automatic_snapshot_evidences_customer_installation_measurements_for_technician() -> None:
+    appointment = Appointment(
+        business_id=BUSINESS_ID,
+        customer_id=CUSTOMER_ID,
+        service_id=SERVICE_ID,
+        employee_id=EMPLOYEE_A,
+        starts_at=datetime(2026, 9, 2, 12, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 9, 2, 13, tzinfo=timezone.utc),
+        status="confirmed",
+    )
+    requirements = BookingRequirements(
+        address=ServiceAddress("Rua A, 10"),
+        operational_details={
+            "indoor_space_width_cm": 90.0,
+            "indoor_space_height_cm": 40.0,
+            "indoor_space_depth_cm": 30.0,
+            "outdoor_space_width_cm": 60.0,
+            "outdoor_space_height_cm": 70.0,
+            "outdoor_space_depth_cm": 50.0,
+            "recommended_equipment": {
+                "label": "Gree G-Top Auto Inverter 9.000 BTU",
+                "selected_cycle": "cold",
+            },
+        },
+    )
+
+    PostgresBookingAvailabilityPort._apply_snapshot(
+        appointment,
+        requirements,
+        plan(),
+    )
+
+    assert appointment.notes is not None
+    assert "Medidas disponíveis informadas pelo cliente" in appointment.notes
+    assert "unidade interna: 90 × 40 × 30 cm" in appointment.notes
+    assert "unidade externa: 60 × 70 × 50 cm" in appointment.notes
+    assert "Técnico: conferir as medidas no local" in appointment.notes
+    details = appointment.estimate_details["operational_details"]
+    assert details["indoor_space_width_cm"] == 90.0
+    assert details["outdoor_space_depth_cm"] == 50.0
+
