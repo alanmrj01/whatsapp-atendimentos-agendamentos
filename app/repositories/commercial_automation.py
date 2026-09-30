@@ -578,6 +578,36 @@ class CommercialAutomationRepository:
             conversation.context = context
         return CreatedAutomation(event_id, (first_id, second_id))
 
+    async def pending_dispatch_ids(
+        self,
+        *,
+        limit: int = MAX_SWEEP_ITEMS,
+    ) -> list[uuid.UUID]:
+        result = await self.session.scalars(
+            select(Message.id)
+            .where(
+                Message.direction == "outbound",
+                Message.status == "pending",
+                Message.message_type == "template",
+                Message.outbound_payload.is_not(None),
+                Message.outbound_payload.op("->>")(
+                    "_alovia_automation_kind"
+                ).is_not(None),
+                or_(
+                    Message.outbound_payload.op("->>")(
+                        "_alovia_sequence_index"
+                    ).is_(None),
+                    Message.outbound_payload.op("->>")(
+                        "_alovia_sequence_index"
+                    )
+                    == "0",
+                ),
+            )
+            .order_by(Message.created_at.asc(), Message.id)
+            .limit(limit)
+        )
+        return list(result.all())
+
     async def mark_responded(
         self,
         business_id: uuid.UUID,
