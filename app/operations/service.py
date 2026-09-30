@@ -1055,6 +1055,7 @@ class OperationalService:
             whatsapp_id=values.phone[1:],
             phone_e164=values.phone,
             name=values.name,
+            name_source="manual",
         )
         self.session.add(item)
         try:
