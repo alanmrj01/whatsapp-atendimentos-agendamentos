@@ -4117,3 +4117,57 @@ async def test_unknown_comment_during_schedule_keeps_checkpoint_and_repeats_pend
     assert "continua exatamente de onde parou" in body.casefold()
     assert "09:00" in body
 
+@mark.asyncio
+async def test_service_inquiry_during_booking_answers_and_returns_to_same_checkpoint() -> None:
+    maintenance_id = uuid.UUID("41000000-0000-0000-0000-000000000004")
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização"),
+        BookingOption(str(maintenance_id), "Diagnóstico / manutenção corretiva"),
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1210, body="Vocês fazem manutenção?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["selected_date"] == "2026-09-02"
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "manutenção" in body.casefold() or "manutencao" in body.casefold()
+    assert "09:00" in body
+
+
+@mark.asyncio
+async def test_service_question_from_menu_answers_then_shows_real_service_choices() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.MENU,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Diagnóstico / manutenção corretiva")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1211, body="Vocês fazem manutenção?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "manutenção" in combined or "manutencao" in combined
+    assert "escolha o serviço" in combined or "escolha o servico" in combined
+    assert "posso continuar com o atendimento" not in combined
+
