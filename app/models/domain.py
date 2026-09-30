@@ -874,6 +874,55 @@ class BusinessNotification(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class CustomerOutreach(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "customer_outreach"
+    __table_args__ = (
+        CheckConstraint(
+            "outreach_type IN ('incomplete_24h', 'cleaning_6m')",
+            name="outreach_type_allowed",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'skipped', 'responded', 'declined')",
+            name="status_allowed",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            name="fk_customer_outreach_business_customer_customers",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "conversation_id"],
+            ["conversations.business_id", "conversations.id"],
+            name="fk_customer_outreach_business_conversation_conversations",
+        ),
+        Index("ix_customer_outreach_business_due", "business_id", "due_at"),
+        Index("ix_customer_outreach_conversation", "conversation_id"),
+        Index("ix_customer_outreach_status", "status"),
+        Index(
+            "uq_customer_outreach_idempotency_key",
+            "idempotency_key",
+            unique=True,
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_appointment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=True
+    )
+    outreach_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    trigger_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending", nullable=False
+    )
+    service_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "messages"
     __table_args__ = (
