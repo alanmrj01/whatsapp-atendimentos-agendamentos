@@ -339,6 +339,7 @@ class CommercialAutomationRepository:
         self,
         now: datetime,
         *,
+        business_id: uuid.UUID | None = None,
         include_future_days: int = 0,
         limit: int = MAX_SWEEP_ITEMS,
     ) -> list[_CleaningCandidate]:
@@ -370,6 +371,11 @@ class CommercialAutomationRepository:
             )
         )
         horizon = now + timedelta(days=max(0, include_future_days))
+        business_scope = (
+            ()
+            if business_id is None
+            else (ranked.c.business_id == business_id,)
+        )
         result = await self.session.execute(
             select(
                 ranked.c.business_id,
@@ -407,6 +413,7 @@ class CommercialAutomationRepository:
             )
             .where(
                 ranked.c.rank == 1,
+                *business_scope,
                 Business.active.is_(True),
                 Business.assistant_enabled.is_(True),
                 Conversation.automation_enabled.is_(True),
@@ -659,11 +666,11 @@ class CommercialAutomationRepository:
             candidate
             for candidate in await self.cleaning_candidates(
                 now,
+                business_id=business_id,
                 include_future_days=upcoming_days,
                 limit=MAX_SWEEP_ITEMS,
             )
-            if candidate.business_id == business_id
-            and candidate.due_at > now
+            if candidate.due_at > now
         ]
         existing_anchors = set(
             (
