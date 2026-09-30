@@ -3084,6 +3084,8 @@ async def test_purchase_only_recommends_once_and_pickup_finishes_without_handoff
     assert "R$ 2.500,00" in combined
     images = [message for message in messages if message.message_type == "image"]
     assert len(images) == 1
+    assert images[0].body == "Gree G-Top Auto Inverter"
+    assert "foto de referência" not in (images[0].body or "").casefold()
     assert images[0].sequence_optional is True
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_DELIVERY
 
@@ -3305,13 +3307,14 @@ async def test_purchase_and_install_offers_delivery_with_technician() -> None:
         for message in messages
         if message.interactive_id == "equipment.delivery"
     )
-    button_ids = {
-        button["id"]
-        for button in (delivery.outbound_payload or {}).get("buttons", [])
-    }
+    delivery_buttons = (delivery.outbound_payload or {}).get("buttons", [])
+    button_ids = {button["id"] for button in delivery_buttons}
+    button_titles = {button["title"] for button in delivery_buttons}
     assert "equipment.delivery.pickup" in button_ids
     assert "equipment.delivery.address" in button_ids
     assert "equipment.delivery.with_installation" in button_ids
+    assert "Com a instalação" in button_titles
+    assert all(len(title) <= 20 for title in button_titles)
 
     await engine.process(
         inbound(
