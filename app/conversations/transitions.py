@@ -1111,6 +1111,7 @@ def _has_service_question(interpretation: Interpretation) -> bool:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.TECHNICAL_QUESTION,
             ConversationIntent.CANCEL_QUESTION,
             ConversationIntent.RESCHEDULE_QUESTION,
         )
@@ -1397,6 +1398,158 @@ def _repeats_catalog_mismatch(
     )
 
 
+def _catalog_item_from_context(
+    context: dict[str, Any],
+    catalog: Sequence[Any],
+) -> Any | None:
+    for key in ("recommended_equipment", "equipment_suggestion"):
+        snapshot = context.get(key)
+        if not isinstance(snapshot, dict):
+            continue
+        item_id = snapshot.get("item_id")
+        if isinstance(item_id, str) and item_id:
+            matched = next(
+                (item for item in catalog if item.item_id == item_id),
+                None,
+            )
+            if matched is not None:
+                return matched
+
+    model = _context_string(context, "equipment_model")
+    if model is not None:
+        return _catalog_entry_matching_customer_request(model, catalog)
+    return None
+
+
+def _catalog_equipment_label(item: Any) -> str:
+    return (
+        f"{item.brand} {item.line} {item.capacity_btu:,} BTU"
+        .replace(",", ".")
+    )
+
+
+def _dimension_text(dimensions: dict[str, float] | None) -> str | None:
+    if not isinstance(dimensions, dict):
+        return None
+    width = dimensions.get("width")
+    height = dimensions.get("height")
+    depth = dimensions.get("depth")
+    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+        return None
+    text = f"{width:g} × {height:g} cm (largura × altura)"
+    if isinstance(depth, (int, float)):
+        text = f"{width:g} × {height:g} × {depth:g} cm (largura × altura × profundidade)"
+    return text
+
+
+def _technical_equipment_answer(
+    normalized: str,
+    item: Any,
+) -> str | None:
+    label = _catalog_equipment_label(item)
+
+    if "btu" in normalized or "capacidade" in normalized:
+        return f"No catálogo ativo, {label} tem capacidade de {item.capacity_btu:,} BTU.".replace(",", ".")
+
+    feature_aliases = {
+        "Wi-Fi": ("wifi", "wi fi"),
+        "Alexa": ("alexa",),
+        "Bluetooth": ("bluetooth",),
+        "Inverter": ("inverter",),
+    }
+    normalized_features = tuple(
+        normalize_portuguese(value)
+        for value in item.features
+        if isinstance(value, str)
+    )
+    for feature_label, aliases in feature_aliases.items():
+        if not any(alias in normalized for alias in aliases):
+            continue
+        supported = any(
+            any(alias in feature for alias in aliases)
+            for feature in normalized_features
+        ) or (
+            feature_label == "Inverter"
+            and "inverter" in normalize_portuguese(item.line)
+        )
+        if supported:
+            return f"No catálogo ativo, {label} consta com {feature_label}."
+        return (
+            f"No catálogo ativo, {feature_label} não aparece explicitamente cadastrado "
+            f"para {label}. Prefiro não afirmar compatibilidade sem essa confirmação."
+        )
+
+    asks_dimensions = any(
+        token in normalized
+        for token in (
+            "dimensao",
+            "dimensoes",
+            "medida",
+            "medidas",
+            "largura",
+            "profundidade",
+            "evaporadora",
+            "condensadora",
+        )
+    )
+    if asks_dimensions:
+        asks_outdoor = any(
+            token in normalized
+            for token in ("condensadora", "externa", "unidade externa")
+        )
+        asks_indoor = any(
+            token in normalized
+            for token in ("evaporadora", "interna", "unidade interna")
+        )
+        indoor = _dimension_text(item.indoor_dimensions_cm)
+        outdoor = _dimension_text(item.outdoor_dimensions_cm)
+        if asks_outdoor:
+            return (
+                f"No catálogo ativo, a unidade externa de {label} mede {outdoor}."
+                if outdoor
+                else f"As medidas da unidade externa de {label} não estão cadastradas."
+            )
+        if asks_indoor:
+            return (
+                f"No catálogo ativo, a unidade interna de {label} mede {indoor}."
+                if indoor
+                else f"As medidas da unidade interna de {label} não estão cadastradas."
+            )
+        if indoor and outdoor:
+            return (
+                f"No catálogo ativo, {label} tem unidade interna de {indoor} "
+                f"e unidade externa de {outdoor}."
+            )
+        return (
+            f"As dimensões completas de {label} não estão cadastradas com segurança "
+            "no catálogo ativo."
+        )
+
+    if any(
+        token in normalized
+        for token in (
+            "voltagem",
+            "tensao",
+            "consumo",
+            "energia",
+            "garantia",
+            "refrigerante",
+            "serpentina",
+            "nivel de ruido",
+            "potencia",
+            "amperagem",
+            "corrente",
+            "dreno",
+            "controle",
+        )
+    ):
+        return (
+            f"Esse detalhe técnico não está cadastrado com segurança para {label}. "
+            "Prefiro não inventar uma especificação."
+        )
+    return None
+
+
 async def _equipment_question_answer(
     inbound: ConversationInput,
     context: dict[str, Any],
@@ -1414,6 +1567,8 @@ async def _equipment_question_answer(
         "alexa",
         "bluetooth",
         "inverter",
+        "evaporadora",
+        "condensadora",
     )
     cheaper_terms = ("mais barato", "mais em conta")
     has_equipment_context = (
@@ -1422,9 +1577,36 @@ async def _equipment_question_answer(
         or context.get("equipment_ownership") == "needs_equipment"
         or isinstance(context.get("recommended_equipment"), dict)
     )
+    technical_equipment_terms = (
+        "voltagem",
+        "tensao",
+        "consumo",
+        "energia",
+        "garantia",
+        "dimensao",
+        "dimensoes",
+        "medida",
+        "medidas",
+        "largura",
+        "profundidade",
+        "refrigerante",
+        "serpentina",
+        "nivel de ruido",
+        "potencia",
+        "amperagem",
+        "corrente",
+        "dreno",
+        "controle",
+    )
     if not any(term in normalized for term in equipment_terms) and not (
         has_equipment_context
-        and any(term in normalized for term in cheaper_terms)
+        and (
+            any(term in normalized for term in cheaper_terms)
+            or (
+                interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
+                and any(term in normalized for term in technical_equipment_terms)
+            )
+        )
     ):
         return None
     technical_terms = (
@@ -1439,6 +1621,7 @@ async def _equipment_question_answer(
     )
     if (
         not interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and not interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
         and not any(term in normalized for term in technical_terms)
     ):
         return None
@@ -1449,6 +1632,21 @@ async def _equipment_question_answer(
         return None
     if not catalog:
         return "No momento não há equipamentos ativos cadastrados para eu comparar."
+
+    if interpretation.has(ConversationIntent.TECHNICAL_QUESTION):
+        current_item = _catalog_item_from_context(context, catalog)
+        if current_item is not None:
+            technical_answer = _technical_equipment_answer(normalized, current_item)
+            if technical_answer is not None:
+                return technical_answer
+        if has_equipment_context and any(
+            term in normalized
+            for term in technical_equipment_terms
+        ):
+            return (
+                "Para responder esse detalhe técnico com segurança, preciso primeiro "
+                "confirmar qual modelo do catálogo estamos tratando."
+            )
 
     candidates = list(catalog)
     canonical_input = re.sub(r"[^a-z0-9]+", " ", normalized)
@@ -1903,6 +2101,16 @@ async def _service_question_answer(
                 f"A duração estimada de {target.label} é de "
                 f"{_format_duration(plan.service.estimated_duration_minutes)}."
             )
+
+    if (
+        interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
+        and not interpretation.has(ConversationIntent.SERVICE_QUESTION)
+    ):
+        parts.append(
+            f"Esse detalhe técnico específico não está estruturado no cadastro de {target.label}. "
+            "Prefiro não inventar uma informação; a equipe pode confirmar esse ponto sem alterar "
+            "o andamento do seu atendimento."
+        )
 
     if interpretation.has(ConversationIntent.SERVICE_QUESTION):
         inquiry_language = bool(
@@ -2604,6 +2812,7 @@ def _has_substantive_intent(interpretation: Interpretation) -> bool:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.TECHNICAL_QUESTION,
         )
     )
 
@@ -2653,6 +2862,7 @@ def _without_greeting(interpretation: Interpretation) -> Interpretation:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.TECHNICAL_QUESTION,
         )
         primary = next(
             (intent for intent in precedence if intent in intents),
