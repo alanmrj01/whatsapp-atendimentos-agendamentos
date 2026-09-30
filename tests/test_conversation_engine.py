@@ -4254,3 +4254,81 @@ async def test_repeated_arbitrary_off_catalog_name_is_handed_off_on_second_attem
     assert repository.automation_enabled is False
     assert repository.context["catalog_mismatch_attempts"] == 2
 
+@mark.asyncio
+async def test_unavailable_brand_is_never_substituted_by_same_capacity_from_another_brand() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.equipment_catalog = [
+        EquipmentCatalogEntry(
+            item_id="gree-only",
+            brand="Gree",
+            line="G-Top Auto Inverter",
+            capacity_btu=9000,
+            segment="cost_benefit",
+            cycles=("cold",),
+            price=2500.0,
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1216, body="Tem Samsung 9000 BTU?")
+    )
+
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "gree" not in combined
+    assert "não encontrei" in combined or "nao encontrei" in combined
+
+
+@mark.asyncio
+async def test_purchase_model_brand_and_capacity_must_match_same_catalog_item() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "purchase_mode": "purchase",
+            "purchase_only": True,
+            "equipment_ownership": "needs_equipment",
+            "equipment_model_known": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    booking_port.equipment_catalog = [
+        EquipmentCatalogEntry(
+            item_id="gree-only",
+            brand="Gree",
+            line="G-Top Auto Inverter",
+            capacity_btu=9000,
+            segment="cost_benefit",
+            cycles=("cold",),
+            price=2500.0,
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1217, body="Quero Samsung 9000 BTU")
+    )
+
+    assert repository.context["catalog_mismatch_attempts"] == 1
+    assert "equipment_model" not in repository.context
+    assert "recommended_equipment" not in repository.context
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "gree" not in combined
+    assert "catálogo ativo" in combined or "catalogo ativo" in combined
+
