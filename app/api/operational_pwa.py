@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.automation.commercial import CommercialAutomationService
 from app.auth.dependencies import require_origin, require_principal
 from app.auth.schemas import MembershipResponse, MembershipRole
 from app.auth.service import Principal
@@ -62,10 +63,12 @@ from app.operations.schemas import (
 )
 from app.models import Message
 from app.operations.service import OperationalService
+from app.repositories.commercial_automation import CommercialAutomationRepository
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.client import WhatsAppClientError
 from app.whatsapp.sender import build_business_sender_resolver
 from app.schemas.automation import AutomationExclusionCreate, AutomationExclusionUpdate
+from app.schemas.commercial_automation import CleaningReminderDashboard
 from app.tasks.cloud_tasks import CloudTasksEnqueueError
 from app.tasks.outbound import (
     build_outbound_task_enqueuer,
@@ -147,6 +150,20 @@ async def mark_notification_read(
         membership.business_id,
         notification_id,
     )
+
+
+@router.get(
+    "/commercial-automations/cleaning",
+    response_model=CleaningReminderDashboard,
+)
+async def cleaning_reminder_dashboard(
+    principal: Identity,
+    db: Db,
+):
+    membership = _membership(principal)
+    return await CommercialAutomationService(
+        CommercialAutomationRepository(db)
+    ).cleaning_dashboard(membership.business_id)
 
 
 @router.get("/appointments", response_model=AppointmentList)
