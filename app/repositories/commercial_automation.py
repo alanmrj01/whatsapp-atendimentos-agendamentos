@@ -571,11 +571,14 @@ class CommercialAutomationRepository:
             .with_for_update()
         )
         if conversation is not None:
-            context = dict(conversation.context or {})
-            context["commercial_offer_event_id"] = str(event_id)
-            context["commercial_offer_kind"] = "cleaning_reminder_6m"
-            context["commercial_offer_pending"] = True
-            conversation.context = context
+            # A six-month reminder begins a new relationship journey. Historical
+            # quote/equipment facts must not leak into the cleaning offer.
+            conversation.context = {
+                "commercial_offer_event_id": str(event_id),
+                "commercial_offer_kind": "cleaning_reminder_6m",
+                "commercial_offer_pending": True,
+            }
+            conversation.state = "COMPLETED"
         return CreatedAutomation(event_id, (first_id, second_id))
 
     async def pending_dispatch_ids(
