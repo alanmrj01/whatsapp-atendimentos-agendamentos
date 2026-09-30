@@ -203,7 +203,10 @@ def enrich_context_from_message(
         _assign_fact(updated, "room_people_max", people, is_correction)
 
     preference = _preference(assertion)
-    if preference is not None:
+    if preference is not None and (
+        preference != "economy"
+        or _should_capture_equipment_preference(updated, normalized)
+    ):
         _assign_fact(updated, "equipment_preference", preference, is_correction)
 
     cycle = _climate_mode(assertion)
@@ -391,6 +394,29 @@ def _people_count(normalized: str) -> int | None:
         if value is not None and value.is_integer() and 1 <= value <= 100:
             return int(value)
     return None
+
+
+def _should_capture_equipment_preference(
+    context: dict[str, Any],
+    normalized: str,
+) -> bool:
+    """Avoid treating a generic price objection as an equipment-profile change."""
+
+    if context.get("purchase_mode") in {"purchase", "both"}:
+        return True
+    if context.get("equipment_ownership") == "needs_equipment":
+        return True
+    return any(
+        term in normalized
+        for term in (
+            "ar condicionado",
+            "aparelho",
+            "equipamento",
+            "modelo",
+            "split",
+            "btu",
+        )
+    )
 
 
 def _preference(normalized: str) -> str | None:

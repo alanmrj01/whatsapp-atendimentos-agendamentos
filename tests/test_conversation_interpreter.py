@@ -289,3 +289,19 @@ def test_direct_need_for_equipment_with_budget_is_purchase_intent() -> None:
 
     assert result.has(ConversationIntent.EQUIPMENT_PURCHASE)
     assert result.equipment_budget_max == 1500.0
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Tem como melhorar o valor?",
+        "Vocês conseguem dar desconto?",
+        "Achei muito caro",
+        "Tem um preço menor?",
+    ],
+)
+def test_price_objection_language_is_recognized_as_price_question(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+
