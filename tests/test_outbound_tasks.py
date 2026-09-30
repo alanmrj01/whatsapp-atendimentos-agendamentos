@@ -46,6 +46,7 @@ from app.whatsapp.client import (
     WhatsAppRateLimitError,
     WhatsAppTemporaryError,
     WhatsAppTimeoutError,
+    WhatsAppValidationError,
 )
 from app.whatsapp.webhook import InboundMessageEvent, build_event_key
 
@@ -412,6 +413,39 @@ async def test_transient_failures_remain_pending_for_cloud_tasks_retry(
 
     assert repository.sent == []
     assert repository.failed == []
+
+
+@pytest.mark.asyncio
+async def test_interactive_validation_failure_falls_back_to_plain_text() -> None:
+    class ValidationThenTextSender(FakeWhatsAppSender):
+        async def send_interactive_buttons(
+            self, to: str, body: str, buttons: Any
+        ) -> str:
+            self.calls.append(("buttons", (to, body, buttons)))
+            raise WhatsAppValidationError("button title is too long")
+
+        async def send_text(self, to: str, text: str) -> str:
+            self.calls.append(("text", (to, text)))
+            return "wamid.fallback"
+
+    repository = FakeOutboundRepository(
+        stored_message(message_type="interactive_button")
+    )
+    sender = ValidationThenTextSender()
+
+    result = await process_outbound_message(
+        FakeSession(),
+        MESSAGE_ID,
+        lambda: sender,
+        repository,
+    )
+
+    assert result == "sent"
+    assert [kind for kind, _ in sender.calls] == ["buttons", "text"]
+    assert "Responda com: Sim" in sender.calls[1][1][1]
+    assert repository.sent == [(MESSAGE_ID, "wamid.fallback")]
+    assert repository.failed == []
+    assert repository.retry_attempts == []
 
 
 @pytest.mark.asyncio

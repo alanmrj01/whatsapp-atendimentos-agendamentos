@@ -3903,7 +3903,7 @@ async def _handle_equipment_profile(
         else None
     )
     if isinstance(image_url, str) and image_url.startswith("https://"):
-        caption = f"Foto de referência: {product}."
+        caption = product
         followups.append(
             equipment_image_message(
                 image_url,

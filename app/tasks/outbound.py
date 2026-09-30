@@ -286,7 +286,10 @@ async def process_outbound_message(
             ) from None
 
         try:
-            provider_message_id = await _send_message(client, message)
+            provider_message_id = await _send_message_with_validation_fallback(
+                client,
+                message,
+            )
         except (WhatsAppTemporaryError, WhatsAppInvalidResponseError):
             raise OutboundTaskTransientError(
                 "WhatsApp outbound delivery is temporarily unavailable"
@@ -307,6 +310,62 @@ async def process_outbound_message(
             provider_message_id,
         )
         return "sent"
+
+
+async def _send_message_with_validation_fallback(
+    client: WhatsAppSender,
+    message: StoredOutboundMessage,
+) -> str:
+    try:
+        return await _send_message(client, message)
+    except WhatsAppValidationError:
+        if message.message_type not in {"interactive_button", "interactive_list"}:
+            raise
+        fallback = _interactive_plain_text_fallback(message)
+        return await client.send_text(message.recipient, fallback)
+
+
+def _interactive_plain_text_fallback(
+    message: StoredOutboundMessage,
+) -> str:
+    body = (message.body or "").strip()
+    payload = message.outbound_payload
+    labels: list[str] = []
+    if isinstance(payload, Mapping):
+        if message.message_type == "interactive_button":
+            raw_buttons = payload.get("buttons")
+            if isinstance(raw_buttons, Sequence) and not isinstance(
+                raw_buttons, (str, bytes)
+            ):
+                for item in raw_buttons:
+                    if isinstance(item, Mapping):
+                        title = item.get("title")
+                        if isinstance(title, str) and title.strip():
+                            labels.append(title.strip())
+        elif message.message_type == "interactive_list":
+            raw_sections = payload.get("sections")
+            if isinstance(raw_sections, Sequence) and not isinstance(
+                raw_sections, (str, bytes)
+            ):
+                for section in raw_sections:
+                    if not isinstance(section, Mapping):
+                        continue
+                    rows = section.get("rows")
+                    if not isinstance(rows, Sequence) or isinstance(
+                        rows, (str, bytes)
+                    ):
+                        continue
+                    for row in rows:
+                        if isinstance(row, Mapping):
+                            title = row.get("title")
+                            if isinstance(title, str) and title.strip():
+                                labels.append(title.strip())
+    if labels:
+        options = " | ".join(dict.fromkeys(labels))
+        fallback = f"{body}\n\nResponda com: {options}" if body else f"Responda com: {options}"
+    else:
+        fallback = body or "Por favor, responda em texto para continuar."
+    return fallback[:4096]
 
 
 async def _send_message(
