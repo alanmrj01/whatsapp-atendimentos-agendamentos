@@ -4013,7 +4013,7 @@ async def test_existing_maintenance_model_answer_is_not_reinterpreted_as_catalog
 
 
 @mark.asyncio
-async def test_unavailable_purchase_model_returns_to_profile_then_second_insistence_handoffs() -> None:
+async def test_unavailable_purchase_model_sizes_and_offers_alternative_before_handoff() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_EQUIPMENT_MODEL,
         context={
@@ -4031,9 +4031,7 @@ async def test_unavailable_purchase_model_returns_to_profile_then_second_insiste
     ]
     engine = ConversationEngine(repository, booking_port)
 
-    await engine.process(
-        inbound(1304, body="Midea 50000btu quente frio")
-    )
+    await engine.process(inbound(1304, body="Midea 50000btu quente frio"))
 
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
     assert repository.context["catalog_miss_count"] == 1
@@ -4045,8 +4043,36 @@ async def test_unavailable_purchase_model_returns_to_profile_then_second_insiste
     assert "catálogo ativo" in first_text
     assert "cadastrada" in first_text or "cadastrado" in first_text
 
+    # Repetir antes do dimensionamento não dispara handoff prematuro:
+    # ainda não existe uma alternativa segura para oferecer.
     await engine.process(
         inbound(1305, body="Mas eu quero Midea 50000 BTU quente frio")
+    )
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    assert repository.context["catalog_miss_count"] == 1
+    assert repository.automation_enabled is True
+
+    await engine.process(inbound(1306, body="3 pessoas"))
+    await engine.process(inbound(1307, body="16 m2"))
+    await engine.process(
+        inbound(
+            1308,
+            action="equipment.preference.cost_benefit",
+            body="Custo-benefício",
+        )
+    )
+    await engine.process(
+        inbound(1309, action="equipment.cycle.cold", body="Só frio")
+    )
+    await engine.process(
+        inbound(1310, action="equipment.space.no_limit", body="Sem restrição")
+    )
+
+    assert repository.context["catalog_alternative_presented"] is True
+    assert isinstance(repository.context["recommended_equipment"], dict)
+
+    await engine.process(
+        inbound(1311, body="Mesmo assim eu quero Midea 50000 BTU quente frio")
     )
 
     assert repository.state == ConversationState.HUMAN_HANDOFF
