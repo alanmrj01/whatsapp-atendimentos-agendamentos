@@ -5116,7 +5116,7 @@ async def _handle_equipment_delivery(
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
-        _, intake = await _context_intake(inbound, context, port)
+        service_id, intake = await _context_intake(inbound, context, port)
     except BookingPortUnavailable:
         return _transition(
             ConversationState.BOOKING_EQUIPMENT_DELIVERY,
@@ -5155,7 +5155,7 @@ async def _handle_equipment_delivery(
         details = await _safe_service_details(
             inbound,
             port,
-            _context_service_id(updated) or uuid.UUID(int=0),
+            service_id,
         )
         pickup_address = getattr(details, "business_address", None)
         if isinstance(pickup_address, str) and pickup_address.strip():
