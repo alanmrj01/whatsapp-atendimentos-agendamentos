@@ -284,6 +284,13 @@ class DeterministicConversationInterpreter:
                 intents.add(ConversationIntent.SERVICE_INTENT)
                 break
 
+        if service_key is not None and re.search(
+            r"\b(?:voces\s+)?(?:fazem|tem|trabalham\s+com|realizam|atendem|oferecem)\b",
+            assertion,
+        ):
+            intents.add(ConversationIntent.SERVICE_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
+
         if _contains_equipment_purchase(assertion) and not _purchase_is_negated(normalized):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
         elif (
