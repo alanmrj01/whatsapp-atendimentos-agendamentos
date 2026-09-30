@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models import (
     Appointment,
@@ -157,6 +158,7 @@ async def _create_cleaning_followups(
     limit: int,
 ) -> list[uuid.UUID]:
     cutoff = reference - CLEANING_CYCLE_DELAY
+    future_appointment = aliased(Appointment)
     latest_completed = (
         select(
             Appointment.business_id.label("business_id"),
@@ -220,11 +222,11 @@ async def _create_cleaning_followups(
                     )
                 ),
                 ~exists(
-                    select(Appointment.id).where(
-                        Appointment.business_id == latest_completed.c.business_id,
-                        Appointment.customer_id == latest_completed.c.customer_id,
-                        Appointment.status == "confirmed",
-                        Appointment.starts_at >= reference,
+                    select(future_appointment.id).where(
+                        future_appointment.business_id == Appointment.business_id,
+                        future_appointment.customer_id == Appointment.customer_id,
+                        future_appointment.status == "confirmed",
+                        future_appointment.starts_at >= reference,
                     )
                 ),
             )
