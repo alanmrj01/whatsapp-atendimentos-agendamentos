@@ -172,6 +172,33 @@ class ConversationDetail(ConversationView):
     free_form_window_expires_at: datetime | None
 
 
+class ConversationMessageDelta(StrictModel):
+    items: list[MessageView]
+    latest_at: datetime | None
+
+
+class ConversationBulkAction(StrictModel):
+    conversation_ids: list[UUID] = Field(min_length=1, max_length=100)
+    action: Literal[
+        "mark_read",
+        "mark_unread",
+        "pin",
+        "unpin",
+        "delete",
+        "assistant_on",
+        "assistant_off",
+    ]
+
+    @field_validator("conversation_ids")
+    @classmethod
+    def unique_conversations(cls, value: list[UUID]) -> list[UUID]:
+        return list(dict.fromkeys(value))
+
+
+class ConversationBulkResult(StrictModel):
+    affected: int
+
+
 class CustomerNameUpdate(StrictModel):
     name: str | None = Field(default=None, max_length=255)
 
@@ -409,10 +436,11 @@ class AutomationSettingsView(StrictModel):
     assistant_enabled: bool = True
     greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?"
     fallback_message: str = (
-        "Não entendi. Conte em poucas palavras o serviço que você precisa."
+        "Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa."
     )
     handoff_message: str = (
-        "Seu atendimento foi encaminhado para uma pessoa da equipe."
+        "Seu atendimento foi encaminhado para uma pessoa da equipe. "
+        "Por favor, aguarde alguns instantes."
     )
     supported_options: tuple[str, ...] = (
         "assistant_enabled",
