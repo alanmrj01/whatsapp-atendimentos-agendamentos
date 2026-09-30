@@ -4,12 +4,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Appointment,
     Business,
+    BusinessAutomationExclusion,
     Conversation,
     Customer,
     CustomerOutreach,
@@ -78,8 +79,19 @@ async def _create_incomplete_followups(
                 Conversation.automation_enabled.is_(True),
                 Conversation.handoff_status == "none",
                 Conversation.deleted_at.is_(None),
+                or_(
+                    Conversation.automation_suppressed_until.is_(None),
+                    Conversation.automation_suppressed_until <= reference,
+                ),
                 Business.active.is_(True),
                 Business.assistant_enabled.is_(True),
+                ~exists(
+                    select(BusinessAutomationExclusion.id).where(
+                        BusinessAutomationExclusion.business_id == Conversation.business_id,
+                        BusinessAutomationExclusion.whatsapp_id == Customer.whatsapp_id,
+                        BusinessAutomationExclusion.active.is_(True),
+                    )
+                ),
             )
             .order_by(Conversation.last_interaction_at.asc())
             .limit(limit)
@@ -194,8 +206,27 @@ async def _create_cleaning_followups(
                 Conversation.automation_enabled.is_(True),
                 Conversation.handoff_status == "none",
                 Conversation.deleted_at.is_(None),
+                or_(
+                    Conversation.automation_suppressed_until.is_(None),
+                    Conversation.automation_suppressed_until <= reference,
+                ),
                 Business.active.is_(True),
                 Business.assistant_enabled.is_(True),
+                ~exists(
+                    select(BusinessAutomationExclusion.id).where(
+                        BusinessAutomationExclusion.business_id == Appointment.business_id,
+                        BusinessAutomationExclusion.whatsapp_id == Customer.whatsapp_id,
+                        BusinessAutomationExclusion.active.is_(True),
+                    )
+                ),
+                ~exists(
+                    select(Appointment.id).where(
+                        Appointment.business_id == latest_completed.c.business_id,
+                        Appointment.customer_id == latest_completed.c.customer_id,
+                        Appointment.status == "confirmed",
+                        Appointment.starts_at >= reference,
+                    )
+                ),
             )
             .order_by(Appointment.ends_at.asc())
             .limit(limit)
@@ -339,13 +370,33 @@ async def mark_outreach_response(
         .where(
             CustomerOutreach.business_id == business_id,
             CustomerOutreach.conversation_id == conversation_id,
-            CustomerOutreach.status == "sent",
+            CustomerOutreach.status.in_(("pending", "sent")),
         )
-        .order_by(CustomerOutreach.sent_at.desc().nullslast())
+        .order_by(
+            CustomerOutreach.sent_at.desc().nullslast(),
+            CustomerOutreach.created_at.desc(),
+        )
         .limit(1)
         .with_for_update()
     )
     if outreach is None:
+        return
+
+    if outreach.status == "pending":
+        outreach.status = "skipped"
+        outreach.responded_at = occurred_at
+        await session.execute(
+            update(Message)
+            .where(
+                Message.business_id == business_id,
+                Message.conversation_id == conversation_id,
+                Message.direction == "outbound",
+                Message.status == "pending",
+                Message.outbound_payload.op("->>")("_alovia_outreach_id")
+                == str(outreach.id),
+            )
+            .values(status="failed")
+        )
         return
 
     normalized = " ".join((body or "").casefold().split())
