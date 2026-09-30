@@ -201,6 +201,105 @@ async def determine_transition(
     interpretation = interpreter.interpret(inbound.body)
     action = inbound.interactive_id
     base_context = _clean_context(conversation.context)
+    normalized_inbound = normalize_portuguese(inbound.body or "")
+
+    if (
+        base_context.get("inactivity_followup_pending_response") is True
+        and action is None
+        and any(
+            phrase in normalized_inbound
+            for phrase in (
+                "nao gostei",
+                "nao gostei disso",
+                "nao gostei do servico",
+                "nao gostei do atendimento",
+                "nao gostei do aparelho",
+                "nao gostei do prazo",
+                "nao ficou bom",
+                "nao me agradou",
+            )
+        )
+        and not any(
+            token in normalized_inbound
+            for token in ("preco", "valor", "caro", "orcamento", "desconto")
+        )
+    ):
+        updated = dict(base_context)
+        updated.pop("inactivity_followup_pending_response", None)
+        updated.pop("inactivity_followup_outreach_id", None)
+        return _transition(
+            ConversationState.HUMAN_HANDOFF,
+            updated,
+            _text_message(
+                "Entendi. Vou encaminhar seu atendimento para uma pessoa da equipe "
+                "para conversar com você e buscar a melhor solução."
+            ),
+            automation_enabled=False,
+            handoff_status="waiting",
+        )
+
+    if (
+        base_context.get("cleaning_outreach_pending_response") is True
+        and action is None
+        and normalized_inbound in {
+            "nao",
+            "nao obrigado",
+            "nao obrigada",
+            "agora nao",
+            "nao tenho interesse",
+            "pode deixar",
+        }
+    ):
+        updated = dict(base_context)
+        updated.pop("cleaning_outreach_pending_response", None)
+        updated.pop("cleaning_outreach_id", None)
+        return _transition(
+            ConversationState.COMPLETED,
+            updated,
+            _text_message(
+                "Sem problema. Obrigado pelo retorno. Quando precisar, estaremos por aqui."
+            ),
+        )
+
+    if (
+        base_context.get("cleaning_outreach_pending_response") is True
+        and action is None
+        and normalized_inbound in {
+            "sim",
+            "quero",
+            "tenho interesse",
+            "pode ser",
+            "vamos",
+            "vamos agendar",
+            "quero agendar",
+        }
+    ):
+        try:
+            port = _require_booking_port(booking_port)
+            services = _snapshot_options(await port.list_services(inbound.business_id))
+        except BookingPortUnavailable:
+            services = ()
+        cleaning = next(
+            (
+                item
+                for item in services
+                if _service_kind(services, uuid.UUID(item.id)) == "cleaning"
+            ),
+            None,
+        )
+        if cleaning is not None:
+            updated = dict(base_context)
+            updated.pop("cleaning_outreach_pending_response", None)
+            updated.pop("cleaning_outreach_id", None)
+            return await _handle_service(
+                inbound,
+                updated,
+                f"service:{cleaning.id}",
+                booking_port,
+                interpretation=interpretation,
+                fallback_message=conversation.fallback_message,
+                customer_name=conversation.customer_name,
+            )
 
     commercial_handoff = await _commercial_negotiation_handoff_if_applicable(
         conversation,
@@ -213,6 +312,11 @@ async def determine_transition(
     )
     if commercial_handoff is not None:
         return commercial_handoff
+
+    if base_context.get("inactivity_followup_pending_response") is True:
+        base_context = dict(base_context)
+        base_context.pop("inactivity_followup_pending_response", None)
+        base_context.pop("inactivity_followup_outreach_id", None)
 
     context = (
         enrich_context_from_message(
@@ -1194,6 +1298,12 @@ def _looks_like_commercial_negotiation(
         "consegue fazer por",
         "da para fazer por",
         "tem como fazer por",
+        "nao gostei do preco",
+        "nao gostei do valor",
+        "preco ficou alto",
+        "valor ficou alto",
+        "preco esta alto",
+        "valor esta alto",
     )
     if any(phrase in normalized for phrase in negotiation_phrases):
         return True
