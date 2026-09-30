@@ -318,3 +318,18 @@ def test_generic_ac_problem_maps_to_corrective_diagnostics(body: str) -> None:
     assert result.has(ConversationIntent.SERVICE_INTENT)
     assert result.service_key == "diagnostics"
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Vocês fazem manutenção?",
+        "Tem manutenção corretiva?",
+        "Vocês trabalham com limpeza?",
+    ],
+)
+def test_service_inquiry_is_side_question_not_implicit_workflow_change(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+    assert result.has(ConversationIntent.SERVICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+
