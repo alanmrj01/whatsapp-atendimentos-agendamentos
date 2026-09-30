@@ -246,7 +246,12 @@ class CommercialAutomationRepository:
         now: datetime,
     ) -> CreatedAutomation | None:
         event_id = uuid.uuid4()
-        anchor = str(candidate.latest_inbound_id)
+        journey_id = candidate.context.get("commercial_journey_id")
+        anchor = (
+            journey_id
+            if isinstance(journey_id, str) and journey_id.strip()
+            else str(candidate.conversation_id)
+        )
         service_name = await self.service_name(
             candidate.business_id,
             candidate.context,
