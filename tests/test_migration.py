@@ -64,6 +64,12 @@ STRUCTURED_ADDRESS_MIGRATION_PATH = (
     / "versions"
     / "20260923_0018_structured_company_address.py"
 )
+DELIVERY_FEE_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260930_0021_equipment_delivery_fee.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -96,7 +102,25 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260928_0020"]
+    assert script.get_heads() == ["20260930_0021"]
+
+
+def test_equipment_delivery_fee_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", DELIVERY_FEE_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", DELIVERY_FEE_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "add column equipment_delivery_fee_per_km" in upgrade
+    assert "default '2.40' not null" in upgrade
+    assert "equipment_delivery_fee_per_km >= 0" in upgrade
+    assert "drop column equipment_delivery_fee_per_km" in downgrade
 
 
 def test_automatic_booking_notifications_migration_is_additive_and_reversible() -> None:
