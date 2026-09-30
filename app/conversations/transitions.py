@@ -226,13 +226,33 @@ async def determine_transition(
     if catalog_guard is not None:
         return catalog_guard
 
+    pending_state_answer = _message_can_answer_pending_state(
+        state,
+        inbound,
+        base_context,
+        interpretation,
+    )
+    question_without_slot_answer = (
+        action is None
+        and inbound.message_type == "text"
+        and isinstance(inbound.body, str)
+        and inbound.body.strip()
+        and not pending_state_answer
+        and (
+            interpretation.has_act(ConversationAct.SIDE_QUESTION)
+            or _looks_like_parallel_digression(inbound.body)
+            or _equipment_technical_question(
+                normalize_portuguese(inbound.body)
+            ) is not None
+        )
+    )
     context = (
         enrich_context_from_message(
             base_context,
             None,
             whatsapp_id=inbound.whatsapp_id,
         )
-        if action is not None
+        if action is not None or question_without_slot_answer
         else enrich_context_from_message(
             base_context,
             inbound.body,
@@ -1819,7 +1839,11 @@ async def _equipment_question_answer(
         ]
 
     recommendation = context.get("recommended_equipment")
-    technical_kind = _equipment_technical_question(normalized)
+    technical_kind = (
+        None
+        if interpretation.has(ConversationIntent.PRICE_QUESTION)
+        else _equipment_technical_question(normalized)
+    )
     if technical_kind is not None:
         current_item = None
         current_item_id = (
