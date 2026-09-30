@@ -214,6 +214,18 @@ async def determine_transition(
     if commercial_handoff is not None:
         return commercial_handoff
 
+    catalog_guard = await _purchase_catalog_guard_if_needed(
+        conversation,
+        inbound,
+        state,
+        base_context,
+        interpretation,
+        booking_port,
+        action,
+    )
+    if catalog_guard is not None:
+        return catalog_guard
+
     context = (
         enrich_context_from_message(
             base_context,
@@ -440,9 +452,21 @@ async def _route_named_conversation(
     if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
 
+    pending_state_answer = _message_can_answer_pending_state(
+        state,
+        inbound,
+        context,
+        interpretation,
+    )
     equipment_question_answer = (
         None
-        if action in {QUOTE_FINISH, QUOTE_SCHEDULE}
+        if (
+            action in {QUOTE_FINISH, QUOTE_SCHEDULE}
+            or (
+                state is ConversationState.BOOKING_EQUIPMENT_MODEL
+                and pending_state_answer
+            )
+        )
         else await _equipment_question_answer(
             inbound,
             context,
@@ -570,12 +594,7 @@ async def _route_named_conversation(
             interpretation.has_act(ConversationAct.SIDE_QUESTION)
             or equipment_question_answer is not None
         )
-        and not _message_can_answer_pending_state(
-            state,
-            inbound,
-            context,
-            interpretation,
-        )
+        and not pending_state_answer
     ):
         return await _resume_pending_question(
             conversation,
@@ -623,22 +642,23 @@ async def _route_named_conversation(
             matched is not None
             and current_id is not None
             and matched.id != str(current_id)
-            and interpretation.has_act(ConversationAct.ADDITIONAL_REQUEST)
         ):
             updated = {
                 **context,
                 "pending_service_change_id": matched.id,
                 "pending_service_change_label": matched.label,
             }
+            prompt = (
+                additional_request_message(matched.label)
+                if interpretation.has_act(ConversationAct.ADDITIONAL_REQUEST)
+                else change_confirmation_message(matched.label)
+            )
             return _transition(
                 state,
                 updated,
-                additional_request_message(matched.label),
+                prompt,
             )
-        if (
-            matched is not None
-            and (current_id is None or matched.id != str(current_id))
-        ):
+        if matched is not None and current_id is None:
             return await _handle_service(
                 inbound,
                 {},
@@ -648,6 +668,20 @@ async def _route_named_conversation(
                 fallback_message=conversation.fallback_message,
                 customer_name=customer_name,
             )
+
+    if (
+        state in booking_states
+        and action is None
+        and interpretation.intent is ConversationIntent.UNKNOWN
+        and not pending_state_answer
+    ):
+        return await _resume_pending_question(
+            conversation,
+            inbound,
+            context,
+            booking_port,
+            prefix=_closed_loop_digression_reply(inbound.body),
+        )
 
     greeting_prefix: str | None = None
     if (
@@ -3461,6 +3495,37 @@ async def _handle_access(
         ACCESS_UNKNOWN: AccessCondition.UNKNOWN,
     }.get(action)
     if access is None:
+        normalized = normalize_portuguese(inbound.body or "")
+        if any(
+            phrase in normalized
+            for phrase in (
+                "acesso normal",
+                "normal",
+                "facil",
+                "sem dificuldade",
+                "sem problema de acesso",
+            )
+        ):
+            access = AccessCondition.NORMAL
+        elif any(
+            phrase in normalized
+            for phrase in (
+                "acesso dificil",
+                "dificil",
+                "complicado",
+                "escada",
+                "local apertado",
+                "dificuldade de acesso",
+            )
+        ):
+            access = AccessCondition.DIFFICULT
+        elif normalized in {
+            "nao sei",
+            "nao tenho certeza",
+            "nao consigo informar",
+        }:
+            access = AccessCondition.UNKNOWN
+    if access is None:
         return _retry_or_handoff(
             ConversationState.BOOKING_ACCESS,
             context,
@@ -5889,25 +5954,41 @@ async def _advance_intake(
                 )
         else:
             model_known = context.get("equipment_model_known")
-            if model_known is None and _context_string(context, "equipment_model") is None:
+            model_text = _context_string(context, "equipment_model")
+            if (
+                "recommended_equipment" not in context
+                and model_known is None
+                and model_text is None
+            ):
                 return _transition(
                     ConversationState.BOOKING_EQUIPMENT_MODEL,
                     context,
                     equipment_model_known_message(),
                 )
-            if model_known is True and _context_string(context, "equipment_model") is None:
+            if (
+                "recommended_equipment" not in context
+                and model_known is True
+                and model_text is None
+            ):
                 return _transition(
                     ConversationState.BOOKING_EQUIPMENT_MODEL,
                     context,
                     equipment_model_request_message(),
                 )
-            if model_known is False and "recommended_equipment" not in context:
-                missing = missing_equipment_profile_fields(context)
+            if "recommended_equipment" not in context:
+                # A model typed by the customer is a preference/request, not a
+                # recommendation. Purchased equipment must always be dimensioned
+                # and selected from the active catalog before quote/checkout.
+                profile_context = {
+                    **context,
+                    "equipment_model_known": False,
+                }
+                missing = missing_equipment_profile_fields(profile_context)
                 if missing:
                     prompt = _equipment_profile_prompt(missing)
-                    if context.get("equipment_profile_intro_sent") is not True:
+                    if profile_context.get("equipment_profile_intro_sent") is not True:
                         updated = {
-                            **context,
+                            **profile_context,
                             "equipment_profile_intro_sent": True,
                         }
                         return _transition(
@@ -5918,12 +5999,12 @@ async def _advance_intake(
                         )
                     return _transition(
                         ConversationState.BOOKING_EQUIPMENT_PROFILE,
-                        context,
+                        profile_context,
                         prompt,
                     )
                 return await _handle_equipment_profile(
-                    inbound,
-                    context,
+                    replace(inbound, body=None),
+                    profile_context,
                     None,
                     port,
                     customer_name=customer_name,
