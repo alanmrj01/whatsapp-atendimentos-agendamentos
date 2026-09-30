@@ -283,6 +283,32 @@ class PostgresBookingAvailabilityPort:
                     image_url=item.image_url,
                     source_url=item.source_url or "",
                     price=float(item.price) if item.price is not None else None,
+                    voltage_v=(
+                        int(specs["voltage_v"])
+                        if isinstance(specs.get("voltage_v"), int)
+                        and not isinstance(specs.get("voltage_v"), bool)
+                        else None
+                    ),
+                    voltage=(
+                        str(specs.get("voltage"))
+                        if isinstance(specs.get("voltage"), str)
+                        else None
+                    ),
+                    model_sku=(
+                        str(specs.get("model_sku"))
+                        if isinstance(specs.get("model_sku"), str)
+                        else None
+                    ),
+                    wifi=(
+                        bool(specs.get("wifi"))
+                        if isinstance(specs.get("wifi"), bool)
+                        else None
+                    ),
+                    inverter=(
+                        bool(specs.get("inverter"))
+                        if isinstance(specs.get("inverter"), bool)
+                        else None
+                    ),
                 )
             )
         return tuple(entries)
