@@ -1665,7 +1665,10 @@ async def _equipment_question_answer(
     if not catalog:
         return "No momento não há equipamentos ativos cadastrados para eu comparar."
 
-    if interpretation.has(ConversationIntent.TECHNICAL_QUESTION):
+    if (
+        interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
+        and not interpretation.has(ConversationIntent.PRICE_QUESTION)
+    ):
         current_item = _catalog_item_from_context(context, catalog)
         if current_item is not None:
             technical_answer = _technical_equipment_answer(normalized, current_item)
