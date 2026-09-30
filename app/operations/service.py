@@ -1935,6 +1935,7 @@ def _conversation_view(row: Any) -> ConversationView:
             customer_name, whatsapp_profile_name, customer_phone, whatsapp_id
         ),
         customer_phone=customer_phone,
+        whatsapp_number=_whatsapp_number(customer_phone, whatsapp_id),
         last_content=last_content,
         last_message_at=last_message_at,
         status=status,
@@ -2065,6 +2066,21 @@ def _customer_display_name(item: Customer) -> str:
         item.phone_e164,
         item.whatsapp_id,
     )
+
+
+def _whatsapp_number(
+    customer_phone: str | None,
+    whatsapp_id: str | None,
+) -> str | None:
+    if isinstance(customer_phone, str) and customer_phone.strip():
+        return customer_phone.strip()
+    if not isinstance(whatsapp_id, str) or not whatsapp_id.strip():
+        return None
+    normalized = whatsapp_id.strip()
+    digits = "".join(character for character in normalized if character.isdigit())
+    if 8 <= len(digits) <= 15:
+        return f"+{digits}"
+    return normalized
 
 
 def _display_name(
