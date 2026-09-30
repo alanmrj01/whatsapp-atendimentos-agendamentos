@@ -16,6 +16,9 @@ from app.repositories.cloud_tasks import (
     CloudTaskEventRepository,
     StoredTaskEvent,
 )
+from app.repositories.commercial_automation import (
+    mark_commercial_automation_responded,
+)
 from app.repositories.automation import AutomationRepository
 from app.whatsapp.processor import (
     ConversationProcessor,
@@ -92,6 +95,12 @@ async def process_cloud_task_event(
             if inbound.whatsapp_id is None and isinstance(session, AsyncSession):
                 await event_repository.complete_event(event_key, "ignored")
                 return False
+            if isinstance(session, AsyncSession):
+                await mark_commercial_automation_responded(
+                    session,
+                    inbound.business_id,
+                    inbound.conversation_id,
+                )
             if inbound.whatsapp_id is not None:
                 exclusion_mode = await policy.active_exclusion(
                     inbound.business_id,
