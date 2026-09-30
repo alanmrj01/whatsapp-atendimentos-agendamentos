@@ -6567,9 +6567,13 @@ async def _handle_confirmation(
             context,
             booking_unavailable_message(),
         )
+    completed_context = {
+        **_clean_context(context),
+        "appointment_id": str(confirmation.appointment_id),
+    }
     return _transition(
         ConversationState.POST_BOOKING_HELP,
-        _clean_context(context),
+        completed_context,
         booking_completed_message(
             f"Agendamento confirmado para {date_short_label(selected_date)} "
             f"às {selected_time}."
