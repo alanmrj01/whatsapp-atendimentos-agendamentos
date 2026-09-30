@@ -138,6 +138,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "recommendation_presented",
         "catalog_miss_count",
         "last_catalog_miss",
+        "catalog_alternative_presented",
         "delivery_method",
         "equipment_budget_max",
         "service_budget_max",
