@@ -441,3 +441,80 @@ async def test_sensitive_values_are_absent_from_logs_and_exceptions(
         "sensitive-response-content",
     ):
         assert sensitive_value not in combined_output
+
+@mark.asyncio
+async def test_send_template_success() -> None:
+    captured_payload: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_payload.update(json.loads(request.content))
+        return httpx.Response(200, json={"messages": [{"id": "wamid.template"}]})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = WhatsAppClient(settings(), http_client=http_client)
+        provider_message_id = await client.send_template(
+            "5511999999999",
+            "alovia_atendimento_pendente_24h",
+            language_code="pt_BR",
+            body_parameters=("Alan", "instalação", "instalação"),
+        )
+
+    assert provider_message_id == "wamid.template"
+    assert captured_payload == {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": "5511999999999",
+        "type": "template",
+        "template": {
+            "name": "alovia_atendimento_pendente_24h",
+            "language": {"code": "pt_BR"},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": "Alan"},
+                        {"type": "text", "text": "instalação"},
+                        {"type": "text", "text": "instalação"},
+                    ],
+                }
+            ],
+        },
+    }
+
+
+@mark.parametrize(
+    ("name", "language"),
+    [
+        ("Invalid Name", "pt_BR"),
+        ("template-name", "pt_BR"),
+        ("template", "pt-br"),
+        ("", "pt_BR"),
+    ],
+)
+@mark.asyncio
+async def test_invalid_template_metadata_does_not_call_meta(
+    name: str,
+    language: str,
+) -> None:
+    request_count = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return httpx.Response(200, json={"messages": [{"id": "unexpected"}]})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = WhatsAppClient(settings(), http_client=http_client)
+        with raises(WhatsAppValidationError):
+            await client.send_template(
+                "5511999999999",
+                name,
+                language_code=language,
+            )
+
+    assert request_count == 0
+
