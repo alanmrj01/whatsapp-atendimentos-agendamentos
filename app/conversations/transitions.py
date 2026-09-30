@@ -4241,6 +4241,10 @@ async def _handle_service(
             **context,
             "service_id": str(service_id),
             "purchase_mode": purchase_mode,
+            "commercial_journey_id": (
+                _context_string(context, "commercial_journey_id")
+                or str(uuid.uuid4())
+            ),
         }
         updated_context.pop("service_clarification", None)
         if purchase_action == EQUIPMENT_INSTALLATION:
@@ -4329,6 +4333,10 @@ async def _handle_service(
     updated_context = {
         **context,
         "service_id": str(service_id),
+        "commercial_journey_id": (
+            _context_string(context, "commercial_journey_id")
+            or str(uuid.uuid4())
+        ),
     }
     updated_context.pop("service_clarification", None)
     selected_service_kind = _service_kind(services, service_id)
