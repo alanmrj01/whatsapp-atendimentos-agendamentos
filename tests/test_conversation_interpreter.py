@@ -321,3 +321,22 @@ def test_generic_non_equipment_problem_is_not_misclassified_as_maintenance() -> 
     assert result.service_key != "diagnostics"
     assert not result.has(ConversationIntent.SERVICE_INTENT)
 
+def test_service_capability_question_is_a_side_question() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Vocês fazem manutenção?"
+    )
+
+    assert result.service_key == "diagnostics"
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+    assert result.has(ConversationIntent.SERVICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+
+
+def test_diagnostic_evidence_question_is_service_question() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Precisa mandar foto ou vídeo?"
+    )
+
+    assert result.has(ConversationIntent.SERVICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+
