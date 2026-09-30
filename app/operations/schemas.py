@@ -213,6 +213,7 @@ class BusinessView(StrictModel):
     preparation_minutes: int | None
     finishing_minutes: int | None
     minimum_booking_notice_minutes: int | None
+    equipment_delivery_fee_per_km: Decimal
     materials_catalog_reviewed: bool
     agenda_preferences_reviewed: bool
     onboarding_completed_at: datetime | None
@@ -235,6 +236,12 @@ class BusinessUpdate(StrictModel):
     preparation_minutes: int | None = Field(default=None, ge=0, le=240)
     finishing_minutes: int | None = Field(default=None, ge=0, le=240)
     minimum_booking_notice_minutes: int | None = Field(default=None, ge=0, le=10080)
+    equipment_delivery_fee_per_km: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1000"),
+        decimal_places=2,
+    )
     materials_catalog_reviewed: bool | None = None
     agenda_preferences_reviewed: bool | None = None
 
