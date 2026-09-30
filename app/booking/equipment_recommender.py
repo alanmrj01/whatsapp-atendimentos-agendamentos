@@ -124,11 +124,14 @@ def recommend_equipment(
     capacity_candidates = [
         item for item in candidates if item.capacity_btu >= minimum_acceptable
     ]
-    if not capacity_candidates:
-        raise ValueError(
-            "No active equipment has enough capacity for the informed environment"
-        )
-    candidates = capacity_candidates
+    if capacity_candidates:
+        candidates = capacity_candidates
+    else:
+        max_capacity = max(item.capacity_btu for item in candidates)
+        if required > max_capacity * 1.30:
+            raise ValueError(
+                "No active equipment has enough capacity for the informed environment"
+            )
 
     within_budget: bool | None = None
     if budget_max is not None:
