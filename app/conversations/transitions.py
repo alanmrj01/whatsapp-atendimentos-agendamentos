@@ -740,21 +740,42 @@ async def _route_named_conversation(
                 )
             )
         )
-        if looks_like_parallel_question and not _message_can_answer_pending_state(
-            state,
-            inbound,
-            context,
-            interpretation,
+        is_conversation_feedback = any(
+            phrase in normalized_unknown
+            for phrase in (
+                "isso esta ficando complicado",
+                "esta complicado",
+                "nao estou entendendo",
+                "nao entendi nada",
+                "esta confuso",
+                "que confuso",
+                "nao faz sentido",
+            )
+        )
+        if (
+            (looks_like_parallel_question or is_conversation_feedback)
+            and not _message_can_answer_pending_state(
+                state,
+                inbound,
+                context,
+                interpretation,
+            )
         ):
+            prefix = (
+                "Entendi. Vou manter tudo o que já foi preenchido e seguir exatamente "
+                "do ponto em que estávamos."
+                if is_conversation_feedback
+                else (
+                    "Não tenho essa informação cadastrada com segurança e prefiro não "
+                    "inventar. Seu atendimento continua exatamente de onde parou."
+                )
+            )
             return await _resume_pending_question(
                 conversation,
                 inbound,
                 context,
                 booking_port,
-                prefix=(
-                    "Não tenho essa informação cadastrada com segurança e prefiro não "
-                    "inventar. Seu atendimento continua exatamente de onde parou."
-                ),
+                prefix=prefix,
             )
 
     greeting_prefix: str | None = None
