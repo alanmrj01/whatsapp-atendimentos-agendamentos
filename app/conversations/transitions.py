@@ -477,6 +477,23 @@ async def _route_named_conversation(
         )
 
     if (
+        equipment_question_answer is not None
+        and state in {ConversationState.START, ConversationState.MENU}
+        and action is None
+        and _looks_like_specific_equipment_request(inbound.body)
+    ):
+        return _transition(
+            ConversationState.BOOKING_SERVICE,
+            {
+                **context,
+                "service_clarification": "equipment_purchase",
+                "request_mode": "quote",
+            },
+            _text_message(equipment_question_answer),
+            follow_ups=(equipment_purchase_clarification_message(),),
+        )
+
+    if (
         question_answer is not None
         and state in {
             ConversationState.START,
@@ -648,6 +665,40 @@ async def _route_named_conversation(
                 fallback_message=conversation.fallback_message,
                 customer_name=customer_name,
             )
+
+    if (
+        state in booking_states
+        and action is None
+        and interpretation.intent is ConversationIntent.UNKNOWN
+        and isinstance(inbound.body, str)
+        and inbound.body.strip()
+        and not _message_can_answer_pending_state(
+            state,
+            inbound,
+            context,
+            interpretation,
+        )
+    ):
+        normalized_unknown = normalize_portuguese(inbound.body)
+        looks_like_question = (
+            "?" in inbound.body
+            or normalized_unknown.startswith(
+                ("como ", "qual ", "quais ", "quanto ", "tem ", "pode ", "posso ", "sera ", "e se ")
+            )
+        )
+        prefix = (
+            "Não tenho essa informação cadastrada com segurança e prefiro não inventar. "
+            "Seu atendimento continua exatamente de onde parou."
+            if looks_like_question
+            else "Entendi. Seu atendimento continua exatamente de onde parou."
+        )
+        return await _resume_pending_question(
+            conversation,
+            inbound,
+            context,
+            booking_port,
+            prefix=prefix,
+        )
 
     greeting_prefix: str | None = None
     if (
@@ -1163,6 +1214,48 @@ def _equipment_suggestion_snapshot(
         "price": item.price,
         "required_btu_reference": required_btu,
     }
+
+
+def _catalog_entry_matching_customer_request(
+    body: str | None,
+    catalog: Sequence[Any],
+) -> Any | None:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return None
+    capacity_match = re.search(r"\b(\d{4,6})\s*btu\b", normalized)
+    capacity = int(capacity_match.group(1)) if capacity_match else None
+    matches: list[Any] = []
+    for item in catalog:
+        brand = normalize_portuguese(item.brand)
+        line = normalize_portuguese(item.line)
+        brand_mentioned = bool(brand and f" {brand} " in f" {normalized} ")
+        line_mentioned = bool(line and len(line) >= 4 and line in normalized)
+        capacity_matches = capacity is None or item.capacity_btu == capacity
+        if capacity_matches and (brand_mentioned or line_mentioned or capacity is not None):
+            matches.append(item)
+    if len(matches) == 1:
+        return matches[0]
+    if capacity is not None:
+        exact_capacity = [item for item in matches if item.capacity_btu == capacity]
+        if len(exact_capacity) == 1:
+            return exact_capacity[0]
+    return None
+
+
+def _looks_like_specific_equipment_request(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    return bool(
+        re.search(r"\b\d{4,6}\s*btu\b", normalized)
+        or any(
+            token in normalized
+            for token in (
+                "midea", "gree", "lg", "samsung", "electrolux", "philco",
+                "tcl", "agratto", "daikin", "elgin", "hisense", "carrier",
+                "springer",
+            )
+        )
+    )
 
 
 async def _equipment_question_answer(
@@ -3361,7 +3454,28 @@ async def _handle_service(
         "service_id": str(service_id),
     }
     updated_context.pop("service_clarification", None)
-    if _service_kind(services, service_id) == "diagnostics":
+    selected_service_kind = _service_kind(services, service_id)
+    if selected_service_kind in {
+        "cleaning",
+        "gas_recharge",
+        "diagnostics",
+        "preventive",
+    }:
+        updated_context["equipment_ownership"] = "has_equipment"
+        for key in (
+            "purchase_mode",
+            "purchase_only",
+            "request_mode",
+            "recommended_equipment",
+            "recommendation_presented",
+            "equipment_suggestion",
+            "catalog_mismatch_attempts",
+            "delivery_method",
+            "delivery_address",
+            "delivery_installation_match_pending",
+        ):
+            updated_context.pop(key, None)
+    if selected_service_kind == "diagnostics":
         raw_issue = " ".join((inbound.body or "").strip().split())
         if raw_issue:
             updated_context["reported_issue"] = raw_issue[:300]
@@ -3942,6 +4056,93 @@ async def _handle_equipment_model(
         )
 
     raw = " ".join((inbound.body or "").strip().split())
+    if (
+        raw
+        and _context_string(context, "equipment_ownership") == "needs_equipment"
+        and _looks_like_specific_equipment_request(raw)
+    ):
+        try:
+            catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
+        except BookingRequiresHandoff as exc:
+            return _handoff_for_reason(str(exc))
+        matched_catalog = _catalog_entry_matching_customer_request(raw, catalog)
+        if matched_catalog is None:
+            attempts = int(context.get("catalog_mismatch_attempts") or 0) + 1
+            if attempts >= 2:
+                preserved = {
+                    **context,
+                    "catalog_mismatch_attempts": attempts,
+                }
+                preserved.pop("equipment_model", None)
+                preserved.pop("recommended_equipment", None)
+                preserved.pop("recommendation_presented", None)
+                return _transition(
+                    ConversationState.HUMAN_HANDOFF,
+                    preserved,
+                    _text_message(
+                        "Esse equipamento não está no catálogo ativo e você confirmou que "
+                        "quer seguir com ele. Para não informar modelo, preço ou disponibilidade "
+                        "sem confirmação, vou encaminhar seu atendimento para a equipe."
+                    ),
+                    automation_enabled=False,
+                    handoff_status="waiting",
+                )
+            updated = {
+                **context,
+                "equipment_model_known": False,
+                "catalog_mismatch_attempts": attempts,
+            }
+            updated.pop("equipment_model", None)
+            updated.pop("recommended_equipment", None)
+            updated.pop("recommendation_presented", None)
+            transition = await _advance_intake(
+                inbound,
+                port,
+                intake,
+                updated,
+                services=services,
+                customer_name=customer_name,
+            )
+            return _prepend_transition_body(
+                transition,
+                (
+                    f"Não encontrei “{raw}” no catálogo ativo. Para não inventar um aparelho "
+                    "ou indicar uma capacidade inadequada, vou confirmar o perfil do ambiente "
+                    "e te oferecer uma opção realmente cadastrada."
+                ),
+            )
+
+        selected_cycle = (
+            "heat_cool"
+            if "quente frio" in normalized or "quente e frio" in normalized
+            else "cold"
+        )
+        recommendation = _equipment_suggestion_snapshot(
+            matched_catalog,
+            required_btu=None,
+            selected_cycle=selected_cycle,
+        )
+        updated = {
+            **_clear_repair_attempt(context, "equipment_model"),
+            "equipment_model_known": True,
+            "equipment_model": recommendation["label"],
+            "recommended_equipment": recommendation,
+            "recommendation_presented": True,
+            "catalog_mismatch_attempts": 0,
+        }
+        transition = await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            services=services,
+            customer_name=customer_name,
+        )
+        return _prepend_transition_body(
+            transition,
+            f"Encontrei esse equipamento no catálogo ativo: {recommendation['label']}.",
+        )
+
     if (
         2 <= len(raw) <= 180
         and normalized not in {
