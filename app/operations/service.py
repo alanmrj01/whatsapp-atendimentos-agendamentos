@@ -57,6 +57,9 @@ from app.operations.schemas import (
     ConversationDetail,
     ConversationActionUpdate,
     ConversationAutomationUpdate,
+    ConversationBulkAction,
+    ConversationBulkResult,
+    ConversationMessageDelta,
     ConversationView,
     CustomerNameUpdate,
     CustomerCreate,
@@ -159,6 +162,7 @@ class OperationalService:
             select(
                 CustomerOutreach,
                 Customer.name,
+                Customer.name_source,
                 Customer.whatsapp_profile_name,
                 Customer.phone_e164,
                 Customer.whatsapp_id,
@@ -191,6 +195,7 @@ class OperationalService:
                     whatsapp_profile_name,
                     customer_phone,
                     whatsapp_id,
+                    name_source=customer_name_source,
                 ),
                 customer_phone=customer_phone,
                 outreach_type=item.outreach_type,
@@ -210,6 +215,7 @@ class OperationalService:
             for (
                 item,
                 customer_name,
+                customer_name_source,
                 whatsapp_profile_name,
                 customer_phone,
                 whatsapp_id,
@@ -397,6 +403,118 @@ class OperationalService:
             free_form_window_expires_at=window_expires_at,
         )
 
+    async def list_conversation_messages(
+        self,
+        business_id: UUID,
+        conversation_id: UUID,
+        *,
+        after: datetime | None = None,
+        limit: int = 100,
+    ) -> ConversationMessageDelta:
+        exists = await self.session.scalar(
+            select(Conversation.id).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+                Conversation.deleted_at.is_(None),
+            )
+        )
+        if exists is None:
+            raise HTTPException(404, "Conversation not found")
+
+        query = select(Message).where(
+            Message.business_id == business_id,
+            Message.conversation_id == conversation_id,
+        )
+        if after is not None:
+            query = query.where(Message.created_at >= after)
+        messages = list(
+            (
+                await self.session.scalars(
+                    query.order_by(Message.created_at, Message.id).limit(limit)
+                )
+            ).all()
+        )
+        messages.sort(key=_message_history_sort_key)
+        latest_at = max(
+            (item.created_at for item in messages),
+            default=after,
+        )
+        return ConversationMessageDelta(
+            items=[_message_view(item) for item in messages],
+            latest_at=latest_at,
+        )
+
+    async def bulk_conversation_action(
+        self,
+        business_id: UUID,
+        values: ConversationBulkAction,
+    ) -> ConversationBulkResult:
+        conversation_ids = values.conversation_ids
+        conversations = list(
+            (
+                await self.session.scalars(
+                    select(Conversation)
+                    .where(
+                        Conversation.business_id == business_id,
+                        Conversation.id.in_(conversation_ids),
+                        Conversation.deleted_at.is_(None),
+                    )
+                    .with_for_update()
+                )
+            ).all()
+        )
+        if not conversations:
+            return ConversationBulkResult(affected=0)
+
+        now = datetime.now(UTC)
+        automation = AutomationRepository(self.session)
+        for conversation in conversations:
+            action = values.action
+            if action == "mark_read":
+                conversation.last_read_at = now
+                conversation.manual_unread = False
+            elif action == "mark_unread":
+                conversation.manual_unread = True
+            elif action == "pin":
+                conversation.pinned_at = now
+            elif action == "unpin":
+                conversation.pinned_at = None
+            elif action == "assistant_on":
+                conversation.automation_enabled = True
+                conversation.handoff_status = "none"
+                conversation.automation_suppressed_until = None
+                conversation.suppression_reason = None
+                if conversation.state == ConversationState.HUMAN_HANDOFF.value:
+                    conversation.state = ConversationState.START.value
+                    conversation.context = {}
+            elif action == "assistant_off":
+                conversation.automation_enabled = False
+                conversation.handoff_status = "waiting"
+                await automation.cancel_pending_outbounds(
+                    business_id,
+                    conversation.id,
+                )
+            elif action == "delete":
+                conversation.deleted_at = now
+                conversation.state = ConversationState.START.value
+                conversation.context = {}
+                conversation.automation_enabled = True
+                conversation.handoff_status = "none"
+                conversation.automation_suppressed_until = None
+                conversation.suppression_reason = None
+                conversation.human_control_started_at = None
+                conversation.last_human_message_at = None
+                conversation.pinned_at = None
+                conversation.manual_unread = False
+                await automation.cancel_pending_outbounds(
+                    business_id,
+                    conversation.id,
+                )
+
+        await self.session.commit()
+        return ConversationBulkResult(affected=len(conversations))
+
+
     async def update_customer_name(
         self,
         business_id: UUID,
@@ -421,6 +539,7 @@ class OperationalService:
         if customer is None:
             raise HTTPException(404, "Conversation not found")
         customer.name = values.name
+        customer.name_source = "manual" if values.name is not None else None
         await self.session.commit()
         return await self.get_conversation(business_id, conversation_id)
 
@@ -936,6 +1055,7 @@ class OperationalService:
             whatsapp_id=values.phone[1:],
             phone_e164=values.phone,
             name=values.name,
+            name_source="manual",
         )
         self.session.add(item)
         try:
@@ -1540,7 +1660,16 @@ class OperationalService:
 
     def _appointment_query(self, business_id: UUID):
         return (
-            select(Appointment, Customer.name, Customer.phone_e164, Service.name, Employee.name)
+            select(
+                Appointment,
+                Customer.name,
+                Customer.name_source,
+                Customer.whatsapp_profile_name,
+                Customer.phone_e164,
+                Customer.whatsapp_id,
+                Service.name,
+                Employee.name,
+            )
             .join(Customer, and_(Customer.business_id == Appointment.business_id, Customer.id == Appointment.customer_id))
             .join(Service, and_(Service.business_id == Appointment.business_id, Service.id == Appointment.service_id))
             .join(Employee, and_(Employee.business_id == Appointment.business_id, Employee.id == Appointment.employee_id))
@@ -1553,7 +1682,10 @@ class OperationalService:
                 BusinessNotification,
                 Appointment.starts_at,
                 Customer.name,
+                Customer.name_source,
                 Customer.whatsapp_profile_name,
+                Customer.phone_e164,
+                Customer.whatsapp_id,
                 Service.name,
                 Employee.name,
             )
@@ -1634,8 +1766,8 @@ class OperationalService:
             unread_message.created_at > read_boundary,
         ).correlate(Conversation).scalar_subquery()
         query = select(
-            Conversation, Customer.name, Customer.whatsapp_profile_name,
-            Customer.phone_e164, Customer.whatsapp_id,
+            Conversation, Customer.name, Customer.name_source,
+            Customer.whatsapp_profile_name, Customer.phone_e164, Customer.whatsapp_id,
             latest_body.label("last_content"), latest_time.label("last_message_at"),
             latest_direction.label("last_direction"),
             latest_transition.label("last_transition"),
@@ -1706,7 +1838,16 @@ def _day_bounds(value: date, timezone_name: str) -> tuple[datetime, datetime]:
 
 
 def _appointment_view(row: Any) -> AppointmentView:
-    item, customer_name, customer_phone, service_name, employee_name = row
+    (
+        item,
+        customer_name,
+        customer_name_source,
+        whatsapp_profile_name,
+        customer_phone,
+        whatsapp_id,
+        service_name,
+        employee_name,
+    ) = row
     estimate_details = (
         item.estimate_details
         if isinstance(item.estimate_details, dict)
@@ -1720,7 +1861,15 @@ def _appointment_view(row: Any) -> AppointmentView:
         elif fulfillment_type == "equipment_pickup":
             service_name = "Retirada de equipamento"
     return AppointmentView(
-        id=item.id, customer_id=item.customer_id, customer_name=customer_name or "Cliente",
+        id=item.id,
+        customer_id=item.customer_id,
+        customer_name=_display_name(
+            customer_name,
+            whatsapp_profile_name,
+            customer_phone,
+            whatsapp_id,
+            name_source=customer_name_source,
+        ),
         customer_phone=customer_phone, service_id=item.service_id, service_name=service_name,
         employee_id=item.employee_id, employee_name=employee_name, starts_at=item.starts_at,
         ends_at=item.ends_at, status=item.status, notes=item.notes,
@@ -1732,12 +1881,21 @@ def _notification_view(row: Any, timezone_name: str) -> NotificationView:
         item,
         starts_at,
         customer_name,
+        customer_name_source,
         whatsapp_profile_name,
+        customer_phone,
+        whatsapp_id,
         service_name,
         employee_name,
     ) = row
     local_start = starts_at.astimezone(ZoneInfo(timezone_name))
-    display_customer = customer_name or whatsapp_profile_name or "Cliente"
+    display_customer = _display_name(
+        customer_name,
+        whatsapp_profile_name,
+        customer_phone,
+        whatsapp_id,
+        name_source=customer_name_source,
+    )
     return NotificationView(
         id=item.id,
         appointment_id=item.appointment_id,
@@ -1761,6 +1919,7 @@ def _conversation_view(row: Any) -> ConversationView:
     (
         item,
         customer_name,
+        customer_name_source,
         whatsapp_profile_name,
         customer_phone,
         whatsapp_id,
@@ -1790,7 +1949,11 @@ def _conversation_view(row: Any) -> ConversationView:
         id=item.id,
         customer_id=item.customer_id,
         customer_name=_display_name(
-            customer_name, whatsapp_profile_name, customer_phone, whatsapp_id
+            customer_name,
+            whatsapp_profile_name,
+            customer_phone,
+            whatsapp_id,
+            name_source=customer_name_source,
         ),
         customer_phone=customer_phone,
         last_content=last_content,
@@ -1904,6 +2067,7 @@ def _customer_display_name(item: Customer) -> str:
         item.whatsapp_profile_name,
         item.phone_e164,
         item.whatsapp_id,
+        name_source=item.name_source,
     )
 
 
@@ -1912,8 +2076,16 @@ def _display_name(
     profile_name: str | None,
     phone: str | None,
     whatsapp_id: str,
+    *,
+    name_source: str | None = None,
 ) -> str:
-    return name or profile_name or phone or whatsapp_id
+    if name_source == "manual" and isinstance(name, str) and name.strip():
+        return name
+    if isinstance(profile_name, str) and profile_name.strip():
+        return profile_name
+    if isinstance(name, str) and name.strip():
+        return name
+    return phone or whatsapp_id
 
 
 def _service_view(item: Service) -> ServiceOption:

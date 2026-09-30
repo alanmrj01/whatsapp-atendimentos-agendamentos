@@ -196,6 +196,66 @@ _CORRECTION_MARKERS = (
     "melhor dizendo",
 )
 
+_BARE_NAME_REJECT_WORDS = frozenset(
+    {
+        "agora",
+        "aqui",
+        "hoje",
+        "amanha",
+        "ontem",
+        "quente",
+        "frio",
+        "calor",
+        "problema",
+        "duvida",
+        "servico",
+        "atendimento",
+        "aparelho",
+        "equipamento",
+        "modelo",
+        "preco",
+        "valor",
+        "orcamento",
+        "instalacao",
+        "manutencao",
+        "limpeza",
+        "recarga",
+        "gas",
+        "comprar",
+        "compra",
+        "instalar",
+        "limpar",
+        "consertar",
+        "arrumar",
+        "preciso",
+        "quero",
+        "gostaria",
+        "tenho",
+        "estou",
+        "esta",
+        "ficou",
+        "pode",
+        "consegue",
+        "quanto",
+        "qual",
+        "quando",
+        "onde",
+        "como",
+        "porque",
+        "sim",
+        "nao",
+        "obrigado",
+        "obrigada",
+        "valeu",
+        "certo",
+        "perfeito",
+        "tranquilo",
+        "beleza",
+        "suave",
+    }
+)
+
+
 _BARE_NAME_REJECT_PREFIXES = (
     "oi",
     "ola",
@@ -639,6 +699,8 @@ def extract_customer_name(
     ):
         return None
     if any(_contains_any(normalized, aliases) for aliases in SERVICE_ALIASES.values()):
+        return None
+    if any(word in _BARE_NAME_REJECT_WORDS for word in normalized.split()):
         return None
     if not re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\- ]{0,59}", raw):
         return None

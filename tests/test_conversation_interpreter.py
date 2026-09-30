@@ -348,3 +348,34 @@ def test_technical_questions_are_side_questions(body: str) -> None:
     assert result.has(ConversationIntent.TECHNICAL_QUESTION)
     assert result.has_act(ConversationAct.SIDE_QUESTION)
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Hoje está muito quente",
+        "Está muito quente",
+        "Tenho um problema",
+        "Qual o valor",
+        "Quero comprar",
+        "Preciso de ajuda",
+        "Agora pode",
+    ],
+)
+def test_bare_name_extraction_rejects_conversation_fragments(body: str) -> None:
+    assert extract_customer_name(body, allow_bare=True) is None
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("alan", "Alan"),
+        ("Maria Clara", "Maria Clara"),
+        ("João de Souza", "João de Souza"),
+        ("Ana Paula Lima", "Ana Paula Lima"),
+    ],
+)
+def test_bare_name_extraction_keeps_real_name_shapes(
+    body: str,
+    expected: str,
+) -> None:
+    assert extract_customer_name(body, allow_bare=True) == expected
+
