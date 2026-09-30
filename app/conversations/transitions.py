@@ -4998,9 +4998,15 @@ async def _handle_equipment_profile(
             updated,
         )
     except ValueError:
-        return _handoff_transition(
-            "Não encontrei no catálogo ativo um equipamento que atenda "
-            "ao ciclo e ao espaço informados. Vou chamar a equipe para validar uma opção."
+        return _transition(
+            ConversationState.HUMAN_HANDOFF,
+            _clean_context(updated),
+            _text_message(
+                "Não encontrei no catálogo ativo um equipamento que atenda "
+                "ao ciclo e ao espaço informados. Vou chamar a equipe para validar uma opção."
+            ),
+            automation_enabled=False,
+            handoff_status="waiting",
         )
 
     recommendation = recommended.get("recommended_equipment")
