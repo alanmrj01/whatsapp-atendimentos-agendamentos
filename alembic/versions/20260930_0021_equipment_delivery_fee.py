@@ -29,9 +29,29 @@ def upgrade() -> None:
         "businesses",
         "equipment_delivery_fee_per_km >= 0",
     )
+    op.add_column(
+        "appointments",
+        sa.Column(
+            "appointment_kind",
+            sa.String(length=32),
+            nullable=False,
+            server_default="service",
+        ),
+    )
+    op.create_check_constraint(
+        "ck_appointments_appointment_kind_allowed",
+        "appointments",
+        "appointment_kind IN ('service', 'equipment_delivery', 'equipment_pickup')",
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint(
+        "ck_appointments_appointment_kind_allowed",
+        "appointments",
+        type_="check",
+    )
+    op.drop_column("appointments", "appointment_kind")
     op.drop_constraint(
         "ck_businesses_equipment_delivery_fee_per_km_nonnegative",
         "businesses",
