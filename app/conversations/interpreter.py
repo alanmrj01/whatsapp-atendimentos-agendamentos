@@ -62,15 +62,18 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
     "diagnostics": (
         "nao gela",
         "nao esta gelando",
-        "parou",
+        "gela pouco",
+        "gelando pouco",
+        "nao esfria",
         "barulho",
+        "ruido",
         "pingando",
         "defeito",
         "manutencao",
         "corretiva",
         "diagnostico",
         "conserto",
-        "arrumar",
+        "cheiro estranho",
     ),
     "gas-recharge": ("gas", "sem gas", "recarga", "vazamento"),
 }
@@ -128,6 +131,25 @@ _SERVICE_QUESTION_PHRASES = (
     "o que voces fazem",
     "o que e feito",
     "faz parte",
+    "quantos metros",
+    "metragem incluida",
+    "tubulacao incluida",
+    "material incluso",
+    "materiais inclusos",
+    "quais materiais",
+    "qual material",
+    "garantia do servico",
+    "garantia da instalacao",
+    "deslocamento",
+    "taxa de visita",
+    "precisa mandar foto",
+    "posso mandar foto",
+    "enviar foto",
+    "foto do aparelho",
+    "precisa mandar video",
+    "posso mandar video",
+    "enviar video",
+    "video do aparelho",
 )
 
 _SOCIAL_ONLY = frozenset(
@@ -280,6 +302,15 @@ class DeterministicConversationInterpreter:
                 service_key = candidate_key
                 intents.add(ConversationIntent.SERVICE_INTENT)
                 break
+        if service_key is None and _looks_like_equipment_problem(assertion):
+            service_key = "diagnostics"
+            intents.add(ConversationIntent.SERVICE_INTENT)
+        if (
+            service_key is not None
+            and _looks_like_service_capability_question(original, assertion)
+        ):
+            intents.add(ConversationIntent.SERVICE_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
 
         if _contains_equipment_purchase(assertion) and not _purchase_is_negated(normalized):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
@@ -351,6 +382,60 @@ class DeterministicConversationInterpreter:
             service_budget_max=service_budget,
             total_budget_max=total_budget,
         )
+
+
+def _looks_like_service_capability_question(
+    original: str,
+    normalized: str,
+) -> bool:
+    leads = (
+        "voces fazem ",
+        "voces trabalham com ",
+        "tem servico de ",
+        "fazem ",
+        "trabalham com ",
+        "oferecem ",
+    )
+    if any(normalized.startswith(lead) for lead in leads):
+        return True
+    if "?" not in original:
+        return False
+    return any(
+        marker in normalized
+        for marker in (
+            "voces fazem ",
+            "fazem ",
+            "trabalham com ",
+            "oferecem ",
+            "tem servico de ",
+        )
+    )
+
+
+def _looks_like_equipment_problem(normalized: str) -> bool:
+    equipment_terms = (
+        "ar condicionado",
+        "aparelho",
+        "split",
+        "evaporadora",
+        "condensadora",
+    )
+    problem_terms = (
+        "nao funciona",
+        "parou de funcionar",
+        "parou",
+        "nao liga",
+        "liga e desliga",
+        "com problema",
+        "problema",
+        "quebrou",
+        "falha",
+        "arrumar",
+    )
+    return (
+        any(term in normalized for term in equipment_terms)
+        and any(term in normalized for term in problem_terms)
+    )
 
 
 def extract_budget_constraints(

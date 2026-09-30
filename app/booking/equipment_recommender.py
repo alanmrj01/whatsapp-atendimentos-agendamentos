@@ -25,6 +25,11 @@ class EquipmentCatalogEntry:
     image_url: str | None = None
     source_url: str = ""
     price: float | None = None
+    voltage_v: int | None = None
+    voltage: str | None = None
+    model_sku: str | None = None
+    wifi: bool | None = None
+    inverter: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +227,32 @@ def _entry_from_mapping(item: dict[str, object]) -> EquipmentCatalogEntry:
             else None
         ),
         source_url=str(item.get("source_url") or ""),
+        voltage_v=(
+            int(item["voltage_v"])
+            if isinstance(item.get("voltage_v"), int)
+            and not isinstance(item.get("voltage_v"), bool)
+            else None
+        ),
+        voltage=(
+            str(item.get("voltage"))
+            if isinstance(item.get("voltage"), str)
+            else None
+        ),
+        model_sku=(
+            str(item.get("model_sku"))
+            if isinstance(item.get("model_sku"), str)
+            else None
+        ),
+        wifi=(
+            bool(item.get("wifi"))
+            if isinstance(item.get("wifi"), bool)
+            else None
+        ),
+        inverter=(
+            bool(item.get("inverter"))
+            if isinstance(item.get("inverter"), bool)
+            else None
+        ),
     )
 
 
