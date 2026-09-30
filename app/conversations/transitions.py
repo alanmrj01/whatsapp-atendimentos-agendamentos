@@ -2212,7 +2212,15 @@ def _message_can_answer_pending_state(
     if state is ConversationState.BOOKING_SERVICE:
         return interpretation.has(ConversationIntent.SERVICE_INTENT)
     if state is ConversationState.BOOKING_QUANTITY:
-        return parse_number_answer(body) is not None
+        return (
+            parse_number_answer(body) is not None
+            or normalized in {
+                "nao sei",
+                "nao sei informar",
+                "nao faco ideia",
+                "complicado",
+            }
+        )
     if state is ConversationState.BOOKING_ADDRESS:
         return _looks_like_address(body)
     if state in {
@@ -2254,7 +2262,30 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
-        return _has_profile_fact(enrich_context_from_message({}, body))
+        if _has_profile_fact(enrich_context_from_message({}, body)):
+            return True
+        if parse_number_answer(body) is not None:
+            return True
+        if any(
+            phrase in normalized
+            for phrase in (
+                "sem restricao",
+                "sem limitacao",
+                "nao tem limitacao",
+                "nao tenho limitacao",
+                "nao ha limitacao",
+                "nao sei",
+                "nao sei dizer",
+                "nao faco ideia",
+            )
+        ):
+            return True
+        return bool(
+            re.search(
+                r"\b\d+(?:[.,]\d+)?\s*(?:cm|m|metro|metros)\b",
+                normalized,
+            )
+        )
     if state is ConversationState.BOOKING_ACCESS:
         return any(
             phrase in normalized
@@ -2331,7 +2362,19 @@ def _message_can_answer_pending_state(
             or _decimal_from_text(body) is not None
         )
     if state is ConversationState.BOOKING_BUILDING_HOURS:
-        return _time_window_from_text(body) is not None
+        return (
+            _time_window_from_text(body) is not None
+            or any(
+                phrase in normalized
+                for phrase in (
+                    "durante o dia",
+                    "horario comercial",
+                    "nao sei",
+                    "nao sei dizer",
+                    "nao faco ideia",
+                )
+            )
+        )
     if state is ConversationState.BOOKING_GATE_DETAILS:
         return _looks_like_gate_instruction(body)
     if state is ConversationState.BOOKING_ATTENDEE_NAME:
