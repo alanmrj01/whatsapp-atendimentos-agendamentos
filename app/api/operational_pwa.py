@@ -401,7 +401,7 @@ async def get_conversation_message_media(
         range_value = range_header.strip().casefold()
         if not range_value.startswith("bytes=") or "," in range_value:
             return Response(
-                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
                 headers={
                     **common_headers,
                     "Content-Range": f"bytes */{len(content)}",
@@ -425,7 +425,7 @@ async def get_conversation_message_media(
                 raise ValueError
         except ValueError:
             return Response(
-                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
                 headers={
                     **common_headers,
                     "Content-Range": f"bytes */{len(content)}",
@@ -434,7 +434,7 @@ async def get_conversation_message_media(
 
         if start < 0 or start >= len(content) or end < start:
             return Response(
-                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
                 headers={
                     **common_headers,
                     "Content-Range": f"bytes */{len(content)}",
