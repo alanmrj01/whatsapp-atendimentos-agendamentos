@@ -4133,6 +4133,13 @@ async def test_service_inquiry_during_booking_answers_and_returns_to_same_checkp
         BookingOption(str(SERVICE_ID), "Limpeza e higienização"),
         BookingOption(str(maintenance_id), "Diagnóstico / manutenção corretiva"),
     ]
+    booking_port.get_service_details = AsyncMock(
+        return_value=ServiceDetails(
+            id=maintenance_id,
+            name="Diagnóstico / manutenção corretiva",
+            description="Atendimento técnico para diagnóstico e correção de falhas.",
+        )
+    )
 
     await ConversationEngine(repository, booking_port).process(
         inbound(1210, body="Vocês fazem manutenção?")
