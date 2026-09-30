@@ -18,6 +18,7 @@ class ConversationIntent(StrEnum):
     PRICE_QUESTION = "price_question"
     DURATION_QUESTION = "duration_question"
     SERVICE_QUESTION = "service_question"
+    TECHNICAL_QUESTION = "technical_question"
     CANCEL_QUESTION = "cancel_question"
     RESCHEDULE_QUESTION = "reschedule_question"
     UNKNOWN = "unknown"
@@ -131,6 +132,39 @@ _SERVICE_QUESTION_PHRASES = (
     "o que voces fazem",
     "o que e feito",
     "faz parte",
+)
+
+_TECHNICAL_TERMS = (
+    "voltagem",
+    "tensao",
+    "consumo",
+    "energia",
+    "garantia",
+    "dimensao",
+    "dimensoes",
+    "medida",
+    "medidas",
+    "largura",
+    "altura",
+    "profundidade",
+    "refrigerante",
+    "serpentina",
+    "cobre",
+    "nivel de ruido",
+    "potencia",
+    "amperagem",
+    "corrente",
+    "tubulacao",
+    "tubo",
+    "dreno",
+    "condensadora",
+    "evaporadora",
+    "controle",
+    "wifi",
+    "alexa",
+    "bluetooth",
+    "inverter",
+    "btu",
 )
 
 _SOCIAL_ONLY = frozenset(
@@ -313,6 +347,25 @@ class DeterministicConversationInterpreter:
         if _contains_any(normalized, _SERVICE_QUESTION_PHRASES):
             intents.add(ConversationIntent.SERVICE_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
+        technical_question_shape = (
+            "?" in original
+            or normalized.startswith(
+                (
+                    "qual ",
+                    "quais ",
+                    "quanto ",
+                    "como ",
+                    "tem ",
+                    "possui ",
+                    "usa ",
+                    "e ",
+                    "eh ",
+                )
+            )
+        )
+        if technical_question_shape and _contains_any(normalized, _TECHNICAL_TERMS):
+            intents.add(ConversationIntent.TECHNICAL_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_greeting(normalized):
             intents.add(ConversationIntent.GREETING)
         if intents == {ConversationIntent.GREETING}:
@@ -340,6 +393,7 @@ class DeterministicConversationInterpreter:
             ConversationIntent.PRICE_QUESTION,
             ConversationIntent.DURATION_QUESTION,
             ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.TECHNICAL_QUESTION,
             ConversationIntent.CANCEL_QUESTION,
             ConversationIntent.RESCHEDULE_QUESTION,
             ConversationIntent.GREETING,
