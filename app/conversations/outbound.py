@@ -948,7 +948,7 @@ def cancel_message() -> OutboundMessage:
 def handoff_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="text",
-        body="Seu atendimento foi encaminhado para uma pessoa da equipe.",
+        body="Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes.",
     )
 
 
