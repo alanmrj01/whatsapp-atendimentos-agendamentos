@@ -1389,7 +1389,9 @@ async def _purchase_catalog_guard_if_needed(
         return None
 
     misses = context.get("catalog_miss_count")
-    miss_count = (misses if isinstance(misses, int) else 0) + 1
+    previous_misses = misses if isinstance(misses, int) else 0
+    alternative_presented = context.get("catalog_alternative_presented") is True
+    miss_count = previous_misses + 1 if alternative_presented or previous_misses == 0 else previous_misses
     updated = {
         **context,
         "catalog_miss_count": miss_count,
@@ -1406,7 +1408,7 @@ async def _purchase_catalog_guard_if_needed(
     ):
         updated.pop(key, None)
 
-    if miss_count >= 2:
+    if alternative_presented and miss_count >= 2:
         return _transition(
             ConversationState.HUMAN_HANDOFF,
             _clean_context(updated),
@@ -1423,6 +1425,10 @@ async def _purchase_catalog_guard_if_needed(
         "Esse aparelho ou configuração não aparece no catálogo ativo. Para não "
         "inventar um modelo nem assumir uma capacidade inadequada, vou dimensionar "
         "seu ambiente e te mostrar somente uma opção realmente cadastrada."
+        if previous_misses == 0
+        else
+        "Essa configuração continua fora do catálogo ativo. Antes de oferecer uma "
+        "alternativa segura, ainda preciso concluir o dimensionamento do ambiente."
     )
     missing = missing_equipment_profile_fields(updated)
     if missing:
@@ -2905,7 +2911,14 @@ def _retry_or_handoff(
     attempts = _repair_attempts(context)
     next_attempt = attempts.get(slot, 0) + 1
     if next_attempt >= 2:
-        return _handoff_transition(handoff_body)
+        attempts[slot] = next_attempt
+        return _transition(
+            ConversationState.HUMAN_HANDOFF,
+            {**context, "repair_attempts": attempts},
+            _text_message(handoff_body),
+            automation_enabled=False,
+            handoff_status="waiting",
+        )
     attempts[slot] = next_attempt
     return _transition(
         state,
@@ -4600,6 +4613,8 @@ async def _handle_equipment_profile(
         else None
     )
     recommended = {**recommended, "recommendation_presented": True}
+    if isinstance(recommended.get("catalog_miss_count"), int):
+        recommended["catalog_alternative_presented"] = True
     transition = await _advance_intake(
         inbound,
         port,
