@@ -761,12 +761,14 @@ async def _route_named_conversation(
             ConversationState.BOOKING_INSTALLATION_HEIGHT,
             ConversationState.BOOKING_PROPERTY,
             ConversationState.BOOKING_BUILDING_HOURS,
+            ConversationState.BOOKING_GATE_DETAILS,
             ConversationState.BOOKING_TUBING,
             ConversationState.BOOKING_SITE_LIMIT,
             ConversationState.BOOKING_WEEKDAY,
             ConversationState.BOOKING_DATE,
             ConversationState.BOOKING_TIME,
             ConversationState.BOOKING_ATTENDEE,
+            ConversationState.BOOKING_ATTENDEE_NAME,
             ConversationState.BOOKING_PHONE_CONFIRM,
             ConversationState.BOOKING_CONFIRM,
             ConversationState.QUOTE_DECISION,
@@ -2321,6 +2323,10 @@ def _message_can_answer_pending_state(
         )
     if state is ConversationState.BOOKING_BUILDING_HOURS:
         return _time_window_from_text(body) is not None
+    if state is ConversationState.BOOKING_GATE_DETAILS:
+        return _looks_like_gate_instruction(body)
+    if state is ConversationState.BOOKING_ATTENDEE_NAME:
+        return extract_customer_name(body, allow_bare=True) is not None
     if state is ConversationState.BOOKING_TUBING:
         meters = _decimal_from_text(body)
         return (
@@ -2358,10 +2364,7 @@ def _message_can_answer_pending_state(
                 "outro numero",
                 "nao",
             }
-            or (
-                context.get("awaiting_other_phone") is True
-                and _phone_from_text(body) is not None
-            )
+            or _phone_from_text(body) is not None
         )
     if state is ConversationState.BOOKING_CONFIRM:
         return normalized in {
@@ -2370,6 +2373,12 @@ def _message_can_answer_pending_state(
             "sim",
             "pode confirmar",
             "pode",
+            "esta certo",
+            "esta tudo certo",
+            "tudo certo",
+            "pode finalizar",
+            "pode fechar",
+            "fechado",
             "voltar",
             "outro horario",
             "trocar horario",
@@ -5572,6 +5581,41 @@ async def _handle_building_hours(
     )
 
 
+def _looks_like_gate_instruction(body: str | None) -> bool:
+    value = " ".join((body or "").strip().split())
+    if not 2 <= len(value) <= 300:
+        return False
+    normalized = normalize_portuguese(value)
+    if normalized in {
+        "nao tem",
+        "nao tem portaria",
+        "sem portaria",
+        "nao ha portaria",
+        "livre acesso",
+        "acesso livre",
+    }:
+        return True
+    return any(
+        token in normalized
+        for token in (
+            "portaria",
+            "porteiro",
+            "interfone",
+            "bloco",
+            "torre",
+            "apartamento",
+            "apto",
+            "senha",
+            "guarita",
+            "entrada",
+            "acesso",
+            "falar com",
+            "chamar",
+            "autorizar",
+        )
+    )
+
+
 async def _handle_gate_details(
     inbound: ConversationInput,
     context: dict[str, Any],
@@ -5592,7 +5636,7 @@ async def _handle_gate_details(
         return _handoff_for_reason(str(exc))
 
     value = " ".join((inbound.body or "").strip().split())
-    if len(value) < 2 or len(value) > 300:
+    if not _looks_like_gate_instruction(value):
         return _retry_or_handoff(
             ConversationState.BOOKING_GATE_DETAILS,
             context,
@@ -6097,7 +6141,19 @@ async def _handle_confirmation(
 ) -> ConversationTransition:
     if action is None:
         normalized = normalize_portuguese(inbound.body or "")
-        if normalized in {"confirmar", "confirmo", "sim", "pode confirmar", "pode"}:
+        if normalized in {
+            "confirmar",
+            "confirmo",
+            "sim",
+            "pode confirmar",
+            "pode",
+            "esta certo",
+            "esta tudo certo",
+            "tudo certo",
+            "pode finalizar",
+            "pode fechar",
+            "fechado",
+        }:
             action = BOOKING_CONFIRM
         elif normalized in {"voltar", "outro horario", "trocar horario"}:
             action = BOOKING_BACK
@@ -7212,6 +7268,20 @@ async def _handle_phone_confirmation(
 
     normalized = normalize_portuguese(inbound.body or "")
     whatsapp_phone = _context_string(context, "whatsapp_contact_phone")
+    typed_phone = _phone_from_text(inbound.body)
+    if typed_phone is not None:
+        updated = {
+            **_clear_repair_attempt(context, "phone"),
+            "contact_phone": typed_phone,
+            "contact_phone_confirmed": True,
+        }
+        updated.pop("awaiting_other_phone", None)
+        return await _resume_final_confirmation(
+            inbound,
+            port,
+            updated,
+            customer_name=customer_name,
+        )
     if action == PHONE_CONFIRM or normalized in {"sim", "pode", "correto", "isso"}:
         if whatsapp_phone is None:
             return _transition(
@@ -8373,6 +8443,18 @@ def _site_limit(
     body: str | None,
 ) -> time | None | bool:
     if action == SITE_LIMIT_NONE:
+        return None
+    normalized = normalize_portuguese(body or "")
+    if any(
+        phrase in normalized
+        for phrase in (
+            "sem limite",
+            "nao tem limite",
+            "nao ha limite",
+            "sem restricao de horario",
+            "qualquer horario",
+        )
+    ):
         return None
     mapped = {SITE_LIMIT_17: "17:00", SITE_LIMIT_18: "18:00"}.get(action)
     raw_value = mapped or (body or "").strip()
