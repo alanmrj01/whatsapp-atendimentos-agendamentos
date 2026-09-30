@@ -6,6 +6,7 @@ Create Date: 2026-09-30
 """
 
 from alembic import op
+import sqlalchemy as sa
 
 revision = "20260930_0023"
 down_revision = "20260930_0022"
@@ -22,16 +23,17 @@ NEW_HANDOFF = (
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    bind.exec_driver_sql(
-        "UPDATE businesses SET assistant_fallback_message = %s "
-        "WHERE assistant_fallback_message = %s",
-        (NEW_FALLBACK, OLD_FALLBACK),
+    op.execute(
+        sa.text(
+            "UPDATE businesses SET assistant_fallback_message = :new "
+            "WHERE assistant_fallback_message = :old"
+        ).bindparams(new=NEW_FALLBACK, old=OLD_FALLBACK)
     )
-    bind.exec_driver_sql(
-        "UPDATE businesses SET assistant_handoff_message = %s "
-        "WHERE assistant_handoff_message = %s",
-        (NEW_HANDOFF, OLD_HANDOFF),
+    op.execute(
+        sa.text(
+            "UPDATE businesses SET assistant_handoff_message = :new "
+            "WHERE assistant_handoff_message = :old"
+        ).bindparams(new=NEW_HANDOFF, old=OLD_HANDOFF)
     )
     op.alter_column(
         "businesses",
@@ -46,16 +48,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    bind.exec_driver_sql(
-        "UPDATE businesses SET assistant_fallback_message = %s "
-        "WHERE assistant_fallback_message = %s",
-        (OLD_FALLBACK, NEW_FALLBACK),
+    op.execute(
+        sa.text(
+            "UPDATE businesses SET assistant_fallback_message = :old "
+            "WHERE assistant_fallback_message = :new"
+        ).bindparams(old=OLD_FALLBACK, new=NEW_FALLBACK)
     )
-    bind.exec_driver_sql(
-        "UPDATE businesses SET assistant_handoff_message = %s "
-        "WHERE assistant_handoff_message = %s",
-        (OLD_HANDOFF, NEW_HANDOFF),
+    op.execute(
+        sa.text(
+            "UPDATE businesses SET assistant_handoff_message = :old "
+            "WHERE assistant_handoff_message = :new"
+        ).bindparams(old=OLD_HANDOFF, new=NEW_HANDOFF)
     )
     op.alter_column(
         "businesses",
