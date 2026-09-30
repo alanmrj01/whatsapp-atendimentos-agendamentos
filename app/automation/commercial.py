@@ -16,27 +16,41 @@ class CommercialAutomationService:
         repository: CommercialAutomationRepository,
         *,
         now: Callable[[], datetime] | None = None,
+        followup_24h_enabled: bool = False,
+        cleaning_6m_enabled: bool = False,
     ) -> None:
         self.repository = repository
         self.now = now or (lambda: datetime.now(timezone.utc))
+        self.followup_24h_enabled = followup_24h_enabled
+        self.cleaning_6m_enabled = cleaning_6m_enabled
 
     async def sweep(self) -> list[UUID]:
         current = self.now()
-        abandoned = await self.repository.abandoned_candidates(current)
-        for candidate in abandoned:
-            await self.repository.create_abandoned_followup(
-                candidate,
-                now=current,
-            )
+        enabled_kinds: set[str] = set()
 
-        cleaning = await self.repository.cleaning_candidates(current)
-        for candidate in cleaning:
-            await self.repository.create_cleaning_reminder(
-                candidate,
-                now=current,
-            )
+        if self.followup_24h_enabled:
+            enabled_kinds.add("abandoned_followup_24h")
+            abandoned = await self.repository.abandoned_candidates(current)
+            for candidate in abandoned:
+                await self.repository.create_abandoned_followup(
+                    candidate,
+                    now=current,
+                )
 
-        return await self.repository.pending_dispatch_ids()
+        if self.cleaning_6m_enabled:
+            enabled_kinds.add("cleaning_reminder_6m")
+            cleaning = await self.repository.cleaning_candidates(current)
+            for candidate in cleaning:
+                await self.repository.create_cleaning_reminder(
+                    candidate,
+                    now=current,
+                )
+
+        if not enabled_kinds:
+            return []
+        return await self.repository.pending_dispatch_ids(
+            automation_kinds=enabled_kinds,
+        )
 
     async def cleaning_dashboard(
         self,
