@@ -441,10 +441,10 @@ class AutomationSettingsView(StrictModel):
     assistant_enabled: bool = True
     greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?"
     fallback_message: str = (
-        "Não entendi. Conte em poucas palavras o serviço que você precisa."
+        "Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa."
     )
     handoff_message: str = (
-        "Seu atendimento foi encaminhado para uma pessoa da equipe."
+        "Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes."
     )
     supported_options: tuple[str, ...] = (
         "assistant_enabled",
