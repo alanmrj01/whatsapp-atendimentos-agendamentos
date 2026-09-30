@@ -120,6 +120,15 @@ class WhatsAppSender(Protocol):
         sections: Sequence[Mapping[str, Any]],
     ) -> str: ...
 
+    async def send_template(
+        self,
+        to: str,
+        template_name: str,
+        *,
+        language_code: str = "pt_BR",
+        body_parameters: Sequence[str] = (),
+    ) -> str: ...
+
     async def aclose(self) -> None: ...
 
 
@@ -399,6 +408,26 @@ async def _send_message(
             message.recipient,
             image_url,
             body or None,
+        )
+    if message.message_type == "template":
+        if not isinstance(payload, Mapping):
+            raise WhatsAppValidationError("Outbound template payload is invalid")
+        template_name = payload.get("template_name")
+        language_code = payload.get("language_code", "pt_BR")
+        raw_parameters = payload.get("body_parameters", [])
+        if (
+            not isinstance(template_name, str)
+            or not isinstance(language_code, str)
+            or isinstance(raw_parameters, (str, bytes))
+            or not isinstance(raw_parameters, Sequence)
+            or not all(isinstance(value, str) for value in raw_parameters)
+        ):
+            raise WhatsAppValidationError("Outbound template payload is invalid")
+        return await client.send_template(
+            message.recipient,
+            template_name,
+            language_code=language_code,
+            body_parameters=cast(Sequence[str], raw_parameters),
         )
     if not isinstance(payload, Mapping):
         raise WhatsAppValidationError("Outbound payload is invalid")
