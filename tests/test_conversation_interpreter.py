@@ -305,3 +305,11 @@ def test_price_objection_language_is_recognized_as_price_question(body: str) -> 
     assert result.has(ConversationIntent.PRICE_QUESTION)
     assert result.has_act(ConversationAct.SIDE_QUESTION)
 
+def test_generic_air_conditioner_problem_is_diagnostics_intent() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Bom dia! Meu ar condicionado está com problema"
+    )
+
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+    assert result.service_key == "diagnostics"
+
