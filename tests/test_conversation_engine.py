@@ -4912,7 +4912,7 @@ async def test_24h_followup_price_objection_with_equipment_offers_semi_new() -> 
 
 @mark.asyncio
 async def test_six_month_cleaning_outreach_acceptance_enters_cleaning_workflow() -> None:
-    cleaning_id = uuid.uuid4()
+    cleaning_id = SERVICE_ID
     repository = FakeConversationRepository(
         state=ConversationState.COMPLETED,
         context={
