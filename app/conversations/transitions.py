@@ -4098,7 +4098,15 @@ async def _handle_equipment_model(
     if (
         raw
         and _context_string(context, "equipment_ownership") == "needs_equipment"
-        and _looks_like_specific_equipment_request(raw)
+        and normalized not in {
+            "sim",
+            "isso",
+            "tenho",
+            "ok",
+            "certo",
+            "nao",
+            "nao sei",
+        }
     ):
         try:
             catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
