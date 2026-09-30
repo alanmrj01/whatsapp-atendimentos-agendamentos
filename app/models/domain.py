@@ -230,14 +230,14 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     assistant_fallback_message: Mapped[str] = mapped_column(
         String(1000),
-        default="Não entendi. Conte em poucas palavras o serviço que você precisa.",
-        server_default="Não entendi. Conte em poucas palavras o serviço que você precisa.",
+        default="Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa.",
+        server_default="Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa.",
         nullable=False,
     )
     assistant_handoff_message: Mapped[str] = mapped_column(
         String(1000),
-        default="Seu atendimento foi encaminhado para uma pessoa da equipe.",
-        server_default="Seu atendimento foi encaminhado para uma pessoa da equipe.",
+        default="Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes.",
+        server_default="Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes.",
         nullable=False,
     )
     active: Mapped[bool] = mapped_column(
