@@ -485,3 +485,25 @@ def test_recommendation_fails_closed_when_required_capacity_exceeds_catalog() ->
             entries=(only_small,),
         )
 
+def test_purchase_request_model_is_not_persisted_as_owned_equipment_fact() -> None:
+    context = enrich_context_from_message(
+        {
+            "equipment_ownership": "needs_equipment",
+            "purchase_mode": "purchase",
+        },
+        "Quero o Midea 50000 BTU quente frio",
+    )
+
+    assert "equipment_model" not in context
+    assert context["equipment_ownership"] == "needs_equipment"
+
+
+def test_owned_equipment_model_is_still_captured_for_service_flow() -> None:
+    context = enrich_context_from_message(
+        {},
+        "Já tenho um LG Dual Inverter 12000 BTU",
+    )
+
+    assert context["equipment_ownership"] == "has_equipment"
+    assert "LG" in context["equipment_model"]
+
