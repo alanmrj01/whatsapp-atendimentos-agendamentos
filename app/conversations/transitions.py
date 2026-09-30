@@ -435,6 +435,36 @@ async def _route_named_conversation(
             prefix=confirmation_text,
         )
 
+    if (
+        action is None
+        and _context_string(context, "equipment_ownership") == "needs_equipment"
+        and int(context.get("catalog_mismatch_attempts") or 0) >= 1
+        and _looks_like_specific_equipment_request(inbound.body)
+    ):
+        try:
+            port = _require_booking_port(booking_port)
+            catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
+        except (BookingPortUnavailable, BookingRequiresHandoff):
+            catalog = ()
+        if _catalog_entry_matching_customer_request(inbound.body, catalog) is None:
+            updated = {
+                **context,
+                "catalog_mismatch_attempts": int(
+                    context.get("catalog_mismatch_attempts") or 0
+                ) + 1,
+            }
+            return _transition(
+                ConversationState.HUMAN_HANDOFF,
+                updated,
+                _text_message(
+                    "Esse equipamento continua fora do catálogo ativo. Para não inventar "
+                    "modelo, preço ou disponibilidade e como você quer seguir com essa opção, "
+                    "vou encaminhar o atendimento para uma pessoa da equipe."
+                ),
+                automation_enabled=False,
+                handoff_status="waiting",
+            )
+
     if interpretation.intent is ConversationIntent.RESCHEDULE and state is not ConversationState.RESCHEDULE:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
     if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
