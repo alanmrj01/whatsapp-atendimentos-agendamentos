@@ -305,7 +305,6 @@ async def determine_transition(
         if cleaning is not None:
             updated = dict(base_context)
             updated.pop("cleaning_outreach_pending_response", None)
-            updated.pop("cleaning_outreach_id", None)
             return await _handle_service(
                 inbound,
                 updated,
@@ -8685,6 +8684,7 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         "onsite_contact_name",
         "contact_phone",
         "contact_phone_confirmed",
+        "cleaning_outreach_id",
     )
     operational_details = {
         key: context[key]
