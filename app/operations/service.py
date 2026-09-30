@@ -1636,6 +1636,18 @@ def _day_bounds(value: date, timezone_name: str) -> tuple[datetime, datetime]:
 
 def _appointment_view(row: Any) -> AppointmentView:
     item, customer_name, customer_phone, service_name, employee_name = row
+    estimate_details = (
+        item.estimate_details
+        if isinstance(item.estimate_details, dict)
+        else {}
+    )
+    operational_details = estimate_details.get("operational_details")
+    if isinstance(operational_details, dict):
+        fulfillment_type = operational_details.get("fulfillment_type")
+        if fulfillment_type == "equipment_delivery":
+            service_name = "Entrega de equipamento"
+        elif fulfillment_type == "equipment_pickup":
+            service_name = "Retirada de equipamento"
     return AppointmentView(
         id=item.id, customer_id=item.customer_id, customer_name=customer_name or "Cliente",
         customer_phone=customer_phone, service_id=item.service_id, service_name=service_name,
