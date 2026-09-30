@@ -1454,6 +1454,12 @@ class PostgresBookingAvailabilityPort:
             if requirements.address is not None
             else None
         )
+        fulfillment_type = requirements.operational_details.get("fulfillment_type")
+        appointment.appointment_kind = (
+            fulfillment_type
+            if fulfillment_type in {"equipment_delivery", "equipment_pickup"}
+            else "service"
+        )
         appointment.quantity = requirements.quantity or 1
         appointment.tubing_meters = requirements.tubing_meters
         appointment.access_condition = requirements.access_condition.value
@@ -1581,6 +1587,23 @@ def _operational_notes(
         lines.append(
             "⚠ Técnico: conferir as medidas no local antes de instalar o equipamento."
         )
+
+    fulfillment_type = details.get("fulfillment_type")
+    if fulfillment_type == "equipment_delivery":
+        lines.append("Tipo do compromisso: entrega de equipamento.")
+        fee = details.get("delivery_fee_per_km")
+        if isinstance(fee, (int, float, str, Decimal)):
+            try:
+                lines.append(
+                    f"Taxa de entrega configurada: R$ {Decimal(str(fee)):.2f} por km."
+                )
+            except Exception:
+                pass
+    elif fulfillment_type == "equipment_pickup":
+        lines.append("Tipo do compromisso: retirada de equipamento.")
+        pickup_address = details.get("pickup_address")
+        if isinstance(pickup_address, str) and pickup_address.strip():
+            lines.append(f"Local de retirada: {pickup_address.strip()}")
 
     recommendation = details.get("recommended_equipment")
     if isinstance(recommendation, dict):
