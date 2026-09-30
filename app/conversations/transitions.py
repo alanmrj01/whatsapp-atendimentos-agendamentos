@@ -1440,7 +1440,7 @@ async def _equipment_question_answer(
     if mentioned_candidates:
         candidates = mentioned_candidates
 
-    requested_capacity = re.search(r"\b(\d{4,5})\s*btu\b", normalized)
+    requested_capacity = re.search(r"\b(\d{4,6})\s*btu\b", normalized)
     if requested_capacity:
         capacity = int(requested_capacity.group(1))
         candidates = [item for item in candidates if item.capacity_btu == capacity]
@@ -1858,6 +1858,19 @@ async def _service_question_answer(
             )
 
     if interpretation.has(ConversationIntent.SERVICE_QUESTION):
+        inquiry_language = bool(
+            re.search(
+                r"\b(?:voces\s+)?(?:fazem|tem|trabalham\s+com|realizam|atendem|oferecem)\b",
+                interpretation.normalized_text,
+            )
+        )
+        parts.append(
+            (
+                f"Sim, trabalhamos com {target.label}."
+                if inquiry_language
+                else f"Sobre {target.label}:"
+            )
+        )
         details_loader = getattr(port, "get_service_details", None)
         details = None
         if callable(details_loader):
@@ -6817,6 +6830,8 @@ async def _handle_quote_decision(
     if action is None:
         if normalized in {
             "sim",
+            "sim vamos seguir",
+            "sim pode",
             "pode",
             "vamos",
             "vamos seguir",
