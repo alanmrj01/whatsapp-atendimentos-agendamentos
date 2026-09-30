@@ -22,3 +22,9 @@ class WhatsAppOutboundTaskPayload(BaseModel):
 
 class TaskAcknowledgement(BaseModel):
     status: Literal["accepted"]
+
+class LifecycleOutreachSweepPayload(BaseModel):
+    limit: int = Field(default=100, ge=1, le=500)
+
+    model_config = ConfigDict(extra="forbid")
+
