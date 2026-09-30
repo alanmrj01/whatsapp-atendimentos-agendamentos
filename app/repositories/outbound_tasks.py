@@ -11,6 +11,7 @@ from sqlalchemy.orm import aliased
 from app.models import (
     Business,
     BusinessAutomationExclusion,
+    CommercialAutomationEvent,
     Conversation,
     Customer,
     Message,
@@ -332,6 +333,9 @@ class OutboundTaskRepository:
         message_id: uuid.UUID,
         provider_message_id: str,
     ) -> None:
+        payload = await self.session.scalar(
+            select(Message.outbound_payload).where(Message.id == message_id)
+        )
         await self.session.execute(
             update(Message)
             .where(Message.id == message_id)
@@ -340,8 +344,47 @@ class OutboundTaskRepository:
                 status="sent",
             )
         )
+        if isinstance(payload, dict):
+            event_id = payload.get("_alovia_automation_event_id")
+            sequence_index = payload.get("_alovia_sequence_index")
+            sequence_count = payload.get("_alovia_sequence_count")
+            is_final = (
+                not isinstance(sequence_index, int)
+                or not isinstance(sequence_count, int)
+                or sequence_index >= sequence_count - 1
+            )
+            if isinstance(event_id, str) and is_final:
+                try:
+                    parsed_event_id = uuid.UUID(event_id)
+                except ValueError:
+                    parsed_event_id = None
+                if parsed_event_id is not None:
+                    await self.session.execute(
+                        update(CommercialAutomationEvent)
+                        .where(CommercialAutomationEvent.id == parsed_event_id)
+                        .values(status="sent", sent_at=func.now())
+                    )
 
     async def mark_failed(self, message_id: uuid.UUID) -> None:
+        payload = await self.session.scalar(
+            select(Message.outbound_payload).where(Message.id == message_id)
+        )
         await self.session.execute(
             update(Message).where(Message.id == message_id).values(status="failed")
         )
+        if isinstance(payload, dict):
+            event_id = payload.get("_alovia_automation_event_id")
+            if isinstance(event_id, str):
+                try:
+                    parsed_event_id = uuid.UUID(event_id)
+                except ValueError:
+                    parsed_event_id = None
+                if parsed_event_id is not None:
+                    await self.session.execute(
+                        update(CommercialAutomationEvent)
+                        .where(
+                            CommercialAutomationEvent.id == parsed_event_id,
+                            CommercialAutomationEvent.status.in_(("queued", "sent")),
+                        )
+                        .values(status="failed", resolved_at=func.now())
+                    )

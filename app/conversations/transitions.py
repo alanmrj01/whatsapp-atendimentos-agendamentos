@@ -214,6 +214,29 @@ async def determine_transition(
     if commercial_handoff is not None:
         return commercial_handoff
 
+    if (
+        action is None
+        and base_context.get("commercial_followup_pending") is True
+        and _looks_like_followup_dissatisfaction(inbound.body, interpretation)
+    ):
+        updated = dict(base_context)
+        updated["_commercial_offer_resolution"] = "handoff"
+        return _transition(
+            ConversationState.HUMAN_HANDOFF,
+            updated,
+            _text_message(
+                "Entendi. Vou encaminhar seu atendimento para uma pessoa da equipe "
+                "continuar essa negociação com você. Por favor, aguarde alguns instantes."
+            ),
+            automation_enabled=False,
+            handoff_status="waiting",
+        )
+
+    if base_context.get("commercial_followup_pending") is True:
+        base_context = dict(base_context)
+        base_context.pop("commercial_followup_pending", None)
+        base_context.pop("commercial_followup_event_id", None)
+
     context = (
         enrich_context_from_message(
             base_context,
@@ -386,6 +409,17 @@ async def _route_named_conversation(
     state = _canonical_state(conversation.state)
     action = inbound.interactive_id
     customer_name = conversation.customer_name
+
+    cleaning_offer = await _cleaning_offer_response_if_applicable(
+        conversation,
+        inbound,
+        context,
+        interpretation,
+        booking_port,
+        action,
+    )
+    if cleaning_offer is not None:
+        return cleaning_offer
 
     suggestion = context.get("equipment_suggestion")
     normalized_turn = normalize_portuguese(inbound.body or "")
@@ -1147,6 +1181,195 @@ def _has_service_question(interpretation: Interpretation) -> bool:
             ConversationIntent.CANCEL_QUESTION,
             ConversationIntent.RESCHEDULE_QUESTION,
         )
+    )
+
+
+def _looks_like_followup_dissatisfaction(
+    body: str | None,
+    interpretation: Interpretation,
+) -> bool:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+    if interpretation.has(ConversationIntent.PRICE_QUESTION) or any(
+        token in normalized
+        for token in (
+            "preco",
+            "valor",
+            "caro",
+            "barato",
+            "desconto",
+            "orcamento",
+        )
+    ):
+        return True
+    return any(
+        phrase in normalized
+        for phrase in (
+            "nao gostei",
+            "nao me agradou",
+            "nao curti",
+            "nao gostei desse",
+            "nao gostei do",
+            "achei ruim",
+            "nao quero desse jeito",
+            "nao ficou bom",
+            "nao era isso",
+            "esperava outra coisa",
+        )
+    )
+
+
+async def _cleaning_offer_response_if_applicable(
+    conversation: ConversationSnapshot,
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+    action: str | None,
+) -> ConversationTransition | None:
+    if context.get("commercial_offer_pending") is not True:
+        return None
+    if _context_string(context, "commercial_offer_kind") != "cleaning_reminder_6m":
+        return None
+    if action is not None:
+        return None
+
+    normalized = normalize_portuguese(inbound.body or "")
+    if not normalized:
+        return None
+
+    decline = (
+        normalized
+        in {
+            "nao",
+            "nao obrigado",
+            "nao obrigada",
+            "agora nao",
+            "nao tenho interesse",
+            "nao quero",
+            "deixa para depois",
+            "depois",
+        }
+        or any(
+            phrase in normalized
+            for phrase in (
+                "nao quero limpeza",
+                "nao preciso de limpeza",
+                "nao tenho interesse",
+                "agora nao",
+                "agora nao quero",
+            )
+        )
+    )
+    if decline:
+        updated = dict(context)
+        updated.pop("commercial_offer_pending", None)
+        updated["_commercial_offer_resolution"] = "declined"
+        return _transition(
+            ConversationState.COMPLETED,
+            updated,
+            _text_message(
+                "Tudo bem. Obrigado por nos avisar. Quando precisar, a equipe "
+                "continua à disposição."
+            ),
+        )
+
+    dissatisfied = any(
+        phrase in normalized
+        for phrase in (
+            "nao gostei",
+            "nao me agradou",
+            "achei ruim",
+            "tive problema",
+            "deu problema",
+            "quero reclamar",
+        )
+    )
+    if dissatisfied:
+        updated = dict(context)
+        updated["_commercial_offer_resolution"] = "handoff"
+        return _transition(
+            ConversationState.HUMAN_HANDOFF,
+            updated,
+            _text_message(
+                "Entendi. Vou encaminhar você para uma pessoa da equipe continuar "
+                "esse atendimento. Por favor, aguarde alguns instantes."
+            ),
+            automation_enabled=False,
+            handoff_status="waiting",
+        )
+
+    wants_cleaning = (
+        normalized
+        in {
+            "sim",
+            "tenho interesse",
+            "quero",
+            "quero sim",
+            "pode ser",
+            "vamos agendar",
+            "quero agendar",
+        }
+        or "limpeza" in normalized
+        or "higienizacao" in normalized
+        or interpretation.has(ConversationIntent.PRICE_QUESTION)
+        or interpretation.has(ConversationIntent.BOOK)
+        or interpretation.has(ConversationIntent.AVAILABILITY)
+    )
+    if not wants_cleaning:
+        return _transition(
+            ConversationState.COMPLETED,
+            context,
+            _text_message(
+                "Claro. Se quiser seguir com a limpeza, me diga que tem interesse "
+                "ou pergunte o que gostaria de saber."
+            ),
+        )
+
+    try:
+        port = _require_booking_port(booking_port)
+        services = _snapshot_options(await port.list_services(inbound.business_id))
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.COMPLETED,
+            context,
+            booking_unavailable_message(),
+        )
+
+    cleaning = next(
+        (
+            item
+            for item in services
+            if _service_kind(services, uuid.UUID(item.id)) == "cleaning"
+        ),
+        None,
+    )
+    if cleaning is None:
+        updated = dict(context)
+        updated["_commercial_offer_resolution"] = "handoff"
+        return _transition(
+            ConversationState.HUMAN_HANDOFF,
+            updated,
+            _text_message(
+                "Quero continuar com você, mas não encontrei um serviço de limpeza "
+                "configurado para agendamento automático. Vou chamar uma pessoa da equipe."
+            ),
+            automation_enabled=False,
+            handoff_status="waiting",
+        )
+
+    clean_context = {
+        "commercial_offer_event_id": context.get("commercial_offer_event_id"),
+        "commercial_offer_kind": "cleaning_reminder_6m",
+    }
+    return await _handle_service(
+        inbound,
+        clean_context,
+        f"service:{cleaning.id}",
+        port,
+        interpretation=interpretation,
+        customer_name=conversation.customer_name,
     )
 
 
@@ -4019,6 +4242,10 @@ async def _handle_service(
             **context,
             "service_id": str(service_id),
             "purchase_mode": purchase_mode,
+            "commercial_journey_id": (
+                _context_string(context, "commercial_journey_id")
+                or str(uuid.uuid4())
+            ),
         }
         updated_context.pop("service_clarification", None)
         if purchase_action == EQUIPMENT_INSTALLATION:
@@ -4107,6 +4334,10 @@ async def _handle_service(
     updated_context = {
         **context,
         "service_id": str(service_id),
+        "commercial_journey_id": (
+            _context_string(context, "commercial_journey_id")
+            or str(uuid.uuid4())
+        ),
     }
     updated_context.pop("service_clarification", None)
     selected_service_kind = _service_kind(services, service_id)
@@ -6346,9 +6577,13 @@ async def _handle_confirmation(
             context,
             booking_unavailable_message(),
         )
+    completed_context = {
+        **_clean_context(context),
+        "appointment_id": str(confirmation.appointment_id),
+    }
     return _transition(
         ConversationState.POST_BOOKING_HELP,
-        _clean_context(context),
+        completed_context,
         booking_completed_message(
             f"Agendamento confirmado para {date_short_label(selected_date)} "
             f"às {selected_time}."

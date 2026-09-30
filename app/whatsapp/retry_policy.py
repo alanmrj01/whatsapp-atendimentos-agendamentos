@@ -9,6 +9,7 @@ RETRYABLE_OUTBOUND_MESSAGE_TYPES = {
     "image",
     "interactive_button",
     "interactive_list",
+    "template",
 }
 
 

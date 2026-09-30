@@ -261,6 +261,19 @@ class FakeWhatsAppSender:
     ) -> str:
         return await self._send("list", (to, body, sections))
 
+    async def send_template(
+        self,
+        to: str,
+        template_name: str,
+        *,
+        language_code: str = "pt_BR",
+        body_parameters: Any = (),
+    ) -> str:
+        return await self._send(
+            "template",
+            (to, template_name, language_code, tuple(body_parameters)),
+        )
+
     async def _send(self, kind: str, arguments: Any) -> str:
         self.calls.append((kind, arguments))
         if self.error is not None:
@@ -305,6 +318,11 @@ def stored_message(
             "message_id": "wamid.customer",
             "emoji": "👍",
         },
+        "template": {
+            "template_name": "alovia_atendimento_pendente_24h",
+            "language_code": "pt_BR",
+            "body_parameters": ["Alan", "instalação", "instalação"],
+        },
     }
     return StoredOutboundMessage(
         message_id=MESSAGE_ID,
@@ -326,6 +344,7 @@ def stored_message(
         ("interactive_button", "buttons"),
         ("interactive_list", "list"),
         ("reaction", "reaction"),
+        ("template", "template"),
     ],
 )
 @pytest.mark.asyncio
@@ -854,3 +873,9 @@ async def test_critical_failed_message_still_blocks_sequence() -> None:
 
     assert found is None
     session.scalar.assert_not_awaited()
+
+def test_template_is_retryable_outbound_type() -> None:
+    from app.whatsapp.retry_policy import RETRYABLE_OUTBOUND_MESSAGE_TYPES
+
+    assert "template" in RETRYABLE_OUTBOUND_MESSAGE_TYPES
+

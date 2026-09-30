@@ -7,6 +7,14 @@ on:
     paths:
       - 'app/conversations/**'
       - 'app/booking/**'
+      - 'app/automation/**'
+      - 'app/api/internal_tasks.py'
+      - 'app/api/operational_pwa.py'
+      - 'app/repositories/commercial_automation.py'
+      - 'app/schemas/commercial_automation.py'
+      - 'app/whatsapp/client.py'
+      - 'app/whatsapp/sender.py'
+      - 'app/whatsapp/retry_policy.py'
       - 'app/repositories/conversations.py'
       - 'app/repositories/cloud_tasks.py'
       - 'app/repositories/outbound_tasks.py'
@@ -17,6 +25,7 @@ on:
       - 'app/whatsapp/processor.py'
       - 'tests/test_conversation_*.py'
       - 'tests/test_cloud_tasks.py'
+      - 'tests/test_commercial_automation.py'
       - 'tests/test_dialogue.py'
       - 'tests/test_booking_availability.py'
       - 'tests/test_booking_travel.py'
@@ -62,6 +71,7 @@ jobs:
           tests/test_conversation_repository.py
           tests/test_handoff_reactivation.py
           tests/test_cloud_tasks.py
+          tests/test_commercial_automation.py
           tests/test_dialogue.py
           tests/test_booking_availability.py
           tests/test_booking_travel.py

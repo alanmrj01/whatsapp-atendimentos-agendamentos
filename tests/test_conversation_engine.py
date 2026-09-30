@@ -701,16 +701,17 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         inbound(3, action=f"service:{SERVICE_ID}")
     ) is True
     assert repository.state == ConversationState.BOOKING_DATE
-    assert repository.context == {"service_id": str(SERVICE_ID)}
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    journey_id = repository.context["commercial_journey_id"]
+    assert uuid.UUID(journey_id)
 
     assert await engine.process(
         inbound(4, action="date:2026-09-02")
     ) is True
     assert repository.state == ConversationState.BOOKING_TIME
-    assert repository.context == {
-        "service_id": str(SERVICE_ID),
-        "selected_date": "2026-09-02",
-    }
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["commercial_journey_id"] == journey_id
 
     assert await engine.process(
         inbound(5, action="time:09:00", whatsapp_id="5512981359722")
@@ -4849,4 +4850,175 @@ async def test_installation_space_flow_asks_only_missing_measurement_before_reco
     assert repository.context["outdoor_space_height_cm"] == 70.0
     assert repository.context["outdoor_space_depth_cm"] == 50.0
     assert repository.context["recommended_equipment"]["item_id"] == "catalog-gree-9000-cold"
+
+@mark.asyncio
+async def test_24h_followup_price_objection_with_equipment_offers_semi_new_and_handoffs() -> None:
+    candidate = {
+        "service_id": str(SERVICE_ID),
+        "selected_date": "2026-09-02",
+        "selected_time": "09:00",
+    }
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={
+            **candidate,
+            "candidate_booking": candidate,
+            "commercial_journey_id": str(uuid.uuid4()),
+            "commercial_followup_event_id": str(uuid.uuid4()),
+            "commercial_followup_pending": True,
+            "purchase_mode": "both",
+            "purchase_only": False,
+            "equipment_ownership": "needs_equipment",
+            "recommended_equipment": {
+                "item_id": "catalog-gree-9000-cold",
+                "label": "Gree G-Top Auto Inverter 9.000 BTU",
+                "price": 2500.0,
+            },
+            "recommendation_presented": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1401, body="Achei o valor muito caro, tem como melhorar?")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "seminovo" in body.casefold()
+    assert "disponibilidade" in body.casefold()
+
+
+@mark.asyncio
+async def test_24h_followup_service_price_objection_handoffs_without_semi_new() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "commercial_journey_id": str(uuid.uuid4()),
+            "commercial_followup_event_id": str(uuid.uuid4()),
+            "commercial_followup_pending": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1402, body="Não gostei desse preço, achei caro")
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "seminovo" not in body.casefold()
+    assert "pessoa da equipe" in body.casefold()
+
+
+@mark.asyncio
+async def test_24h_followup_normal_reply_resumes_same_checkpoint_and_clears_marker() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "commercial_journey_id": str(uuid.uuid4()),
+            "commercial_followup_event_id": str(uuid.uuid4()),
+            "commercial_followup_pending": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1403, body="09:00")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ATTENDEE
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert "commercial_followup_pending" not in repository.context
+    assert "commercial_followup_event_id" not in repository.context
+
+
+@mark.asyncio
+async def test_cleaning_reminder_acceptance_enters_normal_cleaning_workflow_without_old_sale() -> None:
+    offer_event_id = str(uuid.uuid4())
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={
+            "commercial_offer_event_id": offer_event_id,
+            "commercial_offer_kind": "cleaning_reminder_6m",
+            "commercial_offer_pending": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1404, body="Sim, quero agendar a limpeza")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["commercial_offer_event_id"] == offer_event_id
+    assert repository.context["commercial_offer_kind"] == "cleaning_reminder_6m"
+    assert repository.context["equipment_ownership"] == "has_equipment"
+    assert "recommended_equipment" not in repository.context
+
+
+@mark.asyncio
+async def test_cleaning_reminder_decline_finishes_without_restarting_sales_flow() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={
+            "commercial_offer_event_id": str(uuid.uuid4()),
+            "commercial_offer_kind": "cleaning_reminder_6m",
+            "commercial_offer_pending": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1405, body="Agora não, obrigado")
+    )
+
+    assert repository.state == ConversationState.COMPLETED
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "obrigado" in body.casefold()
+    assert "disposição" in body.casefold() or "disposicao" in body.casefold()
+
+
+@mark.asyncio
+async def test_new_service_selection_creates_stable_commercial_journey_id() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        context={},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1406, action=f"service:{SERVICE_ID}", body="Limpeza")
+    )
+
+    journey_id = repository.context.get("commercial_journey_id")
+    assert isinstance(journey_id, str)
+    assert uuid.UUID(journey_id)
+    assert repository.context["service_id"] == str(SERVICE_ID)
 

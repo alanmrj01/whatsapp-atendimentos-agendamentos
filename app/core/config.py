@@ -138,6 +138,14 @@ class Settings(BaseSettings):
     outbound_tasks_enabled: bool = Field(
         default=False, validation_alias="OUTBOUND_TASKS_ENABLED"
     )
+    commercial_followup_24h_enabled: bool = Field(
+        default=False,
+        validation_alias="COMMERCIAL_FOLLOWUP_24H_ENABLED",
+    )
+    cleaning_reminder_6m_enabled: bool = Field(
+        default=False,
+        validation_alias="CLEANING_REMINDER_6M_ENABLED",
+    )
     cloud_tasks_outbound_queue: str = Field(
         default="whatsapp-outbound",
         validation_alias="CLOUD_TASKS_OUTBOUND_QUEUE",

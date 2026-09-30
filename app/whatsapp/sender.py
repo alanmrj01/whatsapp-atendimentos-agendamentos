@@ -66,6 +66,15 @@ class Sender(Protocol):
         sections: Sequence[Mapping[str, Any]],
     ) -> str: ...
 
+    async def send_template(
+        self,
+        to: str,
+        template_name: str,
+        *,
+        language_code: str = "pt_BR",
+        body_parameters: Sequence[str] = (),
+    ) -> str: ...
+
     async def aclose(self) -> None: ...
 
 

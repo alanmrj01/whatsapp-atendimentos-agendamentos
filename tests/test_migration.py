@@ -70,6 +70,12 @@ DELIVERY_FEE_MIGRATION_PATH = (
     / "versions"
     / "20260930_0021_equipment_delivery_fee.py"
 )
+COMMERCIAL_AUTOMATION_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260930_0022_commercial_automations.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -102,7 +108,27 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260930_0021"]
+    assert script.get_heads() == ["20260930_0022"]
+
+
+def test_commercial_automation_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", COMMERCIAL_AUTOMATION_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", COMMERCIAL_AUTOMATION_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "create table commercial_automation_events" in upgrade
+    assert "abandoned_followup_24h" in upgrade
+    assert "cleaning_reminder_6m" in upgrade
+    assert "uq_commercial_automation_events_business_type_anchor" in upgrade
+    assert "enable row level security" in upgrade
+    assert "drop table commercial_automation_events" in downgrade
 
 
 def test_equipment_delivery_fee_migration_is_additive_and_reversible() -> None:
