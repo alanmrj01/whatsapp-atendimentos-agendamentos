@@ -2227,10 +2227,16 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_TIME:
+        parsed_hour = parse_number_answer(body)
         return bool(
             re.search(
                 r"\b(?:[01]?\d|2[0-3])(?::[0-5]\d|h)\b",
-                normalized,
+                body.casefold(),
+            )
+            or (
+                parsed_hour is not None
+                and parsed_hour.is_integer()
+                and 0 <= parsed_hour <= 23
             )
         )
     if state is ConversationState.BOOKING_PROPERTY:
