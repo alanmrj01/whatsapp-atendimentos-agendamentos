@@ -7862,18 +7862,7 @@ async def _confirmation_body(
             f"• Horário: {selected_time}",
         )
     )
-    if (
-        context.get("purchase_only") is True
-        and _context_string(context, "fulfillment_type") == "equipment_delivery"
-    ):
-        address = ServiceAddress.from_snapshot(context.get("delivery_address"))
-    elif (
-        context.get("purchase_only") is True
-        and _context_string(context, "fulfillment_type") == "equipment_pickup"
-    ):
-        address = None
-    else:
-        if fulfillment_type == "equipment_delivery":
+    if fulfillment_type == "equipment_delivery":
         address = ServiceAddress.from_snapshot(context.get("delivery_address"))
         if address is not None:
             lines.append(f"• Endereço de entrega: {address.searchable_text}")
@@ -8506,7 +8495,19 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         )
     except ValueError:
         access = AccessCondition.UNKNOWN
-    address = ServiceAddress.from_snapshot(context.get("service_address"))
+    fulfillment_type = _context_string(context, "fulfillment_type")
+    if (
+        context.get("purchase_only") is True
+        and fulfillment_type == "equipment_delivery"
+    ):
+        address = ServiceAddress.from_snapshot(context.get("delivery_address"))
+    elif (
+        context.get("purchase_only") is True
+        and fulfillment_type == "equipment_pickup"
+    ):
+        address = None
+    else:
+        address = ServiceAddress.from_snapshot(context.get("service_address"))
     site_start = _context_time(context, "building_hours_start")
     site_limit = (
         _context_time(context, "building_hours_end")
