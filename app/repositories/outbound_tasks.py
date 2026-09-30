@@ -372,6 +372,26 @@ class OutboundTaskRepository:
         )
 
     async def mark_failed(self, message_id: uuid.UUID) -> None:
+        payload = await self.session.scalar(
+            select(Message.outbound_payload).where(Message.id == message_id)
+        )
         await self.session.execute(
             update(Message).where(Message.id == message_id).values(status="failed")
+        )
+        if not isinstance(payload, dict):
+            return
+        raw_outreach_id = payload.get("_alovia_outreach_id")
+        if not isinstance(raw_outreach_id, str):
+            return
+        try:
+            outreach_id = uuid.UUID(raw_outreach_id)
+        except ValueError:
+            return
+        await self.session.execute(
+            update(CustomerOutreach)
+            .where(
+                CustomerOutreach.id == outreach_id,
+                CustomerOutreach.status == "pending",
+            )
+            .values(status="failed")
         )
