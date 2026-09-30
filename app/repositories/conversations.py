@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from copy import deepcopy
 from contextlib import asynccontextmanager
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.postgresql.dml import Insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +33,10 @@ def build_lock_conversation_statement(
             Business.assistant_handoff_message,
             Business.timezone.label("business_timezone"),
             Customer.name.label("customer_name"),
+            Customer.name_source.label("customer_name_source"),
             Customer.whatsapp_profile_name.label("whatsapp_profile_name"),
+            Customer.phone_e164.label("customer_phone"),
+            Customer.whatsapp_id.label("customer_whatsapp_id"),
         )
         .join(Business, Business.id == Conversation.business_id)
         .join(
@@ -49,6 +52,24 @@ def build_lock_conversation_statement(
         )
         .with_for_update()
     )
+
+
+def _effective_customer_name(
+    name: str | None,
+    name_source: str | None,
+    profile_name: str | None,
+    phone: str | None,
+    whatsapp_id: str,
+) -> str | None:
+    if name_source == "manual" and isinstance(name, str) and name.strip():
+        return name
+    if isinstance(profile_name, str) and profile_name.strip():
+        return profile_name
+    if isinstance(name, str) and name.strip():
+        return name
+    if isinstance(phone, str) and phone.strip():
+        return phone
+    return whatsapp_id or None
 
 
 def _sequence_group(idempotency_key: str) -> str:
@@ -182,7 +203,13 @@ class ConversationRepository:
             greeting_message=row.assistant_greeting_message,
             fallback_message=row.assistant_fallback_message,
             handoff_message=row.assistant_handoff_message,
-            customer_name=row.customer_name,
+            customer_name=_effective_customer_name(
+                row.customer_name,
+                row.customer_name_source,
+                row.whatsapp_profile_name,
+                row.customer_phone,
+                row.customer_whatsapp_id,
+            ),
             whatsapp_profile_name=row.whatsapp_profile_name,
             business_timezone=row.business_timezone,
         )
@@ -238,7 +265,14 @@ class ConversationRepository:
                 .where(
                     Customer.business_id == snapshot.business_id,
                     Customer.id == snapshot.customer_id,
+                    or_(
+                        Customer.name_source.is_(None),
+                        Customer.name_source != "manual",
+                    ),
                 )
-                .values(name=transition.customer_name)
+                .values(
+                    name=transition.customer_name,
+                    name_source="conversation",
+                )
             )
         return True
