@@ -162,6 +162,7 @@ class OperationalService:
             select(
                 CustomerOutreach,
                 Customer.name,
+                Customer.name_source,
                 Customer.whatsapp_profile_name,
                 Customer.phone_e164,
                 Customer.whatsapp_id,
@@ -194,6 +195,7 @@ class OperationalService:
                     whatsapp_profile_name,
                     customer_phone,
                     whatsapp_id,
+                    name_source=customer_name_source,
                 ),
                 customer_phone=customer_phone,
                 outreach_type=item.outreach_type,
@@ -213,6 +215,7 @@ class OperationalService:
             for (
                 item,
                 customer_name,
+                customer_name_source,
                 whatsapp_profile_name,
                 customer_phone,
                 whatsapp_id,
@@ -536,6 +539,7 @@ class OperationalService:
         if customer is None:
             raise HTTPException(404, "Conversation not found")
         customer.name = values.name
+        customer.name_source = "manual" if values.name is not None else None
         await self.session.commit()
         return await self.get_conversation(business_id, conversation_id)
 
@@ -1655,7 +1659,16 @@ class OperationalService:
 
     def _appointment_query(self, business_id: UUID):
         return (
-            select(Appointment, Customer.name, Customer.phone_e164, Service.name, Employee.name)
+            select(
+                Appointment,
+                Customer.name,
+                Customer.name_source,
+                Customer.whatsapp_profile_name,
+                Customer.phone_e164,
+                Customer.whatsapp_id,
+                Service.name,
+                Employee.name,
+            )
             .join(Customer, and_(Customer.business_id == Appointment.business_id, Customer.id == Appointment.customer_id))
             .join(Service, and_(Service.business_id == Appointment.business_id, Service.id == Appointment.service_id))
             .join(Employee, and_(Employee.business_id == Appointment.business_id, Employee.id == Appointment.employee_id))
@@ -1668,7 +1681,10 @@ class OperationalService:
                 BusinessNotification,
                 Appointment.starts_at,
                 Customer.name,
+                Customer.name_source,
                 Customer.whatsapp_profile_name,
+                Customer.phone_e164,
+                Customer.whatsapp_id,
                 Service.name,
                 Employee.name,
             )
@@ -1749,8 +1765,8 @@ class OperationalService:
             unread_message.created_at > read_boundary,
         ).correlate(Conversation).scalar_subquery()
         query = select(
-            Conversation, Customer.name, Customer.whatsapp_profile_name,
-            Customer.phone_e164, Customer.whatsapp_id,
+            Conversation, Customer.name, Customer.name_source,
+            Customer.whatsapp_profile_name, Customer.phone_e164, Customer.whatsapp_id,
             latest_body.label("last_content"), latest_time.label("last_message_at"),
             latest_direction.label("last_direction"),
             latest_transition.label("last_transition"),
@@ -1821,7 +1837,16 @@ def _day_bounds(value: date, timezone_name: str) -> tuple[datetime, datetime]:
 
 
 def _appointment_view(row: Any) -> AppointmentView:
-    item, customer_name, customer_phone, service_name, employee_name = row
+    (
+        item,
+        customer_name,
+        customer_name_source,
+        whatsapp_profile_name,
+        customer_phone,
+        whatsapp_id,
+        service_name,
+        employee_name,
+    ) = row
     estimate_details = (
         item.estimate_details
         if isinstance(item.estimate_details, dict)
@@ -1835,7 +1860,15 @@ def _appointment_view(row: Any) -> AppointmentView:
         elif fulfillment_type == "equipment_pickup":
             service_name = "Retirada de equipamento"
     return AppointmentView(
-        id=item.id, customer_id=item.customer_id, customer_name=customer_name or "Cliente",
+        id=item.id,
+        customer_id=item.customer_id,
+        customer_name=_display_name(
+            customer_name,
+            whatsapp_profile_name,
+            customer_phone,
+            whatsapp_id,
+            name_source=customer_name_source,
+        ),
         customer_phone=customer_phone, service_id=item.service_id, service_name=service_name,
         employee_id=item.employee_id, employee_name=employee_name, starts_at=item.starts_at,
         ends_at=item.ends_at, status=item.status, notes=item.notes,
@@ -1847,12 +1880,21 @@ def _notification_view(row: Any, timezone_name: str) -> NotificationView:
         item,
         starts_at,
         customer_name,
+        customer_name_source,
         whatsapp_profile_name,
+        customer_phone,
+        whatsapp_id,
         service_name,
         employee_name,
     ) = row
     local_start = starts_at.astimezone(ZoneInfo(timezone_name))
-    display_customer = customer_name or whatsapp_profile_name or "Cliente"
+    display_customer = _display_name(
+        customer_name,
+        whatsapp_profile_name,
+        customer_phone,
+        whatsapp_id,
+        name_source=customer_name_source,
+    )
     return NotificationView(
         id=item.id,
         appointment_id=item.appointment_id,
@@ -1876,6 +1918,7 @@ def _conversation_view(row: Any) -> ConversationView:
     (
         item,
         customer_name,
+        customer_name_source,
         whatsapp_profile_name,
         customer_phone,
         whatsapp_id,
@@ -1905,7 +1948,11 @@ def _conversation_view(row: Any) -> ConversationView:
         id=item.id,
         customer_id=item.customer_id,
         customer_name=_display_name(
-            customer_name, whatsapp_profile_name, customer_phone, whatsapp_id
+            customer_name,
+            whatsapp_profile_name,
+            customer_phone,
+            whatsapp_id,
+            name_source=customer_name_source,
         ),
         customer_phone=customer_phone,
         last_content=last_content,
@@ -2019,6 +2066,7 @@ def _customer_display_name(item: Customer) -> str:
         item.whatsapp_profile_name,
         item.phone_e164,
         item.whatsapp_id,
+        name_source=item.name_source,
     )
 
 
@@ -2027,8 +2075,16 @@ def _display_name(
     profile_name: str | None,
     phone: str | None,
     whatsapp_id: str,
+    *,
+    name_source: str | None = None,
 ) -> str:
-    return name or profile_name or phone or whatsapp_id
+    if name_source == "manual" and isinstance(name, str) and name.strip():
+        return name
+    if isinstance(profile_name, str) and profile_name.strip():
+        return profile_name
+    if isinstance(name, str) and name.strip():
+        return name
+    return phone or whatsapp_id
 
 
 def _service_view(item: Service) -> ServiceOption:
