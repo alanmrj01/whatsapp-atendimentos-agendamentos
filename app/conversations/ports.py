@@ -31,6 +31,7 @@ class ServiceDetails:
     extra_tubing_price: Decimal | None = None
     business_city: str | None = None
     business_state: str | None = None
+    business_address: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
