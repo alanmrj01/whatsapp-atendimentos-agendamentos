@@ -77,6 +77,19 @@ LIFECYCLE_OUTREACH_MIGRATION_PATH = (
     / "20260930_0022_customer_lifecycle_outreach.py"
 )
 
+ASSISTANT_MESSAGES_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260930_0023_friendlier_assistant_messages.py"
+)
+CUSTOMER_NAME_SOURCE_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260930_0024_customer_name_source.py"
+)
+
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
     spec = importlib.util.spec_from_file_location(
@@ -108,7 +121,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260930_0022"]
+    assert script.get_heads() == ["20260930_0024"]
 
 
 def test_equipment_delivery_fee_migration_is_additive_and_reversible() -> None:
@@ -448,4 +461,40 @@ def test_lifecycle_outreach_migration_is_additive_and_reversible() -> None:
     assert "create table customer_outreach" in upgrade
     assert "uq_customer_outreach_idempotency_key" in upgrade
     assert "drop table customer_outreach" in downgrade
+
+def test_friendlier_assistant_message_migration_updates_only_legacy_defaults() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", ASSISTANT_MESSAGES_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", ASSISTANT_MESSAGES_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "update businesses set assistant_fallback_message" in upgrade
+    assert "where assistant_fallback_message" in upgrade
+    assert "update businesses set assistant_handoff_message" in upgrade
+    assert "alter column assistant_fallback_message set default" in upgrade
+    assert "alter column assistant_handoff_message set default" in upgrade
+    assert "update businesses set assistant_fallback_message" in downgrade
+
+
+def test_customer_name_source_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", CUSTOMER_NAME_SOURCE_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", CUSTOMER_NAME_SOURCE_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "add column name_source" in upgrade
+    assert "manual" in upgrade and "conversation" in upgrade
+    assert "drop column name_source" in downgrade
 
