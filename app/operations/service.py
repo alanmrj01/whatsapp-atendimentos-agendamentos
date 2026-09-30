@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any
@@ -1635,6 +1636,18 @@ def _day_bounds(value: date, timezone_name: str) -> tuple[datetime, datetime]:
 
 def _appointment_view(row: Any) -> AppointmentView:
     item, customer_name, customer_phone, service_name, employee_name = row
+    estimate_details = (
+        item.estimate_details
+        if isinstance(item.estimate_details, dict)
+        else {}
+    )
+    operational_details = estimate_details.get("operational_details")
+    if isinstance(operational_details, dict):
+        fulfillment_type = operational_details.get("fulfillment_type")
+        if fulfillment_type == "equipment_delivery":
+            service_name = "Entrega de equipamento"
+        elif fulfillment_type == "equipment_pickup":
+            service_name = "Retirada de equipamento"
     return AppointmentView(
         id=item.id, customer_id=item.customer_id, customer_name=customer_name or "Cliente",
         customer_phone=customer_phone, service_id=item.service_id, service_name=service_name,
@@ -1739,6 +1752,7 @@ def _business_view(item: Business) -> BusinessView:
         preparation_minutes=item.preparation_minutes,
         finishing_minutes=item.finishing_minutes,
         minimum_booking_notice_minutes=item.minimum_booking_notice_minutes,
+        equipment_delivery_fee_per_km=Decimal(item.equipment_delivery_fee_per_km),
         materials_catalog_reviewed=item.materials_catalog_reviewed,
         agenda_preferences_reviewed=item.agenda_preferences_reviewed,
         onboarding_completed_at=item.onboarding_completed_at,

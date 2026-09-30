@@ -178,6 +178,12 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     travel_after_buffer_minutes: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )
+    equipment_delivery_fee_per_km: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2),
+        default=Decimal("2.40"),
+        server_default="2.40",
+        nullable=False,
+    )
     travel_region_rules: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB,
         default=list,

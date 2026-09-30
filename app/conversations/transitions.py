@@ -5116,7 +5116,7 @@ async def _handle_equipment_delivery(
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
-        _, intake = await _context_intake(inbound, context, port)
+        service_id, intake = await _context_intake(inbound, context, port)
     except BookingPortUnavailable:
         return _transition(
             ConversationState.BOOKING_EQUIPMENT_DELIVERY,
@@ -5148,8 +5148,18 @@ async def _handle_equipment_delivery(
     updated = _clear_repair_attempt(context, "equipment_delivery")
     if action == EQUIPMENT_DELIVERY_PICKUP:
         updated["delivery_method"] = "pickup"
+        updated["fulfillment_type"] = "equipment_pickup"
         updated.pop("delivery_address", None)
+        updated.pop("address_purpose", None)
         updated.pop("delivery_installation_match_pending", None)
+        details = await _safe_service_details(
+            inbound,
+            port,
+            service_id,
+        )
+        pickup_address = getattr(details, "business_address", None)
+        if isinstance(pickup_address, str) and pickup_address.strip():
+            updated["pickup_address"] = pickup_address.strip()
         return await _advance_intake(
             inbound,
             port,
@@ -5162,6 +5172,8 @@ async def _handle_equipment_delivery(
         and context.get("purchase_mode") == "both"
     ):
         updated["delivery_method"] = "with_installation"
+        updated.pop("fulfillment_type", None)
+        updated.pop("pickup_address", None)
         updated.pop("delivery_address", None)
         updated.pop("address_purpose", None)
         updated.pop("delivery_installation_match_pending", None)
@@ -5174,6 +5186,11 @@ async def _handle_equipment_delivery(
         )
     if action == EQUIPMENT_DELIVERY_ADDRESS:
         updated["delivery_method"] = "delivery"
+        if context.get("purchase_only") is True:
+            updated["fulfillment_type"] = "equipment_delivery"
+        else:
+            updated.pop("fulfillment_type", None)
+        updated.pop("pickup_address", None)
         return _transition(
             ConversationState.BOOKING_ADDRESS,
             {**updated, "address_purpose": "delivery"},
@@ -6945,26 +6962,22 @@ async def _advance_intake(
                     delivery_installation_address_message(),
                 )
             if context.get("purchase_only") is True:
-                recommendation = context.get("recommended_equipment")
-                purchase_lines = [
-                    "Perfeito. Segue o resumo da compra:",
-                ]
-                if isinstance(recommendation, dict):
-                    label = recommendation.get("label")
-                    price = recommendation.get("price")
-                    if isinstance(label, str) and label:
-                        purchase_lines.append(f"• Equipamento: {label}")
-                    if isinstance(price, (int, float)) and not isinstance(price, bool):
-                        purchase_lines.append(
-                            f"• Valor do equipamento: {_format_brl(Decimal(str(price)))}"
-                        )
-                purchase_lines.append(
-                    "A equipe seguirá com a confirmação de disponibilidade e os próximos detalhes da compra."
-                )
-                return _transition(
-                    ConversationState.COMPLETED,
+                fulfillment_type = _context_string(context, "fulfillment_type")
+                if fulfillment_type not in {
+                    "equipment_delivery",
+                    "equipment_pickup",
+                }:
+                    return _transition(
+                        ConversationState.BOOKING_EQUIPMENT_DELIVERY,
+                        context,
+                        equipment_delivery_message(include_with_installation=False),
+                    )
+                return await _offer_dates(
+                    inbound,
+                    port,
                     context,
-                    _text_message("\n".join(purchase_lines)),
+                    services=available_services,
+                    customer_name=customer_name,
                 )
 
         if (
@@ -7096,6 +7109,45 @@ async def _advance_intake(
     )
 
 
+def _fulfillment_schedule_intro(
+    plan: BookingPlan,
+    context: dict[str, Any],
+) -> str:
+    fulfillment_type = _context_string(context, "fulfillment_type")
+    recommendation = context.get("recommended_equipment")
+    equipment_price: Decimal | None = None
+    if isinstance(recommendation, dict):
+        raw_price = recommendation.get("price")
+        if isinstance(raw_price, (int, float)) and not isinstance(raw_price, bool):
+            equipment_price = Decimal(str(raw_price))
+
+    if fulfillment_type == "equipment_pickup":
+        pickup_address = _context_string(context, "pickup_address")
+        location = (
+            f" no endereço cadastrado da empresa: {pickup_address}"
+            if pickup_address
+            else " no endereço cadastrado da empresa"
+        )
+        return (
+            "A retirada do equipamento não tem taxa de entrega e será agendada"
+            f"{location}."
+        )
+
+    if fulfillment_type == "equipment_delivery":
+        delivery_fee = plan.service.estimated_price or Decimal("0")
+        parts = [
+            "A entrega será agendada conforme a disponibilidade da agenda.",
+            f"Taxa de entrega calculada pela rota: {_format_brl(delivery_fee)}.",
+        ]
+        if equipment_price is not None:
+            parts.append(
+                f"Total com equipamento: {_format_brl(equipment_price + delivery_fee)}."
+            )
+        return " ".join(parts)
+
+    return _estimate_message(plan)
+
+
 async def _offer_dates(
     inbound: ConversationInput,
     port: BookingAvailabilityPort,
@@ -7138,10 +7190,15 @@ async def _offer_dates(
             ),
         )
 
+    fulfillment_type = _context_string(context, "fulfillment_type")
     estimate = (
-        ""
-        if context.get("quote_presented") is True
-        else _estimate_message(plan)
+        _fulfillment_schedule_intro(plan, context)
+        if fulfillment_type in {"equipment_delivery", "equipment_pickup"}
+        else (
+            ""
+            if context.get("quote_presented") is True
+            else _estimate_message(plan)
+        )
     )
     prefix = f"{estimate}\n\n" if estimate else ""
     if len(dates) > 10:
@@ -7783,6 +7840,11 @@ async def _confirmation_body(
         None,
     )
     service_label = service.label if service is not None else "Serviço selecionado"
+    fulfillment_type = _context_string(context, "fulfillment_type")
+    if fulfillment_type == "equipment_delivery":
+        service_label = "Entrega de equipamento"
+    elif fulfillment_type == "equipment_pickup":
+        service_label = "Retirada de equipamento"
     service_kind = _service_kind(services, service_id)
     lines = [
         (
@@ -7800,9 +7862,24 @@ async def _confirmation_body(
             f"• Horário: {selected_time}",
         )
     )
-    address = ServiceAddress.from_snapshot(context.get("service_address"))
-    if address is not None:
-        lines.append(f"• Endereço: {address.searchable_text}")
+    if fulfillment_type == "equipment_delivery":
+        address = ServiceAddress.from_snapshot(context.get("delivery_address"))
+        if address is not None:
+            lines.append(f"• Endereço de entrega: {address.searchable_text}")
+    elif fulfillment_type == "equipment_pickup":
+        pickup_address = _context_string(context, "pickup_address")
+        lines.append(
+            "• Retirada: "
+            + (
+                pickup_address
+                if pickup_address
+                else "endereço cadastrado da empresa"
+            )
+        )
+    else:
+        address = ServiceAddress.from_snapshot(context.get("service_address"))
+        if address is not None:
+            lines.append(f"• Endereço: {address.searchable_text}")
     model = _context_string(context, "equipment_model")
     if model:
         lines.append(f"• Equipamento: {model}")
@@ -7872,6 +7949,17 @@ async def _confirmation_body(
                 lines.append(
                     f"• Valor do equipamento: {_format_brl(equipment_price)}"
                 )
+            if fulfillment_type == "equipment_delivery":
+                delivery_fee = plan.service.estimated_price or Decimal("0")
+                lines.append(
+                    f"• Taxa de entrega: {_format_brl(delivery_fee)}"
+                )
+                if equipment_price is not None:
+                    lines.append(
+                        f"• Total: {_format_brl(equipment_price + delivery_fee)}"
+                    )
+            elif fulfillment_type == "equipment_pickup":
+                lines.append("• Taxa de entrega: não se aplica")
         elif service_price is not None:
             price_label = (
                 "Valor base do serviço técnico"
@@ -8407,7 +8495,19 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         )
     except ValueError:
         access = AccessCondition.UNKNOWN
-    address = ServiceAddress.from_snapshot(context.get("service_address"))
+    fulfillment_type = _context_string(context, "fulfillment_type")
+    if (
+        context.get("purchase_only") is True
+        and fulfillment_type == "equipment_delivery"
+    ):
+        address = ServiceAddress.from_snapshot(context.get("delivery_address"))
+    elif (
+        context.get("purchase_only") is True
+        and fulfillment_type == "equipment_pickup"
+    ):
+        address = None
+    else:
+        address = ServiceAddress.from_snapshot(context.get("service_address"))
     site_start = _context_time(context, "building_hours_start")
     site_limit = (
         _context_time(context, "building_hours_end")
@@ -8443,7 +8543,12 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         "outdoor_space_depth_cm",
         "outdoor_space_unrestricted",
         "recommended_equipment",
+        "purchase_mode",
+        "purchase_only",
         "delivery_method",
+        "fulfillment_type",
+        "pickup_address",
+        "delivery_fee_per_km",
         "delivery_address",
         "installation_height_over_3m",
         "work_at_height",

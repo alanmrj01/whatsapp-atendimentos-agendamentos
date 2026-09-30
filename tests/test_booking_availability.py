@@ -1237,3 +1237,174 @@ def test_automatic_snapshot_evidences_customer_installation_measurements_for_tec
     assert details["indoor_space_width_cm"] == 90.0
     assert details["outdoor_space_depth_cm"] == 50.0
 
+
+class _FulfillmentTravelPort:
+    def __init__(self, distance_km: Decimal | None) -> None:
+        self.distance_km = distance_km
+
+    async def estimate(
+        self,
+        origin: TravelOrigin,
+        destination: ServiceAddress,
+    ) -> TravelEstimate:
+        return TravelEstimate(
+            travel_minutes=20,
+            distance_km=self.distance_km,
+            source="test_route",
+            method="route",
+            estimated=False,
+            available=True,
+            within_service_area=True,
+            origin_is_precise=origin.is_precise,
+        )
+
+
+class _FulfillmentPlanPort(PostgresBookingAvailabilityPort):
+    def __init__(
+        self,
+        company: Business,
+        *,
+        distance_km: Decimal | None = Decimal("10.00"),
+    ) -> None:
+        super().__init__(
+            object(),  # type: ignore[arg-type]
+            travel_time_port=_FulfillmentTravelPort(distance_km),
+            now_provider=lambda: NOW,
+        )
+        self.company = company
+        self.catalog_service = service()
+
+    async def _load_business_service(
+        self,
+        _: uuid.UUID,
+        __: uuid.UUID,
+    ) -> tuple[Business, Service]:
+        return self.company, self.catalog_service
+
+    async def _require_eligible_employees(
+        self,
+        *_: Any,
+    ) -> tuple[uuid.UUID, ...]:
+        return (EMPLOYEE_A,)
+
+
+@pytest.mark.asyncio
+async def test_equipment_delivery_uses_configured_per_km_fee() -> None:
+    company = business(
+        travel_calculation_method="route",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+        equipment_delivery_fee_per_km=Decimal("2.40"),
+    )
+    port = _FulfillmentPlanPort(company, distance_km=Decimal("10.00"))
+
+    booking_plan = await port.estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(
+            address=ServiceAddress("Rua Destino, 100, São José dos Campos - SP"),
+            operational_details={"fulfillment_type": "equipment_delivery"},
+        ),
+    )
+
+    assert booking_plan.requires_handoff is False
+    assert booking_plan.service.estimated_duration_minutes == 30
+    assert booking_plan.service.estimated_price == Decimal("24.00")
+    assert "equipment_delivery_fee_per_km" in booking_plan.service.applied_rules
+    assert booking_plan.travel.distance_km == Decimal("10.00")
+
+
+@pytest.mark.asyncio
+async def test_equipment_delivery_without_route_distance_requires_handoff() -> None:
+    company = business(
+        travel_calculation_method="route",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+        equipment_delivery_fee_per_km=Decimal("2.40"),
+    )
+    port = _FulfillmentPlanPort(company, distance_km=None)
+
+    booking_plan = await port.estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(
+            address=ServiceAddress("Rua Destino, 100, São José dos Campos - SP"),
+            operational_details={"fulfillment_type": "equipment_delivery"},
+        ),
+    )
+
+    assert booking_plan.requires_handoff is True
+    assert booking_plan.handoff_reason == "delivery_distance_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_equipment_pickup_has_no_delivery_fee_or_travel() -> None:
+    company = business(equipment_delivery_fee_per_km=Decimal("2.40"))
+    port = _FulfillmentPlanPort(company)
+
+    booking_plan = await port.estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(
+            operational_details={"fulfillment_type": "equipment_pickup"},
+        ),
+    )
+
+    assert booking_plan.requires_handoff is False
+    assert booking_plan.service.estimated_price == Decimal("0.00")
+    assert booking_plan.travel.travel_minutes == 0
+    assert booking_plan.travel.method == "no_travel"
+
+
+def test_automatic_snapshot_records_equipment_delivery_and_pickup_details() -> None:
+    delivery_appointment = Appointment(
+        business_id=BUSINESS_ID,
+        customer_id=CUSTOMER_ID,
+        service_id=SERVICE_ID,
+        employee_id=EMPLOYEE_A,
+        starts_at=datetime(2026, 9, 2, 12, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 9, 2, 13, tzinfo=timezone.utc),
+        status="confirmed",
+    )
+    delivery_requirements = BookingRequirements(
+        address=ServiceAddress("Rua Destino, 100, São José dos Campos - SP"),
+        operational_details={
+            "fulfillment_type": "equipment_delivery",
+            "delivery_address": ServiceAddress(
+                "Rua Destino, 100, São José dos Campos - SP"
+            ).to_snapshot(),
+        },
+    )
+    delivery_plan = plan(duration=30)
+    delivery_plan = BookingPlan(
+        service=ServiceEstimate(
+            estimated_duration_minutes=30,
+            estimated_price=Decimal("24.00"),
+            pricing_type=PricingType.FIXED,
+            requires_human_quote=False,
+            applied_rules=("equipment_delivery_fee_per_km",),
+            qualifier="fixed",
+        ),
+        travel=TravelEstimate(
+            travel_minutes=20,
+            distance_km=Decimal("10.00"),
+            source="test_route",
+            method="route",
+            estimated=False,
+        ),
+        travel_before_minutes=20,
+        travel_after_minutes=20,
+        requires_handoff=False,
+    )
+
+    PostgresBookingAvailabilityPort._apply_snapshot(
+        delivery_appointment,
+        delivery_requirements,
+        delivery_plan,
+    )
+
+    assert delivery_appointment.notes is not None
+    assert "entrega de equipamento" in delivery_appointment.notes.casefold()
+    assert "Rua Destino, 100" in delivery_appointment.notes
+    assert "R$ 24,00" in delivery_appointment.notes
+
