@@ -222,6 +222,7 @@ class FakeBookingPort:
         self.extra_tubing_price: Decimal | None = None
         self.business_city: str | None = None
         self.business_state: str | None = None
+        self.business_address: str | None = None
         self.equipment_catalog = [
             EquipmentCatalogEntry(
                 item_id="catalog-gree-9000-cold",
@@ -277,6 +278,7 @@ class FakeBookingPort:
             extra_tubing_price=self.extra_tubing_price,
             business_city=self.business_city,
             business_state=self.business_state,
+            business_address=self.business_address,
         )
 
     async def get_service_intake(
@@ -3054,13 +3056,16 @@ async def _complete_equipment_profile(
 
 
 @mark.asyncio
-async def test_purchase_only_recommends_once_and_pickup_finishes_without_handoff() -> None:
+async def test_purchase_only_recommends_once_and_pickup_goes_to_calendar() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_SERVICE,
         context={"service_clarification": "equipment_purchase"},
         customer_name="Alan",
     )
     booking_port = FakeBookingPort()
+    booking_port.business_address = (
+        "Rua Itumbiara, 160 - Parque Industrial, São José dos Campos - SP"
+    )
     booking_port.services = [
         BookingOption(
             str(SERVICE_ID),
@@ -3093,10 +3098,70 @@ async def test_purchase_only_recommends_once_and_pickup_finishes_without_handoff
         inbound(978, action="equipment.delivery.pickup", body="Retirar")
     )
 
-    assert repository.state == ConversationState.COMPLETED
+    assert repository.state == ConversationState.BOOKING_DATE
     assert repository.automation_enabled is True
     assert repository.context["purchase_mode"] == "purchase"
+    assert repository.context["fulfillment_type"] == "equipment_pickup"
+    assert repository.context["pickup_address"] == booking_port.business_address
     assert "service_address" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "retirada" in body.casefold()
+    assert "não tem taxa de entrega" in body.casefold()
+
+
+@mark.asyncio
+async def test_purchase_only_delivery_collects_address_and_goes_to_calendar_with_fee() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        context={"service_clarification": "equipment_purchase"},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    booking_port.plan = replace(
+        booking_port.plan,
+        service=replace(
+            booking_port.plan.service,
+            estimated_price=Decimal("24.00"),
+            pricing_type=PricingType.FIXED,
+        ),
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(979, action="equipment.purchase", body="Só comprar")
+    )
+    await _complete_equipment_profile(engine, sequence=1980)
+
+    await engine.process(
+        inbound(1990, action="equipment.delivery.address", body="Receber")
+    )
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["fulfillment_type"] == "equipment_delivery"
+
+    await engine.process(
+        inbound(
+            1991,
+            body="Rua A, 10, Centro, São José dos Campos - SP",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["delivery_method"] == "delivery"
+    assert repository.context["fulfillment_type"] == "equipment_delivery"
+    assert "delivery_address" in repository.context
+    assert "service_address" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "taxa de entrega" in body.casefold()
+    assert "R$ 24,00" in body
 
 
 @mark.asyncio
