@@ -76,6 +76,12 @@ LIFECYCLE_OUTREACH_MIGRATION_PATH = (
     / "versions"
     / "20260930_0022_customer_lifecycle_outreach.py"
 )
+POLITE_ASSISTANT_DEFAULTS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20260930_0023_polite_assistant_defaults.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -448,4 +454,19 @@ def test_lifecycle_outreach_migration_is_additive_and_reversible() -> None:
     assert "create table customer_outreach" in upgrade
     assert "uq_customer_outreach_idempotency_key" in upgrade
     assert "drop table customer_outreach" in downgrade
+
+def test_polite_assistant_defaults_migration_preserves_custom_copy() -> None:
+    upgrade = " ".join(
+        render_migration_sql(
+            "upgrade",
+            POLITE_ASSISTANT_DEFAULTS_MIGRATION_PATH,
+        )
+        .lower()
+        .split()
+    )
+
+    assert "where businesses.assistant_fallback_message =" in upgrade
+    assert "where businesses.assistant_handoff_message =" in upgrade
+    assert "desculpe, não entendi" in upgrade
+    assert "aguarde alguns instantes" in upgrade
 
