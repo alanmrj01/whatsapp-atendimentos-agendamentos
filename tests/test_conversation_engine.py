@@ -4416,3 +4416,52 @@ async def test_service_technical_question_is_safe_and_returns_to_pending_booking
     assert "prefiro não inventar" in body.casefold() or "prefiro nao inventar" in body.casefold()
     assert "endereço" in body.casefold() or "endereco" in body.casefold()
 
+@mark.asyncio
+async def test_arbitrary_comment_in_structured_checkpoint_does_not_consume_slot_or_increment_retry() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1221, body="Meu cachorro se chama Rex")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert "repair_attempts" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "preservar o que já foi preenchido" in body.casefold()
+    assert "09:00" in body
+
+
+@mark.asyncio
+async def test_arbitrary_comment_during_equipment_ownership_keeps_purchase_checkpoint() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1222, body="Hoje está muito quente por aqui")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_OWNERSHIP
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "repair_attempts" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "preservar o que já foi preenchido" in body.casefold()
+
