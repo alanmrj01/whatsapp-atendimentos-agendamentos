@@ -4129,7 +4129,10 @@ async def _handle_equipment_model(
             "Recebi a foto do aparelho para a equipe conferir.",
         )
 
-    if _context_string(context, "equipment_model") is not None:
+    if (
+        _context_string(context, "equipment_model") is not None
+        and _context_string(context, "equipment_ownership") != "needs_equipment"
+    ):
         return await _advance_intake(
             inbound,
             port,
