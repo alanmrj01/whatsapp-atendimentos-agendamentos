@@ -71,6 +71,9 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
         "diagnostico",
         "conserto",
         "arrumar",
+        "com problema",
+        "esta com problema",
+        "problema no ar",
     ),
     "gas-recharge": ("gas", "sem gas", "recarga", "vazamento"),
 }
