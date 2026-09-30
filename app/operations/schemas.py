@@ -172,6 +172,15 @@ class ConversationDetail(ConversationView):
     free_form_window_expires_at: datetime | None
 
 
+class MessageDelta(StrictModel):
+    items: list[MessageView]
+    cursor: str | None
+
+
+class UnreadNotificationCount(StrictModel):
+    unread_count: int
+
+
 class CustomerNameUpdate(StrictModel):
     name: str | None = Field(default=None, max_length=255)
 
@@ -213,6 +222,29 @@ class ConversationActionUpdate(StrictModel):
         if not self.model_fields_set:
             raise ValueError("At least one conversation action is required")
         return self
+
+
+class ConversationBulkUpdate(StrictModel):
+    conversation_ids: list[UUID] = Field(min_length=1, max_length=200)
+    pinned: bool | None = None
+    read: bool | None = None
+    assistant_enabled: bool | None = None
+
+    @field_validator("conversation_ids")
+    @classmethod
+    def unique_conversation_ids(cls, value: list[UUID]) -> list[UUID]:
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ConversationBulkUpdate":
+        if not {"pinned", "read", "assistant_enabled"} & self.model_fields_set:
+            raise ValueError("At least one bulk conversation action is required")
+        return self
+
+
+class ConversationBulkResult(StrictModel):
+    updated_count: int
+    items: list[ConversationView]
 
 
 class PostalAddressView(StrictModel):
