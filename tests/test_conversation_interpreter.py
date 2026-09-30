@@ -305,3 +305,16 @@ def test_price_objection_language_is_recognized_as_price_question(body: str) -> 
     assert result.has(ConversationIntent.PRICE_QUESTION)
     assert result.has_act(ConversationAct.SIDE_QUESTION)
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Meu ar-condicionado está com problema",
+        "Estou com problema no ar",
+    ],
+)
+def test_generic_ac_problem_maps_to_corrective_diagnostics(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+    assert result.service_key == "diagnostics"
+
