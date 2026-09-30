@@ -726,6 +726,10 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "access_condition IN ('normal', 'difficult', 'unknown')",
             name="access_condition_allowed",
         ),
+        CheckConstraint(
+            "appointment_kind IN ('service', 'equipment_delivery', 'equipment_pickup')",
+            name="appointment_kind_allowed",
+        ),
         ForeignKeyConstraint(
             ["business_id", "customer_id"],
             ["customers.business_id", "customers.id"],
@@ -784,6 +788,9 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    appointment_kind: Mapped[str] = mapped_column(
+        String(32), default="service", server_default="service", nullable=False
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     service_address: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True
