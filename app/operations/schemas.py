@@ -147,6 +147,7 @@ class ConversationView(StrictModel):
     customer_id: UUID
     customer_name: str
     customer_phone: str | None
+    whatsapp_number: str | None = None
     last_content: str | None
     last_message_at: datetime | None
     status: ConversationStatus
