@@ -1481,9 +1481,205 @@ def _equipment_suggestion_snapshot(
         "source_url": item.source_url,
         "image_url": item.image_url,
         "condenser_form": item.condenser_form,
+        "indoor_dimensions_cm": item.indoor_dimensions_cm,
+        "outdoor_dimensions_cm": item.outdoor_dimensions_cm,
+        "voltage_v": getattr(item, "voltage_v", None),
+        "voltage": getattr(item, "voltage", None),
+        "model_sku": getattr(item, "model_sku", None),
+        "wifi": getattr(item, "wifi", None),
+        "inverter": getattr(item, "inverter", None),
         "price": item.price,
         "required_btu_reference": required_btu,
     }
+
+
+def _equipment_value(item: Any, key: str) -> Any:
+    if isinstance(item, dict):
+        return item.get(key)
+    return getattr(item, key, None)
+
+
+def _equipment_display_label(item: Any) -> str:
+    label = _equipment_value(item, "label")
+    if isinstance(label, str) and label.strip():
+        return label.strip()
+    brand = _equipment_value(item, "brand")
+    line = _equipment_value(item, "line")
+    capacity = _equipment_value(item, "capacity_btu")
+    parts = [
+        value.strip()
+        for value in (brand, line)
+        if isinstance(value, str) and value.strip()
+    ]
+    if isinstance(capacity, int) and not isinstance(capacity, bool):
+        parts.append(f"{capacity:,} BTU".replace(",", "."))
+    return " ".join(parts) or "esse equipamento"
+
+
+def _equipment_technical_question(normalized: str) -> str | None:
+    if any(term in normalized for term in ("voltagem", "tensao", "127v", "127 v", "220v", "220 v")):
+        return "voltage"
+    if any(
+        term in normalized
+        for term in (
+            "dimensao",
+            "dimensoes",
+            "medida",
+            "medidas",
+            "largura",
+            "profundidade",
+            "tamanho do aparelho",
+            "tamanho da evaporadora",
+            "tamanho da condensadora",
+        )
+    ):
+        return "dimensions"
+    if any(term in normalized for term in ("sku", "codigo do modelo", "codigo do aparelho", "referencia do modelo")):
+        return "sku"
+    if any(term in normalized for term in ("quente frio", "quente e frio", "so frio", "ciclo")):
+        return "cycle"
+    if any(term in normalized for term in ("wifi", "wi fi", "alexa", "bluetooth", "inverter", "inteligencia artificial", " ia ")):
+        return "feature"
+    if any(term in normalized for term in ("garantia", "tempo de garantia")):
+        return "warranty"
+    if any(term in normalized for term in ("consumo", "kwh", "gasta muita energia", "economia de energia")):
+        return "consumption"
+    if any(term in normalized for term in ("gas refrigerante", "fluido refrigerante", "r32", "r410")):
+        return "refrigerant"
+    if any(term in normalized for term in ("nivel de ruido", "decibeis", "decibel", " db ")):
+        return "noise"
+    return None
+
+
+def _format_dimensions(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    width = value.get("width")
+    height = value.get("height")
+    depth = value.get("depth")
+    if not isinstance(width, (int, float)) or isinstance(width, bool):
+        return None
+    if not isinstance(height, (int, float)) or isinstance(height, bool):
+        return None
+    text = f"{float(width):g} × {float(height):g} cm (largura × altura)"
+    if isinstance(depth, (int, float)) and not isinstance(depth, bool):
+        text = (
+            f"{float(width):g} × {float(height):g} × {float(depth):g} cm "
+            "(largura × altura × profundidade)"
+        )
+    return text.replace(".", ",")
+
+
+def _equipment_technical_answer(item: Any, normalized: str) -> str | None:
+    kind = _equipment_technical_question(normalized)
+    if kind is None:
+        return None
+    label = _equipment_display_label(item)
+
+    if kind == "voltage":
+        voltage = _equipment_value(item, "voltage")
+        voltage_v = _equipment_value(item, "voltage_v")
+        if isinstance(voltage, str) and voltage.strip():
+            return f"A tensão cadastrada para {label} é {voltage.strip()}."
+        if isinstance(voltage_v, int) and not isinstance(voltage_v, bool):
+            return f"A tensão cadastrada para {label} é {voltage_v} V."
+        return (
+            f"A tensão de {label} não está cadastrada com segurança no catálogo. "
+            "Prefiro não assumir esse dado."
+        )
+
+    if kind == "dimensions":
+        indoor = _format_dimensions(_equipment_value(item, "indoor_dimensions_cm"))
+        outdoor = _format_dimensions(_equipment_value(item, "outdoor_dimensions_cm"))
+        if indoor and outdoor:
+            return (
+                f"As medidas cadastradas de {label} são: unidade interna {indoor}; "
+                f"unidade externa {outdoor}."
+            )
+        if indoor:
+            return f"A unidade interna de {label} tem medidas cadastradas de {indoor}."
+        if outdoor:
+            return f"A unidade externa de {label} tem medidas cadastradas de {outdoor}."
+        return (
+            f"As dimensões de {label} não estão cadastradas com segurança. "
+            "Prefiro não inventar medidas."
+        )
+
+    if kind == "sku":
+        sku = _equipment_value(item, "model_sku")
+        if isinstance(sku, str) and sku.strip():
+            return f"O código/modelo cadastrado de {label} é {sku.strip()}."
+        return f"O código exato de {label} não está cadastrado no catálogo."
+
+    if kind == "cycle":
+        cycles = _equipment_value(item, "cycles")
+        values = set(cycles) if isinstance(cycles, (list, tuple)) else set()
+        if "heat_cool" in values:
+            return f"{label} está cadastrado como quente/frio."
+        if "cold" in values:
+            return f"{label} está cadastrado como só frio."
+        return f"O ciclo de {label} não está cadastrado com segurança."
+
+    if kind == "feature":
+        features = _equipment_value(item, "features")
+        feature_values = tuple(features) if isinstance(features, (list, tuple)) else ()
+        feature_text = " ".join(
+            normalize_portuguese(str(value)) for value in feature_values
+        )
+        checks = (
+            ("alexa", ("alexa", "amazon alexa")),
+            ("bluetooth", ("bluetooth",)),
+            ("Wi-Fi", ("wifi", "wi fi")),
+            ("Inverter", ("inverter",)),
+            ("IA", ("inteligencia artificial", " ia ")),
+        )
+        requested: list[tuple[str, bool]] = []
+        for display, aliases in checks:
+            if any(alias in f" {normalized} " for alias in aliases):
+                explicit_flag = None
+                if display == "Wi-Fi":
+                    explicit_flag = _equipment_value(item, "wifi")
+                elif display == "Inverter":
+                    explicit_flag = _equipment_value(item, "inverter")
+                present = (
+                    explicit_flag
+                    if isinstance(explicit_flag, bool)
+                    else any(alias.strip() in feature_text for alias in aliases)
+                    or (
+                        display == "Inverter"
+                        and "inverter" in normalize_portuguese(
+                            str(_equipment_value(item, "line") or "")
+                        )
+                    )
+                )
+                requested.append((display, bool(present)))
+        if requested:
+            yes = [name for name, present in requested if present]
+            no = [name for name, present in requested if not present]
+            parts: list[str] = []
+            if yes:
+                parts.append(f"{label} tem " + ", ".join(yes) + " cadastrado.")
+            if no:
+                parts.append(
+                    "Não tenho "
+                    + ", ".join(no)
+                    + f" cadastrado para {label}; prefiro não assumir compatibilidade."
+                )
+            return " ".join(parts)
+
+    unsupported_labels = {
+        "warranty": "a garantia",
+        "consumption": "o consumo elétrico",
+        "refrigerant": "o fluido refrigerante",
+        "noise": "o nível de ruído em dB",
+    }
+    if kind in unsupported_labels:
+        detail = unsupported_labels[kind]
+        return (
+            f"Não tenho {detail} de {label} cadastrado com segurança neste catálogo. "
+            "Prefiro não inventar esse dado; a equipe pode confirmar a especificação exata."
+        )
+    return None
 
 
 async def _equipment_question_answer(
@@ -1503,6 +1699,22 @@ async def _equipment_question_answer(
         "alexa",
         "bluetooth",
         "inverter",
+        "voltagem",
+        "tensao",
+        "dimensao",
+        "dimensoes",
+        "medida",
+        "medidas",
+        "sku",
+        "codigo do modelo",
+        "ciclo",
+        "garantia",
+        "consumo",
+        "kwh",
+        "fluido refrigerante",
+        "gas refrigerante",
+        "nivel de ruido",
+        "decibeis",
     )
     cheaper_terms = ("mais barato", "mais em conta")
     has_equipment_context = (
@@ -1523,6 +1735,22 @@ async def _equipment_question_answer(
         "alexa",
         "bluetooth",
         "inverter",
+        "voltagem",
+        "tensao",
+        "dimensao",
+        "dimensoes",
+        "medida",
+        "medidas",
+        "sku",
+        "codigo do modelo",
+        "ciclo",
+        "garantia",
+        "consumo",
+        "kwh",
+        "fluido refrigerante",
+        "gas refrigerante",
+        "nivel de ruido",
+        "decibeis",
         "mais barato",
         "mais em conta",
     )
@@ -1591,6 +1819,49 @@ async def _equipment_question_answer(
         ]
 
     recommendation = context.get("recommended_equipment")
+    technical_kind = _equipment_technical_question(normalized)
+    if technical_kind is not None:
+        current_item = None
+        current_item_id = (
+            recommendation.get("item_id")
+            if isinstance(recommendation, dict)
+            else None
+        )
+        if isinstance(current_item_id, str):
+            current_item = next(
+                (item for item in catalog if item.item_id == current_item_id),
+                None,
+            )
+        target_item: Any | None = current_item
+        if target_item is None and len(candidates) == 1 and (
+            mentioned_candidates or requested_capacity is not None
+        ):
+            target_item = candidates[0]
+        if target_item is None and isinstance(recommendation, dict):
+            target_item = recommendation
+        if target_item is not None:
+            technical_answer = _equipment_technical_answer(
+                target_item,
+                normalized,
+            )
+            if technical_answer is not None:
+                return technical_answer
+        if has_equipment_context and technical_kind in {
+            "voltage",
+            "dimensions",
+            "sku",
+            "cycle",
+            "feature",
+            "warranty",
+            "consumption",
+            "refrigerant",
+            "noise",
+        }:
+            return (
+                "Para responder esse detalhe sem inventar informação, preciso primeiro "
+                "ter o modelo exato definido no catálogo. Vou manter o atendimento no "
+                "ponto atual e seguimos com essa definição."
+            )
     required_btu = (
         recommendation.get("required_btu_reference")
         if isinstance(recommendation, dict)
