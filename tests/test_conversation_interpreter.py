@@ -313,3 +313,11 @@ def test_generic_air_conditioner_problem_is_diagnostics_intent() -> None:
     assert result.has(ConversationIntent.SERVICE_INTENT)
     assert result.service_key == "diagnostics"
 
+def test_generic_non_equipment_problem_is_not_misclassified_as_maintenance() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Estou com um problema no agendamento"
+    )
+
+    assert result.service_key != "diagnostics"
+    assert not result.has(ConversationIntent.SERVICE_INTENT)
+
