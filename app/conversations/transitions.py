@@ -1257,6 +1257,7 @@ async def _cleaning_offer_response_if_applicable(
                 "nao quero limpeza",
                 "nao preciso de limpeza",
                 "nao tenho interesse",
+                "agora nao",
                 "agora nao quero",
             )
         )
