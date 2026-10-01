@@ -184,6 +184,21 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default="2.40",
         nullable=False,
     )
+    service_radius_km: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 2), nullable=True
+    )
+    service_distance_included_km: Mapped[Decimal] = mapped_column(
+        Numeric(8, 2),
+        default=Decimal("15.00"),
+        server_default="15.00",
+        nullable=False,
+    )
+    service_distance_fee_per_km: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2),
+        default=Decimal("2.40"),
+        server_default="2.40",
+        nullable=False,
+    )
     travel_region_rules: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB,
         default=list,
