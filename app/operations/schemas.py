@@ -32,6 +32,9 @@ class AppointmentView(StrictModel):
     ends_at: datetime
     status: AppointmentStatus
     notes: str | None
+    reschedule_pending: bool = False
+    rescheduled: bool = False
+    reschedule_preferred_starts_at: datetime | None = None
 
 
 class AppointmentCreate(StrictModel):
@@ -73,6 +76,36 @@ class AppointmentUpdate(StrictModel):
 
 class AppointmentList(StrictModel):
     items: list[AppointmentView]
+
+
+class AppointmentRescheduleRequest(StrictModel):
+    preferred_starts_at: datetime | None = None
+    force_conflicts: bool = False
+
+    @field_validator("preferred_starts_at")
+    @classmethod
+    def validate_preferred_starts_at(
+        cls,
+        value: datetime | None,
+    ) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("Preferred appointment timestamp must include timezone")
+        return value
+
+
+class AppointmentRescheduleConflict(StrictModel):
+    appointment_id: UUID
+    customer_name: str
+    service_name: str
+    starts_at: datetime
+
+
+class AppointmentRescheduleResult(StrictModel):
+    status: Literal["pending", "conflict"]
+    appointment_id: UUID
+    displaced_appointment_ids: list[UUID] = Field(default_factory=list)
+    conflicts: list[AppointmentRescheduleConflict] = Field(default_factory=list)
+    message_ids: list[UUID] = Field(default_factory=list)
 
 
 class DashboardMetrics(StrictModel):
