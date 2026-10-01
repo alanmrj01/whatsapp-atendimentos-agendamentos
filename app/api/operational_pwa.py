@@ -263,6 +263,7 @@ async def request_appointment_reschedule(
         appointment_id=appointment_id,
         payload=payload,
         booking_port=booking_port,
+        templates_enabled=settings.whatsapp_reschedule_templates_enabled,
     )
     if outcome.message_ids:
         try:
