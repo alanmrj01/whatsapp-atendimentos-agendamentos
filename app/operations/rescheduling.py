@@ -28,6 +28,13 @@ from app.operations.schemas import (
     AppointmentRescheduleRequest,
     AppointmentRescheduleResult,
 )
+from app.whatsapp.templates import (
+    RESCHEDULE_PREFERRED_TEMPLATE_NAME,
+    RESCHEDULE_TEMPLATE_LANGUAGE,
+    RESCHEDULE_TEMPLATE_NAME,
+    render_reschedule_preferred_template_preview,
+    render_reschedule_template_preview,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +50,7 @@ async def initiate_admin_reschedule(
     appointment_id: UUID,
     payload: AppointmentRescheduleRequest,
     booking_port: BookingAvailabilityPort,
+    templates_enabled: bool = False,
 ) -> AdminRescheduleOutcome:
     appointment = await session.scalar(
         select(Appointment)
@@ -57,11 +65,16 @@ async def initiate_admin_reschedule(
     if appointment.status != "confirmed":
         raise HTTPException(409, "Only confirmed appointments can be rescheduled")
 
-    await _require_open_customer_service_window(
+    service_window_open = await _customer_service_window_is_open(
         session,
         business_id=business_id,
         customer_id=appointment.customer_id,
     )
+    if not service_window_open and not templates_enabled:
+        raise HTTPException(
+            409,
+            "Customer service window is closed; approved reschedule templates are not enabled",
+        )
 
     business_timezone = await _business_timezone(session, business_id)
     existing = next(
@@ -148,11 +161,12 @@ async def initiate_admin_reschedule(
                 )
                 if conflict is None:
                     continue
-                if not await _customer_service_window_is_open(
+                conflict_window_open = await _customer_service_window_is_open(
                     session,
                     business_id=business_id,
                     customer_id=conflict.customer_id,
-                ):
+                )
+                if not conflict_window_open and not templates_enabled:
                     continue
                 _mark_reschedule_pending(
                     conflict,
@@ -204,6 +218,7 @@ async def initiate_admin_reschedule(
         timezone_name=business_timezone,
         preferred_starts_at=preferred,
         displaced=False,
+        use_template=not service_window_open,
     )
     if main_message is not None:
         message_ids.append(main_message.id)
@@ -215,6 +230,11 @@ async def initiate_admin_reschedule(
             business_timezone,
         )
         displaced_context = _context_from_existing_booking(displaced_existing)
+        conflict_window_open = await _customer_service_window_is_open(
+            session,
+            business_id=business_id,
+            customer_id=conflict.customer_id,
+        )
         displaced_message = await _prepare_customer_reschedule(
             session,
             appointment=conflict,
@@ -222,6 +242,7 @@ async def initiate_admin_reschedule(
             timezone_name=business_timezone,
             preferred_starts_at=None,
             displaced=True,
+            use_template=not conflict_window_open,
         )
         if displaced_message is not None:
             message_ids.append(displaced_message.id)
@@ -407,6 +428,7 @@ async def _prepare_customer_reschedule(
     timezone_name: str,
     preferred_starts_at: datetime | None,
     displaced: bool,
+    use_template: bool = False,
 ) -> Message | None:
     conversation = await session.scalar(
         select(Conversation)
@@ -435,7 +457,71 @@ async def _prepare_customer_reschedule(
         conversation.last_interaction_at = datetime.now(UTC)
         conversation.conversation_initiated_by = "business"
 
-    if preferred_starts_at is not None:
+    message_type = "text"
+    outbound_payload: dict[str, Any] | None = None
+    if use_template:
+        customer = await session.scalar(
+            select(Customer).where(
+                Customer.business_id == appointment.business_id,
+                Customer.id == appointment.customer_id,
+            )
+        )
+        service = await session.scalar(
+            select(Service).where(
+                Service.business_id == appointment.business_id,
+                Service.id == appointment.service_id,
+            )
+        )
+        customer_name = (
+            (customer.name or customer.whatsapp_profile_name)
+            if customer is not None
+            else None
+        ) or "cliente"
+        service_name = (service.name if service is not None else None) or "seu atendimento"
+        current_slot = appointment.starts_at.astimezone(
+            ZoneInfo(timezone_name)
+        ).strftime("%d/%m/%Y às %H:%M")
+        if preferred_starts_at is not None:
+            preferred_slot = preferred_starts_at.astimezone(
+                ZoneInfo(timezone_name)
+            ).strftime("%d/%m/%Y às %H:%M")
+            body = render_reschedule_preferred_template_preview(
+                customer_name=customer_name,
+                service_name=service_name,
+                current_slot=current_slot,
+                preferred_slot=preferred_slot,
+            )
+            outbound_payload = {
+                "template_name": RESCHEDULE_PREFERRED_TEMPLATE_NAME,
+                "language_code": RESCHEDULE_TEMPLATE_LANGUAGE,
+                "body_parameters": [
+                    customer_name,
+                    service_name,
+                    current_slot,
+                    preferred_slot,
+                ],
+                "_alovia_template_purpose": "admin_reschedule",
+            }
+        else:
+            body = render_reschedule_template_preview(
+                customer_name=customer_name,
+                service_name=service_name,
+                current_slot=current_slot,
+            )
+            outbound_payload = {
+                "template_name": RESCHEDULE_TEMPLATE_NAME,
+                "language_code": RESCHEDULE_TEMPLATE_LANGUAGE,
+                "body_parameters": [
+                    customer_name,
+                    service_name,
+                    current_slot,
+                ],
+                "_alovia_template_purpose": (
+                    "priority_displacement" if displaced else "admin_reschedule"
+                ),
+            }
+        message_type = "template"
+    elif preferred_starts_at is not None:
         local = preferred_starts_at.astimezone(ZoneInfo(timezone_name))
         body = (
             "Precisamos reagendar seu atendimento. "
@@ -479,10 +565,10 @@ async def _prepare_customer_reschedule(
         conversation_id=conversation.id,
         provider_message_id=None,
         direction="outbound",
-        message_type="text",
+        message_type=message_type,
         body=body,
         interactive_id=None,
-        outbound_payload=None,
+        outbound_payload=outbound_payload,
         status="pending",
         idempotency_key=idempotency_key,
     )
