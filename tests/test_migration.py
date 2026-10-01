@@ -460,6 +460,8 @@ def test_lifecycle_outreach_migration_is_additive_and_reversible() -> None:
 
     assert "create table customer_outreach" in upgrade
     assert "uq_customer_outreach_idempotency_key" in upgrade
+    assert 'alter table public."customer_outreach" enable row level security' in upgrade
+    assert 'alter table public."customer_outreach" disable row level security' in downgrade
     assert "drop table customer_outreach" in downgrade
 
 def test_friendlier_assistant_message_migration_updates_only_legacy_defaults() -> None:
