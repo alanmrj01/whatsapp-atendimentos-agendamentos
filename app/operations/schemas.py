@@ -103,6 +103,7 @@ class AppointmentRescheduleConflict(StrictModel):
 class AppointmentRescheduleResult(StrictModel):
     status: Literal["pending", "conflict"]
     appointment_id: UUID
+    reason: Literal["appointment_conflict", "slot_unavailable"] | None = None
     displaced_appointment_ids: list[UUID] = Field(default_factory=list)
     conflicts: list[AppointmentRescheduleConflict] = Field(default_factory=list)
     message_ids: list[UUID] = Field(default_factory=list)
