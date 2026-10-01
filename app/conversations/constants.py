@@ -178,6 +178,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "site_allowed_start",
         "site_allowed_end",
         "preferred_daypart",
+        "admin_preferred_reschedule",
         "site_limit_answered",
         "pending_customer_message",
         "pending_interactive_id",
