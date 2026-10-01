@@ -117,6 +117,45 @@ class WhatsAppClient:
         response_data = await self._request("POST", payload)
         return _provider_message_id(response_data)
 
+    async def send_template(
+        self,
+        to: str,
+        *,
+        name: str,
+        language_code: str,
+        body_parameters: Sequence[str] = (),
+    ) -> str:
+        destination = _validate_destination(to)
+        template_name = _validate_template_name(name)
+        template_language = _validate_template_language(language_code)
+        parameters = [
+            {
+                "type": "text",
+                "text": _validate_text(value, "template parameter", max_length=1024),
+            }
+            for value in body_parameters
+        ]
+        template: dict[str, Any] = {
+            "name": template_name,
+            "language": {"code": template_language},
+        }
+        if parameters:
+            template["components"] = [
+                {
+                    "type": "body",
+                    "parameters": parameters,
+                }
+            ]
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": destination,
+            "type": "template",
+            "template": template,
+        }
+        response_data = await self._request("POST", payload)
+        return _provider_message_id(response_data)
+
     async def send_reaction(
         self,
         to: str,
@@ -511,4 +550,16 @@ def _validate_sequence(
         raise WhatsAppValidationError(
             f"{field} must contain between {minimum} and {maximum} items"
         )
+    return value
+
+
+def _validate_template_name(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z0-9_]{1,512}", value):
+        raise WhatsAppValidationError("template name is invalid")
+    return value
+
+
+def _validate_template_language(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z]{2}(?:_[A-Z]{2})?", value):
+        raise WhatsAppValidationError("template language is invalid")
     return value
