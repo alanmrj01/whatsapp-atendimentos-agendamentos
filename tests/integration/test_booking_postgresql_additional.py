@@ -54,7 +54,7 @@ async def test_physical_schema_is_at_head_with_immutable_exclude_support(
             )
         )
 
-    assert revision == "20261001_0025"
+    assert revision == "20261001_0026"
     assert volatility == "i"
     assert constraint is not None
     assert "tstzrange" in constraint
