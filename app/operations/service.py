@@ -110,7 +110,11 @@ class OperationalService:
                 Appointment.starts_at < end,
             ).order_by(Appointment.starts_at)
         )
-        appointments = [_appointment_view(row) for row in appointment_rows.all()]
+        appointments = [
+            _appointment_view(row)
+            for row in appointment_rows.all()
+            if not _is_reschedule_pending(row[0])
+        ]
         conversation_rows, _ = await self._conversation_rows(business_id)
         conversations = [_conversation_view(row) for row in conversation_rows]
         upcoming = [
@@ -272,7 +276,26 @@ class OperationalService:
         if ends_before is not None:
             query = query.where(Appointment.starts_at < ends_before)
         rows = await self.session.execute(query.order_by(Appointment.starts_at, Appointment.id))
-        return [_appointment_view(row) for row in rows.all()]
+        return [
+            _appointment_view(row)
+            for row in rows.all()
+            if not _is_reschedule_pending(row[0])
+        ]
+
+    async def list_pending_reschedules(
+        self,
+        business_id: UUID,
+    ) -> list[AppointmentView]:
+        rows = await self.session.execute(
+            self._appointment_query(business_id)
+            .where(Appointment.status == "pending")
+            .order_by(Appointment.updated_at.desc(), Appointment.id)
+        )
+        return [
+            _appointment_view(row)
+            for row in rows.all()
+            if _is_reschedule_pending(row[0])
+        ]
 
     async def get_appointment(self, business_id: UUID, appointment_id: UUID) -> AppointmentView:
         row = (await self.session.execute(
@@ -1930,8 +1953,34 @@ def _appointment_view(row: Any) -> AppointmentView:
         ),
         customer_phone=customer_phone, service_id=item.service_id, service_name=service_name,
         employee_id=item.employee_id, employee_name=employee_name, starts_at=item.starts_at,
-        ends_at=item.ends_at, status=item.status, notes=item.notes,
+        ends_at=item.ends_at,
+        status=item.status,
+        notes=item.notes,
+        reschedule_pending=estimate_details.get("reschedule_pending") is True,
+        rescheduled=estimate_details.get("rescheduled") is True,
+        reschedule_preferred_starts_at=_parse_optional_datetime(
+            estimate_details.get("reschedule_preferred_starts_at")
+        ),
     )
+
+
+def _is_reschedule_pending(item: Appointment) -> bool:
+    details = (
+        item.estimate_details
+        if isinstance(item.estimate_details, dict)
+        else {}
+    )
+    return item.status == "pending" and details.get("reschedule_pending") is True
+
+
+def _parse_optional_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def _notification_view(row: Any, timezone_name: str) -> NotificationView:
