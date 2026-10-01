@@ -6755,8 +6755,44 @@ async def _handle_reschedule(
     normalized = normalize_portuguese(inbound.body or "")
     if action is None and normalized in {"confirmar", "confirmo", "sim", "pode", "pode confirmar"}:
         action = RESCHEDULE_CONFIRM
-    elif action is None and normalized in {"voltar", "outro horario", "trocar horario"}:
+    elif action is None and normalized in {
+        "voltar",
+        "outro horario",
+        "trocar horario",
+        "nao",
+        "não",
+        "nao consigo",
+        "não consigo",
+        "prefiro outro horario",
+    }:
         action = BOOKING_BACK
+
+    if (
+        action == BOOKING_BACK
+        and context.get("admin_preferred_reschedule") is True
+    ):
+        updated = dict(context)
+        updated.pop("selected_date", None)
+        updated.pop("selected_time", None)
+        updated.pop("admin_preferred_reschedule", None)
+        dates = _snapshot_options(
+            await port.list_dates(
+                inbound.business_id,
+                service_id,
+                requirements,
+            )
+        )
+        return _transition(
+            ConversationState.RESCHEDULE,
+            updated,
+            date_selection_message(
+                dates,
+                body=(
+                    "Sem problema. Escolha outra data disponível "
+                    "e depois eu mostro os horários."
+                ),
+            ),
+        )
 
     if action == BOOKING_BACK:
         updated = dict(context)
