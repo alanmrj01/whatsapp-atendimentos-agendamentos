@@ -832,8 +832,16 @@ class PostgresBookingAvailabilityPort:
             )
             if radius_km is not None and distance_km > radius_km:
                 service_distance_outside_radius = True
-            included_km = Decimal(business.service_distance_included_km)
-            fee_per_km = Decimal(business.service_distance_fee_per_km)
+            included_km = Decimal(
+                business.service_distance_included_km
+                if business.service_distance_included_km is not None
+                else "15.00"
+            )
+            fee_per_km = Decimal(
+                business.service_distance_fee_per_km
+                if business.service_distance_fee_per_km is not None
+                else "2.40"
+            )
             excess_km = max(Decimal("0"), distance_km - included_km)
             if (
                 excess_km > 0
