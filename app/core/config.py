@@ -155,6 +155,10 @@ class Settings(BaseSettings):
     outbound_tasks_enabled: bool = Field(
         default=False, validation_alias="OUTBOUND_TASKS_ENABLED"
     )
+    whatsapp_reschedule_templates_enabled: bool = Field(
+        default=False,
+        validation_alias="WHATSAPP_RESCHEDULE_TEMPLATES_ENABLED",
+    )
     cloud_tasks_outbound_queue: str = Field(
         default="whatsapp-outbound",
         validation_alias="CLOUD_TASKS_OUTBOUND_QUEUE",
