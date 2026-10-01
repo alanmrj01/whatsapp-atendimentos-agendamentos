@@ -329,6 +329,63 @@ async def test_worker_skips_superseded_fragment_and_only_latest_turn_responds() 
 
 
 @pytest.mark.asyncio
+async def test_worker_preserves_latest_substantive_fragment_when_aggregation_degrades() -> None:
+    repository = FakeTaskRepository(stored_event())
+    repository.inbound = replace(
+        repository.inbound,
+        body="Gostaria de orçar um ar condicionado",
+    )
+    aggregated = replace(
+        repository.inbound,
+        body="Olá boa noite, tudo bem?",
+    )
+    repository.load_inbound_turn = AsyncMock(return_value=aggregated)  # type: ignore[attr-defined]
+    engine = AsyncMock()
+    engine.process.return_value = True
+
+    processed = await process_cloud_task_event(
+        FakeTaskSession(),
+        EVENT_KEY,
+        repository,
+        engine,
+    )
+
+    assert processed is True
+    engine.process.assert_awaited_once_with(repository.inbound)
+    assert repository.completed == [(EVENT_KEY, "processed")]
+
+
+@pytest.mark.asyncio
+async def test_worker_keeps_healthy_aggregated_turn_with_substantive_intent() -> None:
+    repository = FakeTaskRepository(stored_event())
+    repository.inbound = replace(
+        repository.inbound,
+        body="Gostaria de orçar um ar condicionado",
+    )
+    aggregated = replace(
+        repository.inbound,
+        body=(
+            "Olá boa noite, tudo bem?\n"
+            "Gostaria de orçar um ar condicionado"
+        ),
+    )
+    repository.load_inbound_turn = AsyncMock(return_value=aggregated)  # type: ignore[attr-defined]
+    engine = AsyncMock()
+    engine.process.return_value = True
+
+    processed = await process_cloud_task_event(
+        FakeTaskSession(),
+        EVENT_KEY,
+        repository,
+        engine,
+    )
+
+    assert processed is True
+    engine.process.assert_awaited_once_with(aggregated)
+    assert repository.completed == [(EVENT_KEY, "processed")]
+
+
+@pytest.mark.asyncio
 async def test_worker_processes_status_without_conversation_engine() -> None:
     repository = FakeTaskRepository(
         stored_event(event_type="message.status.delivered")
