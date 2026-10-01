@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock
