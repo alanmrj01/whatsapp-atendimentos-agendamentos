@@ -29,6 +29,10 @@ class CloudTasksConfigurationError(RuntimeError):
     """Erro seguro para configuração ausente do Cloud Tasks."""
 
 
+class WebPushConfigurationError(RuntimeError):
+    """Erro seguro para configuração ausente do Web Push."""
+
+
 @dataclass(frozen=True, slots=True)
 class MetaEmbeddedSignupConfiguration:
     app_id: str
@@ -49,9 +53,22 @@ class CloudTasksConfiguration:
     invoker_email: str
 
 
+@dataclass(frozen=True, slots=True)
+class WebPushConfiguration:
+    public_key: str
+    private_key: SecretStr
+    subject: str
+
+
 class Settings(BaseSettings):
     auth_jwt_secret: SecretStr | None = Field(default=None, validation_alias="AUTH_JWT_SECRET")
     pwa_allowed_origins: str = Field(default="", validation_alias="PWA_ALLOWED_ORIGINS")
+    web_push_enabled: bool = Field(default=False, validation_alias="WEB_PUSH_ENABLED")
+    vapid_public_key: str | None = Field(default=None, validation_alias="VAPID_PUBLIC_KEY")
+    vapid_private_key: SecretStr | None = Field(
+        default=None, validation_alias="VAPID_PRIVATE_KEY"
+    )
+    vapid_subject: str | None = Field(default=None, validation_alias="VAPID_SUBJECT")
 
     def allowed_pwa_origins(self) -> tuple[str, ...]:
         # Invalid auth configuration disables auth/CORS, never application startup.
@@ -263,6 +280,33 @@ class Settings(BaseSettings):
             queue=self.cloud_tasks_outbound_queue,
             target_url=self.cloud_tasks_outbound_target_url,
             disabled_message="Outbound tasks are disabled",
+        )
+
+    def require_web_push_configuration(self) -> WebPushConfiguration:
+        if not self.web_push_enabled:
+            raise WebPushConfigurationError("Web Push is disabled")
+        public_key = (self.vapid_public_key or "").strip()
+        private_key = (
+            self.vapid_private_key.get_secret_value().strip()
+            if self.vapid_private_key is not None
+            else ""
+        )
+        subject = (self.vapid_subject or "").strip()
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_-]{80,120}", public_key)
+            or not private_key
+            or not (
+                subject.startswith("mailto:")
+                or subject.startswith("https://")
+            )
+        ):
+            raise WebPushConfigurationError(
+                "Web Push configuration is incomplete"
+            )
+        return WebPushConfiguration(
+            public_key=public_key,
+            private_key=SecretStr(private_key),
+            subject=subject,
         )
 
     def _require_cloud_tasks_configuration(

@@ -235,6 +235,18 @@ retry poderá produzir novo envio. Não há migration nem alteração de schema 
 etapa do sender. Com a feature desligada, nenhuma configuração `META_*` adicional é exigida
 no startup; as credenciais só são validadas quando um envio habilitado é executado.
 
+## Web Push do PWA
+
+O Web Push é opcional e fica desativado por padrão. Para habilitá-lo, defina
+`WEB_PUSH_ENABLED=true`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e
+`VAPID_SUBJECT` (um `mailto:` ou URL HTTPS). A chave privada deve permanecer
+somente no backend/Secret Manager; o PWA recebe apenas a chave pública.
+
+As inscrições são associadas ao usuário, sessão e empresa autenticados. O
+conteúdo enviado ao serviço de push é genérico e não inclui telefone, texto da
+conversa ou outros dados pessoais. A permissão final sempre depende de uma ação
+explícita do usuário no navegador.
+
 ## Conexões WhatsApp por empresa
 
 A migration `20260902_0005` cria `business_whatsapp_connections`, com no máximo

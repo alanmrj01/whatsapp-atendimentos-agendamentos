@@ -26,6 +26,9 @@ EXPECTED_TABLES = {
     "schedule_blocks",
     "services",
     "working_hours",
+    "web_push_subscriptions",
+    "web_push_events",
+    "web_push_deliveries",
 }
 
 
@@ -45,7 +48,7 @@ def test_all_domain_tables_are_registered_in_metadata() -> None:
     assert set(Base.metadata.tables) == EXPECTED_TABLES
 
 
-def test_foreign_keys_do_not_enable_destructive_cascades() -> None:
+def test_only_ephemeral_web_push_rows_enable_delete_cascades() -> None:
     foreign_keys = [
         foreign_key
         for table in Base.metadata.tables.values()
@@ -53,7 +56,17 @@ def test_foreign_keys_do_not_enable_destructive_cascades() -> None:
     ]
 
     assert foreign_keys
-    assert all(foreign_key.ondelete is None for foreign_key in foreign_keys)
+    cascades = [
+        foreign_key
+        for foreign_key in foreign_keys
+        if foreign_key.ondelete is not None
+    ]
+    assert cascades
+    assert all(
+        foreign_key.ondelete == "CASCADE"
+        and foreign_key.parent.table.name.startswith("web_push_")
+        for foreign_key in cascades
+    )
 
 
 def test_automatic_booking_notifications_are_tenant_scoped_and_idempotent() -> None:

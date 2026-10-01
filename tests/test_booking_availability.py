@@ -34,6 +34,7 @@ from app.models import (
     Appointment,
     Business,
     BusinessNotification,
+    WebPushEvent,
     ScheduleBlock,
     Service,
     WorkingHours,
@@ -633,6 +634,11 @@ async def test_confirmation_freezes_duration_travel_price_and_address() -> None:
     assert notification.business_id == BUSINESS_ID
     assert notification.appointment_id == APPOINTMENT_ID
     assert notification.event_type == "automatic_booking_confirmed"
+    push_event = session.added[2]
+    assert isinstance(push_event, WebPushEvent)
+    assert push_event.business_id == BUSINESS_ID
+    assert push_event.event_type == "automatic_booking"
+    assert push_event.target_path == "/app/agenda"
     assert session.flushes == 2
 
 

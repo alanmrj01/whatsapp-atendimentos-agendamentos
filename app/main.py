@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.public_pwa import router as public_pwa_router
 from app.api.operational_pwa import router as operational_pwa_router
 from app.api.platform_admin import router as platform_admin_router
+from app.api.web_push import router as web_push_router
 
 from app.api.health import router as health_router
 from app.api.diagnostics import router as diagnostics_router
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     application.include_router(public_pwa_router)
     application.include_router(operational_pwa_router)
     application.include_router(platform_admin_router)
+    application.include_router(web_push_router)
     origins = current_settings.allowed_pwa_origins()
     application.add_middleware(
         CORSMiddleware,

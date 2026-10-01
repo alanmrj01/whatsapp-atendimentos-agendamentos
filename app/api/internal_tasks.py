@@ -33,6 +33,7 @@ from app.tasks.worker import process_cloud_task_event
 from app.automation.lifecycle import create_due_lifecycle_outreach
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.sender import build_business_sender_resolver
+from app.push.service import dispatch_pending_web_push
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/tasks", tags=["internal-tasks"])
@@ -57,6 +58,11 @@ async def process_whatsapp_event_task(
             session,
             payload.event_key,
             booking_port=booking_port,
+        )
+        await dispatch_pending_web_push(
+            session,
+            payload.event_key,
+            settings,
         )
         if settings.outbound_tasks_enabled:
             outbound_enqueuer = build_outbound_task_enqueuer(settings)

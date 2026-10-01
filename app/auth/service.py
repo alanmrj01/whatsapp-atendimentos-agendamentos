@@ -20,6 +20,7 @@ from app.auth.security import (
 )
 from app.models import AuthSession, Business, BusinessAccess, BusinessUserMembership, User
 from app.operations.defaults import default_services_for_business
+from app.repositories.web_push import WebPushRepository
 
 
 def unauthorized() -> HTTPException:
@@ -253,6 +254,9 @@ class AuthService:
                 .with_for_update()
             )
             if session:
+                await WebPushRepository(self.db).remove_for_auth_session(
+                    session.id
+                )
                 session.revoked_at = datetime.now(UTC)
                 await self.db.commit()
 
