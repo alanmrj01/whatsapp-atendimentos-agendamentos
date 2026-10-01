@@ -136,6 +136,34 @@ def test_generic_equipment_price_request_enters_purchase_flow(body: str) -> None
     assert result.has(ConversationIntent.PRICE_QUESTION)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Gostaria de orçar um ar condicionado",
+        "Quero orçar um ar condicionado",
+        "Pode me orçar um split?",
+        "Boa noite, gostaria de orçar um ar condicionado",
+    ],
+)
+def test_equipment_quote_verb_enters_purchase_flow(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.intent is ConversationIntent.EQUIPMENT_PURCHASE
+    assert result.has(ConversationIntent.EQUIPMENT_PURCHASE)
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+
+
+def test_service_quote_with_orcar_stays_in_service_flow() -> None:
+    result = DeterministicConversationInterpreter().interpret(
+        "Gostaria de orçar a instalação de ar condicionado"
+    )
+
+    assert result.intent is ConversationIntent.SERVICE_INTENT
+    assert result.service_key == "split-installation"
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+    assert not result.has(ConversationIntent.EQUIPMENT_PURCHASE)
+
+
 def test_service_price_question_is_not_stolen_by_equipment_purchase() -> None:
     result = DeterministicConversationInterpreter().interpret(
         "Quanto custa a manutenção do ar condicionado?"
