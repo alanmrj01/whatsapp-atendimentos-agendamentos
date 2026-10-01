@@ -7,7 +7,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.booking.domain import AccessCondition, BookingRequirements, ServiceAddress
@@ -56,6 +56,12 @@ async def initiate_admin_reschedule(
         raise HTTPException(404, "Appointment not found")
     if appointment.status != "confirmed":
         raise HTTPException(409, "Only confirmed appointments can be rescheduled")
+
+    await _require_open_customer_service_window(
+        session,
+        business_id=business_id,
+        customer_id=appointment.customer_id,
+    )
 
     business_timezone = await _business_timezone(session, business_id)
     existing = next(
@@ -141,6 +147,12 @@ async def initiate_admin_reschedule(
                     .with_for_update()
                 )
                 if conflict is None:
+                    continue
+                if not await _customer_service_window_is_open(
+                    session,
+                    business_id=business_id,
+                    customer_id=conflict.customer_id,
+                ):
                     continue
                 _mark_reschedule_pending(
                     conflict,
@@ -445,9 +457,17 @@ async def _prepare_customer_reschedule(
             "eu vou apresentar as novas datas e horários disponíveis."
         )
 
+    details = (
+        appointment.estimate_details
+        if isinstance(appointment.estimate_details, dict)
+        else {}
+    )
+    request_marker = details.get("reschedule_requested_at")
+    if not isinstance(request_marker, str) or not request_marker.strip():
+        raise HTTPException(409, "Reschedule request state is invalid")
     idempotency_key = (
         f"admin-reschedule:{appointment.business_id}:{appointment.id}:"
-        f"{appointment.updated_at.isoformat() if appointment.updated_at else 'pending'}"
+        f"{request_marker}"
     )
     existing_message = await session.scalar(
         select(Message).where(Message.idempotency_key == idempotency_key)
@@ -542,3 +562,47 @@ async def _business_timezone(
     if not timezone_name:
         raise HTTPException(404, "Business not found")
     return timezone_name
+
+
+async def _customer_service_window_is_open(
+    session: AsyncSession,
+    *,
+    business_id: UUID,
+    customer_id: UUID,
+) -> bool:
+    conversation_id = await session.scalar(
+        select(Conversation.id).where(
+            Conversation.business_id == business_id,
+            Conversation.customer_id == customer_id,
+        )
+    )
+    if conversation_id is None:
+        return False
+    last_inbound_at = await session.scalar(
+        select(func.max(Message.created_at)).where(
+            Message.business_id == business_id,
+            Message.conversation_id == conversation_id,
+            Message.direction == "inbound",
+        )
+    )
+    return bool(
+        last_inbound_at is not None
+        and last_inbound_at + timedelta(hours=24) > datetime.now(UTC)
+    )
+
+
+async def _require_open_customer_service_window(
+    session: AsyncSession,
+    *,
+    business_id: UUID,
+    customer_id: UUID,
+) -> None:
+    if not await _customer_service_window_is_open(
+        session,
+        business_id=business_id,
+        customer_id=customer_id,
+    ):
+        raise HTTPException(
+            409,
+            "Customer service window is closed; use an approved template",
+        )

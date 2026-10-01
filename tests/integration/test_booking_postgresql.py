@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import (
 
 from app.booking.availability import PostgresBookingAvailabilityPort
 from app.booking.domain import BookingRequirements, ServiceAddress
-from app.conversations.ports import SlotUnavailable
+from app.conversations.ports import BookingRequiresHandoff, SlotUnavailable
 from app.core.config import get_settings
 from app.models import (
     Appointment,
