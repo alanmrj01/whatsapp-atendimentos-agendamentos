@@ -54,6 +54,7 @@ from app.models import (
     Employee,
     ScheduleBlock,
     Service,
+    WebPushEvent,
     WorkingHours,
 )
 
@@ -420,6 +421,14 @@ class PostgresBookingAvailabilityPort:
                             business_id=business_id,
                             appointment_id=appointment.id,
                             event_type="automatic_booking_confirmed",
+                        )
+                    )
+                    self.session.add(
+                        WebPushEvent(
+                            business_id=business_id,
+                            event_key=f"automatic_booking:{appointment.id}",
+                            event_type="automatic_booking",
+                            target_path="/app/agenda",
                         )
                     )
                     await self.session.flush()

@@ -40,6 +40,7 @@ from app.whatsapp.webhook import (
     normalize_webhook_payload,
     verify_meta_signature,
 )
+from app.push.service import WebPushDispatchError, dispatch_pending_web_push
 
 router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp-webhook"])
 
@@ -119,6 +120,19 @@ async def receive_whatsapp_webhook(
     events = normalize_webhook_payload(payload)
     if not settings.cloud_tasks_enabled:
         await process_webhook_events(session, events, booking_port=booking_port)
+        for event in events:
+            if not isinstance(event, InboundMessageEvent):
+                continue
+            try:
+                await dispatch_pending_web_push(
+                    session,
+                    event.event_key,
+                    settings,
+                )
+            except WebPushDispatchError:
+                # Web Push must not make Meta retry an already-persisted
+                # inbound webhook when Cloud Tasks is disabled.
+                continue
         has_individual_inbound = any(
             isinstance(event, InboundMessageEvent)
             and is_individual_whatsapp_id(event.whatsapp_id)

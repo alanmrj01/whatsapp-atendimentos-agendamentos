@@ -384,20 +384,26 @@ async def persist_webhook_events_for_tasks(
                                     event.event_key,
                                     "ignored",
                                 )
-                                continue
-                            decision = await policy.evaluate_customer_inbound(
-                                business_id,
-                                conversation_id,
-                                exclusion_mode,
-                            )
-                            if decision is not AutomationDecision.ALLOWED:
-                                await event_repository.complete_event(
-                                    event.event_key,
-                                    "ignored",
+                                # The task still dispatches the tenant-scoped
+                                # unread-message Web Push event.
+                                should_enqueue = True
+                            else:
+                                decision = await policy.evaluate_customer_inbound(
+                                    business_id,
+                                    conversation_id,
+                                    exclusion_mode,
                                 )
-                                continue
-                            await event_repository.queue_event(event.event_key)
-                            should_enqueue = True
+                                if decision is not AutomationDecision.ALLOWED:
+                                    await event_repository.complete_event(
+                                        event.event_key,
+                                        "ignored",
+                                    )
+                                    should_enqueue = True
+                                else:
+                                    await event_repository.queue_event(
+                                        event.event_key
+                                    )
+                                    should_enqueue = True
                         elif isinstance(event, BusinessMessageEchoEvent):
                             exclusion_mode = await policy.active_exclusion(
                                 business_id, event.whatsapp_id

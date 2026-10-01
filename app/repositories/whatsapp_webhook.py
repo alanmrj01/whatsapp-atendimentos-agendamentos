@@ -14,6 +14,7 @@ from app.models import (
     Customer,
     Message,
     ProcessedWebhook,
+    WebPushEvent,
 )
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.webhook import InboundMessageEvent, NormalizedWebhookEvent
@@ -205,6 +206,19 @@ class WhatsAppWebhookRepository:
                 media_sha256=event.media_sha256,
                 status="received",
                 created_at=event.occurred_at or func.now(),
+            )
+        )
+        await self.session.execute(
+            postgresql_insert(WebPushEvent)
+            .values(
+                id=uuid.uuid4(),
+                business_id=business_id,
+                event_key=event.event_key,
+                event_type="inbound_message",
+                target_path=f"/app/conversas/{conversation_id}",
+            )
+            .on_conflict_do_nothing(
+                constraint="uq_web_push_events_event_key"
             )
         )
         await mark_outreach_response(

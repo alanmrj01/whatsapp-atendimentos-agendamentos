@@ -18,6 +18,7 @@ from app.models.domain import (
     Service,
     WorkingHours,
 )
+from app.models.push import WebPushDelivery, WebPushEvent, WebPushSubscription
 
 __all__ = [
     "AuthSession",
@@ -41,4 +42,7 @@ __all__ = [
     "ScheduleBlock",
     "Service",
     "WorkingHours",
+    "WebPushDelivery",
+    "WebPushEvent",
+    "WebPushSubscription",
 ]
