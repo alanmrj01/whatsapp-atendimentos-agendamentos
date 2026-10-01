@@ -980,19 +980,59 @@ class OperationalService:
             active=True,
         )
         self.session.add(item)
+        await self.session.flush()
+        service_ids: list[UUID] = []
+        if item.operational_role == "technician":
+            service_ids = list((await self.session.scalars(
+                select(Service.id).where(
+                    Service.business_id == business_id,
+                    Service.active.is_(True),
+                ).order_by(Service.name, Service.id)
+            )).all())
+            self.session.add_all([
+                EmployeeService(
+                    business_id=business_id,
+                    employee_id=item.id,
+                    service_id=service_id,
+                )
+                for service_id in service_ids
+            ])
         await self.session.commit()
-        return _employee_view(item, [])
+        return _employee_view(item, service_ids)
 
     async def update_employee(self, business_id: UUID, employee_id: UUID, values: EmployeeUpdate) -> EmployeeView:
         item = await self._employee(business_id, employee_id, for_update=True)
+        previous_role = item.operational_role
         for field, value in values.model_dump(exclude_unset=True).items():
             setattr(item, field, value)
+
+        if item.operational_role != "technician":
+            await self.session.execute(delete(EmployeeService).where(
+                EmployeeService.business_id == business_id,
+                EmployeeService.employee_id == employee_id,
+            ))
+        elif previous_role != "technician":
+            service_ids = list((await self.session.scalars(
+                select(Service.id).where(
+                    Service.business_id == business_id,
+                    Service.active.is_(True),
+                ).order_by(Service.name, Service.id)
+            )).all())
+            self.session.add_all([
+                EmployeeService(
+                    business_id=business_id,
+                    employee_id=employee_id,
+                    service_id=service_id,
+                )
+                for service_id in service_ids
+            ])
+
         await self.session.commit()
         service_ids = list((await self.session.scalars(
             select(EmployeeService.service_id).where(
                 EmployeeService.business_id == business_id,
                 EmployeeService.employee_id == employee_id,
-            )
+            ).order_by(EmployeeService.service_id)
         )).all())
         return _employee_view(item, service_ids)
 
@@ -1013,6 +1053,8 @@ class OperationalService:
         self, business_id: UUID, employee_id: UUID, values: EmployeeServicesUpdate
     ) -> EmployeeView:
         employee = await self._employee(business_id, employee_id, for_update=True)
+        if employee.operational_role != "technician":
+            raise HTTPException(422, "Only technicians can have service specialties")
         unique_ids = list(dict.fromkeys(values.service_ids))
         if unique_ids:
             valid_ids = set((await self.session.scalars(
@@ -1088,6 +1130,22 @@ class OperationalService:
             active=True,
         )
         self.session.add(item)
+        await self.session.flush()
+        technician_ids = list((await self.session.scalars(
+            select(Employee.id).where(
+                Employee.business_id == business_id,
+                Employee.active.is_(True),
+                Employee.operational_role == "technician",
+            )
+        )).all())
+        self.session.add_all([
+            EmployeeService(
+                business_id=business_id,
+                employee_id=employee_id,
+                service_id=item.id,
+            )
+            for employee_id in technician_ids
+        ])
         await self.session.commit()
         return _service_view(item)
 
@@ -1987,6 +2045,13 @@ def _business_view(item: Business) -> BusinessView:
         finishing_minutes=item.finishing_minutes,
         minimum_booking_notice_minutes=item.minimum_booking_notice_minutes,
         equipment_delivery_fee_per_km=Decimal(item.equipment_delivery_fee_per_km),
+        service_radius_km=(
+            Decimal(item.service_radius_km)
+            if item.service_radius_km is not None
+            else None
+        ),
+        service_distance_included_km=Decimal(item.service_distance_included_km),
+        service_distance_fee_per_km=Decimal(item.service_distance_fee_per_km),
         materials_catalog_reviewed=item.materials_catalog_reviewed,
         agenda_preferences_reviewed=item.agenda_preferences_reviewed,
         onboarding_completed_at=item.onboarding_completed_at,
