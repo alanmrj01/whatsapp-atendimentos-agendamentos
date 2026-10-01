@@ -36,6 +36,15 @@ class ConnectionLookup(Protocol):
 class Sender(Protocol):
     async def send_text(self, to: str, text: str) -> str: ...
 
+    async def send_template(
+        self,
+        to: str,
+        *,
+        name: str,
+        language_code: str,
+        body_parameters: Sequence[str] = (),
+    ) -> str: ...
+
     async def send_reaction(
         self,
         to: str,
