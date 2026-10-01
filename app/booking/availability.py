@@ -501,8 +501,17 @@ class PostgresBookingAvailabilityPort:
             .where(
                 Appointment.business_id == business_id,
                 Appointment.customer_id == customer_id,
-                Appointment.status == "confirmed",
-                Appointment.starts_at > self.now_provider(),
+                or_(
+                    and_(
+                        Appointment.status == "confirmed",
+                        Appointment.starts_at > self.now_provider(),
+                    ),
+                    and_(
+                        Appointment.status == "pending",
+                        Appointment.estimate_details["reschedule_pending"].as_string()
+                        == "true",
+                    ),
+                ),
             )
             .order_by(Appointment.starts_at)
             .limit(10)
@@ -590,7 +599,16 @@ class PostgresBookingAvailabilityPort:
         appointment = await self._lock_customer_appointment(
             business_id, customer_id, appointment_id
         )
-        if appointment.status != "confirmed":
+        details = (
+            dict(appointment.estimate_details)
+            if isinstance(appointment.estimate_details, dict)
+            else {}
+        )
+        is_pending_reschedule = (
+            appointment.status == "pending"
+            and details.get("reschedule_pending") is True
+        )
+        if appointment.status != "confirmed" and not is_pending_reschedule:
             raise BookingNotFound("Appointment cannot be rescheduled")
 
         parsed_date = _parse_date(selected_date)
@@ -623,6 +641,22 @@ class PostgresBookingAvailabilityPort:
                     appointment.starts_at = starts_at
                     appointment.ends_at = ends_at
                     self._apply_snapshot(appointment, requirements, plan)
+                    completed_details = dict(appointment.estimate_details or {})
+                    completed_details.update(
+                        {
+                            "reschedule_pending": False,
+                            "rescheduled": True,
+                            "rescheduled_at": self.now_provider().isoformat(),
+                            "reschedule_original_starts_at": details.get(
+                                "reschedule_original_starts_at"
+                            ),
+                            "reschedule_initiated_by": details.get(
+                                "reschedule_initiated_by"
+                            ),
+                        }
+                    )
+                    appointment.estimate_details = completed_details
+                    appointment.status = "confirmed"
                     appointment.idempotency_key = original_idempotency_key
                     await self.session.flush()
             except IntegrityError as exc:
