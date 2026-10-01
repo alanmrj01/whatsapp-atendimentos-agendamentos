@@ -85,9 +85,15 @@ def upgrade() -> None:
         ["idempotency_key"],
         unique=True,
     )
+    op.execute(
+        'ALTER TABLE public."customer_outreach" ENABLE ROW LEVEL SECURITY'
+    )
 
 
 def downgrade() -> None:
+    op.execute(
+        'ALTER TABLE public."customer_outreach" DISABLE ROW LEVEL SECURITY'
+    )
     op.drop_index("uq_customer_outreach_idempotency_key", table_name="customer_outreach")
     op.drop_index("ix_customer_outreach_status", table_name="customer_outreach")
     op.drop_index("ix_customer_outreach_conversation", table_name="customer_outreach")
