@@ -12,6 +12,7 @@ EXPECTED_TABLES = {
     "business_access",
     "business_catalog_items",
     "business_notifications",
+    "customer_outreach",
     "auth_sessions",
     "appointments",
     "businesses",
@@ -294,10 +295,10 @@ def test_required_server_defaults_are_registered() -> None:
             "Olá! Como posso ajudar com seu ar-condicionado?"
         ),
         ("businesses", "assistant_fallback_message"): (
-            "Não entendi. Conte em poucas palavras o serviço que você precisa."
+            "Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa."
         ),
         ("businesses", "assistant_handoff_message"): (
-            "Seu atendimento foi encaminhado para uma pessoa da equipe."
+            "Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes."
         ),
         ("businesses", "service_origin_is_precise"): "false",
         ("businesses", "travel_calculation_method"): "configured_estimate",

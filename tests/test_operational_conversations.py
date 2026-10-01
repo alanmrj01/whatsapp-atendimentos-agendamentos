@@ -184,7 +184,13 @@ async def test_manual_message_for_conversation_outside_tenant_is_not_found() -> 
 
 
 def test_customer_name_precedence_preserves_manual_override() -> None:
-    assert _display_name("Nome manual", "Nome WhatsApp", "+5511", "5511") == (
+    assert _display_name(
+        "Nome manual",
+        "Nome WhatsApp",
+        "+5511",
+        "5511",
+        name_source="manual",
+    ) == (
         "Nome manual"
     )
     assert _display_name(None, "Nome WhatsApp", "+5511", "5511") == (

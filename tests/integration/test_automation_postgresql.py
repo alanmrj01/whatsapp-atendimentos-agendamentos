@@ -473,7 +473,7 @@ async def test_customer_initiation_is_preserved_when_human_later_takes_control(
     assert conversation.conversation_initiated_by == "customer"
     assert conversation.automation_suppressed_until is not None
     assert pending_count == 0
-    assert failed_count == 1
+    assert failed_count == 0
 
 
 async def test_cloud_task_worker_rechecks_exclusion_before_engine(

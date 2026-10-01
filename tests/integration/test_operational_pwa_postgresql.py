@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (
@@ -49,23 +49,8 @@ pytestmark = [
 
 
 async def _clean(session: AsyncSession) -> None:
-    for model in (
-        Message,
-        ProcessedWebhook,
-        Appointment,
-        WorkingHours,
-        EmployeeService,
-        Conversation,
-        BusinessAutomationExclusion,
-        BusinessWhatsAppConnection,
-        BusinessUserMembership,
-        BusinessAccess,
-        Employee,
-        Service,
-        Customer,
-        Business,
-    ):
-        await session.execute(delete(model))
+    await session.execute(text("TRUNCATE TABLE businesses CASCADE"))
+    await session.execute(text("TRUNCATE TABLE processed_webhooks"))
 
 
 @pytest.mark.usefixtures("migrated_test_database")
@@ -84,7 +69,21 @@ async def test_operational_data_is_real_tenant_scoped_and_mutable() -> None:
             async with session.begin():
                 await _clean(session)
                 session.add_all([
-                    Business(id=business_a, name="Empresa A", timezone="America/Sao_Paulo", active=True),
+                    Business(
+                        id=business_a,
+                        name="Empresa A",
+                        responsible_name="Responsável A",
+                        timezone="America/Sao_Paulo",
+                        service_origin_postal_code="12200000",
+                        service_origin_street="Rua A",
+                        service_origin_neighborhood="Centro",
+                        service_origin_number="10",
+                        service_origin_city="São José dos Campos",
+                        service_origin_state="SP",
+                        service_origin_validated_at=datetime.now(UTC),
+                        agenda_preferences_reviewed=True,
+                        active=True,
+                    ),
                     Business(id=business_b, name="Empresa B", timezone="America/Sao_Paulo", active=True),
                     Customer(id=customer_a, business_id=business_a, whatsapp_id="individual-a", phone_e164="+5512000000001", name="Cliente A"),
                     Customer(id=customer_b, business_id=business_b, whatsapp_id="individual-b", phone_e164="+5512000000002", name="Cliente B"),

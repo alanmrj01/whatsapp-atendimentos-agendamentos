@@ -53,16 +53,26 @@ class SetupSession:
             connected_whatsapp,
         ]
         self.scalar_rows = [
-            ScalarRows(PRESET_KEYS),
+            ScalarRows(()),
             ScalarRows(services),
             ScalarRows(materials),
         ]
+        self.added: list[Any] = []
 
     async def scalar(self, _: object) -> Any:
         return self.scalar_values.pop(0)
 
     async def scalars(self, _: object) -> ScalarRows:
         return self.scalar_rows.pop(0)
+
+    def add(self, item: Any) -> None:
+        self.added.append(item)
+
+    async def delete(self, item: Any) -> None:
+        self.added.remove(item)
+
+    async def commit(self) -> None:
+        return None
 
 
 def company(**changes: Any) -> Business:

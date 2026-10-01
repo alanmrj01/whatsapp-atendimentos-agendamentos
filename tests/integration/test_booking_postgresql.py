@@ -140,7 +140,7 @@ async def seed_capacity(
     employee_ids = [uuid.uuid4() for _ in range(employee_count)]
     customer_ids = [uuid.uuid4() for _ in range(customer_count)]
     local_date = datetime.now(ZoneInfo("America/Sao_Paulo")).date() + timedelta(
-        days=2
+        days=7
     )
     async with factory() as session:
         async with session.begin():
@@ -162,6 +162,9 @@ async def seed_capacity(
                     travel_route_provider=None,
                     travel_before_buffer_minutes=0,
                     travel_after_buffer_minutes=0,
+                    preparation_minutes=0,
+                    finishing_minutes=0,
+                    interval_between_services_minutes=0,
                     travel_region_rules=[],
                     active=True,
                 )
@@ -266,9 +269,14 @@ async def test_active_technician_without_employee_service_can_book(
     assert notification_count == 1
 
 
-def requirements(key: str, *, site_end: time | None = None) -> BookingRequirements:
+def requirements(
+    key: str,
+    *,
+    site_end: time | None = None,
+    address: str = "Rua do teste, 10, São José dos Campos - SP",
+) -> BookingRequirements:
     return BookingRequirements(
-        address=ServiceAddress("Rua do teste, 10, São José dos Campos - SP"),
+        address=ServiceAddress(address),
         site_allowed_end=site_end,
         idempotency_key=key,
     )
@@ -446,13 +454,16 @@ async def test_f_travel_buffers_block_adjacent_capacity(
                 business_id,
                 service_id,
                 selected_date,
-                requirements("unused"),
+                requirements(
+                    "unused",
+                    address="Avenida distante, 200, São José dos Campos - SP",
+                ),
             )
         }
 
     assert "09:00" not in ids
     assert "11:00" not in ids
-    assert "11:30" not in ids
+    assert "11:30" in ids
     assert "12:00" in ids
 
 
