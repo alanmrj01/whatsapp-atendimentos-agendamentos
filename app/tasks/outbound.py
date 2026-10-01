@@ -92,6 +92,15 @@ class TransactionSession(Protocol):
 class WhatsAppSender(Protocol):
     async def send_text(self, to: str, text: str) -> str: ...
 
+    async def send_template(
+        self,
+        to: str,
+        *,
+        name: str,
+        language_code: str,
+        body_parameters: Sequence[str] = (),
+    ) -> str: ...
+
     async def send_reaction(
         self,
         to: str,
@@ -377,6 +386,27 @@ async def _send_message(
         return await client.send_text(message.recipient, body)
 
     payload = message.outbound_payload
+    if message.message_type == "template":
+        if not isinstance(payload, Mapping):
+            raise WhatsAppValidationError("Outbound template payload is invalid")
+        template_name = payload.get("template_name")
+        language_code = payload.get("language_code")
+        raw_parameters = payload.get("body_parameters", ())
+        if (
+            not isinstance(template_name, str)
+            or not isinstance(language_code, str)
+            or isinstance(raw_parameters, (str, bytes))
+            or not isinstance(raw_parameters, Sequence)
+            or not all(isinstance(value, str) for value in raw_parameters)
+        ):
+            raise WhatsAppValidationError("Outbound template payload is invalid")
+        return await client.send_template(
+            message.recipient,
+            name=template_name,
+            language_code=language_code,
+            body_parameters=cast(Sequence[str], raw_parameters),
+        )
+
     if message.message_type == "reaction":
         if not isinstance(payload, Mapping):
             raise WhatsAppValidationError("Outbound reaction payload is invalid")
