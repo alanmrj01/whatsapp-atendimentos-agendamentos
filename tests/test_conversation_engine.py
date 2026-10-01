@@ -931,6 +931,78 @@ def confirmation_context() -> dict[str, Any]:
 
 
 @mark.asyncio
+async def test_date_number_is_never_mistaken_for_service_time() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_DATE,
+        context={"service_id": str(SERVICE_ID)},
+    )
+    booking_port = FakeBookingPort()
+    booking_port.dates = [
+        BookingOption("2026-10-14", "quarta-feira, 14 de outubro"),
+    ]
+    booking_port.list_times = AsyncMock(
+        return_value=(
+            BookingOption("14:00", "14:00"),
+            BookingOption("15:00", "15:00"),
+        )
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="quarta, 14 de outubro")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-10-14"
+    assert "selected_time" not in repository.context
+    assert "14:00" in (repository.outbounds[-1].transition.outbound.body or "")
+
+
+@mark.asyncio
+async def test_daypart_correction_at_confirmation_reopens_time_selection() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={
+            **confirmation_context(),
+            "onsite_contact_mode": "customer",
+            "contact_phone": "+5512999999999",
+            "contact_phone_confirmed": True,
+        },
+    )
+    booking_port = FakeBookingPort()
+    captured: list[BookingRequirements] = []
+
+    async def list_times(
+        _business_id: uuid.UUID,
+        service_id: uuid.UUID,
+        selected_date: str,
+        requirements: BookingRequirements,
+    ) -> tuple[BookingOption, ...]:
+        assert service_id == SERVICE_ID
+        assert selected_date == "2026-09-02"
+        captured.append(requirements)
+        return (
+            BookingOption("08:00", "08:00"),
+            BookingOption("09:00", "09:00"),
+        )
+
+    booking_port.list_times = AsyncMock(side_effect=list_times)
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="só consigo no período da manhã")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["site_allowed_start"] == "06:00"
+    assert repository.context["site_allowed_end"] == "12:00"
+    assert repository.context["preferred_daypart"] == "manhã"
+    assert "selected_time" not in repository.context
+    assert "candidate_booking" not in repository.context
+    assert captured[-1].site_allowed_start == time(6, 0)
+    assert captured[-1].site_allowed_end == time(12, 0)
+    assert "manhã" in (repository.outbounds[-1].transition.outbound.body or "").casefold()
+
+
+@mark.asyncio
 async def test_invalid_confirmation_result_does_not_complete_booking() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_CONFIRM,
