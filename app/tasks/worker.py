@@ -10,6 +10,10 @@ from app.automation.service import (
     AutomationPolicyRepository,
     AutomationPolicyService,
 )
+from app.conversations.interpreter import (
+    ConversationIntent,
+    DeterministicConversationInterpreter,
+)
 from app.conversations.ports import BookingAvailabilityPort
 from app.conversations.types import ConversationInput
 from app.repositories.cloud_tasks import (
@@ -82,13 +86,17 @@ async def process_cloud_task_event(
             )
             if inbound is None:
                 raise TaskEventDataUnavailable("Task event data is unavailable")
+            latest_inbound = inbound
             turn_loader = getattr(event_repository, "load_inbound_turn", None)
             if callable(turn_loader):
                 aggregated = await turn_loader(event.provider_message_id)
                 if aggregated is None:
                     await event_repository.complete_event(event_key, "processed")
                     return False
-                inbound = aggregated
+                inbound = _prefer_latest_substantive_fragment(
+                    latest_inbound,
+                    aggregated,
+                )
             if inbound.whatsapp_id is None and isinstance(session, AsyncSession):
                 await event_repository.complete_event(event_key, "ignored")
                 return False
@@ -129,3 +137,33 @@ async def process_cloud_task_event(
 
         await event_repository.complete_event(event_key, "ignored")
         return False
+
+
+def _prefer_latest_substantive_fragment(
+    latest: ConversationInput,
+    aggregated: ConversationInput,
+) -> ConversationInput:
+    """Do not let turn aggregation erase a clear intent from the latest fragment."""
+
+    if (
+        latest.message_type != "text"
+        or aggregated.message_type != "text"
+        or not isinstance(latest.body, str)
+        or not latest.body.strip()
+        or latest.body == aggregated.body
+    ):
+        return aggregated
+
+    interpreter = DeterministicConversationInterpreter()
+    latest_interpretation = interpreter.interpret(latest.body)
+    aggregated_interpretation = interpreter.interpret(aggregated.body)
+    non_substantive = {
+        ConversationIntent.UNKNOWN,
+        ConversationIntent.GREETING,
+    }
+    if (
+        latest_interpretation.intent not in non_substantive
+        and aggregated_interpretation.intent in non_substantive
+    ):
+        return latest
+    return aggregated
