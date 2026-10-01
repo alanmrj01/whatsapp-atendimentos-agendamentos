@@ -236,37 +236,48 @@ async def seed_capacity(
     )
 
 
-async def test_active_technician_without_employee_service_can_book(
+async def test_active_technician_without_service_specialty_cannot_book(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    business_id, service_id, _, customers, selected_date = await seed_capacity(
+    business_id, service_id, _, _, selected_date = await seed_capacity(
         sessions,
         link_employee_services=False,
         working_start=time(9),
         working_end=time(11),
     )
 
-    result = await confirm_in_new_transaction(
-        sessions,
-        business_id,
-        customers[0],
-        service_id,
-        selected_date,
-        "09:00",
-        "physical:no-employee-service",
-    )
-
-    assert result.appointment_id is not None
     async with sessions() as session:
-        notification_count = await session.scalar(
-            select(func.count())
-            .select_from(BusinessNotification)
-            .where(
-                BusinessNotification.business_id == business_id,
-                BusinessNotification.appointment_id == result.appointment_id,
+        with pytest.raises(BookingRequiresHandoff):
+            await PostgresBookingAvailabilityPort(session).list_times(
+                business_id,
+                service_id,
+                selected_date,
+                requirements("physical:no-employee-service"),
             )
-        )
-    assert notification_count == 1
+
+
+async def test_assistant_never_counts_as_independent_booking_capacity(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id, service_id, employees, _, selected_date = await seed_capacity(
+        sessions,
+        working_start=time(9),
+        working_end=time(11),
+    )
+    async with sessions() as session:
+        employee = await session.get(Employee, employees[0])
+        assert employee is not None
+        employee.operational_role = "assistant"
+        await session.commit()
+
+    async with sessions() as session:
+        with pytest.raises(BookingRequiresHandoff):
+            await PostgresBookingAvailabilityPort(session).list_times(
+                business_id,
+                service_id,
+                selected_date,
+                requirements("physical:assistant-not-capacity"),
+            )
 
 
 def requirements(
