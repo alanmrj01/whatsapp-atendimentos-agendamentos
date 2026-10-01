@@ -98,6 +98,7 @@ _PRICE_PHRASES = (
     "fica quanto",
     "cotacao",
     "orcamento",
+    "orcar",
     "pesquisa de preco",
     "mais barato",
     "mais em conta",
@@ -754,6 +755,7 @@ def _contains_generic_equipment_price_request(value: str) -> bool:
             "cotacao",
             "orcamento",
             "cotar",
+            "orcar",
             "pesquisa de preco",
         ),
     )
@@ -811,6 +813,7 @@ def _contains_equipment_purchase(value: str) -> bool:
         "cotacao",
         "orcamento",
         "cotar",
+        "orcar",
         "preco do aparelho",
         "preco do ar condicionado",
         "valor do aparelho",
