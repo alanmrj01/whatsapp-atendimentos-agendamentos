@@ -52,6 +52,7 @@ from app.models import (
     BusinessNotification,
     CustomerOutreach,
     Employee,
+    EmployeeService,
     ScheduleBlock,
     Service,
     WebPushEvent,
@@ -665,21 +666,28 @@ class PostgresBookingAvailabilityPort:
         business_id: uuid.UUID,
         service_id: uuid.UUID,
     ) -> tuple[uuid.UUID, ...]:
-        # Small service businesses usually do not maintain skill matrices.
-        # Any active technician can be allocated unless a future explicit
-        # restriction is introduced.
         rows = await self.session.scalars(
             select(Employee.id)
+            .join(
+                EmployeeService,
+                and_(
+                    EmployeeService.business_id == Employee.business_id,
+                    EmployeeService.employee_id == Employee.id,
+                ),
+            )
             .where(
                 Employee.business_id == business_id,
                 Employee.active.is_(True),
                 Employee.operational_role == "technician",
+                EmployeeService.service_id == service_id,
             )
             .order_by(Employee.id)
         )
         employee_ids = tuple(rows.all())
         if not employee_ids:
-            raise BookingRequiresHandoff("No active technician")
+            raise BookingRequiresHandoff(
+                "No active technician is configured for this service"
+            )
         return employee_ids
 
     async def _build_plan(
@@ -814,6 +822,48 @@ class PostgresBookingAvailabilityPort:
                         requirements.address,
                     )
 
+        service_distance_outside_radius = False
+        if not is_fulfillment and travel.distance_km is not None:
+            distance_km = Decimal(travel.distance_km)
+            radius_km = (
+                Decimal(business.service_radius_km)
+                if business.service_radius_km is not None
+                else None
+            )
+            if radius_km is not None and distance_km > radius_km:
+                service_distance_outside_radius = True
+            included_km = Decimal(business.service_distance_included_km)
+            fee_per_km = Decimal(business.service_distance_fee_per_km)
+            excess_km = max(Decimal("0"), distance_km - included_km)
+            if (
+                excess_km > 0
+                and fee_per_km > 0
+                and service_estimate.estimated_price is not None
+            ):
+                distance_fee = (excess_km * fee_per_km).quantize(
+                    Decimal("0.01")
+                )
+                service_estimate = replace(
+                    service_estimate,
+                    estimated_price=(
+                        Decimal(service_estimate.estimated_price) + distance_fee
+                    ),
+                    pricing_type=(
+                        PricingType.ESTIMATED
+                        if service_estimate.pricing_type is PricingType.FIXED
+                        else service_estimate.pricing_type
+                    ),
+                    qualifier=(
+                        "Valor estimado com adicional de deslocamento."
+                    ),
+                    applied_rules=(
+                        *service_estimate.applied_rules,
+                        f"service_distance_km:{distance_km}",
+                        f"service_distance_excess_km:{excess_km}",
+                        f"service_distance_fee:{distance_fee}",
+                    ),
+                )
+
         delivery_distance_unavailable = False
         if fulfillment_type == "equipment_delivery":
             if travel.method == "same_address":
@@ -845,6 +895,7 @@ class PostgresBookingAvailabilityPort:
             service_estimate.requires_human_quote
             or not travel.available
             or not travel.within_service_area
+            or service_distance_outside_radius
             or delivery_distance_unavailable
         )
         reason = None
@@ -852,7 +903,7 @@ class PostgresBookingAvailabilityPort:
             reason = "service_estimate_requires_human_quote"
         elif not travel.available:
             reason = "travel_estimate_unavailable"
-        elif not travel.within_service_area:
+        elif not travel.within_service_area or service_distance_outside_radius:
             reason = "address_outside_service_area"
         elif delivery_distance_unavailable:
             reason = "delivery_distance_unavailable"
