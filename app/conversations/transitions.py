@@ -832,6 +832,28 @@ async def _route_named_conversation(
                 customer_name=customer_name,
             )
 
+    daypart = _daypart_preference(inbound.body)
+    if (
+        daypart is not None
+        and action is None
+        and state in {
+            ConversationState.BOOKING_WEEKDAY,
+            ConversationState.BOOKING_DATE,
+            ConversationState.BOOKING_TIME,
+            ConversationState.BOOKING_ATTENDEE,
+            ConversationState.BOOKING_ATTENDEE_NAME,
+            ConversationState.BOOKING_PHONE_CONFIRM,
+            ConversationState.BOOKING_CONFIRM,
+        }
+    ):
+        return await _handle_daypart_preference(
+            inbound,
+            context,
+            booking_port,
+            daypart=daypart,
+            customer_name=customer_name,
+        )
+
     if (
         state in booking_states
         and action is None
@@ -7383,7 +7405,11 @@ async def _offer_times_for_date(
             customer_name=customer_name,
         )
 
-    selected_time = _time_from_text(inbound.body, times)
+    selected_time = (
+        _time_from_text(inbound.body, times)
+        if _has_explicit_time_reference(inbound.body)
+        else None
+    )
     if selected_time is not None:
         return await _advance_preconfirmation(
             inbound,
@@ -7404,6 +7430,177 @@ async def _offer_times_for_date(
         ),
     )
 
+
+
+async def _handle_daypart_preference(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    daypart: tuple[str, time, time],
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_TIME,
+            context,
+            booking_unavailable_message(),
+        )
+
+    service_id = _context_service_id(context)
+    if service_id is None:
+        return await _restart_service_selection(inbound, port)
+
+    label, starts_at, ends_at = daypart
+    updated = {
+        **_booking_time_context(context),
+        "site_allowed_start": starts_at.strftime("%H:%M"),
+        "site_allowed_end": ends_at.strftime("%H:%M"),
+        "preferred_daypart": label,
+    }
+    requirements = _requirements_from_context(updated)
+    selected_date = _context_string(updated, "selected_date")
+
+    if selected_date is not None:
+        try:
+            times = _snapshot_options(
+                await port.list_times(
+                    inbound.business_id,
+                    service_id,
+                    selected_date,
+                    requirements,
+                )
+            )
+        except BookingRequiresHandoff as exc:
+            return _handoff_for_reason(str(exc))
+        if times:
+            return _transition(
+                ConversationState.BOOKING_TIME,
+                updated,
+                time_selection_message(
+                    times,
+                    body=(
+                        f"Entendi. Vou considerar somente o período da {label}. "
+                        f"Qual destes horários de {date_short_label(selected_date)} "
+                        "fica melhor para você?"
+                    ),
+                ),
+            )
+
+    try:
+        dates = _snapshot_options(
+            await port.list_dates(
+                inbound.business_id,
+                service_id,
+                requirements,
+            )
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+    if not dates:
+        return _transition(
+            ConversationState.BOOKING_DATE,
+            updated,
+            booking_unavailable_message(),
+        )
+
+    selected_from_message = _date_from_text(inbound.body, dates)
+    if selected_from_message is not None:
+        return await _offer_times_for_date(
+            inbound,
+            port,
+            updated,
+            service_id,
+            selected_from_message,
+            requirements,
+            customer_name=customer_name,
+        )
+
+    body = (
+        f"Entendi. Vou considerar somente o período da {label}. "
+        "Estas são as datas que ainda têm horário compatível."
+    )
+    if len(dates) > 10:
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            _intake_context(updated),
+            weekday_selection_message(
+                weekday_options(dates),
+                body=body + " Qual dia da semana fica melhor?",
+            ),
+        )
+    return _transition(
+        ConversationState.BOOKING_DATE,
+        _intake_context(updated),
+        date_selection_message(dates, body=body),
+    )
+
+
+def _daypart_preference(
+    body: str | None,
+) -> tuple[str, time, time] | None:
+    normalized = normalize_portuguese(body or "")
+    if any(
+        phrase in normalized
+        for phrase in (
+            "periodo da manha",
+            "pela manha",
+            "de manha",
+            "na manha",
+            "somente manha",
+            "so de manha",
+            "so pela manha",
+        )
+    ):
+        return ("manhã", time(6, 0), time(12, 0))
+    if any(
+        phrase in normalized
+        for phrase in (
+            "periodo da tarde",
+            "pela tarde",
+            "de tarde",
+            "na tarde",
+            "somente tarde",
+            "so de tarde",
+            "so pela tarde",
+        )
+    ):
+        return ("tarde", time(12, 0), time(18, 0))
+    if any(
+        phrase in normalized
+        for phrase in (
+            "periodo da noite",
+            "pela noite",
+            "de noite",
+            "a noite",
+            "somente noite",
+            "so de noite",
+        )
+    ):
+        return ("noite", time(18, 0), time(23, 59))
+    return None
+
+
+def _has_explicit_time_reference(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+    if re.search(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", normalized):
+        return True
+    if re.search(r"\b(?:as|a)\s+(?:[01]?\d|2[0-3])(?:h|\s*horas?)?\b", normalized):
+        return True
+    return any(
+        phrase in normalized
+        for phrase in (
+            "da manha",
+            "da tarde",
+            "da noite",
+            "meio dia",
+            "meia noite",
+        )
+    ) and bool(re.search(r"\b\d{1,2}\b", normalized))
 
 
 async def _handle_attendee(
@@ -8632,11 +8829,24 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         address = None
     else:
         address = ServiceAddress.from_snapshot(context.get("service_address"))
-    site_start = _context_time(context, "building_hours_start")
-    site_limit = (
-        _context_time(context, "building_hours_end")
-        or _context_time(context, "site_allowed_end")
+    site_start_values = tuple(
+        value
+        for value in (
+            _context_time(context, "building_hours_start"),
+            _context_time(context, "site_allowed_start"),
+        )
+        if value is not None
     )
+    site_end_values = tuple(
+        value
+        for value in (
+            _context_time(context, "building_hours_end"),
+            _context_time(context, "site_allowed_end"),
+        )
+        if value is not None
+    )
+    site_start = max(site_start_values) if site_start_values else None
+    site_limit = min(site_end_values) if site_end_values else None
     tubing_value = _context_string(context, "tubing_meters")
     tubing: Decimal | None = None
     if tubing_value is not None:
