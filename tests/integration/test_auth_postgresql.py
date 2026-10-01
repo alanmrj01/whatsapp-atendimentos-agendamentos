@@ -123,7 +123,10 @@ async def test_platform_super_admin_lists_and_changes_business_access(auth_env):
     assert listed.status_code == 200
     businesses = {item["id"]: item for item in listed.json()["businesses"]}
     assert businesses[str(env.a)]["access_mode"] == "free"
-    assert businesses[str(env.a)]["owners"] == ["owner@example.test"]
+    assert businesses[str(env.a)]["owners"] == [
+        "multi@example.test",
+        "owner@example.test",
+    ]
     assert businesses[str(env.a)]["whatsapp_status"] == "connected"
     assert businesses[str(env.b)]["access_mode"] == "paid"
     assert businesses[str(env.b)]["whatsapp_status"] == "pending"
@@ -279,7 +282,14 @@ async def test_roles_and_tenant_input_rejected(auth_env, role):
     r = await env.client.post("/api/v1/whatsapp/onboarding/plan", json={"intent":"keep_whatsapp_business"})
     assert r.status_code == (200 if role in {"owner","admin"} else 403)
     if r.status_code == 200: assert r.json()["requested_mode"] == "coexistence"
-    assert (await env.client.get(f"/api/v1/whatsapp/connection?business_id={env.b}")).status_code == 400
+    tenant_override = await env.client.get(
+        f"/api/v1/whatsapp/connection?business_id={env.b}"
+    )
+    assert tenant_override.status_code == 200
+    assert tenant_override.json() == {
+        "status": "connected",
+        "mode": "coexistence",
+    }
     assert (await env.client.post("/api/v1/auth/active-business",json={"business_id":str(env.b)})).status_code == 403
     assert (await env.client.get("/api/v1/me")).json()["active_business_id"] == str(env.a)
 
