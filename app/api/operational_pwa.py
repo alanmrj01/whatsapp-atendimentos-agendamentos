@@ -12,11 +12,15 @@ from app.auth.dependencies import require_origin, require_principal
 from app.auth.schemas import MembershipResponse, MembershipRole
 from app.auth.service import Principal
 from app.core.database import get_db
+from app.conversations.dependencies import get_booking_availability_port
+from app.conversations.ports import BookingAvailabilityPort
 from app.core.config import CloudTasksConfigurationError, Settings, get_settings
 from app.operations.address_lookup import PostalAddressLookupError, lookup_postal_address
 from app.operations.schemas import (
     AppointmentCreate,
     AppointmentList,
+    AppointmentRescheduleRequest,
+    AppointmentRescheduleResult,
     AppointmentUpdate,
     AppointmentView,
     AutomationExclusionList,
@@ -65,6 +69,7 @@ from app.operations.schemas import (
     WorkingHoursView,
 )
 from app.models import Message
+from app.operations.rescheduling import initiate_admin_reschedule
 from app.operations.service import OperationalService
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.client import WhatsAppClientError
@@ -218,6 +223,60 @@ async def create_appointment(
 ):
     membership = _authorize(principal, AGENDA_ROLES)
     return await service.create_appointment(membership.business_id, payload)
+
+
+@router.get(
+    "/appointments/reschedule-pending",
+    response_model=AppointmentList,
+)
+async def list_pending_reschedules(
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _membership(principal)
+    return AppointmentList(
+        items=await service.list_pending_reschedules(membership.business_id)
+    )
+
+
+@router.post(
+    "/appointments/{appointment_id}/reschedule-request",
+    response_model=AppointmentRescheduleResult,
+    dependencies=[Depends(require_origin)],
+)
+async def request_appointment_reschedule(
+    appointment_id: UUID,
+    payload: AppointmentRescheduleRequest,
+    principal: Identity,
+    service: ServiceDep,
+    session: Db,
+    settings: Config,
+    booking_port: Annotated[
+        BookingAvailabilityPort,
+        Depends(get_booking_availability_port),
+    ],
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    outcome = await initiate_admin_reschedule(
+        session,
+        business_id=membership.business_id,
+        appointment_id=appointment_id,
+        payload=payload,
+        booking_port=booking_port,
+    )
+    if outcome.message_ids:
+        try:
+            enqueuer = build_outbound_task_enqueuer(settings)
+            await enqueue_outbound_message_ids(
+                list(outcome.message_ids),
+                enqueuer,
+            )
+        except (CloudTasksConfigurationError, CloudTasksEnqueueError):
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Reschedule was created, but customer notification could not be queued",
+            ) from None
+    return outcome.result
 
 
 @router.get("/appointments/{appointment_id}", response_model=AppointmentView)
