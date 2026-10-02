@@ -35,6 +35,24 @@ def active_subscription_exists(
     )
 
 
+def legacy_paid_access_exists(business_id):
+    """Preserve pre-commercial paid compatibility without granting unlimited access."""
+    explicit_paid = exists(
+        select(BusinessAccess.business_id).where(
+            BusinessAccess.business_id == business_id,
+            BusinessAccess.access_mode == "paid",
+        )
+    )
+    # Missing rows were historically interpreted as paid. Preserve that
+    # compatibility, but never treat it as an administrative full-access grant.
+    missing_legacy_row = ~exists(
+        select(BusinessAccess.business_id).where(
+            BusinessAccess.business_id == business_id,
+        )
+    )
+    return or_(explicit_paid, missing_legacy_row)
+
+
 def active_operational_access_exists(
     business_id,
     provider_environment: str | None = None,
@@ -43,6 +61,7 @@ def active_operational_access_exists(
 ):
     return or_(
         admin_full_access_exists(business_id),
+        legacy_paid_access_exists(business_id),
         active_subscription_exists(
             business_id,
             provider_environment,

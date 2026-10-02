@@ -81,6 +81,7 @@ class AuthService:
         effective_access = case(
             (
                 or_(
+                    func.coalesce(BusinessAccess.access_mode, "paid") == "paid",
                     func.coalesce(BusinessAccess.admin_full_access, False),
                     commercial_access,
                 ),

@@ -60,7 +60,7 @@ def test_access_history_migration_is_additive_and_never_deletes_business_data() 
 
 
 
-def test_admin_full_access_migration_preserves_existing_admin_and_legacy_access() -> None:
+def test_admin_full_access_migration_is_additive_without_legacy_promotion() -> None:
     upgrade = " ".join(
         render_migration_sql(
             "upgrade",
@@ -75,9 +75,7 @@ def test_admin_full_access_migration_preserves_existing_admin_and_legacy_access(
     )
 
     assert "add column admin_full_access boolean default false not null" in upgrade
-    assert "set admin_full_access = true" in upgrade
-    assert "where access_mode = 'paid'" in upgrade
-    assert "insert into business_access" in upgrade
-    assert "where ba.business_id is null" in upgrade
+    assert "update business_access" not in upgrade
+    assert "insert into business_access" not in upgrade
     assert "delete from" not in upgrade
     assert "drop column admin_full_access" in downgrade

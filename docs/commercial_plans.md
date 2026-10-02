@@ -52,3 +52,14 @@ Quando um pagamento válido é confirmado/recebido, a assinatura retorna a
 utilizada automaticamente.
 
 Uma assinatura cancelada conserva acesso apenas até o `access_until` já pago.
+
+
+## Compatibilidade de acessos anteriores ao billing comercial
+
+Registros históricos com `access_mode=paid` permanecem operacionalmente ativos
+para não interromper tenants/pilotos existentes, mas isso não equivale a
+`admin_full_access`.
+
+Esses registros não recebem automaticamente funcionalidades exclusivas do Plus,
+mensagens ilimitadas ou técnicos ilimitados. O acesso administrativo total só é
+ativado por uma ação explícita do SUPER_ADMIN.

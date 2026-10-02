@@ -15,6 +15,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Historical access_mode='paid' is intentionally NOT promoted here.
+    # Only an explicit platform-admin grant may set admin_full_access=true.
     op.add_column(
         "business_access",
         sa.Column(
@@ -23,39 +25,6 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("false"),
         ),
-    )
-
-    # Before commercial billing went live, an explicit paid access row represented
-    # administrative/pilot access. Preserve those tenants as unlimited overrides.
-    op.execute(
-        """
-        UPDATE business_access
-        SET admin_full_access = true,
-            has_had_operational_access = true
-        WHERE access_mode = 'paid'
-        """
-    )
-
-    # Admin-created legacy tenants can have no row because missing rows were
-    # historically interpreted as paid. Materialize them explicitly.
-    op.execute(
-        """
-        INSERT INTO business_access (
-            business_id,
-            access_mode,
-            has_had_operational_access,
-            admin_full_access
-        )
-        SELECT
-            b.id,
-            'paid',
-            true,
-            true
-        FROM businesses AS b
-        LEFT JOIN business_access AS ba
-          ON ba.business_id = b.id
-        WHERE ba.business_id IS NULL
-        """
     )
 
 
