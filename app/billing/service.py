@@ -181,6 +181,7 @@ class BillingService:
         )
         checkout.provider_customer_id = customer_id
         checkout.provider_authorization_id = authorization.authorization_id
+        checkout.provider_subscription_id = authorization.subscription_id
         checkout.pix_qr_payload = authorization.payload
         checkout.pix_conciliation_identifier = authorization.conciliation_identifier
         checkout.pix_qr_expires_at = authorization.expires_at
@@ -294,6 +295,14 @@ class BillingService:
         if checkout is None:
             return
 
+        provider_subscription_id = payload.get("subscriptionId")
+        if (
+            isinstance(provider_subscription_id, str)
+            and provider_subscription_id
+            and len(provider_subscription_id) <= 80
+        ):
+            checkout.provider_subscription_id = provider_subscription_id
+
         if event_type == "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED":
             if not self._valid_pix_authorization(checkout, payload):
                 checkout.status = "failed"
@@ -317,6 +326,7 @@ class BillingService:
                     provider_environment=self.provider_environment,
                     status="active",
                     provider_authorization_id=provider_id,
+                    provider_subscription_id=checkout.provider_subscription_id,
                     provider_customer_id=checkout.provider_customer_id,
                     access_until=_cycle_end(datetime.now(UTC), checkout.billing_cycle),
                 )
@@ -324,6 +334,8 @@ class BillingService:
             else:
                 subscription.status = "active"
                 subscription.provider_authorization_id = provider_id
+                if checkout.provider_subscription_id:
+                    subscription.provider_subscription_id = checkout.provider_subscription_id
                 subscription.provider_customer_id = checkout.provider_customer_id
                 subscription.access_until = max(
                     subscription.access_until,

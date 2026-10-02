@@ -28,6 +28,7 @@ class AsaasCheckoutResult:
 @dataclass(frozen=True, slots=True)
 class AsaasPixAuthorizationResult:
     authorization_id: str
+    subscription_id: str | None
     payload: str
     conciliation_identifier: str | None
     expires_at: datetime | None
@@ -122,9 +123,17 @@ class AsaasGateway:
         conciliation = immediate.get("conciliationIdentifier")
         if not isinstance(conciliation, str) or len(conciliation) > 100:
             conciliation = None
+        subscription_id = data.get("subscriptionId")
+        if (
+            not isinstance(subscription_id, str)
+            or not subscription_id.strip()
+            or len(subscription_id) > 80
+        ):
+            subscription_id = None
         expires_at = _parse_asaas_datetime(immediate.get("expirationDate"))
         return AsaasPixAuthorizationResult(
             authorization_id=authorization_id,
+            subscription_id=subscription_id,
             payload=qr_payload,
             conciliation_identifier=conciliation,
             expires_at=expires_at,

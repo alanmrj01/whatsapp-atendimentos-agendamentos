@@ -183,6 +183,7 @@ async def test_pix_automatic_sets_immediate_qr_expiration() -> None:
             captured.update(payload)
             return SimpleNamespace(
                 authorization_id="auth_test",
+                subscription_id="sub_pix_test",
                 payload="pix-payload",
                 conciliation_identifier="conciliation-test",
                 expires_at=None,
@@ -193,6 +194,7 @@ async def test_pix_automatic_sets_immediate_qr_expiration() -> None:
         business_id=uuid4(),
         provider_customer_id=None,
         provider_authorization_id=None,
+        provider_subscription_id=None,
         pix_qr_payload=None,
         pix_conciliation_identifier=None,
         pix_qr_expires_at=None,
@@ -213,6 +215,7 @@ async def test_pix_automatic_sets_immediate_qr_expiration() -> None:
         "originalValue": 197.0,
         "expirationSeconds": 3600,
     }
+    assert checkout.provider_subscription_id == "sub_pix_test"
 
 
 
@@ -227,6 +230,7 @@ async def test_pix_gateway_reads_top_level_payload_from_asaas_response() -> None
     async def fake_json_request(*args, **kwargs):
         return {
             "id": "auth_test_123",
+            "subscriptionId": "sub_pix_test",
             "payload": "000201pix-copia-e-cola",
             "encodedImage": "base64-image",
             "immediateQrCode": {
@@ -240,6 +244,7 @@ async def test_pix_gateway_reads_top_level_payload_from_asaas_response() -> None
     result = await gateway.create_pix_authorization({})
 
     assert result.authorization_id == "auth_test_123"
+    assert result.subscription_id == "sub_pix_test"
     assert result.payload == "000201pix-copia-e-cola"
     assert result.conciliation_identifier == "conciliation-test"
     assert result.expires_at is not None
@@ -386,3 +391,45 @@ async def test_card_payment_amount_mismatch_never_links_subscription(monkeypatch
 
     assert checkout.provider_subscription_id is None
     assert db.subscription is None
+
+
+
+@pytest.mark.asyncio
+async def test_pix_activation_persists_provider_subscription_id(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+
+    checkout = SimpleNamespace(
+        id=uuid4(),
+        business_id=uuid4(),
+        payment_method="pix_automatic",
+        provider_environment="sandbox",
+        provider_authorization_id="auth_pix_test",
+        provider_subscription_id=None,
+        provider_customer_id="cus_pix_test",
+        plan_code="basic",
+        billing_cycle="monthly",
+        amount_cents=500,
+        status="active",
+        paid_at=None,
+    )
+    db = _BillingStateDb(checkout)
+    service = BillingService(db, _GatewayMustNotBeCalled())
+
+    await service.apply_pix_authorization_event(
+        "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED",
+        {
+            "id": "auth_pix_test",
+            "customerId": "cus_pix_test",
+            "value": 5.0,
+            "subscriptionId": "sub_pix_test",
+        },
+    )
+
+    assert checkout.status == "paid"
+    assert checkout.provider_subscription_id == "sub_pix_test"
+    assert db.subscription is not None
+    assert db.subscription.status == "active"
+    assert db.subscription.provider_authorization_id == "auth_pix_test"
+    assert db.subscription.provider_subscription_id == "sub_pix_test"
