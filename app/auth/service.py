@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from anyio import to_thread
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import case, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,15 @@ from app.auth.security import (
     token_hash,
     verify_password,
 )
-from app.models import AuthSession, Business, BusinessAccess, BusinessUserMembership, User
+from app.models import (
+    AuthSession,
+    Business,
+    BusinessAccess,
+    BusinessUserMembership,
+    CommercialSubscription,
+    User,
+)
+from app.models.billing import billing_provider_environment
 from app.operations.defaults import default_services_for_business
 from app.repositories.web_push import WebPushRepository
 
@@ -59,15 +67,35 @@ class Principal:
 class AuthService:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.billing_environment = billing_provider_environment()
 
     async def memberships(self, user: User) -> list[MembershipResponse]:
         if user.platform_role == "super_admin":
             return []
+
+        commercial_access = exists(
+            select(CommercialSubscription.id).where(
+                CommercialSubscription.business_id == Business.id,
+                CommercialSubscription.provider_environment == self.billing_environment,
+                CommercialSubscription.status.in_(("active", "past_due", "canceled")),
+                CommercialSubscription.access_until > func.now(),
+            )
+        )
+        effective_access = case(
+            (
+                or_(
+                    func.coalesce(BusinessAccess.access_mode, "paid") == "paid",
+                    commercial_access,
+                ),
+                "paid",
+            ),
+            else_="free",
+        )
         rows = await self.db.execute(
             select(
                 BusinessUserMembership,
                 Business.name,
-                func.coalesce(BusinessAccess.access_mode, "paid"),
+                effective_access,
                 # Missing legacy access rows were historically treated as paid,
                 # so they must also be treated as having real operational history.
                 func.coalesce(BusinessAccess.has_had_operational_access, True),
