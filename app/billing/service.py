@@ -17,6 +17,7 @@ from app.billing.catalog import (
     BillingCycle,
     cycle_months,
     get_offer,
+    plan_is_enabled,
 )
 from app.billing.schemas import (
     CheckoutCreateRequest,
@@ -49,6 +50,8 @@ class BillingService:
     ) -> CheckoutCreateResponse:
         if payload.return_origin not in allowed_origins:
             raise HTTPException(400, "Invalid return origin")
+        if not plan_is_enabled(payload.plan):
+            raise HTTPException(409, "Plan is not available yet")
         try:
             offer = get_offer(payload.plan, payload.cycle)
         except BillingCatalogConfigurationError:
@@ -387,7 +390,10 @@ class BillingService:
             subscription.canceled_at = datetime.now(UTC)
         elif event_type in {"SUBSCRIPTION_CREATED", "SUBSCRIPTION_UPDATED"}:
             provider_status = payload.get("status")
-            if provider_status == "ACTIVE" and subscription.status != "suspended":
+            if (
+                provider_status == "ACTIVE"
+                and subscription.status not in {"suspended", "past_due"}
+            ):
                 subscription.status = "active"
         await self.db.commit()
 

@@ -61,6 +61,7 @@ async def test_admin_grant_records_operational_history_without_billing() -> None
     compiled = statement.compile()
     assert statement.table.name == BusinessAccess.__tablename__
     assert "has_had_operational_access" in str(compiled)
+    assert "admin_full_access" in str(compiled)
     assert True in compiled.params.values()
     db.commit.assert_awaited_once()
 
@@ -82,5 +83,6 @@ async def test_admin_revoke_updates_entitlement_without_delete_or_data_reset() -
     statement = db.execute.await_args.args[0]
     assert "ON CONFLICT" in str(statement)
     assert "has_had_operational_access" in str(statement)
+    assert "admin_full_access" in str(statement)
     db.delete.assert_not_awaited()
     db.commit.assert_awaited_once()

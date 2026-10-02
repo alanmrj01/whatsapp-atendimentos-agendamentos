@@ -1,0 +1,54 @@
+# Planos comerciais da ALOVIA
+
+## Regra de prioridade
+
+1. `admin_full_access=true`: acesso administrativo total e ilimitado.
+2. Assinatura comercial válida: aplica o plano contratado.
+3. Conta que já teve operação real, mas perdeu o direito ativo:
+   `payment_blocked`, somente histórico preservado/leitura e WhatsApp pausado.
+4. Conta que nunca teve operação real: `demo`, podendo mostrar exemplos
+   explicitamente identificados como demonstração.
+
+`has_had_operational_access` é permanente. Depois que uma empresa começa a operar
+com dados reais, dados de demonstração jamais devem reaparecer.
+
+## Basic — lançamento
+
+- R$ 197,00 por mês.
+- Até 2 técnicos.
+- Até 800 mensagens por mês.
+- Único plano disponível para contratação no lançamento.
+
+Os limites acima são inicialmente informativos na oferta. A aplicação dos limites
+de técnicos e mensagens dentro do produto será feita em etapa específica.
+
+## Plus — em breve
+
+- R$ 397,00 por mês.
+- Mais de 2 técnicos.
+- Até 2.000 mensagens por mês.
+- Oferta automática de nova limpeza após 6 meses.
+- PMOC após 12 meses: funcionalidade planejada, ainda não implementada.
+
+O checkout Plus permanece bloqueado enquanto `BILLING_PLUS_ENABLED=false`.
+
+## Liberação administrativa
+
+Uma empresa liberada pelo SUPER_ADMIN recebe todas as funcionalidades presentes e
+futuras dos planos comerciais, técnicos ilimitados e mensagens ilimitadas enquanto
+o override estiver ativo.
+
+## Inadimplência
+
+`PAYMENT_OVERDUE` coloca a assinatura em `past_due`. `past_due` não concede
+entitlement operacional.
+
+A empresa continua podendo acessar seus registros históricos, mas mutações e
+automação ficam bloqueadas. O vínculo Meta/WhatsApp não é apagado nem
+desconectado: inbound e outbound operacionais são pausados por entitlement.
+
+Quando um pagamento válido é confirmado/recebido, a assinatura retorna a
+`active`, o entitlement volta a ficar ativo e a conexão já cadastrada volta a ser
+utilizada automaticamente.
+
+Uma assinatura cancelada conserva acesso apenas até o `access_until` já pago.

@@ -29,7 +29,7 @@ class Offer:
 
 _PLAN = {
     "basic": {"name": "Basic", "monthly_cents": 19_700, "users": 1, "attendances": 500},
-    "plus": {"name": "Plus", "monthly_cents": 29_700, "users": 5, "attendances": 1_500},
+    "plus": {"name": "Plus", "monthly_cents": 39_700, "users": 5, "attendances": 1_500},
 }
 
 _CYCLE = {
@@ -69,6 +69,19 @@ def _sandbox_test_amount_cents() -> int | None:
     if not ASAAS_RECURRENT_MIN_AMOUNT_CENTS <= value <= _SANDBOX_TEST_MAX_AMOUNT_CENTS:
         raise BillingCatalogConfigurationError("Invalid sandbox billing test amount")
     return value
+
+
+def plan_is_enabled(plan: str) -> bool:
+    if plan == "basic":
+        return True
+    if plan != "plus":
+        return False
+    return os.getenv("BILLING_PLUS_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def get_offer(plan: str, cycle: str) -> Offer:

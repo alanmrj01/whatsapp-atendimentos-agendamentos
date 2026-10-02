@@ -6,7 +6,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from app.billing.asaas import AsaasGateway
-from app.billing.catalog import BillingCatalogConfigurationError, get_offer
+from app.billing.catalog import BillingCatalogConfigurationError, get_offer, plan_is_enabled
 from app.billing.schemas import CheckoutCreateRequest
 from app.billing.service import BillingService, _cycle_end, _payment_value_cents
 from app.billing.webhooks import BillingWebhookService, SUPPORTED_EVENTS
@@ -29,6 +29,15 @@ def test_sandbox_price_override_is_isolated(monkeypatch) -> None:
     assert get_offer("basic", "monthly").amount_cents == 19_700
 
 
+def test_plus_is_launch_gated(monkeypatch) -> None:
+    monkeypatch.delenv("BILLING_PLUS_ENABLED", raising=False)
+    assert plan_is_enabled("basic") is True
+    assert plan_is_enabled("plus") is False
+
+    monkeypatch.setenv("BILLING_PLUS_ENABLED", "true")
+    assert plan_is_enabled("plus") is True
+
+
 def test_sandbox_price_override_rejects_provider_invalid_amount(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "499")
@@ -40,9 +49,9 @@ def test_server_side_catalog_uses_approved_prices_and_cycles() -> None:
     assert get_offer("basic", "monthly").amount_cents == 19_700
     assert get_offer("basic", "quarterly").amount_cents == 53_190
     assert get_offer("basic", "annual").amount_cents == 200_940
-    assert get_offer("plus", "monthly").amount_cents == 29_700
-    assert get_offer("plus", "quarterly").amount_cents == 80_190
-    assert get_offer("plus", "annual").amount_cents == 302_940
+    assert get_offer("plus", "monthly").amount_cents == 39_700
+    assert get_offer("plus", "quarterly").amount_cents == 107_190
+    assert get_offer("plus", "annual").amount_cents == 404_940
     assert get_offer("basic", "quarterly").asaas_cycle == "QUARTERLY"
     assert get_offer("plus", "annual").asaas_cycle == "YEARLY"
     assert get_offer("basic", "monthly").asaas_pix_frequency == "MONTHLY"

@@ -16,12 +16,18 @@ ACCESS_HISTORY_MIGRATION_PATH = (
     / "versions"
     / "20260915_0009_access_history.py"
 )
+ADMIN_FULL_ACCESS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261002_0027_admin_full_access.py"
+)
 
 
 def test_access_history_remains_in_current_alembic_chain() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20261001_0026"]
+    assert script.get_heads() == ["20261002_0027"]
     assert script.get_revision("20260915_0009").down_revision == "20260908_0008"
 
 
@@ -51,3 +57,27 @@ def test_access_history_migration_is_additive_and_never_deletes_business_data() 
     assert "delete from" not in upgrade
     assert "drop table" not in upgrade
     assert "drop column has_had_operational_access" in downgrade
+
+
+
+def test_admin_full_access_migration_preserves_existing_admin_and_legacy_access() -> None:
+    upgrade = " ".join(
+        render_migration_sql(
+            "upgrade",
+            ADMIN_FULL_ACCESS_MIGRATION_PATH,
+        ).lower().split()
+    )
+    downgrade = " ".join(
+        render_migration_sql(
+            "downgrade",
+            ADMIN_FULL_ACCESS_MIGRATION_PATH,
+        ).lower().split()
+    )
+
+    assert "add column admin_full_access boolean default false not null" in upgrade
+    assert "set admin_full_access = true" in upgrade
+    assert "where access_mode = 'paid'" in upgrade
+    assert "insert into business_access" in upgrade
+    assert "where ba.business_id is null" in upgrade
+    assert "delete from" not in upgrade
+    assert "drop column admin_full_access" in downgrade

@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.schemas import MeResponse, MembershipResponse, MembershipRole, SignupRequest
+from app.billing.entitlements import active_subscription_exists
 from app.auth.security import (
     REFRESH_TTL_SECONDS,
     hash_password,
@@ -73,18 +74,14 @@ class AuthService:
         if user.platform_role == "super_admin":
             return []
 
-        commercial_access = exists(
-            select(CommercialSubscription.id).where(
-                CommercialSubscription.business_id == Business.id,
-                CommercialSubscription.provider_environment == self.billing_environment,
-                CommercialSubscription.status.in_(("active", "past_due", "canceled")),
-                CommercialSubscription.access_until > func.now(),
-            )
+        commercial_access = active_subscription_exists(
+            Business.id,
+            self.billing_environment,
         )
         effective_access = case(
             (
                 or_(
-                    func.coalesce(BusinessAccess.access_mode, "paid") == "paid",
+                    func.coalesce(BusinessAccess.admin_full_access, False),
                     commercial_access,
                 ),
                 "paid",
@@ -99,6 +96,7 @@ class AuthService:
                 # Missing legacy access rows were historically treated as paid,
                 # so they must also be treated as having real operational history.
                 func.coalesce(BusinessAccess.has_had_operational_access, True),
+                func.coalesce(BusinessAccess.admin_full_access, False),
             )
             .join(Business, Business.id == BusinessUserMembership.business_id)
             .outerjoin(BusinessAccess, BusinessAccess.business_id == Business.id)
@@ -112,8 +110,24 @@ class AuthService:
                 role=MembershipRole(m.role),
                 access_mode=access_mode,
                 has_had_operational_access=has_had_operational_access,
+                admin_full_access=admin_full_access,
+                account_state=(
+                    "active"
+                    if access_mode == "paid"
+                    else (
+                        "payment_blocked"
+                        if has_had_operational_access
+                        else "demo"
+                    )
+                ),
             )
-            for m, name, access_mode, has_had_operational_access in rows
+            for (
+                m,
+                name,
+                access_mode,
+                has_had_operational_access,
+                admin_full_access,
+            ) in rows
         ]
 
     async def _select_default(self, user: User, session: AuthSession) -> None:
