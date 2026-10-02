@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Literal
 
 PlanCode = Literal["basic", "plus"]
@@ -46,6 +47,19 @@ _CYCLE = {
 }
 
 
+def _sandbox_test_amount_cents() -> int | None:
+    if os.getenv("BILLING_PROVIDER_ENVIRONMENT", "production").strip().lower() != "sandbox":
+        return None
+    raw = os.getenv("BILLING_TEST_AMOUNT_CENTS", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if 1 <= value <= 100_000 else None
+
+
 def get_offer(plan: str, cycle: str) -> Offer:
     if plan not in _PLAN or cycle not in _CYCLE:
         raise ValueError("Unknown commercial offer")
@@ -53,6 +67,9 @@ def get_offer(plan: str, cycle: str) -> Offer:
     cycle_data = _CYCLE[cycle]
     gross = plan_data["monthly_cents"] * cycle_data["months"]
     amount = gross * (10_000 - cycle_data["discount_bps"]) // 10_000
+    test_amount = _sandbox_test_amount_cents()
+    if test_amount is not None:
+        amount = test_amount
     return Offer(
         plan=plan,  # type: ignore[arg-type]
         cycle=cycle,  # type: ignore[arg-type]
