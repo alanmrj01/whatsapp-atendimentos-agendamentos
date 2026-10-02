@@ -8,9 +8,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.automation.lifecycle import create_due_lifecycle_outreach, mark_outreach_response
 from app.booking.availability import PostgresBookingAvailabilityPort
 from app.conversations.ports import SlotUnavailable
-from app.models import Appointment, ScheduleBlock
+from app.models import Appointment, Conversation, CustomerOutreach, Message, ScheduleBlock
+from app.repositories.outbound_tasks import OutboundTaskRepository
 from tests.integration.test_booking_postgresql import (
     TEST_DATABASE_URL,
     _physical_appointment,
@@ -198,3 +200,119 @@ async def test_composite_foreign_keys_reject_cross_business_appointments(
     async with sessions() as session:
         count = await session.scalar(select(func.count(Appointment.id)))
     assert count == 0
+
+
+async def test_preventive_outreach_can_be_fast_forwarded_without_waiting_six_months(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id, service_id, employees, customers, _ = await seed_capacity(
+        sessions,
+        customer_count=1,
+    )
+    reference = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
+    starts_at = reference - timedelta(days=181, hours=1)
+    completed = _physical_appointment(
+        business_id,
+        customers[0],
+        service_id,
+        employees[0],
+        starts_at,
+        "additional:preventive:completed",
+    )
+    completed.status = "completed"
+
+    async with sessions() as session:
+        async with session.begin():
+            session.add(completed)
+            session.add(
+                Conversation(
+                    business_id=business_id,
+                    customer_id=customers[0],
+                    state="COMPLETED",
+                    context={},
+                    automation_enabled=True,
+                    handoff_status="none",
+                    last_interaction_at=completed.ends_at,
+                )
+            )
+
+    async with sessions() as session:
+        async with session.begin():
+            created = await create_due_lifecycle_outreach(
+                session,
+                now=reference,
+                limit=100,
+            )
+    assert len(created) == 1
+
+    async with sessions() as session:
+        outreach = await session.scalar(
+            select(CustomerOutreach).where(
+                CustomerOutreach.business_id == business_id,
+                CustomerOutreach.customer_id == customers[0],
+                CustomerOutreach.outreach_type == "cleaning_6m",
+            )
+        )
+        messages = (
+            await session.scalars(
+                select(Message).where(
+                    Message.business_id == business_id,
+                    Message.conversation_id == outreach.conversation_id,
+                    Message.direction == "outbound",
+                )
+            )
+        ).all()
+
+    assert outreach is not None
+    assert outreach.status == "pending"
+    assert outreach.source_appointment_id == completed.id
+    assert outreach.due_at == completed.ends_at + timedelta(days=180)
+    assert len(messages) == 2
+    assert {message.outbound_payload.get("_alovia_sequence_index") for message in messages} == {0, 1}
+    assert all(message.outbound_payload.get("_alovia_outreach_id") == str(outreach.id) for message in messages)
+
+    async with sessions() as session:
+        async with session.begin():
+            duplicate = await create_due_lifecycle_outreach(
+                session,
+                now=reference,
+                limit=100,
+            )
+    assert duplicate == []
+
+    ordered = sorted(
+        messages,
+        key=lambda message: int(message.outbound_payload["_alovia_sequence_index"]),
+    )
+    async with sessions() as session:
+        repository = OutboundTaskRepository(session)
+        async with session.begin():
+            await repository.mark_sent(ordered[0].id, "wamid.preventive.0")
+            await repository.mark_sent(ordered[1].id, "wamid.preventive.1")
+
+    async with sessions() as session:
+        sent_outreach = await session.get(CustomerOutreach, outreach.id)
+        conversation = await session.get(Conversation, outreach.conversation_id)
+
+    assert sent_outreach is not None
+    assert sent_outreach.status == "sent"
+    assert conversation is not None
+    assert conversation.context["cleaning_outreach_pending_response"] is True
+    assert conversation.context["cleaning_outreach_id"] == str(outreach.id)
+
+    async with sessions() as session:
+        async with session.begin():
+            await mark_outreach_response(
+                session,
+                business_id=business_id,
+                conversation_id=outreach.conversation_id,
+                body="não tenho interesse",
+                occurred_at=reference + timedelta(minutes=5),
+            )
+
+    async with sessions() as session:
+        declined = await session.get(CustomerOutreach, outreach.id)
+
+    assert declined is not None
+    assert declined.status == "declined"
+    assert declined.responded_at == reference + timedelta(minutes=5)

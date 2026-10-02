@@ -29,9 +29,12 @@ from app.models import (
     Appointment,
     Business,
     BusinessNotification,
+    Conversation,
     Customer,
+    CustomerOutreach,
     Employee,
     EmployeeService,
+    Message,
     ScheduleBlock,
     Service,
     WorkingHours,
@@ -109,11 +112,14 @@ async def sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     async with factory() as session:
         async with session.begin():
             for model in (
+                CustomerOutreach,
+                Message,
                 BusinessNotification,
                 Appointment,
                 ScheduleBlock,
                 WorkingHours,
                 EmployeeService,
+                Conversation,
                 Employee,
                 Service,
                 Customer,
