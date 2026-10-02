@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -242,3 +243,146 @@ async def test_pix_gateway_reads_top_level_payload_from_asaas_response() -> None
     assert result.payload == "000201pix-copia-e-cola"
     assert result.conciliation_identifier == "conciliation-test"
     assert result.expires_at is not None
+
+
+class _BillingStateDb:
+    def __init__(self, checkout):
+        self.checkout = checkout
+        self.subscription = None
+        self.commits = 0
+
+    async def scalar(self, statement):
+        sql = str(statement)
+        if "FROM billing_checkouts" in sql:
+            return self.checkout
+        if "FROM commercial_subscriptions" in sql:
+            if self.subscription is None:
+                return None
+            if "checkout_id" in sql:
+                return (
+                    self.subscription
+                    if self.subscription.checkout_id == self.checkout.id
+                    else None
+                )
+            if "provider_subscription_id" in sql:
+                return (
+                    self.subscription
+                    if self.subscription.provider_subscription_id
+                    == self.checkout.provider_subscription_id
+                    else None
+                )
+            return self.subscription
+        return None
+
+    def add(self, obj):
+        if isinstance(obj, CommercialSubscription):
+            self.subscription = obj
+
+    async def commit(self):
+        self.commits += 1
+
+
+class _GatewayMustNotBeCalled:
+    def __getattr__(self, name):
+        raise AssertionError(f"Webhook reconciliation called provider gateway: {name}")
+
+
+def _card_checkout():
+    return SimpleNamespace(
+        id=uuid4(),
+        business_id=uuid4(),
+        payment_method="credit_card",
+        provider_environment="sandbox",
+        provider_checkout_id="checkout_test",
+        provider_subscription_id=None,
+        provider_customer_id=None,
+        plan_code="basic",
+        billing_cycle="monthly",
+        amount_cents=500,
+        status="active",
+        paid_at=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_card_webhooks_correlate_payment_before_checkout_paid(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    checkout = _card_checkout()
+    db = _BillingStateDb(checkout)
+    service = BillingService(db, _GatewayMustNotBeCalled())
+
+    await service.apply_payment_event(
+        "PAYMENT_CREATED",
+        {
+            "id": "pay_test",
+            "checkoutSession": "checkout_test",
+            "subscription": "sub_test",
+            "customer": "cus_test",
+            "value": 5.0,
+        },
+    )
+    assert checkout.provider_subscription_id == "sub_test"
+    assert checkout.provider_customer_id == "cus_test"
+    assert checkout.status == "active"
+    assert db.subscription is None
+
+    await service.activate_paid_checkout("checkout_test")
+
+    assert checkout.status == "paid"
+    assert checkout.paid_at is not None
+    assert db.subscription is not None
+    assert db.subscription.status == "active"
+    assert db.subscription.provider_subscription_id == "sub_test"
+    assert db.subscription.provider_customer_id == "cus_test"
+
+
+@pytest.mark.asyncio
+async def test_card_webhooks_correlate_checkout_paid_before_payment(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    checkout = _card_checkout()
+    db = _BillingStateDb(checkout)
+    service = BillingService(db, _GatewayMustNotBeCalled())
+
+    await service.activate_paid_checkout("checkout_test")
+    assert checkout.status == "paid"
+    assert db.subscription is None
+
+    await service.apply_payment_event(
+        "PAYMENT_CREATED",
+        {
+            "id": "pay_test",
+            "checkoutSession": "checkout_test",
+            "subscription": "sub_test",
+            "customer": "cus_test",
+            "value": "5.00",
+        },
+    )
+
+    assert db.subscription is not None
+    assert db.subscription.status == "active"
+    assert db.subscription.provider_subscription_id == "sub_test"
+
+
+@pytest.mark.asyncio
+async def test_card_payment_amount_mismatch_never_links_subscription(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    checkout = _card_checkout()
+    checkout.status = "paid"
+    db = _BillingStateDb(checkout)
+    service = BillingService(db, _GatewayMustNotBeCalled())
+
+    await service.apply_payment_event(
+        "PAYMENT_CREATED",
+        {
+            "checkoutSession": "checkout_test",
+            "subscription": "sub_wrong",
+            "customer": "cus_test",
+            "value": 6.0,
+        },
+    )
+
+    assert checkout.provider_subscription_id is None
+    assert db.subscription is None

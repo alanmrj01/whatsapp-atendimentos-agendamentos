@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from uuid import UUID, uuid4
@@ -28,6 +29,7 @@ from app.models.billing import billing_provider_environment
 
 
 BRAZIL_TZ = ZoneInfo("America/Sao_Paulo")
+logger = logging.getLogger(__name__)
 
 
 class BillingService:
@@ -231,34 +233,29 @@ class BillingService:
         )
         if checkout is None or checkout.payment_method != "credit_card":
             return
-        if checkout.status == "paid":
-            return
 
-        payments = await self.gateway.payments_for_checkout(provider_checkout_id)
-        payment = next(
-            (
-                row
-                for row in payments
-                if isinstance(row.get("subscription"), str)
-                and row.get("subscription")
-                and _payment_value_cents(row.get("value")) == checkout.amount_cents
-            ),
-            None,
-        )
-        if payment is None:
-            raise AsaasGatewayError("Checkout subscription reconciliation pending")
+        if checkout.status != "paid":
+            checkout.status = "paid"
+            checkout.paid_at = checkout.paid_at or datetime.now(UTC)
 
-        provider_subscription_id = str(payment["subscription"])
-        provider_customer_id = payment.get("customer")
-        if provider_customer_id is not None:
-            provider_customer_id = str(provider_customer_id)
+        # CHECKOUT_PAID is the provider's authoritative checkout result.
+        # Never block its webhook acknowledgement on a secondary provider query:
+        # payment/subscription references are correlated from payment events.
+        await self._activate_credit_card_subscription_if_ready(checkout)
+        await self.db.commit()
 
-        checkout.status = "paid"
-        checkout.paid_at = datetime.now(UTC)
-        checkout.provider_subscription_id = provider_subscription_id
-        checkout.provider_customer_id = provider_customer_id
+    async def _activate_credit_card_subscription_if_ready(
+        self, checkout: BillingCheckout
+    ) -> CommercialSubscription | None:
+        if (
+            checkout.payment_method != "credit_card"
+            or checkout.status != "paid"
+            or not checkout.provider_subscription_id
+        ):
+            return None
 
         subscription = await self._subscription_for_checkout(checkout.id)
+        access_until = _cycle_end(datetime.now(UTC), checkout.billing_cycle)
         if subscription is None:
             subscription = CommercialSubscription(
                 id=uuid4(),
@@ -269,21 +266,19 @@ class BillingService:
                 payment_method="credit_card",
                 provider_environment=self.provider_environment,
                 status="active",
-                provider_subscription_id=provider_subscription_id,
-                provider_customer_id=provider_customer_id,
-                access_until=_cycle_end(datetime.now(UTC), checkout.billing_cycle),
+                provider_subscription_id=checkout.provider_subscription_id,
+                provider_customer_id=checkout.provider_customer_id,
+                access_until=access_until,
             )
             self.db.add(subscription)
         else:
             subscription.status = "active"
-            subscription.provider_subscription_id = provider_subscription_id
-            subscription.provider_customer_id = provider_customer_id
-            subscription.access_until = max(
-                subscription.access_until,
-                _cycle_end(datetime.now(UTC), checkout.billing_cycle),
-            )
+            subscription.provider_subscription_id = checkout.provider_subscription_id
+            subscription.provider_customer_id = checkout.provider_customer_id
+            subscription.access_until = max(subscription.access_until, access_until)
+
         await self._record_operational_history(checkout.business_id)
-        await self.db.commit()
+        return subscription
 
     async def apply_pix_authorization_event(self, event_type: str, payload: dict) -> None:
         provider_id = payload.get("id")
@@ -301,7 +296,13 @@ class BillingService:
 
         if event_type == "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED":
             if not self._valid_pix_authorization(checkout, payload):
-                raise AsaasGatewayError("Pix Automatic authorization reconciliation failed")
+                checkout.status = "failed"
+                logger.warning(
+                    "asaas_pix_authorization_reconciliation_rejected",
+                    extra={"provider_authorization_id": provider_id},
+                )
+                await self.db.commit()
+                return
             checkout.status = "paid"
             checkout.paid_at = checkout.paid_at or datetime.now(UTC)
             subscription = await self._subscription_for_checkout(checkout.id)
@@ -379,13 +380,22 @@ class BillingService:
         await self.db.commit()
 
     async def apply_payment_event(self, event_type: str, payload: dict) -> None:
+        checkout = await self._capture_credit_card_checkout_refs(payload)
+        if checkout is not None:
+            await self._activate_credit_card_subscription_if_ready(checkout)
+
         subscription = await self._subscription_for_payment(payload)
         if subscription is None:
+            # PAYMENT_CREATED can legitimately arrive before CHECKOUT_PAID.
+            # Persist any provider references captured above and wait for the
+            # complementary webhook instead of polling Asaas.
+            await self.db.commit()
             return
 
         if event_type in {"PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"}:
             expected = get_offer(subscription.plan_code, subscription.billing_cycle).amount_cents
             if _payment_value_cents(payload.get("value")) != expected:
+                await self.db.commit()
                 return
             due_date = _parse_due_date(payload.get("dueDate"))
             anchor = (
@@ -409,6 +419,43 @@ class BillingService:
             subscription.status = "suspended"
             subscription.access_until = min(subscription.access_until, datetime.now(UTC))
         await self.db.commit()
+
+    async def _capture_credit_card_checkout_refs(
+        self, payload: dict
+    ) -> BillingCheckout | None:
+        checkout_session = payload.get("checkoutSession")
+        provider_subscription_id = payload.get("subscription")
+        if (
+            not isinstance(checkout_session, str)
+            or not checkout_session
+            or len(checkout_session) > 80
+            or not isinstance(provider_subscription_id, str)
+            or not provider_subscription_id
+            or len(provider_subscription_id) > 80
+        ):
+            return None
+
+        checkout = await self.db.scalar(
+            select(BillingCheckout).where(
+                BillingCheckout.provider_checkout_id == checkout_session,
+                BillingCheckout.payment_method == "credit_card",
+                BillingCheckout.provider_environment == self.provider_environment,
+            )
+        )
+        if checkout is None:
+            return None
+        if _payment_value_cents(payload.get("value")) != checkout.amount_cents:
+            logger.warning(
+                "asaas_payment_checkout_amount_mismatch",
+                extra={"provider_checkout_id": checkout_session},
+            )
+            return None
+
+        checkout.provider_subscription_id = provider_subscription_id
+        provider_customer_id = payload.get("customer")
+        if isinstance(provider_customer_id, str) and 0 < len(provider_customer_id) <= 80:
+            checkout.provider_customer_id = provider_customer_id
+        return checkout
 
     async def _subscription_for_payment(self, payload: dict) -> CommercialSubscription | None:
         provider_subscription_id = payload.get("subscription")

@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.billing.asaas import AsaasGateway, AsaasGatewayError
+from app.billing.asaas import AsaasGateway
 from app.billing.webhooks import BillingWebhookService
 from app.core.config import AsaasConfigurationError, Settings, get_settings
 from app.core.database import get_db
@@ -42,10 +42,8 @@ async def asaas_webhook(
     if not isinstance(payload, dict):
         raise HTTPException(400, "Invalid webhook payload")
 
-    try:
-        await BillingWebhookService(db, AsaasGateway(configuration)).process(payload)
-    except AsaasGatewayError:
-        # A provider retry is desirable while a paid checkout is still waiting
-        # for the associated subscription/payment to become queryable.
-        raise HTTPException(503, "Billing reconciliation pending") from None
+    # Keep the webhook path deterministic and local: provider webhooks are the
+    # source of truth for checkout/payment state, so no secondary Asaas polling
+    # is performed before acknowledging the delivery.
+    await BillingWebhookService(db, AsaasGateway(configuration)).process(payload)
     return Response(status_code=200)
