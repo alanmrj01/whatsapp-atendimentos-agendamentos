@@ -17,6 +17,16 @@ def settings(**values):
     return Settings(ENVIRONMENT=Environment.test, **values)
 
 
+def test_sandbox_price_override_is_isolated(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "100")
+    assert get_offer("basic", "monthly").amount_cents == 100
+    assert get_offer("plus", "annual").amount_cents == 100
+
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    assert get_offer("basic", "monthly").amount_cents == 19_700
+
+
 def test_server_side_catalog_uses_approved_prices_and_cycles() -> None:
     assert get_offer("basic", "monthly").amount_cents == 19_700
     assert get_offer("basic", "quarterly").amount_cents == 53_190
