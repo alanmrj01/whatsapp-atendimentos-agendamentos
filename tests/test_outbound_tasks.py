@@ -243,6 +243,19 @@ class FakeWhatsAppSender:
     async def send_text(self, to: str, text: str) -> str:
         return await self._send("text", (to, text))
 
+    async def send_template(
+        self,
+        to: str,
+        *,
+        name: str,
+        language_code: str,
+        body_parameters: Any = (),
+    ) -> str:
+        return await self._send(
+            "template",
+            (to, name, language_code, tuple(body_parameters)),
+        )
+
     async def send_reaction(
         self,
         to: str,
@@ -305,6 +318,11 @@ def stored_message(
             "message_id": "wamid.customer",
             "emoji": "👍",
         },
+        "template": {
+            "template_name": "alovia_reagendamento_atendimento",
+            "language_code": "pt_BR",
+            "body_parameters": ["Alan", "Limpeza", "07/10/2026 às 14:00"],
+        },
     }
     return StoredOutboundMessage(
         message_id=MESSAGE_ID,
@@ -326,6 +344,7 @@ def stored_message(
         ("interactive_button", "buttons"),
         ("interactive_list", "list"),
         ("reaction", "reaction"),
+        ("template", "template"),
     ],
 )
 @pytest.mark.asyncio

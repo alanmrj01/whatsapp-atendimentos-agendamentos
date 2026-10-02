@@ -126,6 +126,49 @@ async def test_send_text_success() -> None:
 
 
 @mark.asyncio
+async def test_send_template_success() -> None:
+    captured_payload: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_payload.update(json.loads(request.content))
+        return httpx.Response(200, json={"messages": [{"id": "wamid.template"}]})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = WhatsAppClient(settings(), http_client=http_client)
+        provider_message_id = await client.send_template(
+            "recipient-template",
+            name="alovia_reagendamento_atendimento",
+            language_code="pt_BR",
+            body_parameters=("Alan", "Limpeza", "07/10/2026 às 14:00"),
+        )
+
+    assert provider_message_id == "wamid.template"
+    assert captured_payload == {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": "recipient-template",
+        "type": "template",
+        "template": {
+            "name": "alovia_reagendamento_atendimento",
+            "language": {"code": "pt_BR"},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": "Alan"},
+                        {"type": "text", "text": "Limpeza"},
+                        {"type": "text", "text": "07/10/2026 às 14:00"},
+                    ],
+                }
+            ],
+        },
+    }
+
+
+
+@mark.asyncio
 async def test_send_reaction_success() -> None:
     captured_payload: dict[str, Any] = {}
 
@@ -360,6 +403,18 @@ InvalidOperation = Callable[[WhatsAppClient], Awaitable[Any]]
     [
         lambda client: client.send_text("", "text"),
         lambda client: client.send_text("recipient", "   "),
+        lambda client: client.send_template(
+            "recipient",
+            name="Invalid Template",
+            language_code="pt_BR",
+            body_parameters=("value",),
+        ),
+        lambda client: client.send_template(
+            "recipient",
+            name="valid_template",
+            language_code="pt-br",
+            body_parameters=("value",),
+        ),
         lambda client: client.send_interactive_buttons("recipient", "body", []),
         lambda client: client.send_interactive_buttons(
             "recipient",
