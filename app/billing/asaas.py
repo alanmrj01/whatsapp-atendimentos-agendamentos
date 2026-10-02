@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import logging
 from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -9,6 +10,9 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.core.config import AsaasConfiguration
+
+
+logger = logging.getLogger(__name__)
 
 
 class AsaasGatewayError(RuntimeError):
@@ -156,6 +160,15 @@ class AsaasGateway:
                 )
             response.raise_for_status()
             data = response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "Asaas request failed method=%s path=%s status=%s codes=%s",
+                method,
+                path,
+                exc.response.status_code,
+                ",".join(_provider_error_codes(exc.response)) or "unknown",
+            )
+            raise AsaasGatewayError("Asaas request failed") from exc
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             raise AsaasGatewayError("Asaas request failed") from exc
         if not isinstance(data, dict):
@@ -174,6 +187,26 @@ class AsaasGateway:
             and parsed.username is None
             and parsed.password is None
         )
+
+
+def _provider_error_codes(response: httpx.Response) -> tuple[str, ...]:
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        return ()
+    codes: list[str] = []
+    for error in errors[:5]:
+        if not isinstance(error, dict):
+            continue
+        code = error.get("code")
+        if isinstance(code, str) and 0 < len(code) <= 80:
+            codes.append(code)
+    return tuple(codes)
 
 
 def _parse_asaas_datetime(value: object) -> datetime | None:

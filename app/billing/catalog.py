@@ -7,6 +7,13 @@ from typing import Literal
 PlanCode = Literal["basic", "plus"]
 BillingCycle = Literal["monthly", "quarterly", "annual"]
 
+ASAAS_RECURRENT_MIN_AMOUNT_CENTS = 500
+_SANDBOX_TEST_MAX_AMOUNT_CENTS = 100_000
+
+
+class BillingCatalogConfigurationError(RuntimeError):
+    """Invalid server-side billing catalog configuration."""
+
 
 @dataclass(frozen=True, slots=True)
 class Offer:
@@ -56,8 +63,12 @@ def _sandbox_test_amount_cents() -> int | None:
     try:
         value = int(raw)
     except ValueError:
-        return None
-    return value if 1 <= value <= 100_000 else None
+        raise BillingCatalogConfigurationError(
+            "Invalid sandbox billing test amount"
+        ) from None
+    if not ASAAS_RECURRENT_MIN_AMOUNT_CENTS <= value <= _SANDBOX_TEST_MAX_AMOUNT_CENTS:
+        raise BillingCatalogConfigurationError("Invalid sandbox billing test amount")
+    return value
 
 
 def get_offer(plan: str, cycle: str) -> Offer:

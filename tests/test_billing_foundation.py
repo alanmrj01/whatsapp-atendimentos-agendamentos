@@ -5,7 +5,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from app.billing.asaas import AsaasGateway
-from app.billing.catalog import get_offer
+from app.billing.catalog import BillingCatalogConfigurationError, get_offer
 from app.billing.schemas import CheckoutCreateRequest
 from app.billing.service import BillingService, _cycle_end, _payment_value_cents
 from app.billing.webhooks import BillingWebhookService, SUPPORTED_EVENTS
@@ -19,12 +19,20 @@ def settings(**values):
 
 def test_sandbox_price_override_is_isolated(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
-    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "100")
-    assert get_offer("basic", "monthly").amount_cents == 100
-    assert get_offer("plus", "annual").amount_cents == 100
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    assert get_offer("basic", "monthly").amount_cents == 500
+    assert get_offer("plus", "annual").amount_cents == 500
 
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "100")
     assert get_offer("basic", "monthly").amount_cents == 19_700
+
+
+def test_sandbox_price_override_rejects_provider_invalid_amount(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "499")
+    with pytest.raises(BillingCatalogConfigurationError):
+        get_offer("basic", "monthly")
 
 
 def test_server_side_catalog_uses_approved_prices_and_cycles() -> None:

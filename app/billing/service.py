@@ -11,7 +11,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing.asaas import AsaasGateway, AsaasGatewayError
-from app.billing.catalog import BillingCycle, cycle_months, get_offer
+from app.billing.catalog import (
+    BillingCatalogConfigurationError,
+    BillingCycle,
+    cycle_months,
+    get_offer,
+)
 from app.billing.schemas import (
     CheckoutCreateRequest,
     CheckoutCreateResponse,
@@ -42,7 +47,10 @@ class BillingService:
     ) -> CheckoutCreateResponse:
         if payload.return_origin not in allowed_origins:
             raise HTTPException(400, "Invalid return origin")
-        offer = get_offer(payload.plan, payload.cycle)
+        try:
+            offer = get_offer(payload.plan, payload.cycle)
+        except BillingCatalogConfigurationError:
+            raise HTTPException(503, "Billing configuration is unavailable") from None
         existing = await self.db.scalar(
             select(BillingCheckout).where(
                 BillingCheckout.idempotency_key == idempotency_key,
