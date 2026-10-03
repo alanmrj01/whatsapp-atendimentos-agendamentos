@@ -121,7 +121,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261002_0027"]
+    assert script.get_heads() == ["20261003_0028"]
 
 
 def test_equipment_delivery_fee_migration_is_additive_and_reversible() -> None:
