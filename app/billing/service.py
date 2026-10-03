@@ -235,6 +235,11 @@ class BillingService:
     ) -> CreditCardCheckoutResponse:
         if not native_card_checkout_is_enabled():
             raise HTTPException(409, "Native card checkout is not available yet")
+        if await self._admin_full_access_is_active(business_id):
+            raise HTTPException(
+                409,
+                "Admin full access is active; a paid plan is not required",
+            )
 
         checkout = await self.db.get(BillingCheckout, checkout_id)
         if (
@@ -419,6 +424,10 @@ class BillingService:
             await self._activate_credit_card_subscription_if_ready(checkout)
             await self.db.commit()
             return
+
+    async def _admin_full_access_is_active(self, business_id: UUID) -> bool:
+        access = await self.db.get(BusinessAccess, business_id)
+        return bool(access is not None and access.admin_full_access)
 
     async def checkout_status(
         self, *, business_id: UUID, checkout_id: UUID
