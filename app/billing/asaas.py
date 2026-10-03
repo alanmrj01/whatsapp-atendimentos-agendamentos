@@ -19,6 +19,14 @@ class AsaasGatewayError(RuntimeError):
     """Sanitized provider failure; never include provider payloads or secrets."""
 
 
+class AsaasCardRejectedError(AsaasGatewayError):
+    """Provider rejected the card or cardholder data."""
+
+
+class AsaasGatewayTimeoutError(AsaasGatewayError):
+    """Provider outcome is uncertain because the request timed out."""
+
+
 @dataclass(frozen=True, slots=True)
 class AsaasCheckoutResult:
     checkout_id: str
@@ -32,6 +40,11 @@ class AsaasPixAuthorizationResult:
     payload: str
     conciliation_identifier: str | None
     expires_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class AsaasCreditCardSubscriptionResult:
+    subscription_id: str
 
 
 class AsaasGateway:
@@ -150,6 +163,46 @@ class AsaasGateway:
             raise AsaasGatewayError("Asaas payments response is invalid")
         return [row for row in data if isinstance(row, dict)]
 
+    async def create_credit_card_subscription(
+        self, payload: dict[str, Any]
+    ) -> AsaasCreditCardSubscriptionResult:
+        data = await self._json_request(
+            "POST",
+            "/subscriptions",
+            json=payload,
+            timeout_seconds=65.0,
+            card_decline_on_400=True,
+        )
+        subscription_id = data.get("id") if isinstance(data, dict) else None
+        if (
+            not isinstance(subscription_id, str)
+            or not subscription_id.startswith("sub_")
+            or len(subscription_id) > 80
+        ):
+            raise AsaasGatewayError("Asaas subscription response is invalid")
+        return AsaasCreditCardSubscriptionResult(subscription_id=subscription_id)
+
+    async def find_subscription(self, *, external_reference: str) -> str | None:
+        payload = await self._json_request(
+            "GET",
+            "/subscriptions",
+            params={"externalReference": external_reference, "limit": 2},
+        )
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise AsaasGatewayError("Asaas subscription lookup response is invalid")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            subscription_id = row.get("id")
+            if (
+                isinstance(subscription_id, str)
+                and subscription_id.startswith("sub_")
+                and len(subscription_id) <= 80
+            ):
+                return subscription_id
+        return None
+
     async def _json_request(
         self,
         method: str,
@@ -157,9 +210,11 @@ class AsaasGateway:
         *,
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
+        timeout_seconds: float = 10.0,
+        card_decline_on_400: bool = False,
     ) -> dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
                 response = await client.request(
                     method,
                     f"{self.configuration.api_base_url}{path}",
@@ -177,7 +232,11 @@ class AsaasGateway:
                 exc.response.status_code,
                 ",".join(_provider_error_codes(exc.response)) or "unknown",
             )
+            if card_decline_on_400 and exc.response.status_code == 400:
+                raise AsaasCardRejectedError("Asaas card was not authorized") from exc
             raise AsaasGatewayError("Asaas request failed") from exc
+        except httpx.TimeoutException as exc:
+            raise AsaasGatewayTimeoutError("Asaas request timed out") from exc
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             raise AsaasGatewayError("Asaas request failed") from exc
         if not isinstance(data, dict):
