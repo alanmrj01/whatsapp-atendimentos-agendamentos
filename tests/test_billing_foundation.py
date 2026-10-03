@@ -14,7 +14,7 @@ from app.billing.catalog import (
     payment_method_is_enabled,
     plan_is_enabled,
 )
-from app.billing.schemas import CheckoutCreateRequest
+from app.billing.schemas import CheckoutCreateRequest, CreditCardCheckoutRequest
 from app.billing.service import BillingService, _cycle_end, _payment_value_cents
 from app.billing.webhooks import BillingWebhookService, SUPPORTED_EVENTS
 from app.core.config import AsaasConfigurationError, Environment, Settings
@@ -141,6 +141,22 @@ def test_pix_checkout_requires_only_minimum_payer_identity() -> None:
             payment_method="pix_automatic",
             return_origin="https://alovia.netlify.app",
         )
+
+
+def test_official_asaas_sandbox_card_is_accepted_by_schema() -> None:
+    request = CreditCardCheckoutRequest(
+        payer_name="Teste Alovia",
+        payer_cpf_cnpj="12345678909",
+        payer_postal_code="12235740",
+        payer_address_number="160",
+        payer_phone="11999999999",
+        card_holder_name="TESTE ALOVIA",
+        card_number="4444 4444 4444 4444",
+        card_expiry_month="10",
+        card_expiry_year="2030",
+        card_ccv="123",
+    )
+    assert request.card_number.get_secret_value() == "4444444444444444"
 
 
 def test_card_checkout_does_not_require_document() -> None:
