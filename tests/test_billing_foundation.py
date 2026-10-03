@@ -10,14 +10,15 @@ from app.billing.asaas import AsaasGateway
 from app.billing.catalog import (
     BillingCatalogConfigurationError,
     get_offer,
+    native_card_checkout_is_enabled,
     payment_method_is_enabled,
     plan_is_enabled,
 )
-from app.billing.schemas import CheckoutCreateRequest
+from app.billing.schemas import CheckoutCreateRequest, CreditCardCheckoutRequest
 from app.billing.service import BillingService, _cycle_end, _payment_value_cents
 from app.billing.webhooks import BillingWebhookService, SUPPORTED_EVENTS
 from app.core.config import AsaasConfigurationError, Environment, Settings
-from app.models import BillingCheckout, BillingWebhookEvent, CommercialSubscription
+from app.models import BillingCheckout, BillingWebhookEvent, BusinessAccess, CommercialSubscription
 
 
 def settings(**values):
@@ -57,6 +58,14 @@ def test_pix_automatic_is_fail_closed_in_production(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.delenv("BILLING_PIX_AUTOMATIC_ENABLED", raising=False)
     assert payment_method_is_enabled("pix_automatic") is True
+
+
+def test_native_card_checkout_is_launch_gated(monkeypatch) -> None:
+    monkeypatch.delenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", raising=False)
+    assert native_card_checkout_is_enabled() is False
+
+    monkeypatch.setenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", "true")
+    assert native_card_checkout_is_enabled() is True
 
 
 @pytest.mark.asyncio
@@ -132,6 +141,22 @@ def test_pix_checkout_requires_only_minimum_payer_identity() -> None:
             payment_method="pix_automatic",
             return_origin="https://alovia.netlify.app",
         )
+
+
+def test_official_asaas_sandbox_card_is_accepted_by_schema() -> None:
+    request = CreditCardCheckoutRequest(
+        payer_name="Teste Alovia",
+        payer_cpf_cnpj="12345678909",
+        payer_postal_code="12235740",
+        payer_address_number="160",
+        payer_phone="11999999999",
+        card_holder_name="TESTE ALOVIA",
+        card_number="4444 4444 4444 4444",
+        card_expiry_month="10",
+        card_expiry_year="2030",
+        card_ccv="123",
+    )
+    assert request.card_number.get_secret_value() == "4444444444444444"
 
 
 def test_card_checkout_does_not_require_document() -> None:
@@ -496,3 +521,118 @@ async def test_pix_activation_persists_provider_subscription_id(monkeypatch) -> 
     assert db.subscription.status == "active"
     assert db.subscription.provider_authorization_id == "auth_pix_test"
     assert db.subscription.provider_subscription_id == "sub_pix_test"
+
+
+@pytest.mark.asyncio
+async def test_hosted_checkout_uses_ten_minute_expiration() -> None:
+    captured = {}
+
+    class Gateway:
+        async def create_checkout(self, payload):
+            captured.update(payload)
+            return SimpleNamespace(
+                checkout_id="checkout_test",
+                checkout_url="https://sandbox.asaas.com/checkoutSession/show?id=checkout_test",
+            )
+
+    checkout = SimpleNamespace(id=uuid4(), provider_checkout_id=None, checkout_url=None)
+    await BillingService(object(), Gateway())._prepare_credit_card(
+        checkout=checkout,
+        offer=get_offer("basic", "monthly"),
+        return_origin="https://alovia.netlify.app",
+    )
+
+    assert captured["minutesToExpire"] == 10
+    assert captured["items"][0]["description"] == "Assinatura Basic - mensal"
+
+
+@pytest.mark.asyncio
+async def test_admin_full_access_blocks_native_card_before_provider(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", "true")
+
+    business_id = uuid4()
+    checkout_id = uuid4()
+
+    class Db:
+        async def get(self, model, identifier):
+            if model is BusinessAccess and identifier == business_id:
+                return SimpleNamespace(admin_full_access=True)
+            raise AssertionError("Checkout/provider state must not be read after admin grant")
+
+    class Gateway:
+        def __getattr__(self, name):
+            raise AssertionError(f"Provider gateway must not be called: {name}")
+
+    request = CreditCardCheckoutRequest(
+        payer_name="Teste Alovia",
+        payer_cpf_cnpj="12345678909",
+        payer_postal_code="12235740",
+        payer_address_number="160",
+        payer_phone="11999999999",
+        card_holder_name="TESTE ALOVIA",
+        card_number="4444444444444444",
+        card_expiry_month="10",
+        card_expiry_year="2030",
+        card_ccv="123",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await BillingService(Db(), Gateway()).pay_credit_card(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            checkout_id=checkout_id,
+            payload=request,
+            remote_ip="203.0.113.10",
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == (
+        "Admin full access is active; a paid plan is not required"
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_admin_paid_access_blocks_native_card_before_provider(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", "true")
+
+    business_id = uuid4()
+    checkout_id = uuid4()
+
+    class Db:
+        async def get(self, model, identifier):
+            if model is BusinessAccess and identifier == business_id:
+                return SimpleNamespace(admin_full_access=False, access_mode="paid")
+            raise AssertionError("Checkout/provider state must not be read after admin grant")
+
+    class Gateway:
+        def __getattr__(self, name):
+            raise AssertionError(f"Provider gateway must not be called: {name}")
+
+    request = CreditCardCheckoutRequest(
+        payer_name="Teste Alovia",
+        payer_cpf_cnpj="12345678909",
+        payer_postal_code="12235740",
+        payer_address_number="160",
+        payer_phone="11999999999",
+        card_holder_name="TESTE ALOVIA",
+        card_number="4444444444444444",
+        card_expiry_month="10",
+        card_expiry_year="2030",
+        card_ccv="123",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await BillingService(Db(), Gateway()).pay_credit_card(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            checkout_id=checkout_id,
+            payload=request,
+            remote_ip="203.0.113.10",
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == (
+        "Admin full access is active; a paid plan is not required"
+    )

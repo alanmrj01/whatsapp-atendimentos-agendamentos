@@ -104,6 +104,15 @@ def payment_method_is_enabled(payment_method: str) -> bool:
     return configured.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def native_card_checkout_is_enabled() -> bool:
+    return os.getenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def get_offer(plan: str, cycle: str) -> Offer:
     if plan not in _PLAN or cycle not in _CYCLE:
         raise ValueError("Unknown commercial offer")
