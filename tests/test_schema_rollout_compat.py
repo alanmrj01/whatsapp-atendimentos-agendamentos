@@ -6,7 +6,7 @@ from app.diagnostics.models import (
 from app.diagnostics.service import migration_result
 
 
-def test_readiness_accepts_only_current_rollout_schema_revision() -> None:
+def test_readiness_accepts_current_and_rollout_compatible_revision() -> None:
     current = migration_result([EXPECTED_SCHEMA_REVISION], 1)
     previous = migration_result(["20261002_0027"], 1)
 
@@ -16,8 +16,8 @@ def test_readiness_accepts_only_current_rollout_schema_revision() -> None:
     assert current.code is Code.MIGRATION_OK
     assert current.details.current_revision == "20261003_0028"
 
-    assert previous.status is Status.ERROR
-    assert previous.code is Code.MIGRATION_BEHIND
+    assert previous.status is Status.OK
+    assert previous.code is Code.MIGRATION_OK
     assert previous.details.current_revision == "20261002_0027"
 
 
