@@ -873,3 +873,14 @@ async def test_critical_failed_message_still_blocks_sequence() -> None:
 
     assert found is None
     session.scalar.assert_not_awaited()
+
+
+
+def test_entitlement_block_overrides_manual_message_exemption() -> None:
+    assert _automation_blocked_for_message(
+        idempotency_key="manual:outbound:test",
+        outbound_payload=None,
+        active_ignore=False,
+        standard_automation_blocked=False,
+        entitlement_blocked=True,
+    ) is True

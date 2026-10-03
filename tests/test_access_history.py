@@ -4,9 +4,15 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
 
 from app.api.operational_pwa import AGENDA_ROLES, _authorize, _membership
 from app.auth.schemas import MembershipResponse, MembershipRole
+from app.billing.entitlements import (
+    active_operational_access_exists,
+    plus_features_access_exists,
+)
 from app.models import Business, BusinessAccess
 from app.platform_admin.service import PlatformAdminService
 
@@ -61,6 +67,7 @@ async def test_admin_grant_records_operational_history_without_billing() -> None
     compiled = statement.compile()
     assert statement.table.name == BusinessAccess.__tablename__
     assert "has_had_operational_access" in str(compiled)
+    assert "admin_full_access" in str(compiled)
     assert True in compiled.params.values()
     db.commit.assert_awaited_once()
 
@@ -82,5 +89,30 @@ async def test_admin_revoke_updates_entitlement_without_delete_or_data_reset() -
     statement = db.execute.await_args.args[0]
     assert "ON CONFLICT" in str(statement)
     assert "has_had_operational_access" in str(statement)
+    assert "admin_full_access" in str(statement)
     db.delete.assert_not_awaited()
     db.commit.assert_awaited_once()
+
+
+
+def test_legacy_paid_compatibility_does_not_grant_plus_features() -> None:
+    business_id = uuid4()
+    dialect = postgresql_dialect()
+
+    operational_sql = str(
+        select(active_operational_access_exists(business_id)).compile(
+            dialect=dialect,
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+
+    plus_sql = str(
+        select(plus_features_access_exists(business_id)).compile(
+            dialect=dialect,
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+
+    assert "access_mode" in operational_sql
+    assert "access_mode" not in plus_sql
+    assert "admin_full_access" in plus_sql
