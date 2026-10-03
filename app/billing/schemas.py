@@ -143,7 +143,10 @@ class CreditCardCheckoutRequest(StrictBillingRequest):
     def normalize_card_number(cls, value):
         raw = value.get_secret_value() if isinstance(value, SecretStr) else str(value)
         digits = re.sub(r"\D", "", raw)
-        if not 13 <= len(digits) <= 19 or not _luhn_valid(digits):
+        # Do not apply a local Luhn gate here. Asaas owns card authorization and
+        # its official Sandbox success card (4444 4444 4444 4444) is intended
+        # for homologation even though generic local validators may reject it.
+        if not 13 <= len(digits) <= 19:
             raise ValueError("Invalid card number")
         return digits
 
@@ -190,15 +193,3 @@ class SubscriptionStatusResponse(BaseModel):
     plan: PlanCode | None = None
     cycle: BillingCycle | None = None
     access_until: datetime | None = None
-
-def _luhn_valid(number: str) -> bool:
-    total = 0
-    parity = len(number) % 2
-    for index, digit in enumerate(number):
-        value = int(digit)
-        if index % 2 == parity:
-            value *= 2
-            if value > 9:
-                value -= 9
-        total += value
-    return total % 10 == 0
