@@ -2063,6 +2063,7 @@ def _conversation_view(row: Any) -> ConversationView:
             name_source=customer_name_source,
         ),
         customer_phone=customer_phone,
+        customer_whatsapp_id=whatsapp_id,
         last_content=last_content,
         last_message_at=last_message_at,
         status=status,
