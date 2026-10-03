@@ -427,7 +427,14 @@ class BillingService:
 
     async def _admin_full_access_is_active(self, business_id: UUID) -> bool:
         access = await self.db.get(BusinessAccess, business_id)
-        return bool(access is not None and access.admin_full_access)
+        if access is None:
+            return False
+        # Explicit admin grants created before admin_full_access was introduced
+        # remain represented by access_mode="paid". Treat both representations
+        # as an active administrative grant for checkout purposes. Revocation
+        # writes access_mode="free" and admin_full_access=False, so normal
+        # commercial checkout becomes available again immediately.
+        return bool(access.admin_full_access or access.access_mode == "paid")
 
     async def checkout_status(
         self, *, business_id: UUID, checkout_id: UUID
