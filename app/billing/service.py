@@ -11,22 +11,31 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.billing.asaas import AsaasGateway, AsaasGatewayError
+from app.billing.asaas import (
+    AsaasCardRejectedError,
+    AsaasGateway,
+    AsaasGatewayError,
+    AsaasGatewayTimeoutError,
+)
 from app.billing.catalog import (
     BillingCatalogConfigurationError,
     BillingCycle,
     cycle_months,
     get_offer,
+    native_card_checkout_is_enabled,
     payment_method_is_enabled,
     plan_is_enabled,
 )
 from app.billing.schemas import (
     CheckoutCreateRequest,
     CheckoutCreateResponse,
+    CheckoutProfileResponse,
     CheckoutStatusResponse,
+    CreditCardCheckoutRequest,
+    CreditCardCheckoutResponse,
     SubscriptionStatusResponse,
 )
-from app.models import BillingCheckout, BusinessAccess, CommercialSubscription
+from app.models import BillingCheckout, Business, BusinessAccess, CommercialSubscription
 from app.models.billing import billing_provider_environment
 
 
@@ -87,10 +96,18 @@ class BillingService:
             provider_environment=self.provider_environment,
             amount_cents=offer.amount_cents,
             status="creating",
-            expires_at=datetime.now(UTC) + timedelta(minutes=60),
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
         )
         self.db.add(checkout)
         await self.db.commit()
+
+        if (
+            payload.payment_method == "credit_card"
+            and native_card_checkout_is_enabled()
+        ):
+            checkout.status = "active"
+            await self.db.commit()
+            return self._checkout_response(checkout)
 
         try:
             if payload.payment_method == "pix_automatic":
@@ -121,7 +138,7 @@ class BillingService:
         provider_payload = {
             "billingTypes": ["CREDIT_CARD"],
             "chargeTypes": ["RECURRENT"],
-            "minutesToExpire": 60,
+            "minutesToExpire": 10,
             "externalReference": f"alovia:{checkout.id}",
             "callback": {
                 "successUrl": f"{return_url}?state=success&checkout={checkout.id}",
@@ -132,7 +149,7 @@ class BillingService:
                 {
                     "externalReference": f"alovia-plan:{offer.plan}:{offer.cycle}",
                     "name": f"ALOVIA {offer.plan_name}",
-                    "description": f"Assinatura {offer.plan_name} - {offer.cycle}",
+                    "description": f"Assinatura {offer.plan_name} - {_cycle_label_pt(offer.cycle)}",
                     "quantity": 1,
                     "value": offer.amount_cents / 100,
                 }
@@ -193,6 +210,188 @@ class BillingService:
         checkout.pix_qr_expires_at = authorization.expires_at
         checkout.expires_at = authorization.expires_at or checkout.expires_at
 
+    async def checkout_profile(
+        self, *, business_id: UUID, payer_email: str
+    ) -> CheckoutProfileResponse:
+        business = await self.db.get(Business, business_id)
+        if business is None:
+            raise HTTPException(404, "Business not found")
+        return CheckoutProfileResponse(
+            email=payer_email,
+            business_name=business.name,
+            payer_name=business.responsible_name,
+            postal_code=business.service_origin_postal_code,
+            address_number=business.service_origin_number,
+        )
+
+    async def pay_credit_card(
+        self,
+        *,
+        business_id: UUID,
+        payer_email: str,
+        checkout_id: UUID,
+        payload: CreditCardCheckoutRequest,
+        remote_ip: str,
+    ) -> CreditCardCheckoutResponse:
+        if not native_card_checkout_is_enabled():
+            raise HTTPException(409, "Native card checkout is not available yet")
+
+        checkout = await self.db.get(BillingCheckout, checkout_id)
+        if (
+            checkout is None
+            or checkout.business_id != business_id
+            or checkout.provider_environment != self.provider_environment
+            or checkout.payment_method != "credit_card"
+        ):
+            raise HTTPException(404, "Checkout not found")
+        if checkout.checkout_url is not None:
+            raise HTTPException(409, "Checkout is not a native card session")
+        if checkout.status == "paid":
+            return CreditCardCheckoutResponse(
+                checkout_id=checkout.id,
+                status="paid",
+                expires_at=checkout.expires_at,
+            )
+        if checkout.expires_at is not None and checkout.expires_at <= datetime.now(UTC):
+            if checkout.status != "creating":
+                checkout.status = "expired"
+                await self.db.commit()
+            raise HTTPException(409, "Checkout expired")
+        if checkout.status in {"canceled", "expired", "failed"}:
+            raise HTTPException(409, "Checkout is no longer available")
+        if checkout.provider_subscription_id:
+            return CreditCardCheckoutResponse(
+                checkout_id=checkout.id,
+                status="active",
+                expires_at=checkout.expires_at,
+            )
+
+        external_reference = f"alovia:{checkout.id}"
+        if checkout.status == "creating":
+            recovered = await self._recover_native_subscription(
+                checkout=checkout,
+                external_reference=external_reference,
+            )
+            if recovered:
+                return CreditCardCheckoutResponse(
+                    checkout_id=checkout.id,
+                    status="active",
+                    expires_at=checkout.expires_at,
+                )
+            raise HTTPException(
+                409,
+                "Payment confirmation is still being reconciled",
+            )
+
+        customer_reference = f"alovia:{checkout.business_id}"
+        try:
+            customer_id = await self.gateway.find_customer(
+                external_reference=customer_reference,
+                cpf_cnpj=payload.payer_cpf_cnpj,
+            )
+            if customer_id is None:
+                customer_id = await self.gateway.create_customer(
+                    name=payload.payer_name,
+                    cpf_cnpj=payload.payer_cpf_cnpj,
+                    email=payer_email,
+                    external_reference=customer_reference,
+                )
+        except AsaasGatewayError:
+            raise HTTPException(
+                502, "Payment service is temporarily unavailable"
+            ) from None
+
+        checkout.provider_customer_id = customer_id
+        checkout.status = "creating"
+        await self.db.commit()
+
+        offer = get_offer(checkout.plan_code, checkout.billing_cycle)
+        provider_payload = {
+            "customer": customer_id,
+            "billingType": "CREDIT_CARD",
+            "value": offer.amount_cents / 100,
+            "nextDueDate": datetime.now(BRAZIL_TZ).date().isoformat(),
+            "cycle": offer.asaas_cycle,
+            "description": f"ALOVIA {offer.plan_name}",
+            "externalReference": external_reference,
+            "creditCard": {
+                "holderName": payload.card_holder_name,
+                "number": payload.card_number.get_secret_value(),
+                "expiryMonth": payload.card_expiry_month,
+                "expiryYear": payload.card_expiry_year,
+                "ccv": payload.card_ccv.get_secret_value(),
+            },
+            "creditCardHolderInfo": {
+                "name": payload.payer_name,
+                "email": payer_email,
+                "cpfCnpj": payload.payer_cpf_cnpj,
+                "postalCode": payload.payer_postal_code,
+                "addressNumber": payload.payer_address_number,
+                "addressComplement": payload.payer_address_complement,
+                "phone": None,
+                "mobilePhone": payload.payer_phone,
+            },
+            "remoteIp": remote_ip,
+        }
+
+        try:
+            created = await self.gateway.create_credit_card_subscription(
+                provider_payload
+            )
+        except AsaasCardRejectedError:
+            checkout.status = "active"
+            await self.db.commit()
+            raise HTTPException(
+                422,
+                "Card was not authorized. Check the data or use another card.",
+            ) from None
+        except (AsaasGatewayTimeoutError, AsaasGatewayError):
+            recovered = await self._recover_native_subscription(
+                checkout=checkout,
+                external_reference=external_reference,
+            )
+            if recovered:
+                return CreditCardCheckoutResponse(
+                    checkout_id=checkout.id,
+                    status="active",
+                    expires_at=checkout.expires_at,
+                )
+            # Keep "creating": provider outcome may be uncertain. A repeated
+            # attempt must reconcile by externalReference before any new charge.
+            await self.db.commit()
+            raise HTTPException(
+                502,
+                "Payment confirmation is still being reconciled",
+            ) from None
+
+        checkout.provider_subscription_id = created.subscription_id
+        checkout.status = "active"
+        await self.db.commit()
+        return CreditCardCheckoutResponse(
+            checkout_id=checkout.id,
+            status="active",
+            expires_at=checkout.expires_at,
+        )
+
+    async def _recover_native_subscription(
+        self,
+        *,
+        checkout: BillingCheckout,
+        external_reference: str,
+    ) -> bool:
+        try:
+            subscription_id = await self.gateway.find_subscription(
+                external_reference=external_reference
+            )
+        except AsaasGatewayError:
+            return False
+        if not subscription_id:
+            return False
+        checkout.provider_subscription_id = subscription_id
+        checkout.status = "active"
+        await self.db.commit()
+        return True
+
     async def checkout_status(
         self, *, business_id: UUID, checkout_id: UUID
     ) -> CheckoutStatusResponse:
@@ -203,12 +402,21 @@ class BillingService:
             or checkout.provider_environment != self.provider_environment
         ):
             raise HTTPException(404, "Checkout not found")
+        if (
+            checkout.status == "active"
+            and checkout.expires_at is not None
+            and checkout.expires_at <= datetime.now(UTC)
+            and not checkout.provider_subscription_id
+        ):
+            checkout.status = "expired"
+            await self.db.commit()
         return CheckoutStatusResponse(
             checkout_id=checkout.id,
             status=checkout.status,  # type: ignore[arg-type]
             payment_method=checkout.payment_method,  # type: ignore[arg-type]
             plan=checkout.plan_code,  # type: ignore[arg-type]
             cycle=checkout.billing_cycle,  # type: ignore[arg-type]
+            expires_at=checkout.expires_at,
         )
 
     async def subscription_status(self, *, business_id: UUID) -> SubscriptionStatusResponse:
@@ -403,6 +611,12 @@ class BillingService:
     async def apply_payment_event(self, event_type: str, payload: dict) -> None:
         checkout = await self._capture_credit_card_checkout_refs(payload)
         if checkout is not None:
+            if (
+                checkout.provider_checkout_id is None
+                and event_type in {"PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"}
+            ):
+                checkout.status = "paid"
+                checkout.paid_at = checkout.paid_at or datetime.now(UTC)
             await self._activate_credit_card_subscription_if_ready(checkout)
 
         subscription = await self._subscription_for_payment(payload)
@@ -447,34 +661,53 @@ class BillingService:
         checkout_session = payload.get("checkoutSession")
         provider_subscription_id = payload.get("subscription")
         if (
-            not isinstance(checkout_session, str)
-            or not checkout_session
-            or len(checkout_session) > 80
-            or not isinstance(provider_subscription_id, str)
+            not isinstance(provider_subscription_id, str)
             or not provider_subscription_id
             or len(provider_subscription_id) > 80
         ):
             return None
 
-        checkout = await self.db.scalar(
-            select(BillingCheckout).where(
-                BillingCheckout.provider_checkout_id == checkout_session,
-                BillingCheckout.payment_method == "credit_card",
-                BillingCheckout.provider_environment == self.provider_environment,
+        checkout: BillingCheckout | None = None
+        if (
+            isinstance(checkout_session, str)
+            and checkout_session
+            and len(checkout_session) <= 80
+        ):
+            checkout = await self.db.scalar(
+                select(BillingCheckout).where(
+                    BillingCheckout.provider_checkout_id == checkout_session,
+                    BillingCheckout.payment_method == "credit_card",
+                    BillingCheckout.provider_environment == self.provider_environment,
+                )
             )
-        )
+        if checkout is None:
+            checkout = await self.db.scalar(
+                select(BillingCheckout).where(
+                    BillingCheckout.provider_subscription_id
+                    == provider_subscription_id,
+                    BillingCheckout.payment_method == "credit_card",
+                    BillingCheckout.provider_environment
+                    == self.provider_environment,
+                )
+            )
         if checkout is None:
             return None
         if _payment_value_cents(payload.get("value")) != checkout.amount_cents:
             logger.warning(
                 "asaas_payment_checkout_amount_mismatch",
-                extra={"provider_checkout_id": checkout_session},
+                extra={
+                    "provider_checkout_id": checkout_session,
+                    "provider_subscription_id": provider_subscription_id,
+                },
             )
             return None
 
         checkout.provider_subscription_id = provider_subscription_id
         provider_customer_id = payload.get("customer")
-        if isinstance(provider_customer_id, str) and 0 < len(provider_customer_id) <= 80:
+        if (
+            isinstance(provider_customer_id, str)
+            and 0 < len(provider_customer_id) <= 80
+        ):
             checkout.provider_customer_id = provider_customer_id
         return checkout
 
@@ -543,13 +776,21 @@ class BillingService:
 
     @staticmethod
     def _checkout_response(checkout: BillingCheckout) -> CheckoutCreateResponse:
+        if checkout.payment_method == "pix_automatic":
+            checkout_mode = "pix"
+        elif checkout.checkout_url:
+            checkout_mode = "hosted"
+        else:
+            checkout_mode = "native"
         return CheckoutCreateResponse(
             checkout_id=checkout.id,
             payment_method=checkout.payment_method,  # type: ignore[arg-type]
+            checkout_mode=checkout_mode,  # type: ignore[arg-type]
             checkout_url=checkout.checkout_url,
             pix_authorization_id=checkout.provider_authorization_id,
             pix_payload=checkout.pix_qr_payload,
             pix_expires_at=checkout.pix_qr_expires_at,
+            expires_at=checkout.expires_at,
             plan=checkout.plan_code,  # type: ignore[arg-type]
             cycle=checkout.billing_cycle,  # type: ignore[arg-type]
             amount_cents=checkout.amount_cents,
@@ -582,3 +823,10 @@ def _cycle_end(anchor: datetime, cycle: str) -> datetime:
     month = month_index % 12 + 1
     day = min(anchor.day, calendar.monthrange(year, month)[1])
     return anchor.replace(year=year, month=month, day=day)
+
+def _cycle_label_pt(cycle: str) -> str:
+    return {
+        "monthly": "mensal",
+        "quarterly": "trimestral",
+        "annual": "anual",
+    }.get(cycle, cycle)
