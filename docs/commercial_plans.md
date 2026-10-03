@@ -94,3 +94,14 @@ O backend cria a assinatura recorrente diretamente no Asaas e usa Webhooks de
 cobrança como fonte de verdade para liberar o acesso. Em caso de timeout do
 provedor, a integração tenta reconciliar a assinatura pelo `externalReference`
 antes de permitir qualquer nova tentativa, reduzindo risco de duplicidade.
+
+## Compra durante liberação administrativa
+
+Enquanto `admin_full_access=true`, a empresa já possui acesso operacional completo
+concedido pelo administrador do ALOVIA e não deve iniciar uma nova cobrança de
+cartão. O backend rejeita a tentativa antes de qualquer chamada ao provedor.
+
+Ao revogar a liberação administrativa, `admin_full_access=false`. Se não houver
+uma assinatura comercial válida, a conta volta ao estado comercial aplicável e
+pode contratar normalmente. Uma assinatura comercial real já existente continua
+sendo respeitada independentemente da liberação administrativa.
