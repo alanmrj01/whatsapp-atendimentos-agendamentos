@@ -78,3 +78,19 @@ Quando o Asaas liberar o recurso, a ativação exige:
 1. cadastrar no webhook os eventos de Pix Automático;
 2. definir `BILLING_PIX_AUTOMATIC_ENABLED=true`;
 3. validar novamente o fluxo real antes de disponibilizá-lo na interface.
+
+## Checkout nativo ALOVIA
+
+O checkout nativo de cartão é controlado por `BILLING_NATIVE_CARD_CHECKOUT_ENABLED`.
+O padrão é `false`, preservando o checkout hospedado pelo Asaas até que o fluxo
+nativo tenha sido validado em Sandbox.
+
+Quando habilitado, a sessão de checkout expira em 10 minutos. O navegador envia
+os dados do cartão apenas no momento da confirmação, sob HTTPS; número completo
+do cartão e código de segurança não devem ser persistidos em banco, logs,
+telemetria ou ferramentas de suporte.
+
+O backend cria a assinatura recorrente diretamente no Asaas e usa Webhooks de
+cobrança como fonte de verdade para liberar o acesso. Em caso de timeout do
+provedor, a integração tenta reconciliar a assinatura pelo `externalReference`
+antes de permitir qualquer nova tentativa, reduzindo risco de duplicidade.
