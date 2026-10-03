@@ -590,3 +590,49 @@ async def test_admin_full_access_blocks_native_card_before_provider(monkeypatch)
     assert error.value.detail == (
         "Admin full access is active; a paid plan is not required"
     )
+
+
+@pytest.mark.asyncio
+async def test_legacy_admin_paid_access_blocks_native_card_before_provider(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", "true")
+
+    business_id = uuid4()
+    checkout_id = uuid4()
+
+    class Db:
+        async def get(self, model, identifier):
+            if model is BusinessAccess and identifier == business_id:
+                return SimpleNamespace(admin_full_access=False, access_mode="paid")
+            raise AssertionError("Checkout/provider state must not be read after admin grant")
+
+    class Gateway:
+        def __getattr__(self, name):
+            raise AssertionError(f"Provider gateway must not be called: {name}")
+
+    request = CreditCardCheckoutRequest(
+        payer_name="Teste Alovia",
+        payer_cpf_cnpj="12345678909",
+        payer_postal_code="12235740",
+        payer_address_number="160",
+        payer_phone="11999999999",
+        card_holder_name="TESTE ALOVIA",
+        card_number="4444444444444444",
+        card_expiry_month="10",
+        card_expiry_year="2030",
+        card_ccv="123",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await BillingService(Db(), Gateway()).pay_credit_card(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            checkout_id=checkout_id,
+            payload=request,
+            remote_ip="203.0.113.10",
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == (
+        "Admin full access is active; a paid plan is not required"
+    )
