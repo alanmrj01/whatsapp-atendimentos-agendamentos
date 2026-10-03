@@ -84,6 +84,26 @@ def plan_is_enabled(plan: str) -> bool:
     }
 
 
+def payment_method_is_enabled(payment_method: str) -> bool:
+    if payment_method == "credit_card":
+        return True
+    if payment_method != "pix_automatic":
+        return False
+
+    configured = os.getenv("BILLING_PIX_AUTOMATIC_ENABLED")
+    if configured is None:
+        # Keep the already-validated Sandbox flow available by default,
+        # while Production remains fail-closed until Asaas enables the account.
+        return (
+            os.getenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+            .strip()
+            .lower()
+            == "sandbox"
+        )
+
+    return configured.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def get_offer(plan: str, cycle: str) -> Offer:
     if plan not in _PLAN or cycle not in _CYCLE:
         raise ValueError("Unknown commercial offer")

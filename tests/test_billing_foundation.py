@@ -3,10 +3,16 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from pydantic import SecretStr, ValidationError
 
 from app.billing.asaas import AsaasGateway
-from app.billing.catalog import BillingCatalogConfigurationError, get_offer, plan_is_enabled
+from app.billing.catalog import (
+    BillingCatalogConfigurationError,
+    get_offer,
+    payment_method_is_enabled,
+    plan_is_enabled,
+)
 from app.billing.schemas import CheckoutCreateRequest
 from app.billing.service import BillingService, _cycle_end, _payment_value_cents
 from app.billing.webhooks import BillingWebhookService, SUPPORTED_EVENTS
@@ -36,6 +42,54 @@ def test_plus_is_launch_gated(monkeypatch) -> None:
 
     monkeypatch.setenv("BILLING_PLUS_ENABLED", "true")
     assert plan_is_enabled("plus") is True
+
+
+def test_pix_automatic_is_fail_closed_in_production(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    monkeypatch.delenv("BILLING_PIX_AUTOMATIC_ENABLED", raising=False)
+
+    assert payment_method_is_enabled("credit_card") is True
+    assert payment_method_is_enabled("pix_automatic") is False
+
+    monkeypatch.setenv("BILLING_PIX_AUTOMATIC_ENABLED", "true")
+    assert payment_method_is_enabled("pix_automatic") is True
+
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.delenv("BILLING_PIX_AUTOMATIC_ENABLED", raising=False)
+    assert payment_method_is_enabled("pix_automatic") is True
+
+
+@pytest.mark.asyncio
+async def test_production_pix_checkout_is_rejected_before_provider_call(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    monkeypatch.delenv("BILLING_PIX_AUTOMATIC_ENABLED", raising=False)
+
+    class DbMustNotBeTouched:
+        async def scalar(self, *args, **kwargs):
+            raise AssertionError("Pix gate should run before database access")
+
+    payload = CheckoutCreateRequest(
+        plan="basic",
+        cycle="monthly",
+        payment_method="pix_automatic",
+        return_origin="https://alovia.netlify.app",
+        payer_name="Empresa Teste",
+        payer_cpf_cnpj="12345678000195",
+    )
+
+    service = BillingService(DbMustNotBeTouched(), object())
+
+    with pytest.raises(HTTPException) as error:
+        await service.create_checkout(
+            business_id=uuid4(),
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=payload,
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Payment method is not available yet"
 
 
 def test_sandbox_price_override_rejects_provider_invalid_amount(monkeypatch) -> None:

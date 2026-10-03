@@ -17,6 +17,7 @@ from app.billing.catalog import (
     BillingCycle,
     cycle_months,
     get_offer,
+    payment_method_is_enabled,
     plan_is_enabled,
 )
 from app.billing.schemas import (
@@ -52,6 +53,8 @@ class BillingService:
             raise HTTPException(400, "Invalid return origin")
         if not plan_is_enabled(payload.plan):
             raise HTTPException(409, "Plan is not available yet")
+        if not payment_method_is_enabled(payload.payment_method):
+            raise HTTPException(409, "Payment method is not available yet")
         try:
             offer = get_offer(payload.plan, payload.cycle)
         except BillingCatalogConfigurationError:

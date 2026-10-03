@@ -63,3 +63,18 @@ para não interromper tenants/pilotos existentes, mas isso não equivale a
 Esses registros não recebem automaticamente funcionalidades exclusivas do Plus,
 mensagens ilimitadas ou técnicos ilimitados. O acesso administrativo total só é
 ativado por uma ação explícita do SUPER_ADMIN.
+
+
+## Pix Automático em Produção
+
+O Pix Automático permanece implementado e validado em Sandbox, mas deve ficar
+desabilitado em Produção enquanto a conta Asaas não estiver elegível para o
+recurso.
+
+Durante esse período, o lançamento comercial utiliza cartão recorrente.
+`BILLING_PIX_AUTOMATIC_ENABLED=false` mantém o backend fail-closed.
+
+Quando o Asaas liberar o recurso, a ativação exige:
+1. cadastrar no webhook os eventos de Pix Automático;
+2. definir `BILLING_PIX_AUTOMATIC_ENABLED=true`;
+3. validar novamente o fluxo real antes de disponibilizá-lo na interface.
