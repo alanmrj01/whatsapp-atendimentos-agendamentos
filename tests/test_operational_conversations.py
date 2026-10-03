@@ -14,7 +14,7 @@ from app.operations.schemas import (
     EmployeeUpdate,
     ManualMessageCreate,
 )
-from app.operations.service import OperationalService, _display_name
+from app.operations.service import OperationalService, _conversation_view, _display_name
 
 
 class RowResult:
@@ -222,3 +222,34 @@ def test_assistant_messages_are_bounded_normalized_plain_text() -> None:
         AutomationSettingsUpdate(greeting_message="<strong>Olá</strong>")
     with pytest.raises(ValidationError):
         AutomationSettingsUpdate(fallback_message="x" * 1001)
+
+
+
+def test_conversation_view_exposes_whatsapp_id_without_phone() -> None:
+    conversation_id = uuid4()
+    customer_id = uuid4()
+    row = (
+        SimpleNamespace(
+            id=conversation_id,
+            customer_id=customer_id,
+            handoff_status="none",
+            manual_unread=False,
+            pinned_at=None,
+        ),
+        "Cliente WhatsApp",
+        "whatsapp",
+        "Cliente WhatsApp",
+        None,
+        "5511999999999",
+        "Olá",
+        datetime.now(UTC),
+        "inbound",
+        None,
+        1,
+    )
+
+    view = _conversation_view(row)
+
+    assert view.customer_id == customer_id
+    assert view.customer_phone is None
+    assert view.customer_whatsapp_id == "5511999999999"

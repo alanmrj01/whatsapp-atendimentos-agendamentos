@@ -1,5 +1,6 @@
 from app.models.base import Base
 from app.models.auth import AuthSession, BusinessAccess, BusinessUserMembership, User
+from app.models.billing import BillingCheckout, BillingWebhookEvent, CommercialSubscription
 from app.models.domain import (
     Appointment,
     Business,
@@ -22,8 +23,11 @@ from app.models.push import WebPushDelivery, WebPushEvent, WebPushSubscription
 
 __all__ = [
     "AuthSession",
+    "BillingCheckout",
+    "BillingWebhookEvent",
     "BusinessAccess",
     "BusinessUserMembership",
+    "CommercialSubscription",
     "User",
     "Appointment",
     "Base",

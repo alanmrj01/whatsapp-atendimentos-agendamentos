@@ -72,6 +72,8 @@ class MembershipResponse(BaseModel):
     role: MembershipRole
     access_mode: AccessMode = "free"
     has_had_operational_access: bool = False
+    admin_full_access: bool = False
+    account_state: Literal["demo", "active", "payment_blocked"] = "demo"
 
 
 class MeResponse(BaseModel):
