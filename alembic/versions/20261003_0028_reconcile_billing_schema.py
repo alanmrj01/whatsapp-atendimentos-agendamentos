@@ -47,19 +47,28 @@ def upgrade() -> None:
             ADD COLUMN IF NOT EXISTS provider_authorization_id varchar(100),
             ADD COLUMN IF NOT EXISTS pix_conciliation_identifier varchar(100),
             ADD COLUMN IF NOT EXISTS pix_qr_payload text,
-            ADD COLUMN IF NOT EXISTS pix_qr_expires_at timestamptz;
-
+            ADD COLUMN IF NOT EXISTS pix_qr_expires_at timestamptz
+        """
+    )
+    op.execute(
+        """
         UPDATE billing_checkouts
         SET payment_method = 'credit_card'
-        WHERE payment_method IS NULL;
-
+        WHERE payment_method IS NULL
+        """
+    )
+    op.execute(
+        """
         UPDATE billing_checkouts
         SET provider_environment = 'production'
-        WHERE provider_environment IS NULL;
-
+        WHERE provider_environment IS NULL
+        """
+    )
+    op.execute(
+        """
         ALTER TABLE billing_checkouts
             ALTER COLUMN payment_method SET NOT NULL,
-            ALTER COLUMN provider_environment SET NOT NULL;
+            ALTER COLUMN provider_environment SET NOT NULL
         """
     )
     _add_constraint_if_missing(
@@ -85,20 +94,29 @@ def upgrade() -> None:
         ALTER TABLE commercial_subscriptions
             ADD COLUMN IF NOT EXISTS payment_method varchar(24),
             ADD COLUMN IF NOT EXISTS provider_environment varchar(16),
-            ADD COLUMN IF NOT EXISTS provider_authorization_id varchar(100);
-
+            ADD COLUMN IF NOT EXISTS provider_authorization_id varchar(100)
+        """
+    )
+    op.execute(
+        """
         UPDATE commercial_subscriptions
         SET payment_method = 'credit_card'
-        WHERE payment_method IS NULL;
-
+        WHERE payment_method IS NULL
+        """
+    )
+    op.execute(
+        """
         UPDATE commercial_subscriptions
         SET provider_environment = 'production'
-        WHERE provider_environment IS NULL;
-
+        WHERE provider_environment IS NULL
+        """
+    )
+    op.execute(
+        """
         ALTER TABLE commercial_subscriptions
             ALTER COLUMN payment_method SET NOT NULL,
             ALTER COLUMN provider_environment SET NOT NULL,
-            ALTER COLUMN provider_subscription_id DROP NOT NULL;
+            ALTER COLUMN provider_subscription_id DROP NOT NULL
         """
     )
     _add_constraint_if_missing(
@@ -128,11 +146,14 @@ def upgrade() -> None:
         """
         ALTER TABLE billing_webhook_events
             ADD COLUMN IF NOT EXISTS provider_payment_id varchar(100),
-            ADD COLUMN IF NOT EXISTS provider_authorization_id varchar(100);
-
+            ADD COLUMN IF NOT EXISTS provider_authorization_id varchar(100)
+        """
+    )
+    op.execute(
+        """
         CREATE INDEX IF NOT EXISTS
             ix_billing_webhook_events_provider_payment_id
-        ON billing_webhook_events (provider_payment_id);
+        ON billing_webhook_events (provider_payment_id)
         """
     )
 
