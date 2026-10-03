@@ -519,7 +519,7 @@ async def test_hosted_checkout_uses_ten_minute_expiration() -> None:
                 checkout_url="https://sandbox.asaas.com/checkoutSession/show?id=checkout_test",
             )
 
-    checkout = SimpleNamespace(provider_checkout_id=None, checkout_url=None)
+    checkout = SimpleNamespace(id=uuid4(), provider_checkout_id=None, checkout_url=None)
     await BillingService(object(), Gateway())._prepare_credit_card(
         checkout=checkout,
         offer=get_offer("basic", "monthly"),
