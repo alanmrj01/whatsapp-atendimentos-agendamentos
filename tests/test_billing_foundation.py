@@ -10,6 +10,7 @@ from app.billing.asaas import AsaasGateway
 from app.billing.catalog import (
     BillingCatalogConfigurationError,
     get_offer,
+    native_card_checkout_is_enabled,
     payment_method_is_enabled,
     plan_is_enabled,
 )
@@ -57,6 +58,14 @@ def test_pix_automatic_is_fail_closed_in_production(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.delenv("BILLING_PIX_AUTOMATIC_ENABLED", raising=False)
     assert payment_method_is_enabled("pix_automatic") is True
+
+
+def test_native_card_checkout_is_launch_gated(monkeypatch) -> None:
+    monkeypatch.delenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", raising=False)
+    assert native_card_checkout_is_enabled() is False
+
+    monkeypatch.setenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", "true")
+    assert native_card_checkout_is_enabled() is True
 
 
 @pytest.mark.asyncio
@@ -496,3 +505,26 @@ async def test_pix_activation_persists_provider_subscription_id(monkeypatch) -> 
     assert db.subscription.status == "active"
     assert db.subscription.provider_authorization_id == "auth_pix_test"
     assert db.subscription.provider_subscription_id == "sub_pix_test"
+
+
+@pytest.mark.asyncio
+async def test_hosted_checkout_uses_ten_minute_expiration() -> None:
+    captured = {}
+
+    class Gateway:
+        async def create_checkout(self, payload):
+            captured.update(payload)
+            return SimpleNamespace(
+                checkout_id="checkout_test",
+                checkout_url="https://sandbox.asaas.com/checkoutSession/show?id=checkout_test",
+            )
+
+    checkout = SimpleNamespace(provider_checkout_id=None, checkout_url=None)
+    await BillingService(object(), Gateway())._prepare_credit_card(
+        checkout=checkout,
+        offer=get_offer("basic", "monthly"),
+        return_origin="https://alovia.netlify.app",
+    )
+
+    assert captured["minutesToExpire"] == 10
+    assert captured["items"][0]["description"] == "Assinatura Basic - mensal"
