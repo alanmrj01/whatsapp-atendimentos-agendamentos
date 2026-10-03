@@ -275,7 +275,7 @@ class BillingService:
             if recovered:
                 return CreditCardCheckoutResponse(
                     checkout_id=checkout.id,
-                    status="active",
+                    status=checkout.status,  # type: ignore[arg-type]
                     expires_at=checkout.expires_at,
                 )
             raise HTTPException(
@@ -353,7 +353,7 @@ class BillingService:
             if recovered:
                 return CreditCardCheckoutResponse(
                     checkout_id=checkout.id,
-                    status="active",
+                    status=checkout.status,  # type: ignore[arg-type]
                     expires_at=checkout.expires_at,
                 )
             # Keep "creating": provider outcome may be uncertain. A repeated
@@ -367,9 +367,10 @@ class BillingService:
         checkout.provider_subscription_id = created.subscription_id
         checkout.status = "active"
         await self.db.commit()
+        await self._reconcile_native_payment(checkout)
         return CreditCardCheckoutResponse(
             checkout_id=checkout.id,
-            status="active",
+            status=checkout.status,  # type: ignore[arg-type]
             expires_at=checkout.expires_at,
         )
 
@@ -390,7 +391,34 @@ class BillingService:
         checkout.provider_subscription_id = subscription_id
         checkout.status = "active"
         await self.db.commit()
+        await self._reconcile_native_payment(checkout)
         return True
+
+    async def _reconcile_native_payment(self, checkout: BillingCheckout) -> None:
+        if not checkout.provider_subscription_id or checkout.status == "paid":
+            return
+        try:
+            payments = await self.gateway.payments_for_subscription(
+                checkout.provider_subscription_id
+            )
+        except AsaasGatewayError:
+            return
+        for payment in payments:
+            if _payment_value_cents(payment.get("value")) != checkout.amount_cents:
+                continue
+            if payment.get("status") not in {"CONFIRMED", "RECEIVED"}:
+                continue
+            checkout.status = "paid"
+            checkout.paid_at = checkout.paid_at or datetime.now(UTC)
+            provider_customer_id = payment.get("customer")
+            if (
+                isinstance(provider_customer_id, str)
+                and 0 < len(provider_customer_id) <= 80
+            ):
+                checkout.provider_customer_id = provider_customer_id
+            await self._activate_credit_card_subscription_if_ready(checkout)
+            await self.db.commit()
+            return
 
     async def checkout_status(
         self, *, business_id: UUID, checkout_id: UUID
