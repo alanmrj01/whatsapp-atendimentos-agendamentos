@@ -6,8 +6,10 @@ import jwt
 import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 
 from app.auth.dependencies import require_auth_config
+from app.auth.password_email import ResendPasswordResetMailer
 from app.auth.security import (
     access_token,
     decode_access,
@@ -23,7 +25,12 @@ from app.auth.schemas import (
     PasswordChangeRequest,
     PasswordResetConfirmRequest,
 )
-from app.core.config import PasswordRecoveryConfigurationError, Settings, get_settings
+from app.core.config import (
+    PasswordRecoveryConfigurationError,
+    PasswordResetEmailConfiguration,
+    Settings,
+    get_settings,
+)
 from app.main import create_app
 from tests.test_migration import PROJECT_ROOT, render_migration_sql
 
@@ -181,3 +188,60 @@ def test_password_reset_email_configuration_is_explicit_and_origin_bound():
     )
     with pytest.raises(PasswordRecoveryConfigurationError):
         wrong_origin.require_password_reset_email_configuration()
+
+
+
+@pytest.mark.asyncio
+async def test_password_reset_email_keeps_token_in_fragment_and_is_idempotent(
+    monkeypatch,
+):
+    from app.auth import password_email
+
+    class Response:
+        status_code = 200
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, *, headers, json):
+            self.calls.append((url, headers, json))
+            return Response()
+
+    client = Client()
+    monkeypatch.setattr(
+        password_email.httpx,
+        "AsyncClient",
+        lambda **_kwargs: client,
+    )
+    reset_id = uuid4()
+    token = new_password_reset_token()
+    mailer = ResendPasswordResetMailer(
+        PasswordResetEmailConfiguration(
+            api_key=SecretStr("re_test_secret"),
+            from_email="Alovia <no-reply@example.test>",
+            public_base_url="https://app.example.test",
+        )
+    )
+
+    await mailer.send(
+        reset_id=reset_id,
+        email="member@example.test",
+        token=token,
+    )
+
+    assert len(client.calls) == 1
+    url, headers, payload = client.calls[0]
+    assert url == "https://api.resend.com/emails"
+    assert headers["Idempotency-Key"] == f"password-reset/{reset_id}"
+    assert headers["Authorization"] == "Bearer re_test_secret"
+    assert "re_test_secret" not in repr(payload)
+    assert f"/redefinir-senha#token={token}" in payload["text"]
+    assert "?token=" not in payload["text"]
+    assert f"/redefinir-senha#token={token}" in payload["html"]
