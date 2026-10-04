@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_auth_config, require_origin, require_principal
-from app.auth.rate_limit import login_rate_limiter
+from app.auth.password_email import PasswordResetEmailError, ResendPasswordResetMailer
+from app.auth.rate_limit import login_rate_limiter, password_reset_rate_limiter
 from app.auth.schemas import (
     AccessResponse,
     ActiveBusinessRequest,
@@ -21,6 +22,9 @@ from app.auth.schemas import (
     MetaEmbeddedSignupTelemetryRequest,
     MeResponse,
     MembershipRole,
+    PasswordChangeRequest,
+    PasswordResetConfirmRequest,
+    PasswordResetRequest,
     PublicConnectionResponse,
     PublicPlanRequest,
     SignupRequest,
@@ -31,6 +35,7 @@ from app.core.config import (
     Environment,
     MetaConfigurationError,
     MetaEmbeddedSignupConfiguration,
+    PasswordRecoveryConfigurationError,
     Settings,
 )
 from app.core.database import get_db
@@ -60,6 +65,27 @@ logger = logging.getLogger(__name__)
 Db = Annotated[AsyncSession, Depends(get_db)]
 Config = Annotated[Settings, Depends(require_auth_config)]
 Identity = Annotated[Principal, Depends(require_principal)]
+
+
+def _require_password_recovery(settings: Settings) -> None:
+    try:
+        settings.require_password_recovery_enabled()
+    except PasswordRecoveryConfigurationError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Password recovery is temporarily unavailable",
+        ) from None
+
+
+def _password_reset_mailer(settings: Settings) -> ResendPasswordResetMailer:
+    try:
+        configuration = settings.require_password_reset_email_configuration()
+    except PasswordRecoveryConfigurationError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Password recovery is temporarily unavailable",
+        ) from None
+    return ResendPasswordResetMailer(configuration)
 
 
 async def token_response(
@@ -125,6 +151,67 @@ async def signup(
 async def refresh(payload: EmptyRequest, request: Request, response: Response, settings: Config, db: Db):
     user, session, replacement = await AuthService(db).refresh(request.cookies.get(COOKIE_NAME))
     return await token_response(response, settings, user, session, replacement, db)
+
+
+@router.post(
+    "/auth/password/forgot",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_origin)],
+)
+async def forgot_password(
+    payload: PasswordResetRequest,
+    settings: Config,
+    db: Db,
+):
+    mailer = _password_reset_mailer(settings)
+    await password_reset_rate_limiter.acquire(payload.email)
+    service = AuthService(db)
+    issue = await service.issue_password_reset(payload.email)
+    if issue is not None:
+        try:
+            await mailer.send(email=issue.email, token=issue.token)
+        except PasswordResetEmailError:
+            await service.revoke_password_reset(issue.id)
+            logger.error("password_reset_delivery_failed")
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post(
+    "/auth/password/reset",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def reset_password(
+    payload: PasswordResetConfirmRequest,
+    settings: Config,
+    db: Db,
+):
+    _require_password_recovery(settings)
+    await AuthService(db).reset_password(
+        payload.token.get_secret_value(),
+        payload.new_password.get_secret_value(),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/auth/password/change",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def change_password(
+    payload: PasswordChangeRequest,
+    settings: Config,
+    principal: Identity,
+    db: Db,
+):
+    _require_password_recovery(settings)
+    await AuthService(db).change_password(
+        principal,
+        payload.current_password.get_secret_value(),
+        payload.new_password.get_secret_value(),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/auth/logout", status_code=204, dependencies=[Depends(require_origin)])
