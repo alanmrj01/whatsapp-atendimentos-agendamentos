@@ -169,7 +169,11 @@ async def forgot_password(
     issue = await service.issue_password_reset(payload.email)
     if issue is not None:
         try:
-            await mailer.send(email=issue.email, token=issue.token)
+            await mailer.send(
+                reset_id=issue.id,
+                email=issue.email,
+                token=issue.token,
+            )
         except PasswordResetEmailError:
             await service.revoke_password_reset(issue.id)
             logger.error("password_reset_delivery_failed")
