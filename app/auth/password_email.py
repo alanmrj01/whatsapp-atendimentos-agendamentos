@@ -18,7 +18,7 @@ class ResendPasswordResetMailer:
 
     async def send(self, *, email: str, token: str) -> None:
         reset_url = (
-            f"{self.configuration.public_base_url}/redefinir-senha?"
+            f"{self.configuration.public_base_url}/redefinir-senha#"
             + urlencode({"token": token})
         )
         subject = "Redefina sua senha da Alovia"
