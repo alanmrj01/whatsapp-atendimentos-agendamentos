@@ -1,5 +1,5 @@
 from app.models.base import Base
-from app.models.auth import AuthSession, BusinessAccess, BusinessUserMembership, User
+from app.models.auth import AuthSession, BusinessAccess, BusinessUserMembership, PasswordResetToken, User
 from app.models.billing import BillingCheckout, BillingWebhookEvent, CommercialSubscription
 from app.models.domain import (
     Appointment,
@@ -28,6 +28,7 @@ __all__ = [
     "BusinessAccess",
     "BusinessUserMembership",
     "CommercialSubscription",
+    "PasswordResetToken",
     "User",
     "Appointment",
     "Base",
