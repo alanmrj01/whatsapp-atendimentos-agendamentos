@@ -37,6 +37,17 @@ class WebPushConfigurationError(RuntimeError):
     """Erro seguro para configuração ausente do Web Push."""
 
 
+class PasswordRecoveryConfigurationError(RuntimeError):
+    """Erro seguro para configuração ausente da recuperação de senha."""
+
+
+@dataclass(frozen=True, slots=True)
+class PasswordResetEmailConfiguration:
+    api_key: SecretStr
+    from_email: str
+    public_base_url: str
+
+
 @dataclass(frozen=True, slots=True)
 class MetaEmbeddedSignupConfiguration:
     app_id: str
@@ -74,6 +85,16 @@ class WebPushConfiguration:
 class Settings(BaseSettings):
     auth_jwt_secret: SecretStr | None = Field(default=None, validation_alias="AUTH_JWT_SECRET")
     pwa_allowed_origins: str = Field(default="", validation_alias="PWA_ALLOWED_ORIGINS")
+    password_recovery_enabled: bool = Field(
+        default=False, validation_alias="PASSWORD_RECOVERY_ENABLED"
+    )
+    resend_api_key: SecretStr | None = Field(default=None, validation_alias="RESEND_API_KEY")
+    password_reset_from_email: str | None = Field(
+        default=None, validation_alias="PASSWORD_RESET_FROM_EMAIL"
+    )
+    password_reset_public_base_url: str | None = Field(
+        default=None, validation_alias="PASSWORD_RESET_PUBLIC_BASE_URL"
+    )
     web_push_enabled: bool = Field(default=False, validation_alias="WEB_PUSH_ENABLED")
     vapid_public_key: str | None = Field(default=None, validation_alias="VAPID_PUBLIC_KEY")
     vapid_private_key: SecretStr | None = Field(
@@ -323,6 +344,48 @@ class Settings(BaseSettings):
             queue=self.cloud_tasks_outbound_queue,
             target_url=self.cloud_tasks_outbound_target_url,
             disabled_message="Outbound tasks are disabled",
+        )
+
+    def require_password_recovery_enabled(self) -> None:
+        if not self.password_recovery_enabled:
+            raise PasswordRecoveryConfigurationError(
+                "Password recovery is disabled"
+            )
+
+    def require_password_reset_email_configuration(
+        self,
+    ) -> PasswordResetEmailConfiguration:
+        self.require_password_recovery_enabled()
+        api_key = (
+            self.resend_api_key.get_secret_value().strip()
+            if self.resend_api_key is not None
+            else ""
+        )
+        from_email = (self.password_reset_from_email or "").strip()
+        public_base_url = (self.password_reset_public_base_url or "").strip().rstrip("/")
+        try:
+            parsed = urlsplit(public_base_url)
+            valid_base = (
+                parsed.scheme in {"http", "https"}
+                and bool(parsed.hostname)
+                and not parsed.username
+                and not parsed.password
+                and not parsed.path
+                and not parsed.query
+                and not parsed.fragment
+                and (self.environment is not Environment.production or parsed.scheme == "https")
+                and public_base_url in self.allowed_pwa_origins()
+            )
+        except ValueError:
+            valid_base = False
+        if not api_key or "@" not in from_email or not valid_base:
+            raise PasswordRecoveryConfigurationError(
+                "Password reset email configuration is incomplete"
+            )
+        return PasswordResetEmailConfiguration(
+            api_key=SecretStr(api_key),
+            from_email=from_email,
+            public_base_url=public_base_url,
         )
 
     def require_web_push_configuration(self) -> WebPushConfiguration:
