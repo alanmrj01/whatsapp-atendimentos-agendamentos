@@ -247,6 +247,18 @@ class AuthService:
         )
         if user is None:
             raise unauthorized()
+        current_session = await self.db.scalar(
+            select(AuthSession)
+            .where(
+                AuthSession.id == principal.session.id,
+                AuthSession.user_id == user.id,
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > datetime.now(UTC),
+            )
+            .with_for_update()
+        )
+        if current_session is None:
+            raise unauthorized()
         current_valid = await to_thread.run_sync(
             verify_password,
             current_password,
@@ -275,10 +287,30 @@ class AuthService:
     async def reset_password(self, token: str, new_password: str) -> None:
         if not token or len(token) > 256:
             raise HTTPException(400, "Invalid or expired reset token")
+        reset_hash = token_hash(token)
+        user_id = await self.db.scalar(
+            select(PasswordResetToken.user_id).where(
+                PasswordResetToken.token_hash == reset_hash
+            )
+        )
+        if user_id is None:
+            raise HTTPException(400, "Invalid or expired reset token")
+        # Lock order is always user -> reset token -> sessions. This matches
+        # issuance/change paths and prevents a request/reset deadlock.
+        user = await self.db.scalar(
+            select(User)
+            .where(User.id == user_id, User.is_active.is_(True))
+            .with_for_update()
+        )
+        if user is None:
+            raise HTTPException(400, "Invalid or expired reset token")
         now = datetime.now(UTC)
         reset = await self.db.scalar(
             select(PasswordResetToken)
-            .where(PasswordResetToken.token_hash == token_hash(token))
+            .where(
+                PasswordResetToken.token_hash == reset_hash,
+                PasswordResetToken.user_id == user.id,
+            )
             .with_for_update()
         )
         if (
@@ -287,13 +319,6 @@ class AuthService:
             or reset.revoked_at is not None
             or reset.expires_at <= now
         ):
-            raise HTTPException(400, "Invalid or expired reset token")
-        user = await self.db.scalar(
-            select(User)
-            .where(User.id == reset.user_id, User.is_active.is_(True))
-            .with_for_update()
-        )
-        if user is None:
             raise HTTPException(400, "Invalid or expired reset token")
         same_password = await to_thread.run_sync(
             verify_password,
