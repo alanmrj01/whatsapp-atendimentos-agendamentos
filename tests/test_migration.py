@@ -89,6 +89,12 @@ CUSTOMER_NAME_SOURCE_MIGRATION_PATH = (
     / "versions"
     / "20260930_0024_customer_name_source.py"
 )
+PASSWORD_RESET_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261004_0029_password_reset_tokens.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -122,6 +128,27 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     script = ScriptDirectory.from_config(config)
 
     assert script.get_heads() == ["20261004_0029"]
+
+
+def test_password_reset_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", PASSWORD_RESET_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", PASSWORD_RESET_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "create table password_reset_tokens" in upgrade
+    assert "token_hash" in upgrade
+    assert "expires_at" in upgrade
+    assert "used_at" in upgrade
+    assert "revoked_at" in upgrade
+    assert "foreign key(user_id) references users" in upgrade
+    assert "drop table password_reset_tokens" in downgrade
 
 
 def test_equipment_delivery_fee_migration_is_additive_and_reversible() -> None:
