@@ -204,7 +204,9 @@ class AuthService:
 
     async def issue_password_reset(self, email: str) -> PasswordResetIssue | None:
         user = await self.db.scalar(
-            select(User).where(User.email == email, User.is_active.is_(True))
+            select(User)
+            .where(User.email == email, User.is_active.is_(True))
+            .with_for_update()
         )
         if user is None:
             return None
@@ -238,27 +240,34 @@ class AuthService:
         current_password: str,
         new_password: str,
     ) -> None:
+        user = await self.db.scalar(
+            select(User)
+            .where(User.id == principal.user.id, User.is_active.is_(True))
+            .with_for_update()
+        )
+        if user is None:
+            raise unauthorized()
         current_valid = await to_thread.run_sync(
             verify_password,
             current_password,
-            principal.user.password_hash,
+            user.password_hash,
         )
         if not current_valid:
             raise HTTPException(400, "Current password is incorrect")
         same_password = await to_thread.run_sync(
             verify_password,
             new_password,
-            principal.user.password_hash,
+            user.password_hash,
         )
         if same_password:
             raise HTTPException(400, "New password must be different")
-        principal.user.password_hash = await to_thread.run_sync(
+        user.password_hash = await to_thread.run_sync(
             hash_password,
             new_password,
         )
-        await self._revoke_password_reset_tokens(principal.user.id)
+        await self._revoke_password_reset_tokens(user.id)
         await self._revoke_sessions(
-            principal.user.id,
+            user.id,
             keep_session_id=principal.session.id,
         )
         await self.db.commit()
@@ -279,8 +288,12 @@ class AuthService:
             or reset.expires_at <= now
         ):
             raise HTTPException(400, "Invalid or expired reset token")
-        user = await self.db.get(User, reset.user_id)
-        if user is None or not user.is_active:
+        user = await self.db.scalar(
+            select(User)
+            .where(User.id == reset.user_id, User.is_active.is_(True))
+            .with_for_update()
+        )
+        if user is None:
             raise HTTPException(400, "Invalid or expired reset token")
         same_password = await to_thread.run_sync(
             verify_password,
