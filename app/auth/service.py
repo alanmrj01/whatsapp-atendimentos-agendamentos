@@ -6,15 +6,17 @@ from uuid import UUID, uuid4
 
 from anyio import to_thread
 from fastapi import HTTPException
-from sqlalchemy import case, exists, func, or_, select
+from sqlalchemy import case, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.schemas import MeResponse, MembershipResponse, MembershipRole, SignupRequest
 from app.billing.entitlements import active_subscription_exists
 from app.auth.security import (
+    PASSWORD_RESET_TTL_SECONDS,
     REFRESH_TTL_SECONDS,
     hash_password,
+    new_password_reset_token,
     new_refresh_token,
     token_hash,
     verify_password,
@@ -25,6 +27,7 @@ from app.models import (
     BusinessAccess,
     BusinessUserMembership,
     CommercialSubscription,
+    PasswordResetToken,
     User,
 )
 from app.models.billing import billing_provider_environment
@@ -63,6 +66,13 @@ class Principal:
             ),
             memberships=self.memberships,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PasswordResetIssue:
+    id: UUID
+    email: str
+    token: str
 
 
 class AuthService:
@@ -148,6 +158,148 @@ class AuthService:
             ),
             refresh,
         )
+
+    async def _revoke_sessions(
+        self,
+        user_id: UUID,
+        *,
+        keep_session_id: UUID | None = None,
+    ) -> None:
+        sessions = list(
+            (
+                await self.db.scalars(
+                    select(AuthSession)
+                    .where(
+                        AuthSession.user_id == user_id,
+                        AuthSession.revoked_at.is_(None),
+                    )
+                    .with_for_update()
+                )
+            ).all()
+        )
+        revoked_at = datetime.now(UTC)
+        push = WebPushRepository(self.db)
+        for session in sessions:
+            if keep_session_id is not None and session.id == keep_session_id:
+                continue
+            await push.remove_for_auth_session(session.id)
+            session.revoked_at = revoked_at
+
+    async def _revoke_password_reset_tokens(
+        self,
+        user_id: UUID,
+        *,
+        keep_token_id: UUID | None = None,
+    ) -> None:
+        statement = update(PasswordResetToken).where(
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.revoked_at.is_(None),
+        )
+        if keep_token_id is not None:
+            statement = statement.where(PasswordResetToken.id != keep_token_id)
+        await self.db.execute(
+            statement.values(revoked_at=datetime.now(UTC))
+        )
+
+    async def issue_password_reset(self, email: str) -> PasswordResetIssue | None:
+        user = await self.db.scalar(
+            select(User).where(User.email == email, User.is_active.is_(True))
+        )
+        if user is None:
+            return None
+        await self._revoke_password_reset_tokens(user.id)
+        raw_token = new_password_reset_token()
+        reset = PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash(raw_token),
+            expires_at=datetime.now(UTC)
+            + timedelta(seconds=PASSWORD_RESET_TTL_SECONDS),
+        )
+        self.db.add(reset)
+        await self.db.flush()
+        issue = PasswordResetIssue(
+            id=reset.id,
+            email=user.email,
+            token=raw_token,
+        )
+        await self.db.commit()
+        return issue
+
+    async def revoke_password_reset(self, reset_id: UUID) -> None:
+        reset = await self.db.get(PasswordResetToken, reset_id)
+        if reset is not None and reset.used_at is None and reset.revoked_at is None:
+            reset.revoked_at = datetime.now(UTC)
+            await self.db.commit()
+
+    async def change_password(
+        self,
+        principal: Principal,
+        current_password: str,
+        new_password: str,
+    ) -> None:
+        current_valid = await to_thread.run_sync(
+            verify_password,
+            current_password,
+            principal.user.password_hash,
+        )
+        if not current_valid:
+            raise HTTPException(400, "Current password is incorrect")
+        same_password = await to_thread.run_sync(
+            verify_password,
+            new_password,
+            principal.user.password_hash,
+        )
+        if same_password:
+            raise HTTPException(400, "New password must be different")
+        principal.user.password_hash = await to_thread.run_sync(
+            hash_password,
+            new_password,
+        )
+        await self._revoke_password_reset_tokens(principal.user.id)
+        await self._revoke_sessions(
+            principal.user.id,
+            keep_session_id=principal.session.id,
+        )
+        await self.db.commit()
+
+    async def reset_password(self, token: str, new_password: str) -> None:
+        if not token or len(token) > 256:
+            raise HTTPException(400, "Invalid or expired reset token")
+        now = datetime.now(UTC)
+        reset = await self.db.scalar(
+            select(PasswordResetToken)
+            .where(PasswordResetToken.token_hash == token_hash(token))
+            .with_for_update()
+        )
+        if (
+            reset is None
+            or reset.used_at is not None
+            or reset.revoked_at is not None
+            or reset.expires_at <= now
+        ):
+            raise HTTPException(400, "Invalid or expired reset token")
+        user = await self.db.get(User, reset.user_id)
+        if user is None or not user.is_active:
+            raise HTTPException(400, "Invalid or expired reset token")
+        same_password = await to_thread.run_sync(
+            verify_password,
+            new_password,
+            user.password_hash,
+        )
+        if same_password:
+            raise HTTPException(400, "New password must be different")
+        user.password_hash = await to_thread.run_sync(
+            hash_password,
+            new_password,
+        )
+        reset.used_at = now
+        await self._revoke_password_reset_tokens(
+            user.id,
+            keep_token_id=reset.id,
+        )
+        await self._revoke_sessions(user.id)
+        await self.db.commit()
 
     async def login(self, email: str, password: str) -> tuple[User, AuthSession, str]:
         user = await self.db.scalar(select(User).where(User.email == email))
