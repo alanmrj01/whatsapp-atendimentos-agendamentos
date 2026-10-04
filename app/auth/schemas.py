@@ -53,6 +53,25 @@ class SignupRequest(StrictRequest):
         return normalize_email(value)
 
 
+class PasswordChangeRequest(StrictRequest):
+    current_password: SecretStr = Field(min_length=1, max_length=1024)
+    new_password: SecretStr = Field(min_length=12, max_length=1024)
+
+
+class PasswordResetRequest(StrictRequest):
+    email: str = Field(max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def normalized_email(cls, value: str) -> str:
+        return normalize_email(value)
+
+
+class PasswordResetConfirmRequest(StrictRequest):
+    token: SecretStr = Field(min_length=32, max_length=256)
+    new_password: SecretStr = Field(min_length=12, max_length=1024)
+
+
 class EmptyRequest(StrictRequest):
     pass
 
