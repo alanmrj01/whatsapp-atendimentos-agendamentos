@@ -3,6 +3,8 @@ from pathlib import Path
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
+from app.diagnostics.models import EXPECTED_SCHEMA_REVISION
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = (
@@ -15,7 +17,7 @@ MIGRATION = (
 
 def test_web_push_migration_is_single_additive_head_and_reversible() -> None:
     script = ScriptDirectory.from_config(Config(str(PROJECT_ROOT / "alembic.ini")))
-    assert script.get_heads() == ["20261003_0028"]
+    assert script.get_heads() == [EXPECTED_SCHEMA_REVISION]
 
     source = MIGRATION.read_text(encoding="utf-8")
     assert 'down_revision = "20260930_0024"' in source
