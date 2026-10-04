@@ -8,9 +8,22 @@ from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from app.auth.dependencies import require_auth_config
-from app.auth.security import access_token, decode_access, hash_password, token_hash, verify_password
-from app.auth.schemas import AccessResponse, LoginRequest, MeResponse
-from app.core.config import Settings, get_settings
+from app.auth.security import (
+    access_token,
+    decode_access,
+    hash_password,
+    new_password_reset_token,
+    token_hash,
+    verify_password,
+)
+from app.auth.schemas import (
+    AccessResponse,
+    LoginRequest,
+    MeResponse,
+    PasswordChangeRequest,
+    PasswordResetConfirmRequest,
+)
+from app.core.config import PasswordRecoveryConfigurationError, Settings, get_settings
 from app.main import create_app
 from tests.test_migration import PROJECT_ROOT, render_migration_sql
 
@@ -24,6 +37,18 @@ def test_argon2id_random_salt_and_no_plaintext():
     assert not verify_password(password, None)
     assert len(token_hash(password)) == 64 and token_hash(password) != password
     assert password not in repr(LoginRequest(email="user@example.test", password=password))
+    reset_token = new_password_reset_token()
+    assert len(reset_token) >= 32
+    assert len(token_hash(reset_token)) == 64
+    assert reset_token not in repr(
+        PasswordResetConfirmRequest(token=reset_token, new_password=password)
+    )
+    assert password not in repr(
+        PasswordChangeRequest(
+            current_password=password,
+            new_password=secrets.token_urlsafe(24),
+        )
+    )
 
 
 @pytest.mark.parametrize("kind", ["expired", "forged", "none", "missing", "invalid_uuid"])
@@ -126,3 +151,33 @@ def test_auth_migration_sql():
         assert f"drop table {table}" in downgrade
     assert "refresh_token_hash" in upgrade and "argon2id" in upgrade
     assert "insert into" not in upgrade and "cascade" not in upgrade
+
+
+
+def test_password_reset_email_configuration_is_explicit_and_origin_bound():
+    disabled = Settings(
+        _env_file=None,
+        ENVIRONMENT="production",
+        PWA_ALLOWED_ORIGINS="https://app.example.test",
+    )
+    with pytest.raises(PasswordRecoveryConfigurationError):
+        disabled.require_password_reset_email_configuration()
+
+    configured = Settings(
+        _env_file=None,
+        ENVIRONMENT="production",
+        PWA_ALLOWED_ORIGINS="https://app.example.test",
+        PASSWORD_RECOVERY_ENABLED=True,
+        RESEND_API_KEY="re_test_secret",
+        PASSWORD_RESET_FROM_EMAIL="Alovia <no-reply@example.test>",
+        PASSWORD_RESET_PUBLIC_BASE_URL="https://app.example.test",
+    )
+    email = configured.require_password_reset_email_configuration()
+    assert email.public_base_url == "https://app.example.test"
+    assert email.api_key.get_secret_value() == "re_test_secret"
+
+    wrong_origin = configured.model_copy(
+        update={"password_reset_public_base_url": "https://evil.example.test"}
+    )
+    with pytest.raises(PasswordRecoveryConfigurationError):
+        wrong_origin.require_password_reset_email_configuration()
