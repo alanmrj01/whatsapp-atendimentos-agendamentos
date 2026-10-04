@@ -17,6 +17,7 @@ EXPECTED_TABLES = {
     "business_notifications",
     "customer_outreach",
     "auth_sessions",
+    "password_reset_tokens",
     "appointments",
     "businesses",
     "business_automation_exclusions",
