@@ -27,6 +27,7 @@ from app.models import (
     BusinessAccess,
     BusinessUserMembership,
     BusinessWhatsAppConnection,
+    PasswordResetToken,
     User,
 )
 from app.whatsapp.administration import WhatsAppConnectionAdministrationService
@@ -65,6 +66,13 @@ async def auth_env(monkeypatch):
     monkeypatch.setenv("META_EMBEDDED_SIGNUP_CONFIG_ID", "444444444444444")
     monkeypatch.setenv("META_EMBEDDED_SIGNUP_VERSION", "v4")
     monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("PASSWORD_RECOVERY_ENABLED", "true")
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_secret")
+    monkeypatch.setenv(
+        "PASSWORD_RESET_FROM_EMAIL",
+        "Alovia <no-reply@example.test>",
+    )
+    monkeypatch.setenv("PASSWORD_RESET_PUBLIC_BASE_URL", ORIGIN)
     get_settings.cache_clear()
     engine = create_async_engine(_async_url(TEST_DATABASE_URL))
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -77,6 +85,7 @@ async def auth_env(monkeypatch):
     ids = {name: uuid4() for name in ("owner", "admin", "attendant", "viewer", "multi", "super", "inactive")}
     async with factory() as db, db.begin():
         for model in (
+            PasswordResetToken,
             AuthSession,
             BusinessUserMembership,
             User,
@@ -530,3 +539,268 @@ async def test_anonymous_forged_expired_origin_and_cors(auth_env):
     assert good.headers["access-control-allow-credentials"] == "true"
     for path in ("refresh","logout"):
         assert (await env.client.post(f"/api/v1/auth/{path}",json={"extra":"rejected"})).status_code == 422
+
+
+
+class _PasswordResetMailer:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def send(self, *, email: str, token: str) -> None:
+        self.calls.append((email, token))
+
+
+async def test_password_reset_request_is_neutral_and_rotates_tokens(
+    auth_env, monkeypatch
+):
+    from app.api import public_pwa
+
+    env = auth_env
+    mailer = _PasswordResetMailer()
+    monkeypatch.setattr(
+        public_pwa,
+        "_password_reset_mailer",
+        lambda _settings: mailer,
+    )
+
+    existing = await env.client.post(
+        "/api/v1/auth/password/forgot",
+        json={"email": " OWNER@EXAMPLE.TEST "},
+    )
+    missing = await env.client.post(
+        "/api/v1/auth/password/forgot",
+        json={"email": "missing@example.test"},
+    )
+    assert existing.status_code == missing.status_code == 202
+    assert existing.content == missing.content == b""
+    assert len(mailer.calls) == 1
+    email, first_token = mailer.calls[0]
+    assert email == "owner@example.test"
+
+    async with env.factory() as db:
+        first = await db.scalar(
+            select(PasswordResetToken).where(
+                PasswordResetToken.user_id == env.ids["owner"]
+            )
+        )
+        assert first is not None
+        assert first.token_hash == token_hash(first_token)
+        assert first.token_hash != first_token
+        assert first.used_at is None
+        assert first.revoked_at is None
+
+    second = await env.client.post(
+        "/api/v1/auth/password/forgot",
+        json={"email": "owner@example.test"},
+    )
+    assert second.status_code == 202
+    assert len(mailer.calls) == 2
+    second_token = mailer.calls[1][1]
+    assert second_token != first_token
+
+    async with env.factory() as db:
+        tokens = list(
+            (
+                await db.scalars(
+                    select(PasswordResetToken)
+                    .where(PasswordResetToken.user_id == env.ids["owner"])
+                    .order_by(PasswordResetToken.created_at, PasswordResetToken.id)
+                )
+            ).all()
+        )
+        assert len(tokens) == 2
+        assert tokens[0].revoked_at is not None
+        assert tokens[1].revoked_at is None
+
+
+async def test_password_reset_is_one_time_and_revokes_all_sessions(
+    auth_env, monkeypatch
+):
+    from app.api import public_pwa
+
+    env = auth_env
+    first_login = await login(env)
+    first_access = first_login.json()["access_token"]
+    second_login = await login(env)
+    second_access = second_login.json()["access_token"]
+    assert first_access != second_access
+
+    mailer = _PasswordResetMailer()
+    monkeypatch.setattr(
+        public_pwa,
+        "_password_reset_mailer",
+        lambda _settings: mailer,
+    )
+    requested = await env.client.post(
+        "/api/v1/auth/password/forgot",
+        json={"email": "owner@example.test"},
+    )
+    assert requested.status_code == 202
+    token = mailer.calls[0][1]
+    new_password = secrets.token_urlsafe(24)
+
+    reset = await env.client.post(
+        "/api/v1/auth/password/reset",
+        json={"token": token, "new_password": new_password},
+    )
+    assert reset.status_code == 204
+
+    assert (
+        await env.client.get(
+            "/api/v1/me",
+            headers={"Authorization": "Bearer " + first_access},
+        )
+    ).status_code == 401
+    assert (
+        await env.client.get(
+            "/api/v1/me",
+            headers={"Authorization": "Bearer " + second_access},
+        )
+    ).status_code == 401
+
+    reused = await env.client.post(
+        "/api/v1/auth/password/reset",
+        json={"token": token, "new_password": secrets.token_urlsafe(24)},
+    )
+    assert reused.status_code == 400
+
+    async with env.factory() as db:
+        sessions = list(
+            (
+                await db.scalars(
+                    select(AuthSession).where(
+                        AuthSession.user_id == env.ids["owner"]
+                    )
+                )
+            ).all()
+        )
+        assert sessions
+        assert all(session.revoked_at is not None for session in sessions)
+        reset_row = await db.scalar(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == token_hash(token)
+            )
+        )
+        assert reset_row is not None and reset_row.used_at is not None
+
+    env.client.headers.pop("Authorization", None)
+    old_login = await env.client.post(
+        "/api/v1/auth/login",
+        json={"email": "owner@example.test", "password": env.password},
+    )
+    assert old_login.status_code == 401
+    new_login = await env.client.post(
+        "/api/v1/auth/login",
+        json={"email": "owner@example.test", "password": new_password},
+    )
+    assert new_login.status_code == 200
+
+
+async def test_expired_password_reset_token_is_rejected(auth_env, monkeypatch):
+    from app.api import public_pwa
+
+    env = auth_env
+    mailer = _PasswordResetMailer()
+    monkeypatch.setattr(
+        public_pwa,
+        "_password_reset_mailer",
+        lambda _settings: mailer,
+    )
+    assert (
+        await env.client.post(
+            "/api/v1/auth/password/forgot",
+            json={"email": "owner@example.test"},
+        )
+    ).status_code == 202
+    token = mailer.calls[0][1]
+
+    async with env.factory() as db, db.begin():
+        reset = await db.scalar(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == token_hash(token)
+            )
+        )
+        assert reset is not None
+        reset.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    rejected = await env.client.post(
+        "/api/v1/auth/password/reset",
+        json={"token": token, "new_password": secrets.token_urlsafe(24)},
+    )
+    assert rejected.status_code == 400
+
+
+async def test_authenticated_password_change_keeps_current_session_only(auth_env):
+    env = auth_env
+    first = await login(env)
+    first_access = first.json()["access_token"]
+    current = await login(env)
+    current_access = current.json()["access_token"]
+
+    wrong = await env.client.post(
+        "/api/v1/auth/password/change",
+        json={
+            "current_password": "incorrect-password",
+            "new_password": secrets.token_urlsafe(24),
+        },
+    )
+    assert wrong.status_code == 400
+
+    same = await env.client.post(
+        "/api/v1/auth/password/change",
+        json={
+            "current_password": env.password,
+            "new_password": env.password,
+        },
+    )
+    assert same.status_code == 400
+
+    new_password = secrets.token_urlsafe(24)
+    changed = await env.client.post(
+        "/api/v1/auth/password/change",
+        json={
+            "current_password": env.password,
+            "new_password": new_password,
+        },
+    )
+    assert changed.status_code == 204
+
+    assert (
+        await env.client.get(
+            "/api/v1/me",
+            headers={"Authorization": "Bearer " + current_access},
+        )
+    ).status_code == 200
+    assert (
+        await env.client.get(
+            "/api/v1/me",
+            headers={"Authorization": "Bearer " + first_access},
+        )
+    ).status_code == 401
+
+    async with env.factory() as db:
+        sessions = list(
+            (
+                await db.scalars(
+                    select(AuthSession)
+                    .where(AuthSession.user_id == env.ids["owner"])
+                    .order_by(AuthSession.created_at, AuthSession.id)
+                )
+            ).all()
+        )
+        assert len(sessions) == 2
+        assert sum(session.revoked_at is None for session in sessions) == 1
+
+    env.client.headers.pop("Authorization", None)
+    assert (
+        await env.client.post(
+            "/api/v1/auth/login",
+            json={"email": "owner@example.test", "password": env.password},
+        )
+    ).status_code == 401
+    assert (
+        await env.client.post(
+            "/api/v1/auth/login",
+            json={"email": "owner@example.test", "password": new_password},
+        )
+    ).status_code == 200
