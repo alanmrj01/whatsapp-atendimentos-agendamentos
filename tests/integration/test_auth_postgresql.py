@@ -546,7 +546,8 @@ class _PasswordResetMailer:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    async def send(self, *, email: str, token: str) -> None:
+    async def send(self, *, reset_id, email: str, token: str) -> None:
+        assert reset_id is not None
         self.calls.append((email, token))
 
 
