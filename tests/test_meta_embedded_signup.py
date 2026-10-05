@@ -15,11 +15,14 @@ from app.auth.schemas import (
     EmptyRequest,
     MembershipResponse,
     MembershipRole,
+    MetaApiOnlyEmbeddedSignupCompleteRequest,
+    MetaApiOnlyEmbeddedSignupStartRequest,
     MetaEmbeddedSignupCompleteRequest,
     MetaEmbeddedSignupTelemetryRequest,
 )
 from app.core.config import MetaEmbeddedSignupConfiguration, Settings
 from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionStatus
+from app.whatsapp.onboarding import WhatsAppOnboardingIntent
 from app.whatsapp.credentials import (
     GoogleSecretManagerCredentialProvider,
     GoogleSecretManagerCredentialStore,
@@ -50,7 +53,7 @@ def configuration() -> MetaEmbeddedSignupConfiguration:
     )
 
 
-def settings() -> Settings:
+def settings(*, api_only_enabled: bool = False) -> Settings:
     return Settings(
         _env_file=None,
         ENVIRONMENT="test",
@@ -60,6 +63,7 @@ def settings() -> Settings:
         META_GRAPH_VERSION="v25.0",
         META_APP_SECRET="synthetic-app-secret-for-tests",
         GCP_PROJECT_ID="test-project",
+        WHATSAPP_API_ONLY_FALLBACK_ENABLED=api_only_enabled,
     )
 
 
@@ -455,6 +459,7 @@ async def test_secret_manager_stores_and_resolves_only_version_reference() -> No
 class FakeGateway:
     def __init__(self) -> None:
         self.subscribed = False
+        self.registered_pin: str | None = None
 
     async def exchange_and_validate(self, authorization_code, **hints):
         assert authorization_code.get_secret_value() == RAW_CODE
@@ -471,6 +476,9 @@ class FakeGateway:
 
     async def subscribe_app(self, assets):
         self.subscribed = True
+
+    async def register_phone(self, assets, registration_pin):
+        self.registered_pin = registration_pin.get_secret_value()
 
 
 class FakeStore:
@@ -493,7 +501,7 @@ class FakeOnboarding:
         self.completion = completion
         return SimpleNamespace(
             status=WhatsAppConnectionStatus.CONNECTED,
-            mode=WhatsAppConnectionMode.COEXISTENCE,
+            mode=completion.confirmed_mode,
         )
 
 
@@ -527,3 +535,149 @@ async def test_valid_coexistence_completion_is_scoped_and_db_receives_no_token(
     )
     assert RAW_TOKEN not in caplog.text
     assert RAW_CODE not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_api_only_start_is_fail_closed_until_feature_flag_is_enabled(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        lambda _: EmptyAdministration(),
+    )
+    payload = MetaApiOnlyEmbeddedSignupStartRequest(
+        intent=WhatsAppOnboardingIntent.USE_NEW_OR_DEDICATED_NUMBER,
+    )
+
+    with pytest.raises(HTTPException) as blocked:
+        await public_pwa.start_meta_api_only_signup(
+            payload, FakePrincipal(), settings(), object()
+        )
+
+    assert blocked.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_api_only_start_requires_explicit_confirmation_for_existing_number(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        lambda _: EmptyAdministration(),
+    )
+    unconfirmed = MetaApiOnlyEmbeddedSignupStartRequest(
+        intent=WhatsAppOnboardingIntent.USE_EXISTING_NUMBER_PLATFORM_ONLY,
+        platform_only_impact_confirmed=False,
+    )
+    with pytest.raises(HTTPException) as blocked:
+        await public_pwa.start_meta_api_only_signup(
+            unconfirmed,
+            FakePrincipal(),
+            settings(api_only_enabled=True),
+            object(),
+        )
+    assert blocked.value.status_code == 409
+
+    confirmed = MetaApiOnlyEmbeddedSignupStartRequest(
+        intent=WhatsAppOnboardingIntent.USE_EXISTING_NUMBER_PLATFORM_ONLY,
+        platform_only_impact_confirmed=True,
+    )
+    started = await public_pwa.start_meta_api_only_signup(
+        confirmed,
+        FakePrincipal(),
+        settings(api_only_enabled=True),
+        object(),
+    )
+    assert started.mode == "api_only"
+    assert (
+        started.intent
+        is WhatsAppOnboardingIntent.USE_EXISTING_NUMBER_PLATFORM_ONLY
+    )
+
+
+def test_api_only_contract_rejects_coexistence_intent_and_invalid_pin() -> None:
+    with pytest.raises(ValidationError):
+        MetaApiOnlyEmbeddedSignupStartRequest(
+            intent=WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS,
+        )
+    with pytest.raises(ValidationError):
+        MetaApiOnlyEmbeddedSignupCompleteRequest(
+            intent=WhatsAppOnboardingIntent.USE_NEW_OR_DEDICATED_NUMBER,
+            authorization_code=RAW_CODE,
+            waba_id=WABA_ID,
+            phone_number_id=PHONE_ID,
+            registration_pin=SecretStr("12A456"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_graph_registers_api_only_phone_without_logging_pin(caplog) -> None:
+    pin = "847291"
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith(f"/{PHONE_ID}/register"):
+            return httpx.Response(200, json={"success": True})
+        raise AssertionError("unexpected Graph request")
+
+    assets = MetaAuthorizedAssets(
+        access_token=SecretStr(RAW_TOKEN),
+        waba_id=WABA_ID,
+        phone_number_id=PHONE_ID,
+        display_phone_number="+55 12 99999-1234",
+    )
+    caplog.set_level(logging.DEBUG)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://graph.facebook.com/v25.0/",
+    ) as client:
+        gateway = MetaEmbeddedSignupGateway(configuration(), client=client)
+        await gateway.register_phone(assets, SecretStr(pin))
+
+    assert len(requests) == 1
+    assert requests[0].method == "POST"
+    assert requests[0].url.path == f"/v25.0/{PHONE_ID}/register"
+    assert requests[0].read().decode() == (
+        '{"messaging_product":"whatsapp","pin":"847291"}'
+    )
+    assert pin not in caplog.text
+    assert RAW_TOKEN not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_api_only_completion_registers_before_marking_connection_connected(
+    caplog,
+) -> None:
+    caplog.set_level(logging.INFO)
+    gateway = FakeGateway()
+    store = FakeStore()
+    onboarding = FakeOnboarding()
+    service = MetaEmbeddedSignupService(
+        onboarding, gateway, store, "v25.0"
+    )
+    result = await service.complete_api_only(
+        BUSINESS_ID,
+        SecretStr(RAW_CODE),
+        intent=WhatsAppOnboardingIntent.USE_EXISTING_NUMBER_PLATFORM_ONLY,
+        platform_only_impact_confirmed=True,
+        registration_pin=SecretStr("847291"),
+        waba_id_hint=WABA_ID,
+        phone_number_id_hint=PHONE_ID,
+    )
+
+    assert result.status is WhatsAppConnectionStatus.CONNECTED
+    assert result.mode is WhatsAppConnectionMode.API_ONLY
+    assert gateway.subscribed is True
+    assert gateway.registered_pin == "847291"
+    assert onboarding.completion.confirmed_mode is WhatsAppConnectionMode.API_ONLY
+    assert (
+        onboarding.completion.intent
+        is WhatsAppOnboardingIntent.USE_EXISTING_NUMBER_PLATFORM_ONLY
+    )
+    assert onboarding.completion.platform_only_impact_confirmed is True
+    assert RAW_TOKEN not in repr(onboarding.completion)
+    assert "847291" not in repr(onboarding.completion)
+    assert "847291" not in caplog.text
