@@ -510,6 +510,11 @@ async def start_meta_api_only_signup(
     business = _require_paid_whatsapp_administrator(principal)
     _require_api_only_fallback(settings)
     configuration = _embedded_signup_configuration(settings)
+    if configuration.embedded_signup_version != "v4":
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "WhatsApp exclusive connection requires Embedded Signup v4",
+        )
     administration = WhatsAppConnectionAdministrationService(db)
     current = await administration.get_connection(business.business_id)
     if current is not None and current.status.value == "connected":
