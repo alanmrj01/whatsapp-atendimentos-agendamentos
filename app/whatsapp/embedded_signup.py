@@ -228,12 +228,15 @@ class MetaEmbeddedSignupGateway:
         json_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
+            request_kwargs: dict[str, Any] = {}
+            if json_payload is not None:
+                request_kwargs["json"] = json_payload
             response = await self._client.request(
                 method,
                 path,
                 headers=headers,
                 params=params,
-                json=json_payload,
+                **request_kwargs,
             )
         except (httpx.TimeoutException, httpx.NetworkError):
             raise MetaEmbeddedSignupUnavailable(
