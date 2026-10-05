@@ -56,6 +56,12 @@ class MetaEmbeddedSignupPort(Protocol):
         assets: MetaAuthorizedAssets,
     ) -> None: ...
 
+    async def register_phone(
+        self,
+        assets: MetaAuthorizedAssets,
+        registration_pin: SecretStr,
+    ) -> None: ...
+
 
 class MetaEmbeddedSignupGateway:
     """Troca o código e confirma WABA/telefone via Graph API no servidor."""
@@ -182,6 +188,36 @@ class MetaEmbeddedSignupGateway:
             )
         _log_stage("subscription_ok")
 
+
+    async def register_phone(
+        self,
+        assets: MetaAuthorizedAssets,
+        registration_pin: SecretStr,
+    ) -> None:
+        pin = registration_pin.get_secret_value()
+        if len(pin) != 6 or not pin.isdigit():
+            raise MetaEmbeddedSignupRejected(
+                "Meta phone registration PIN is invalid"
+            )
+        payload = await self._request_json(
+            "POST",
+            f"{assets.phone_number_id}/register",
+            headers={
+                "Authorization": (
+                    f"Bearer {assets.access_token.get_secret_value()}"
+                )
+            },
+            json_payload={
+                "messaging_product": "whatsapp",
+                "pin": pin,
+            },
+        )
+        if payload.get("success") not in {True, "true"}:
+            raise MetaEmbeddedSignupRejected(
+                "Meta phone registration was not confirmed"
+            )
+        _log_stage("phone_registration_ok")
+
     async def _request_json(
         self,
         method: str,
@@ -189,6 +225,7 @@ class MetaEmbeddedSignupGateway:
         *,
         headers: dict[str, str] | None = None,
         params: dict[str, str] | None = None,
+        json_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             response = await self._client.request(
@@ -196,6 +233,7 @@ class MetaEmbeddedSignupGateway:
                 path,
                 headers=headers,
                 params=params,
+                json=json_payload,
             )
         except (httpx.TimeoutException, httpx.NetworkError):
             raise MetaEmbeddedSignupUnavailable(
@@ -268,6 +306,54 @@ class MetaEmbeddedSignupService:
                 graph_version=self._graph_version,
                 credential_secret_ref=credential_secret_ref,
                 provider_confirmed=True,
+                display_phone_number=assets.display_phone_number,
+            ),
+        )
+        _log_stage("connection_saved")
+        return view
+
+
+    async def complete_api_only(
+        self,
+        business_id: uuid.UUID,
+        authorization_code: SecretStr,
+        *,
+        intent: WhatsAppOnboardingIntent,
+        platform_only_impact_confirmed: bool,
+        registration_pin: SecretStr,
+        waba_id_hint: str,
+        phone_number_id_hint: str | None,
+    ) -> WhatsAppConnectionStatusView:
+        if intent not in {
+            WhatsAppOnboardingIntent.USE_NEW_OR_DEDICATED_NUMBER,
+            WhatsAppOnboardingIntent.USE_EXISTING_NUMBER_PLATFORM_ONLY,
+        }:
+            raise MetaEmbeddedSignupRejected(
+                "Meta API-only onboarding intent is invalid"
+            )
+        assets = await self._gateway.exchange_and_validate(
+            authorization_code,
+            waba_id_hint=waba_id_hint,
+            phone_number_id_hint=phone_number_id_hint,
+        )
+        await self._gateway.subscribe_app(assets)
+        credential_secret_ref = await self._credential_store.store(
+            business_id,
+            assets.access_token,
+        )
+        _log_stage("secret_store_ok")
+        await self._gateway.register_phone(assets, registration_pin)
+        view = await self._onboarding.complete_provider_onboarding(
+            business_id,
+            WhatsAppProviderCompletion(
+                intent=intent,
+                confirmed_mode=WhatsAppConnectionMode.API_ONLY,
+                meta_waba_id=assets.waba_id,
+                meta_phone_number_id=assets.phone_number_id,
+                graph_version=self._graph_version,
+                credential_secret_ref=credential_secret_ref,
+                provider_confirmed=True,
+                platform_only_impact_confirmed=platform_only_impact_confirmed,
                 display_phone_number=assets.display_phone_number,
             ),
         )
