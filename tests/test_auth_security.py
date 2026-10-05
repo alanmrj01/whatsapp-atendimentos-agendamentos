@@ -254,3 +254,48 @@ async def test_password_reset_email_keeps_token_in_fragment_and_is_idempotent(
     assert f"/redefinir-senha#token={token}" in payload["textContent"]
     assert "?token=" not in payload["textContent"]
     assert f"/redefinir-senha#token={token}" in payload["htmlContent"]
+
+
+@pytest.mark.asyncio
+async def test_brevo_password_reset_does_not_retry_ambiguous_transport_failure(
+    monkeypatch,
+):
+    from app.auth import password_email
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            self.calls += 1
+            raise password_email.httpx.ConnectError("synthetic transport failure")
+
+    client = Client()
+    monkeypatch.setattr(
+        password_email.httpx,
+        "AsyncClient",
+        lambda **_kwargs: client,
+    )
+    mailer = BrevoPasswordResetMailer(
+        PasswordResetEmailConfiguration(
+            api_key=SecretStr("xkeysib-test-secret"),
+            from_email="no-reply@example.test",
+            from_name="Alovia",
+            public_base_url="https://app.example.test",
+        )
+    )
+
+    with pytest.raises(password_email.PasswordResetEmailError):
+        await mailer.send(
+            reset_id=uuid4(),
+            email="member@example.test",
+            token=new_password_reset_token(),
+        )
+
+    assert client.calls == 1
