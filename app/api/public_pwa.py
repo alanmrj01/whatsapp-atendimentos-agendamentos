@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_auth_config, require_origin, require_principal
-from app.auth.password_email import PasswordResetEmailError, ResendPasswordResetMailer
+from app.auth.password_email import BrevoPasswordResetMailer, PasswordResetEmailError
 from app.auth.rate_limit import login_rate_limiter, password_reset_rate_limiter
 from app.auth.schemas import (
     AccessResponse,
@@ -80,7 +80,7 @@ def _require_password_recovery(settings: Settings) -> None:
         ) from None
 
 
-def _password_reset_mailer(settings: Settings) -> ResendPasswordResetMailer:
+def _password_reset_mailer(settings: Settings) -> BrevoPasswordResetMailer:
     try:
         configuration = settings.require_password_reset_email_configuration()
     except PasswordRecoveryConfigurationError:
@@ -88,7 +88,7 @@ def _password_reset_mailer(settings: Settings) -> ResendPasswordResetMailer:
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Password recovery is temporarily unavailable",
         ) from None
-    return ResendPasswordResetMailer(configuration)
+    return BrevoPasswordResetMailer(configuration)
 
 
 async def token_response(
