@@ -339,13 +339,13 @@ class MetaEmbeddedSignupService:
             waba_id_hint=waba_id_hint,
             phone_number_id_hint=phone_number_id_hint,
         )
+        await self._gateway.register_phone(assets, registration_pin)
         await self._gateway.subscribe_app(assets)
         credential_secret_ref = await self._credential_store.store(
             business_id,
             assets.access_token,
         )
         _log_stage("secret_store_ok")
-        await self._gateway.register_phone(assets, registration_pin)
         view = await self._onboarding.complete_provider_onboarding(
             business_id,
             WhatsAppProviderCompletion(
