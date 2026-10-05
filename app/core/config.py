@@ -45,6 +45,7 @@ class PasswordRecoveryConfigurationError(RuntimeError):
 class PasswordResetEmailConfiguration:
     api_key: SecretStr
     from_email: str
+    from_name: str
     public_base_url: str
 
 
@@ -91,9 +92,12 @@ class Settings(BaseSettings):
     whatsapp_api_only_fallback_enabled: bool = Field(
         default=False, validation_alias="WHATSAPP_API_ONLY_FALLBACK_ENABLED"
     )
-    resend_api_key: SecretStr | None = Field(default=None, validation_alias="RESEND_API_KEY")
+    brevo_api_key: SecretStr | None = Field(default=None, validation_alias="BREVO_API_KEY")
     password_reset_from_email: str | None = Field(
         default=None, validation_alias="PASSWORD_RESET_FROM_EMAIL"
+    )
+    password_reset_from_name: str = Field(
+        default="Alovia", validation_alias="PASSWORD_RESET_FROM_NAME"
     )
     password_reset_public_base_url: str | None = Field(
         default=None, validation_alias="PASSWORD_RESET_PUBLIC_BASE_URL"
@@ -360,11 +364,12 @@ class Settings(BaseSettings):
     ) -> PasswordResetEmailConfiguration:
         self.require_password_recovery_enabled()
         api_key = (
-            self.resend_api_key.get_secret_value().strip()
-            if self.resend_api_key is not None
+            self.brevo_api_key.get_secret_value().strip()
+            if self.brevo_api_key is not None
             else ""
         )
         from_email = (self.password_reset_from_email or "").strip()
+        from_name = self.password_reset_from_name.strip()
         public_base_url = (self.password_reset_public_base_url or "").strip().rstrip("/")
         try:
             parsed = urlsplit(public_base_url)
@@ -381,13 +386,23 @@ class Settings(BaseSettings):
             )
         except ValueError:
             valid_base = False
-        if not api_key or "@" not in from_email or not valid_base:
+        valid_email = bool(
+            re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", from_email)
+        )
+        if (
+            not api_key
+            or not valid_email
+            or not from_name
+            or len(from_name) > 70
+            or not valid_base
+        ):
             raise PasswordRecoveryConfigurationError(
                 "Password reset email configuration is incomplete"
             )
         return PasswordResetEmailConfiguration(
             api_key=SecretStr(api_key),
             from_email=from_email,
+            from_name=from_name,
             public_base_url=public_base_url,
         )
 
