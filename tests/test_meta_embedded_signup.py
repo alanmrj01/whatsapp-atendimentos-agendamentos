@@ -53,13 +53,13 @@ def configuration() -> MetaEmbeddedSignupConfiguration:
     )
 
 
-def settings(*, api_only_enabled: bool = False) -> Settings:
+def settings(*, api_only_enabled: bool = False, embedded_signup_version: str = "v4") -> Settings:
     return Settings(
         _env_file=None,
         ENVIRONMENT="test",
         META_APP_ID="333333333333333",
         META_EMBEDDED_SIGNUP_CONFIG_ID="444444444444444",
-        META_EMBEDDED_SIGNUP_VERSION="v4",
+        META_EMBEDDED_SIGNUP_VERSION=embedded_signup_version,
         META_GRAPH_VERSION="v25.0",
         META_APP_SECRET="synthetic-app-secret-for-tests",
         GCP_PROJECT_ID="test-project",
@@ -555,6 +555,28 @@ async def test_api_only_start_is_fail_closed_until_feature_flag_is_enabled(
             payload, FakePrincipal(), settings(), object()
         )
 
+    assert blocked.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_api_only_start_requires_v4_even_when_feature_is_enabled(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        lambda _: EmptyAdministration(),
+    )
+    payload = MetaApiOnlyEmbeddedSignupStartRequest(
+        intent=WhatsAppOnboardingIntent.USE_NEW_OR_DEDICATED_NUMBER,
+    )
+    with pytest.raises(HTTPException) as blocked:
+        await public_pwa.start_meta_api_only_signup(
+            payload,
+            FakePrincipal(),
+            settings(api_only_enabled=True, embedded_signup_version="v3"),
+            object(),
+        )
     assert blocked.value.status_code == 503
 
 
