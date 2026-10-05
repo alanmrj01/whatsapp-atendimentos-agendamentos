@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 
 from app.auth.dependencies import require_auth_config
-from app.auth.password_email import ResendPasswordResetMailer
+from app.auth.password_email import BrevoPasswordResetMailer
 from app.auth.security import (
     access_token,
     decode_access,
@@ -175,13 +175,16 @@ def test_password_reset_email_configuration_is_explicit_and_origin_bound():
         ENVIRONMENT="production",
         PWA_ALLOWED_ORIGINS="https://app.example.test",
         PASSWORD_RECOVERY_ENABLED=True,
-        RESEND_API_KEY="re_test_secret",
-        PASSWORD_RESET_FROM_EMAIL="Alovia <no-reply@example.test>",
+        BREVO_API_KEY="xkeysib-test-secret",
+        PASSWORD_RESET_FROM_EMAIL="no-reply@example.test",
+        PASSWORD_RESET_FROM_NAME="Alovia",
         PASSWORD_RESET_PUBLIC_BASE_URL="https://app.example.test",
     )
     email = configured.require_password_reset_email_configuration()
     assert email.public_base_url == "https://app.example.test"
-    assert email.api_key.get_secret_value() == "re_test_secret"
+    assert email.api_key.get_secret_value() == "xkeysib-test-secret"
+    assert email.from_email == "no-reply@example.test"
+    assert email.from_name == "Alovia"
 
     wrong_origin = configured.model_copy(
         update={"password_reset_public_base_url": "https://evil.example.test"}
@@ -198,7 +201,7 @@ async def test_password_reset_email_keeps_token_in_fragment_and_is_idempotent(
     from app.auth import password_email
 
     class Response:
-        status_code = 200
+        status_code = 201
 
     class Client:
         def __init__(self) -> None:
@@ -222,10 +225,11 @@ async def test_password_reset_email_keeps_token_in_fragment_and_is_idempotent(
     )
     reset_id = uuid4()
     token = new_password_reset_token()
-    mailer = ResendPasswordResetMailer(
+    mailer = BrevoPasswordResetMailer(
         PasswordResetEmailConfiguration(
-            api_key=SecretStr("re_test_secret"),
-            from_email="Alovia <no-reply@example.test>",
+            api_key=SecretStr("xkeysib-test-secret"),
+            from_email="no-reply@example.test",
+            from_name="Alovia",
             public_base_url="https://app.example.test",
         )
     )
@@ -238,10 +242,15 @@ async def test_password_reset_email_keeps_token_in_fragment_and_is_idempotent(
 
     assert len(client.calls) == 1
     url, headers, payload = client.calls[0]
-    assert url == "https://api.resend.com/emails"
-    assert headers["Idempotency-Key"] == f"password-reset/{reset_id}"
-    assert headers["Authorization"] == "Bearer re_test_secret"
-    assert "re_test_secret" not in repr(payload)
-    assert f"/redefinir-senha#token={token}" in payload["text"]
-    assert "?token=" not in payload["text"]
-    assert f"/redefinir-senha#token={token}" in payload["html"]
+    assert url == "https://api.brevo.com/v3/smtp/email"
+    assert headers["api-key"] == "xkeysib-test-secret"
+    assert payload["headers"]["idempotencyKey"] == str(reset_id)
+    assert payload["sender"] == {
+        "name": "Alovia",
+        "email": "no-reply@example.test",
+    }
+    assert payload["to"] == [{"email": "member@example.test"}]
+    assert "xkeysib-test-secret" not in repr(payload)
+    assert f"/redefinir-senha#token={token}" in payload["textContent"]
+    assert "?token=" not in payload["textContent"]
+    assert f"/redefinir-senha#token={token}" in payload["htmlContent"]
