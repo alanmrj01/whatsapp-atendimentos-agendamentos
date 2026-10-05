@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     password_recovery_enabled: bool = Field(
         default=False, validation_alias="PASSWORD_RECOVERY_ENABLED"
     )
+    whatsapp_api_only_fallback_enabled: bool = Field(
+        default=False, validation_alias="WHATSAPP_API_ONLY_FALLBACK_ENABLED"
+    )
     resend_api_key: SecretStr | None = Field(default=None, validation_alias="RESEND_API_KEY")
     password_reset_from_email: str | None = Field(
         default=None, validation_alias="PASSWORD_RESET_FROM_EMAIL"
