@@ -157,3 +157,42 @@ class MetaEmbeddedSignupCompleteRequest(StrictRequest):
     authorization_code: SecretStr = Field(min_length=1, max_length=4096)
     waba_id: str = Field(min_length=1, max_length=32)
     phone_number_id: str | None = Field(default=None, min_length=1, max_length=32)
+
+
+class MetaApiOnlyEmbeddedSignupStartRequest(StrictRequest):
+    intent: WhatsAppOnboardingIntent
+    platform_only_impact_confirmed: bool = Field(default=False, strict=True)
+
+    @field_validator("intent")
+    @classmethod
+    def api_only_intent(cls, value: WhatsAppOnboardingIntent) -> WhatsAppOnboardingIntent:
+        if value not in {
+            WhatsAppOnboardingIntent.USE_NEW_OR_DEDICATED_NUMBER,
+            WhatsAppOnboardingIntent.USE_EXISTING_NUMBER_PLATFORM_ONLY,
+        }:
+            raise ValueError("API-only onboarding intent is invalid")
+        return value
+
+
+class MetaApiOnlyEmbeddedSignupStartResponse(BaseModel):
+    app_id: str
+    configuration_id: str
+    graph_version: str
+    embedded_signup_version: str
+    mode: Literal["api_only"] = "api_only"
+    intent: WhatsAppOnboardingIntent
+
+
+class MetaApiOnlyEmbeddedSignupCompleteRequest(MetaApiOnlyEmbeddedSignupStartRequest):
+    authorization_code: SecretStr = Field(min_length=1, max_length=4096)
+    waba_id: str = Field(min_length=1, max_length=32)
+    phone_number_id: str | None = Field(default=None, min_length=1, max_length=32)
+    registration_pin: SecretStr = Field(min_length=6, max_length=6)
+
+    @field_validator("registration_pin")
+    @classmethod
+    def six_digit_registration_pin(cls, value: SecretStr) -> SecretStr:
+        raw = value.get_secret_value()
+        if len(raw) != 6 or not raw.isdigit():
+            raise ValueError("Registration PIN must contain exactly 6 digits")
+        return value
