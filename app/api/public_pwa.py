@@ -354,6 +354,14 @@ def _embedded_signup_configuration(
         ) from None
 
 
+def _require_api_only_fallback(settings: Settings) -> None:
+    if not settings.whatsapp_api_only_fallback_enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "WhatsApp exclusive connection is temporarily unavailable",
+        )
+
+
 @router.post(
     "/whatsapp/onboarding/embedded-signup/start",
     response_model=MetaEmbeddedSignupStartResponse,
@@ -477,6 +485,148 @@ async def complete_meta_embedded_signup(
             await gateway.aclose()
         _log_embedded_signup_stage(
             "complete_request_succeeded" if completed else "complete_request_failed"
+        )
+    return PublicConnectionResponse(
+        status=view.status.value,
+        mode=view.mode.value,
+        display_phone_number=view.masked_display_phone_number,
+    )
+
+
+@router.post(
+    "/whatsapp/onboarding/api-only/start",
+    response_model=MetaApiOnlyEmbeddedSignupStartResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def start_meta_api_only_signup(
+    payload: MetaApiOnlyEmbeddedSignupStartRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    _require_api_only_fallback(settings)
+    configuration = _embedded_signup_configuration(settings)
+    administration = WhatsAppConnectionAdministrationService(db)
+    current = await administration.get_connection(business.business_id)
+    if current is not None and current.status.value == "connected":
+        raise HTTPException(409, "WhatsApp account is already connected")
+    plan = WhatsAppOnboardingService(administration).plan(
+        payload.intent,
+        platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
+    )
+    if not plan.ready_to_continue or plan.requested_mode.value != "api_only":
+        raise HTTPException(
+            409,
+            "Explicit confirmation is required before exclusive connection",
+        )
+    return MetaApiOnlyEmbeddedSignupStartResponse(
+        app_id=configuration.app_id,
+        configuration_id=configuration.configuration_id,
+        graph_version=configuration.graph_version,
+        embedded_signup_version=configuration.embedded_signup_version,
+        intent=payload.intent,
+    )
+
+
+@router.post(
+    "/whatsapp/onboarding/api-only/complete",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def complete_meta_api_only_signup(
+    payload: MetaApiOnlyEmbeddedSignupCompleteRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    _require_api_only_fallback(settings)
+    configuration = _embedded_signup_configuration(settings)
+    administration = WhatsAppConnectionAdministrationService(db)
+    current = await administration.get_connection(
+        business.business_id, for_update=True
+    )
+    if current is not None and current.status.value == "connected":
+        raise HTTPException(409, "WhatsApp account is already connected")
+    plan = WhatsAppOnboardingService(administration).plan(
+        payload.intent,
+        platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
+    )
+    if not plan.ready_to_continue or plan.requested_mode.value != "api_only":
+        raise HTTPException(
+            409,
+            "Explicit confirmation is required before exclusive connection",
+        )
+
+    gateway: MetaEmbeddedSignupGateway | None = None
+    completed = False
+    logger.info(
+        "meta_api_only_signup_progress",
+        extra={
+            "stage": "complete_request_started",
+            "intent": payload.intent.value,
+            "waba_id_received": bool(payload.waba_id),
+            "phone_number_id_received": payload.phone_number_id is not None,
+        },
+    )
+    try:
+        service, gateway = _embedded_signup_service(db, configuration)
+        view = await service.complete_api_only(
+            business.business_id,
+            payload.authorization_code,
+            intent=payload.intent,
+            platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
+            registration_pin=payload.registration_pin,
+            waba_id_hint=payload.waba_id,
+            phone_number_id_hint=payload.phone_number_id,
+        )
+        await db.commit()
+        completed = True
+    except HTTPException:
+        await db.rollback()
+        raise
+    except MetaEmbeddedSignupRejected as exc:
+        await db.rollback()
+        _log_embedded_signup_rejection(exc)
+        raise HTTPException(
+            400, "Meta exclusive connection could not be validated"
+        ) from None
+    except (
+        MetaEmbeddedSignupUnavailable,
+        WhatsAppConfigurationError,
+    ) as exc:
+        await db.rollback()
+        _log_embedded_signup_rejection(exc)
+        raise HTTPException(
+            503, "Meta onboarding is temporarily unavailable"
+        ) from None
+    except (
+        MetaEmbeddedSignupError,
+        WhatsAppOnboardingError,
+        WhatsAppConnectionAdministrationError,
+    ) as exc:
+        await db.rollback()
+        _log_embedded_signup_rejection(exc)
+        raise HTTPException(
+            409, "WhatsApp exclusive connection could not be completed"
+        ) from None
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        if gateway is not None:
+            await gateway.aclose()
+        logger.info(
+            "meta_api_only_signup_progress",
+            extra={
+                "stage": (
+                    "complete_request_succeeded"
+                    if completed
+                    else "complete_request_failed"
+                )
+            },
         )
     return PublicConnectionResponse(
         status=view.status.value,
