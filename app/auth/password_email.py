@@ -13,7 +13,7 @@ class PasswordResetEmailError(RuntimeError):
     """Safe delivery error that never includes provider response bodies."""
 
 
-class ResendPasswordResetMailer:
+class BrevoPasswordResetMailer:
     def __init__(self, configuration: PasswordResetEmailConfiguration) -> None:
         self.configuration = configuration
 
@@ -26,6 +26,7 @@ class ResendPasswordResetMailer:
         text = (
             "Recebemos uma solicitação para redefinir sua senha da Alovia.\n\n"
             f"Use este link nos próximos 30 minutos: {reset_url}\n\n"
+            "O link pode ser usado uma única vez.\n\n"
             "Se você não solicitou a alteração, ignore esta mensagem."
         )
         html = (
@@ -35,37 +36,32 @@ class ResendPasswordResetMailer:
             "<p>Se você não solicitou a alteração, ignore esta mensagem.</p>"
         )
         headers = {
-            "Authorization": (
-                "Bearer " + self.configuration.api_key.get_secret_value()
-            ),
+            "Accept": "application/json",
+            "api-key": self.configuration.api_key.get_secret_value(),
             "Content-Type": "application/json",
-            "Idempotency-Key": f"password-reset/{reset_id}",
         }
         payload = {
-            "from": self.configuration.from_email,
-            "to": [email],
+            "sender": {
+                "name": self.configuration.from_name,
+                "email": self.configuration.from_email,
+            },
+            "to": [{"email": email}],
             "subject": subject,
-            "text": text,
-            "html": html,
+            "textContent": text,
+            "htmlContent": html,
+            "headers": {"idempotencyKey": str(reset_id)},
         }
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
-                try:
-                    response = await client.post(
-                        "https://api.resend.com/emails",
-                        headers=headers,
-                        json=payload,
-                    )
-                except httpx.TransportError:
-                    # Resend keeps idempotency keys for retries. If the first
-                    # response was lost after acceptance, this returns the same
-                    # result instead of delivering a duplicate email.
-                    response = await client.post(
-                        "https://api.resend.com/emails",
-                        headers=headers,
-                        json=payload,
-                    )
+                response = await client.post(
+                    "https://api.brevo.com/v3/smtp/email",
+                    headers=headers,
+                    json=payload,
+                )
         except httpx.HTTPError as exc:
+            # Do not retry an ambiguous transport failure automatically.
+            # A user can request a new reset link; the previous unused token
+            # will then be revoked by the issuance flow.
             raise PasswordResetEmailError(
                 "Password reset email delivery failed"
             ) from exc
