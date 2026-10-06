@@ -46,6 +46,30 @@ class WhatsAppConnectionRepository:
             statement = statement.with_for_update()
         return await self.session.scalar(statement)
 
+    async def get_active_connection_by_waba_id(
+        self,
+        meta_waba_id: str,
+        *,
+        for_update: bool = False,
+    ) -> BusinessWhatsAppConnection | None:
+        statement = (
+            select(BusinessWhatsAppConnection)
+            .where(
+                BusinessWhatsAppConnection.meta_waba_id == meta_waba_id,
+                BusinessWhatsAppConnection.status
+                != WhatsAppConnectionStatus.DISCONNECTED.value,
+            )
+            .order_by(
+                BusinessWhatsAppConnection.created_at.desc(),
+                BusinessWhatsAppConnection.id.desc(),
+            )
+            .limit(2)
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        rows = list((await self.session.scalars(statement)).all())
+        return rows[0] if len(rows) == 1 else None
+
     async def get_connection_record(
         self, business_id: uuid.UUID
     ) -> WhatsAppConnectionRecord | None:
