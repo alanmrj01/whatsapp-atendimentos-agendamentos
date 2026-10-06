@@ -457,6 +457,30 @@ async def begin_meta_embedded_signup_attempt(
 
 
 @router.post(
+    "/whatsapp/onboarding/embedded-signup/attempt/cancel",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def cancel_meta_embedded_signup_attempt(
+    payload: EmptyRequest,
+    principal: Identity,
+    db: Db,
+) -> Response:
+    business = _require_paid_whatsapp_administrator(principal)
+    administration = WhatsAppConnectionAdministrationService(db)
+    current = await administration.get_connection(
+        business.business_id,
+        for_update=True,
+    )
+    if current is not None and current.status.value == "pending":
+        await administration.mark_disconnected(business.business_id)
+        await db.commit()
+    else:
+        await db.rollback()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
     "/whatsapp/onboarding/embedded-signup/assets",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_origin)],
