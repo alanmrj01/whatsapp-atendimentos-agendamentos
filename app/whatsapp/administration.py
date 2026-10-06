@@ -40,8 +40,6 @@ class WhatsAppConnectionStatusView:
 
 
 META_ONBOARDING_PENDING = "META_ONBOARDING_PENDING"
-META_REVIEW_APPROVED = "META_REVIEW_APPROVED"
-META_REVIEW_REJECTED = "META_REVIEW_REJECTED"
 
 
 class WhatsAppConnectionAdministrationService:
@@ -122,19 +120,17 @@ class WhatsAppConnectionAdministrationService:
             normalized_waba_id,
             for_update=True,
         )
-        if connection is None or connection.status == WhatsAppConnectionStatus.CONNECTED.value:
+        if connection is None:
             return None
 
         normalized_decision = decision.strip().upper()
-        if normalized_decision == "APPROVED":
-            connection.status = WhatsAppConnectionStatus.PENDING.value
-            connection.last_error_code = META_REVIEW_APPROVED
-        elif normalized_decision in {"REJECTED", "DECLINED"}:
-            connection.status = WhatsAppConnectionStatus.ERROR.value
-            connection.last_error_code = META_REVIEW_REJECTED
-        else:
+        if normalized_decision not in {"APPROVED", "REJECTED", "DECLINED"}:
             return _status_view(connection)
-        await self._session.flush()
+
+        # Meta account review is independent from the Embedded Signup
+        # connection lifecycle. A review event is observable here, but it must
+        # never turn a technically connected number into pending/error or mark
+        # a pending connection as connected.
         return _status_view(connection)
 
     async def create_pending_connection(
