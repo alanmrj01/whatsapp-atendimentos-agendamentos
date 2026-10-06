@@ -24,7 +24,12 @@ from app.auth.schemas import (
 )
 from app.core.config import MetaEmbeddedSignupConfiguration, Settings
 from app.core.logging import JsonFormatter
-from app.whatsapp.administration import META_ONBOARDING_PENDING
+from app.whatsapp.administration import (
+    META_ONBOARDING_PENDING,
+    META_REVIEW_APPROVED,
+    META_REVIEW_REJECTED,
+    WhatsAppConnectionAdministrationService,
+)
 from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionStatus
 from app.whatsapp.onboarding import WhatsAppOnboardingIntent
 from app.whatsapp.credentials import (
@@ -298,6 +303,55 @@ def test_client_telemetry_contract_rejects_unknown_or_sensitive_fields() -> None
             MetaEmbeddedSignupTelemetryRequest.model_validate(
                 {"stage": "sdk_ready", sensitive: "private"}
             )
+
+
+class FlushOnlySession:
+    async def flush(self) -> None:
+        return None
+
+
+class ReviewRepository:
+    def __init__(self, connection) -> None:
+        self.connection = connection
+
+    async def get_active_connection_by_waba_id(
+        self,
+        meta_waba_id,
+        *,
+        for_update=False,
+    ):
+        assert meta_waba_id == WABA_ID
+        assert for_update is True
+        return self.connection
+
+
+@pytest.mark.asyncio
+async def test_review_decision_updates_only_pending_state() -> None:
+    connection = SimpleNamespace(
+        status=WhatsAppConnectionStatus.PENDING.value,
+        mode=WhatsAppConnectionMode.COEXISTENCE.value,
+        last_error_code=META_ONBOARDING_PENDING,
+    )
+    administration = WhatsAppConnectionAdministrationService(
+        FlushOnlySession()
+    )
+    administration._repository = ReviewRepository(connection)
+
+    approved = await administration.record_meta_review_decision(
+        WABA_ID,
+        "APPROVED",
+    )
+    assert approved is not None
+    assert connection.status == WhatsAppConnectionStatus.PENDING.value
+    assert connection.last_error_code == META_REVIEW_APPROVED
+
+    rejected = await administration.record_meta_review_decision(
+        WABA_ID,
+        "REJECTED",
+    )
+    assert rejected is not None
+    assert connection.status == WhatsAppConnectionStatus.ERROR.value
+    assert connection.last_error_code == META_REVIEW_REJECTED
 
 
 def graph_transport(*, waba_id: str = WABA_ID, phone_id: str = PHONE_ID):
