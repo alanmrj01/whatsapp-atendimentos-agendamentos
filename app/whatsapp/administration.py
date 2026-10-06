@@ -76,6 +76,12 @@ class WhatsAppConnectionAdministrationService:
                 "Pending WhatsApp connection uses a different mode"
             )
 
+        if current.status == WhatsAppConnectionStatus.ERROR.value:
+            current.meta_waba_id = None
+            current.meta_phone_number_id = None
+            current.display_phone_number = None
+            current.credential_secret_ref = None
+            current.graph_version = None
         current.status = WhatsAppConnectionStatus.PENDING.value
         current.disconnected_at = None
         current.last_error_code = META_ONBOARDING_PENDING
