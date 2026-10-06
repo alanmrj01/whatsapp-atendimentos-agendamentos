@@ -254,6 +254,13 @@ async def test_password_reset_email_keeps_token_in_fragment_and_is_idempotent(
     assert f"/redefinir-senha#token={token}" in payload["textContent"]
     assert "?token=" not in payload["textContent"]
     assert f"/redefinir-senha#token={token}" in payload["htmlContent"]
+    assert 'src="https://app.example.test/app-icon-192.png"' in payload["htmlContent"]
+    assert "Redefina sua senha" in payload["htmlContent"]
+    assert "Recuperação de acesso" in payload["htmlContent"]
+    assert "30 minutos" in payload["htmlContent"]
+    assert "uma única vez" in payload["htmlContent"]
+    assert "Sua senha atual continuará a mesma." in payload["htmlContent"]
+    assert "Equipe Alovia" in payload["htmlContent"]
 
 
 @pytest.mark.asyncio
