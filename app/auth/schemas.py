@@ -116,6 +116,11 @@ class PublicConnectionResponse(BaseModel):
     status: Literal["disconnected", "pending", "connected", "error"]
     mode: Literal["coexistence", "api_only"] | None = None
     display_phone_number: str | None = None
+    pending_state: Literal[
+        "authorization_pending",
+        "review_approved",
+        "review_rejected",
+    ] | None = None
 
 
 class MetaEmbeddedSignupStartResponse(BaseModel):
@@ -151,6 +156,11 @@ class MetaEmbeddedSignupTelemetryRequest(StrictRequest):
     waba_id_received: bool | None = Field(default=None, strict=True)
     phone_number_id_received: bool | None = Field(default=None, strict=True)
     intermediate_step_received: bool | None = Field(default=None, strict=True)
+
+
+class MetaEmbeddedSignupAssetsRequest(StrictRequest):
+    waba_id: str = Field(min_length=1, max_length=32)
+    phone_number_id: str | None = Field(default=None, min_length=1, max_length=32)
 
 
 class MetaEmbeddedSignupCompleteRequest(StrictRequest):
