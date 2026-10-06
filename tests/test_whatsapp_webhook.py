@@ -1575,3 +1575,30 @@ async def test_cloud_tasks_flow_applies_manual_echo_without_enqueuing() -> None:
     assert automation.manual_events == [
         (repository.business_id, repository.conversation_id, occurred_at)
     ]
+
+
+def test_waba_review_update_normalizes_without_phone_metadata() -> None:
+    from app.schemas.whatsapp_webhook import WhatsAppWebhookPayload
+    from app.whatsapp.webhook import (
+        normalize_waba_review_updates,
+        normalize_webhook_payload,
+    )
+
+    payload = WhatsAppWebhookPayload.model_validate({
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "111111111111111",
+            "time": 1604703141,
+            "changes": [{
+                "field": "account_review_update",
+                "value": {"decision": "APPROVED"},
+            }],
+        }],
+    })
+
+    updates = normalize_waba_review_updates(payload)
+
+    assert len(updates) == 1
+    assert updates[0].meta_waba_id == "111111111111111"
+    assert updates[0].decision == "APPROVED"
+    assert normalize_webhook_payload(payload) == []
