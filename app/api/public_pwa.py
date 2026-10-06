@@ -20,6 +20,7 @@ from app.auth.schemas import (
     MetaApiOnlyEmbeddedSignupCompleteRequest,
     MetaApiOnlyEmbeddedSignupStartRequest,
     MetaApiOnlyEmbeddedSignupStartResponse,
+    MetaEmbeddedSignupAssetsRequest,
     MetaEmbeddedSignupCompleteRequest,
     MetaEmbeddedSignupStartResponse,
     MetaEmbeddedSignupTelemetryRequest,
@@ -45,6 +46,9 @@ from app.core.database import get_db
 from app.models import AuthSession, Business, User
 from app.schemas.whatsapp_onboarding import WhatsAppOnboardingPlanResponse, onboarding_plan_response
 from app.whatsapp.administration import (
+    META_ONBOARDING_PENDING,
+    META_REVIEW_APPROVED,
+    META_REVIEW_REJECTED,
     WhatsAppConnectionAdministrationError,
     WhatsAppConnectionAdministrationService,
 )
@@ -68,6 +72,14 @@ logger = logging.getLogger(__name__)
 Db = Annotated[AsyncSession, Depends(get_db)]
 Config = Annotated[Settings, Depends(require_auth_config)]
 Identity = Annotated[Principal, Depends(require_principal)]
+
+
+def _public_pending_state(error_code: str | None) -> str | None:
+    return {
+        META_ONBOARDING_PENDING: "authorization_pending",
+        META_REVIEW_APPROVED: "review_approved",
+        META_REVIEW_REJECTED: "review_rejected",
+    }.get(error_code)
 
 
 def _require_password_recovery(settings: Settings) -> None:
@@ -259,6 +271,11 @@ async def whatsapp_connection(principal: Identity, db: Db):
         display_phone_number=(
             connection.masked_display_phone_number if connection else None
         ),
+        pending_state=(
+            _public_pending_state(connection.last_error_code)
+            if connection
+            else None
+        ),
     )
 
 
@@ -393,6 +410,80 @@ async def start_meta_embedded_signup(
         graph_version=configuration.graph_version,
         embedded_signup_version=configuration.embedded_signup_version,
     )
+
+
+@router.post(
+    "/whatsapp/onboarding/embedded-signup/attempt",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def begin_meta_embedded_signup_attempt(
+    payload: EmptyRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    _embedded_signup_configuration(settings)
+    administration = WhatsAppConnectionAdministrationService(db)
+    current = await administration.get_connection(
+        business.business_id,
+        for_update=True,
+    )
+    if current is not None and current.status.value == "connected":
+        raise HTTPException(409, "WhatsApp account is already connected")
+    plan = WhatsAppOnboardingService(administration).plan(
+        WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
+    )
+    if not plan.ready_to_continue or plan.requested_mode.value != "coexistence":
+        raise HTTPException(409, "WhatsApp onboarding path is unavailable")
+    try:
+        view = await administration.begin_pending_connection(
+            business.business_id,
+            plan.requested_mode,
+        )
+        await db.commit()
+    except WhatsAppConnectionAdministrationError:
+        await db.rollback()
+        raise HTTPException(
+            409, "WhatsApp onboarding could not be started"
+        ) from None
+    return PublicConnectionResponse(
+        status=view.status.value,
+        mode=view.mode.value,
+        pending_state=_public_pending_state(view.last_error_code),
+    )
+
+
+@router.post(
+    "/whatsapp/onboarding/embedded-signup/assets",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def record_meta_embedded_signup_assets(
+    payload: MetaEmbeddedSignupAssetsRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+) -> Response:
+    business = _require_paid_whatsapp_administrator(principal)
+    configuration = _embedded_signup_configuration(settings)
+    administration = WhatsAppConnectionAdministrationService(db)
+    try:
+        await administration.record_pending_meta_assets(
+            business.business_id,
+            meta_waba_id=payload.waba_id,
+            meta_phone_number_id=payload.phone_number_id,
+            graph_version=configuration.graph_version,
+        )
+        await db.commit()
+    except WhatsAppConnectionAdministrationError:
+        await db.rollback()
+        raise HTTPException(
+            409, "WhatsApp onboarding progress could not be saved"
+        ) from None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
