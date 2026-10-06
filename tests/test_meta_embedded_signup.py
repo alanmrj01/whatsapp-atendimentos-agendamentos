@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ from app.auth.schemas import (
     MetaEmbeddedSignupTelemetryRequest,
 )
 from app.core.config import MetaEmbeddedSignupConfiguration, Settings
+from app.core.logging import JsonFormatter
 from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionStatus
 from app.whatsapp.onboarding import WhatsAppOnboardingIntent
 from app.whatsapp.credentials import (
@@ -177,6 +179,37 @@ async def test_client_telemetry_is_sanitized_and_access_controlled(caplog) -> No
             payload, FakePrincipal(role=MembershipRole.VIEWER)
         )
     assert read_only.value.status_code == 403
+
+
+def test_json_formatter_preserves_only_safe_meta_onboarding_fields() -> None:
+    record = logging.LogRecord(
+        name="app.api.public_pwa",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="meta_embedded_signup_client_progress",
+        args=(),
+        exc_info=None,
+    )
+    record.stage = "login_callback_received"
+    record.authorization_code_received = True
+    record.waba_id_received = True
+    record.phone_number_id_received = False
+    record.intermediate_step_received = True
+    record.review_decision = "APPROVED"
+    record.authorization_code = RAW_CODE
+    record.access_token = RAW_TOKEN
+
+    payload = json.loads(JsonFormatter().format(record))
+
+    assert payload["stage"] == "login_callback_received"
+    assert payload["authorization_code_received"] is True
+    assert payload["waba_id_received"] is True
+    assert payload["phone_number_id_received"] is False
+    assert payload["intermediate_step_received"] is True
+    assert payload["review_decision"] == "APPROVED"
+    assert RAW_CODE not in json.dumps(payload)
+    assert RAW_TOKEN not in json.dumps(payload)
 
 
 def test_client_telemetry_contract_rejects_unknown_or_sensitive_fields() -> None:
