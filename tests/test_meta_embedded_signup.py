@@ -328,8 +328,16 @@ class ReviewRepository:
 @pytest.mark.asyncio
 async def test_review_decision_updates_only_pending_state() -> None:
     connection = SimpleNamespace(
+        id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        business_id=BUSINESS_ID,
+        provider="meta",
         status=WhatsAppConnectionStatus.PENDING.value,
         mode=WhatsAppConnectionMode.COEXISTENCE.value,
+        meta_phone_number_id=None,
+        credential_secret_ref=None,
+        connected_at=None,
+        disconnected_at=None,
+        display_phone_number=None,
         last_error_code=META_ONBOARDING_PENDING,
     )
     administration = WhatsAppConnectionAdministrationService(
