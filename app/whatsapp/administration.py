@@ -39,10 +39,97 @@ class WhatsAppConnectionStatusView:
     masked_display_phone_number: str | None = None
 
 
+META_ONBOARDING_PENDING = "META_ONBOARDING_PENDING"
+META_REVIEW_APPROVED = "META_REVIEW_APPROVED"
+META_REVIEW_REJECTED = "META_REVIEW_REJECTED"
+
+
 class WhatsAppConnectionAdministrationService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repository = WhatsAppConnectionRepository(session)
+
+    async def begin_pending_connection(
+        self,
+        business_id: uuid.UUID,
+        mode: WhatsAppConnectionMode,
+    ) -> WhatsAppConnectionStatusView:
+        normalized_mode = _validated_mode(mode)
+        current = await self._repository.get_connection(
+            business_id, for_update=True
+        )
+        if current is None or current.status == WhatsAppConnectionStatus.DISCONNECTED.value:
+            view = await self.create_pending_connection(
+                business_id, normalized_mode
+            )
+            connection = await self._require_connection(business_id)
+            connection.last_error_code = META_ONBOARDING_PENDING
+            await self._session.flush()
+            return _status_view(connection)
+
+        if current.status == WhatsAppConnectionStatus.CONNECTED.value:
+            raise WhatsAppConnectionAdministrationError(
+                "Business already has an active WhatsApp connection"
+            )
+        if current.mode != normalized_mode.value:
+            raise WhatsAppConnectionAdministrationError(
+                "Pending WhatsApp connection uses a different mode"
+            )
+
+        current.status = WhatsAppConnectionStatus.PENDING.value
+        current.disconnected_at = None
+        current.last_error_code = META_ONBOARDING_PENDING
+        await self._session.flush()
+        return _status_view(current)
+
+    async def record_pending_meta_assets(
+        self,
+        business_id: uuid.UUID,
+        *,
+        meta_waba_id: str,
+        meta_phone_number_id: str | None,
+        graph_version: str,
+    ) -> WhatsAppConnectionStatusView:
+        current = await self._repository.get_connection(
+            business_id, for_update=True
+        )
+        if current is None or current.status != WhatsAppConnectionStatus.PENDING.value:
+            raise WhatsAppConnectionAdministrationError(
+                "Pending WhatsApp connection is not available"
+            )
+        return await self.update_meta_identifiers(
+            business_id,
+            meta_waba_id=meta_waba_id,
+            meta_phone_number_id=meta_phone_number_id,
+            graph_version=graph_version,
+        )
+
+    async def record_meta_review_decision(
+        self,
+        meta_waba_id: str,
+        decision: str,
+    ) -> WhatsAppConnectionStatusView | None:
+        normalized_waba_id = validate_meta_identifier(meta_waba_id)
+        if normalized_waba_id is None:
+            return None
+        connection = await self._repository.get_active_connection_by_waba_id(
+            normalized_waba_id,
+            for_update=True,
+        )
+        if connection is None or connection.status == WhatsAppConnectionStatus.CONNECTED.value:
+            return None
+
+        normalized_decision = decision.strip().upper()
+        if normalized_decision == "APPROVED":
+            connection.status = WhatsAppConnectionStatus.PENDING.value
+            connection.last_error_code = META_REVIEW_APPROVED
+        elif normalized_decision in {"REJECTED", "DECLINED"}:
+            connection.status = WhatsAppConnectionStatus.ERROR.value
+            connection.last_error_code = META_REVIEW_REJECTED
+        else:
+            return _status_view(connection)
+        await self._session.flush()
+        return _status_view(connection)
 
     async def create_pending_connection(
         self,
