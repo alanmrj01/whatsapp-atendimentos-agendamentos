@@ -116,11 +116,7 @@ class PublicConnectionResponse(BaseModel):
     status: Literal["disconnected", "pending", "connected", "error"]
     mode: Literal["coexistence", "api_only"] | None = None
     display_phone_number: str | None = None
-    pending_state: Literal[
-        "authorization_pending",
-        "review_approved",
-        "review_rejected",
-    ] | None = None
+    pending_state: Literal["authorization_pending"] | None = None
 
 
 class MetaEmbeddedSignupStartResponse(BaseModel):
