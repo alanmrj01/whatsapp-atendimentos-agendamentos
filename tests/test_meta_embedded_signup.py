@@ -26,8 +26,6 @@ from app.core.config import MetaEmbeddedSignupConfiguration, Settings
 from app.core.logging import JsonFormatter
 from app.whatsapp.administration import (
     META_ONBOARDING_PENDING,
-    META_REVIEW_APPROVED,
-    META_REVIEW_REJECTED,
     WhatsAppConnectionAdministrationService,
 )
 from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionStatus
@@ -326,19 +324,19 @@ class ReviewRepository:
 
 
 @pytest.mark.asyncio
-async def test_review_decision_updates_only_pending_state() -> None:
+async def test_review_decision_never_changes_connection_lifecycle() -> None:
     connection = SimpleNamespace(
         id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
         business_id=BUSINESS_ID,
         provider="meta",
-        status=WhatsAppConnectionStatus.PENDING.value,
+        status=WhatsAppConnectionStatus.CONNECTED.value,
         mode=WhatsAppConnectionMode.COEXISTENCE.value,
-        meta_phone_number_id=None,
-        credential_secret_ref=None,
+        meta_phone_number_id=PHONE_ID,
+        credential_secret_ref="projects/test-project/secrets/token/versions/1",
         connected_at=None,
         disconnected_at=None,
-        display_phone_number=None,
-        last_error_code=META_ONBOARDING_PENDING,
+        display_phone_number="+55 12 99999-1234",
+        last_error_code=None,
     )
     administration = WhatsAppConnectionAdministrationService(
         FlushOnlySession()
@@ -350,16 +348,16 @@ async def test_review_decision_updates_only_pending_state() -> None:
         "APPROVED",
     )
     assert approved is not None
-    assert connection.status == WhatsAppConnectionStatus.PENDING.value
-    assert connection.last_error_code == META_REVIEW_APPROVED
+    assert connection.status == WhatsAppConnectionStatus.CONNECTED.value
+    assert connection.last_error_code is None
 
     rejected = await administration.record_meta_review_decision(
         WABA_ID,
         "REJECTED",
     )
     assert rejected is not None
-    assert connection.status == WhatsAppConnectionStatus.ERROR.value
-    assert connection.last_error_code == META_REVIEW_REJECTED
+    assert connection.status == WhatsAppConnectionStatus.CONNECTED.value
+    assert connection.last_error_code is None
 
 
 def graph_transport(*, waba_id: str = WABA_ID, phone_id: str = PHONE_ID):
