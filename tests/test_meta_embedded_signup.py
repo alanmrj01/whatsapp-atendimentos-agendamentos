@@ -18,11 +18,13 @@ from app.auth.schemas import (
     MembershipRole,
     MetaApiOnlyEmbeddedSignupCompleteRequest,
     MetaApiOnlyEmbeddedSignupStartRequest,
+    MetaEmbeddedSignupAssetsRequest,
     MetaEmbeddedSignupCompleteRequest,
     MetaEmbeddedSignupTelemetryRequest,
 )
 from app.core.config import MetaEmbeddedSignupConfiguration, Settings
 from app.core.logging import JsonFormatter
+from app.whatsapp.administration import META_ONBOARDING_PENDING
 from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionStatus
 from app.whatsapp.onboarding import WhatsAppOnboardingIntent
 from app.whatsapp.credentials import (
@@ -118,6 +120,80 @@ async def test_paid_business_can_start_and_free_is_blocked(
             EmptyRequest(), FakePrincipal("free"), settings(), object()
         )
     assert blocked.value.status_code == 402
+
+
+class FakeDb:
+    def __init__(self) -> None:
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class PendingAdministration(EmptyAdministration):
+    def __init__(self) -> None:
+        self.assets: tuple[str, str | None, str] | None = None
+
+    async def begin_pending_connection(self, business_id, mode):
+        assert business_id == BUSINESS_ID
+        assert mode is WhatsAppConnectionMode.COEXISTENCE
+        return SimpleNamespace(
+            status=WhatsAppConnectionStatus.PENDING,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code=META_ONBOARDING_PENDING,
+        )
+
+    async def record_pending_meta_assets(
+        self,
+        business_id,
+        *,
+        meta_waba_id,
+        meta_phone_number_id,
+        graph_version,
+    ):
+        assert business_id == BUSINESS_ID
+        self.assets = (meta_waba_id, meta_phone_number_id, graph_version)
+
+
+@pytest.mark.asyncio
+async def test_begin_attempt_and_assets_are_persisted_before_final_completion(
+    monkeypatch,
+) -> None:
+    administration = PendingAdministration()
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        lambda _: administration,
+    )
+    db = FakeDb()
+
+    pending = await public_pwa.begin_meta_embedded_signup_attempt(
+        EmptyRequest(),
+        FakePrincipal(),
+        settings(),
+        db,
+    )
+    assert pending.status == "pending"
+    assert pending.mode == "coexistence"
+    assert pending.pending_state == "authorization_pending"
+    assert db.commits == 1
+
+    response = await public_pwa.record_meta_embedded_signup_assets(
+        MetaEmbeddedSignupAssetsRequest(
+            waba_id=WABA_ID,
+            phone_number_id=PHONE_ID,
+        ),
+        FakePrincipal(),
+        settings(),
+        db,
+    )
+    assert response.status_code == 204
+    assert administration.assets == (WABA_ID, PHONE_ID, "v25.0")
+    assert db.commits == 2
 
 
 @pytest.mark.asyncio
