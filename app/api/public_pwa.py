@@ -47,8 +47,6 @@ from app.models import AuthSession, Business, User
 from app.schemas.whatsapp_onboarding import WhatsAppOnboardingPlanResponse, onboarding_plan_response
 from app.whatsapp.administration import (
     META_ONBOARDING_PENDING,
-    META_REVIEW_APPROVED,
-    META_REVIEW_REJECTED,
     WhatsAppConnectionAdministrationError,
     WhatsAppConnectionAdministrationService,
 )
@@ -75,11 +73,11 @@ Identity = Annotated[Principal, Depends(require_principal)]
 
 
 def _public_pending_state(error_code: str | None) -> str | None:
-    return {
-        META_ONBOARDING_PENDING: "authorization_pending",
-        META_REVIEW_APPROVED: "review_approved",
-        META_REVIEW_REJECTED: "review_rejected",
-    }.get(error_code)
+    return (
+        "authorization_pending"
+        if error_code == META_ONBOARDING_PENDING
+        else None
+    )
 
 
 def _require_password_recovery(settings: Settings) -> None:
