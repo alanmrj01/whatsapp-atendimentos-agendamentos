@@ -18,7 +18,7 @@ from app.billing.schemas import CheckoutCreateRequest, CreditCardCheckoutRequest
 from app.billing.service import BillingService, _cycle_end, _payment_value_cents
 from app.billing.webhooks import BillingWebhookService, SUPPORTED_EVENTS
 from app.core.config import AsaasConfigurationError, Environment, Settings
-from app.models import BillingCheckout, BillingWebhookEvent, BusinessAccess, CommercialSubscription
+from app.models import BillingCheckout, BillingWebhookEvent, BusinessAccess, CommercialSubscription, WebPushEvent
 
 
 def settings(**values):
@@ -342,6 +342,7 @@ class _BillingStateDb:
     def __init__(self, checkout):
         self.checkout = checkout
         self.subscription = None
+        self.push_events = []
         self.commits = 0
 
     async def scalar(self, statement):
@@ -370,6 +371,8 @@ class _BillingStateDb:
     def add(self, obj):
         if isinstance(obj, CommercialSubscription):
             self.subscription = obj
+        elif isinstance(obj, WebPushEvent):
+            self.push_events.append(obj)
 
     async def commit(self):
         self.commits += 1
@@ -480,6 +483,58 @@ async def test_card_payment_amount_mismatch_never_links_subscription(monkeypatch
     assert checkout.provider_subscription_id is None
     assert db.subscription is None
 
+
+
+@pytest.mark.asyncio
+async def test_overdue_payment_creates_one_action_alert(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    checkout = _card_checkout()
+    checkout.provider_subscription_id = "sub_overdue"
+    db = _BillingStateDb(checkout)
+    db.subscription = SimpleNamespace(
+        id=uuid4(),
+        checkout_id=checkout.id,
+        business_id=checkout.business_id,
+        provider_subscription_id="sub_overdue",
+        provider_authorization_id=None,
+        provider_customer_id="cus_overdue",
+        provider_environment="sandbox",
+        payment_method="credit_card",
+        plan_code="basic",
+        billing_cycle="monthly",
+        status="active",
+        access_until=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    service = BillingService(db, _GatewayMustNotBeCalled())
+
+    event_key = await service.apply_payment_event(
+        "PAYMENT_OVERDUE",
+        {
+            "id": "pay_overdue_123",
+            "subscription": "sub_overdue",
+            "customer": "cus_overdue",
+            "value": 197.0,
+        },
+    )
+
+    assert event_key == "billing-overdue:sandbox:pay_overdue_123"
+    assert db.subscription.status == "past_due"
+    assert len(db.push_events) == 1
+    assert db.push_events[0].event_type == "billing_action"
+    assert db.push_events[0].target_path == "/app/mais/plano"
+
+    second = await service.apply_payment_event(
+        "PAYMENT_OVERDUE",
+        {
+            "id": "pay_overdue_123",
+            "subscription": "sub_overdue",
+            "customer": "cus_overdue",
+            "value": 197.0,
+        },
+    )
+    assert second is None
+    assert len(db.push_events) == 1
 
 
 @pytest.mark.asyncio
