@@ -5,6 +5,8 @@ on:
     paths:
       - 'app/api/public_pwa.py'
       - 'app/api/internal_tasks.py'
+      - 'app/api/asaas_webhook.py'
+      - 'app/billing/**'
       - 'app/auth/schemas.py'
       - 'app/diagnostics/**'
       - 'app/models/**'
@@ -16,6 +18,7 @@ on:
       - 'tests/test_meta_embedded_signup.py'
       - 'tests/test_whatsapp_onboarding.py'
       - 'tests/test_web_push.py'
+      - 'tests/test_billing_foundation.py'
       - 'tests/test_migration.py'
       - 'tests/test_schema_rollout_compat.py'
       - '.github/workflows/whatsapp-connection-validation.yml'
@@ -63,6 +66,7 @@ jobs:
           tests/test_meta_embedded_signup.py
           tests/test_whatsapp_onboarding.py
           tests/test_web_push.py
+          tests/test_billing_foundation.py
           tests/test_migration.py
           tests/test_schema_rollout_compat.py
           tests/test_whatsapp_webhook.py
