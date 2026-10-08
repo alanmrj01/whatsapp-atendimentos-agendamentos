@@ -238,11 +238,12 @@ async def test_administration_service_controls_transitions_and_safe_status(
 
             connected = await service.mark_connected(business_id)
             assert connected.status is WhatsAppConnectionStatus.CONNECTED
-            with pytest.raises(WhatsAppConnectionAdministrationError):
-                await service.change_mode(
-                    business_id,
-                    WhatsAppConnectionMode.API_ONLY,
-                )
+            changed = await service.change_mode(
+                business_id,
+                WhatsAppConnectionMode.API_ONLY,
+            )
+            assert changed.status is WhatsAppConnectionStatus.CONNECTED
+            assert changed.mode is WhatsAppConnectionMode.API_ONLY
 
             disconnected = await service.mark_disconnected(business_id)
             assert disconnected.status is WhatsAppConnectionStatus.DISCONNECTED
