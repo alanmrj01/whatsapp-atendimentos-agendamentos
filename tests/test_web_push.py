@@ -74,6 +74,9 @@ class FakeRepository:
     async def pending_events(self, business_id):
         return [] if self.event.id in self.completed else [self.event]
 
+    async def should_deliver(self, event):
+        return event.event_type == "inbound_message"
+
     async def active_subscriptions(self, business_id):
         return [item for item in self.subscriptions if item.business_id == business_id]
 
@@ -126,7 +129,8 @@ async def test_dispatch_is_tenant_scoped_deduplicated_and_payload_is_safe():
     assert len(sender.calls) == 1
     payload = sender.calls[0][1]
     assert payload["target_path"] == event.target_path
-    assert payload["body"] == "Você recebeu uma nova mensagem."
+    assert payload["title"] == "Atendimento precisa de você"
+    assert payload["body"] == "A Alovia precisa da sua intervenção em uma conversa."
     assert "phone" not in json.dumps(payload).casefold()
     assert "message_body" not in payload
     assert repository.completed == [event.id]
@@ -148,20 +152,17 @@ async def test_invalid_subscription_is_removed_without_retrying_delivery():
 
 
 @pytest.mark.asyncio
-async def test_transient_push_failure_stays_retryable():
+async def test_routine_automatic_booking_does_not_emit_system_push():
     event = push_event("automatic_booking")
     target = subscription()
     repository = FakeRepository(event, [target])
-    sender = RecordingSender(WebPushDeliveryError())
+    sender = RecordingSender()
 
-    with pytest.raises(WebPushDispatchError):
-        await WebPushDispatcher(repository, sender).dispatch_pending_from(
-            event.event_key
-        )
-
-    assert repository.failed == [(target.id, event.id)]
-    assert repository.completed == []
-    assert repository.commits == 1
+    assert await WebPushDispatcher(repository, sender).dispatch_pending_from(
+        event.event_key
+    ) == 0
+    assert sender.calls == []
+    assert repository.completed == [event.id]
 
 
 def principal(*, business_id=BUSINESS_A, access_mode="paid") -> Principal:
