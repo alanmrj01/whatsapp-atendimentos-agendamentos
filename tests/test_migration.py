@@ -93,7 +93,13 @@ PASSWORD_RESET_MIGRATION_PATH = (
     PROJECT_ROOT
     / "alembic"
     / "versions"
-    / "20261008_0030_password_reset_tokens.py"
+    / "20261004_0029_password_reset_tokens.py"
+)
+ACTION_PUSH_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261008_0030_action_push_events.py"
 )
 
 
@@ -128,6 +134,25 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     script = ScriptDirectory.from_config(config)
 
     assert script.get_heads() == ["20261008_0030"]
+
+
+def test_action_push_migration_only_expands_allowed_event_types() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", ACTION_PUSH_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", ACTION_PUSH_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    assert "billing_attention" in upgrade
+    assert "whatsapp_connection_attention" in upgrade
+    assert "drop table" not in upgrade
+    assert "drop column" not in upgrade
+    assert "billing_attention" not in downgrade
+    assert "whatsapp_connection_attention" not in downgrade
 
 
 def test_password_reset_migration_is_additive_and_reversible() -> None:
