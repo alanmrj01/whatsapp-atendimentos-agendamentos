@@ -15,12 +15,12 @@ depends_on = None
 
 def upgrade() -> None:
     op.drop_constraint(
-        "ck_web_push_events_event_type_allowed",
+        op.f("ck_web_push_events_event_type_allowed"),
         "web_push_events",
         type_="check",
     )
     op.create_check_constraint(
-        "ck_web_push_events_event_type_allowed",
+        op.f("ck_web_push_events_event_type_allowed"),
         "web_push_events",
         "event_type IN ('inbound_message', 'automatic_booking', "
         "'billing_attention', 'whatsapp_connection_attention')",
@@ -30,12 +30,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     # The downgrade is intentionally fail-closed if newer event types remain.
     op.drop_constraint(
-        "ck_web_push_events_event_type_allowed",
+        op.f("ck_web_push_events_event_type_allowed"),
         "web_push_events",
         type_="check",
     )
     op.create_check_constraint(
-        "ck_web_push_events_event_type_allowed",
+        op.f("ck_web_push_events_event_type_allowed"),
         "web_push_events",
         "event_type IN ('inbound_message', 'automatic_booking')",
     )
