@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
@@ -117,6 +118,15 @@ class PublicConnectionResponse(BaseModel):
     mode: Literal["coexistence", "api_only"] | None = None
     display_phone_number: str | None = None
     pending_state: Literal["authorization_pending"] | None = None
+    review_status: Literal["approved", "rejected"] | None = None
+    preferred_mode: Literal["coexistence", "api_only"] | None = None
+    mode_switch_requested_at: datetime | None = None
+    mode_switch_last_checked_at: datetime | None = None
+    mode_switch_next_check_at: datetime | None = None
+
+
+class WhatsAppModePreferenceRequest(StrictRequest):
+    preferred_mode: Literal["coexistence", "api_only"] | None = None
 
 
 class MetaEmbeddedSignupStartResponse(BaseModel):
