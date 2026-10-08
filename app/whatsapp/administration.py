@@ -283,10 +283,9 @@ class WhatsAppConnectionAdministrationService:
         mode: WhatsAppConnectionMode,
     ) -> WhatsAppConnectionStatusView:
         connection = await self._require_connection(business_id)
-        if connection.status == WhatsAppConnectionStatus.CONNECTED.value:
-            raise WhatsAppConnectionAdministrationError(
-                "Connected WhatsApp mode cannot be changed"
-            )
+        # Mode changes are committed only after the provider completion succeeds.
+        # Keeping the same row avoids a second active connection and lets the
+        # surrounding transaction roll back to the previous working mode.
         connection.mode = _validated_mode(mode).value
         await self._session.flush()
         return _status_view(connection)
