@@ -32,6 +32,7 @@ from app.auth.schemas import (
     PublicConnectionResponse,
     PublicPlanRequest,
     WhatsAppModePreferenceRequest,
+    WhatsAppPrepareCoexistenceRequest,
     SignupRequest,
 )
 from app.auth.security import COOKIE_NAME, COOKIE_PATH, access_token
@@ -53,13 +54,20 @@ from app.whatsapp.administration import (
 )
 from app.whatsapp.client import WhatsAppConfigurationError
 from app.whatsapp.connections import WhatsAppConnectionMode
-from app.whatsapp.credentials import GoogleSecretManagerCredentialStore
+from app.whatsapp.credentials import (
+    BusinessWhatsAppCredentialProvider,
+    GoogleSecretManagerCredentialStore,
+)
 from app.whatsapp.embedded_signup import (
     MetaEmbeddedSignupError,
     MetaEmbeddedSignupGateway,
     MetaEmbeddedSignupRejected,
     MetaEmbeddedSignupService,
     MetaEmbeddedSignupUnavailable,
+)
+from app.repositories.whatsapp_connections import (
+    WhatsAppConnectionRepository,
+    connection_record,
 )
 from app.whatsapp.onboarding import (
     WhatsAppOnboardingError,
@@ -297,6 +305,81 @@ async def whatsapp_connection(principal: Identity, db: Db):
     if connection is None:
         return PublicConnectionResponse(status="disconnected")
     return _public_connection(connection)
+
+
+@router.post(
+    "/whatsapp/mode-switch/prepare-coexistence",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def prepare_whatsapp_coexistence_switch(
+    payload: WhatsAppPrepareCoexistenceRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    membership = _require_paid_whatsapp_administrator(principal)
+    if not (
+        payload.confirm_temporary_interruption
+        and payload.confirm_phone_available
+    ):
+        raise HTTPException(
+            422,
+            "Explicit migration confirmations are required",
+        )
+
+    repository = WhatsAppConnectionRepository(db)
+    current = await repository.get_connection(
+        membership.business_id,
+        for_update=True,
+    )
+    if (
+        current is None
+        or current.status != "connected"
+        or current.mode != "api_only"
+        or current.meta_phone_number_id is None
+    ):
+        raise HTTPException(
+            409,
+            "Exclusive WhatsApp connection is not available for migration",
+        )
+
+    administration = WhatsAppConnectionAdministrationService(db)
+    await administration.request_mode_switch(
+        membership.business_id,
+        WhatsAppConnectionMode.COEXISTENCE,
+    )
+
+    try:
+        access_token = await BusinessWhatsAppCredentialProvider(
+            settings
+        ).resolve(connection_record(current))
+        configuration = _embedded_signup_configuration(settings)
+        gateway = MetaEmbeddedSignupGateway(configuration)
+        try:
+            await gateway.deregister_phone(
+                current.meta_phone_number_id,
+                access_token,
+            )
+        finally:
+            await gateway.aclose()
+    except (WhatsAppConfigurationError, MetaEmbeddedSignupError):
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Meta could not prepare the WhatsApp mode change",
+        ) from None
+
+    view = await administration.mark_disconnected(
+        membership.business_id
+    )
+    business = await db.get(Business, membership.business_id)
+    if business is not None:
+        business.meta_phone_number_id = None
+        business.meta_waba_id = None
+    await db.commit()
+    return _public_connection(view)
 
 
 @router.post(
