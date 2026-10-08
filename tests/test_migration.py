@@ -95,6 +95,12 @@ PASSWORD_RESET_MIGRATION_PATH = (
     / "versions"
     / "20261004_0029_password_reset_tokens.py"
 )
+WHATSAPP_MODE_PREFERENCES_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261008_0030_whatsapp_mode_preferences.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -127,7 +133,36 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261004_0029"]
+    assert script.get_heads() == ["20261008_0030"]
+
+
+def test_whatsapp_mode_preferences_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql(
+            "upgrade", WHATSAPP_MODE_PREFERENCES_MIGRATION_PATH
+        ).lower().split()
+    )
+    downgrade = " ".join(
+        render_migration_sql(
+            "downgrade", WHATSAPP_MODE_PREFERENCES_MIGRATION_PATH
+        ).lower().split()
+    )
+
+    for column_name in (
+        "meta_review_status",
+        "preferred_mode",
+        "mode_switch_requested_at",
+        "mode_switch_last_checked_at",
+        "mode_switch_next_check_at",
+    ):
+        assert f"add column {column_name}" in upgrade
+        assert f"drop column {column_name}" in downgrade
+    assert "ix_business_whatsapp_connections_mode_switch_due" in upgrade
+    assert "human_intervention" in upgrade
+    assert "connection_action" in upgrade
+    assert "billing_action" in upgrade
+    assert "inbound_message" in downgrade
+    assert "automatic_booking" in downgrade
 
 
 def test_password_reset_migration_is_additive_and_reversible() -> None:
