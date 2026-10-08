@@ -113,7 +113,34 @@ class WebPushRepository:
             select(WebPushEvent).where(WebPushEvent.event_key == event_key)
         )
 
+    async def enqueue_action_event(
+        self,
+        *,
+        business_id: uuid.UUID,
+        event_key: str,
+        event_type: str,
+        target_path: str,
+    ) -> None:
+        await self.session.execute(
+            postgresql_insert(WebPushEvent)
+            .values(
+                id=uuid.uuid4(),
+                business_id=business_id,
+                event_key=event_key,
+                event_type=event_type,
+                target_path=target_path,
+            )
+            .on_conflict_do_nothing(
+                constraint="uq_web_push_events_event_key"
+            )
+        )
+
     async def should_deliver(self, event: WebPushEvent) -> bool:
+        if event.event_type in {
+            "billing_attention",
+            "whatsapp_connection_attention",
+        }:
+            return True
         if event.event_type != "inbound_message":
             return False
         prefix = "/app/conversas/"
