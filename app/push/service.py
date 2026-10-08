@@ -130,9 +130,15 @@ def _payload(event: WebPushEvent) -> str:
     if event.event_type == "inbound_message":
         title = "Atendimento precisa de você"
         body = "A Alovia precisa da sua intervenção em uma conversa."
+    elif event.event_type == "billing_attention":
+        title = "Pagamento precisa de atenção"
+        body = "Há uma pendência na sua assinatura. Abra a Alovia para revisar."
+    elif event.event_type == "whatsapp_connection_attention":
+        title = "Conexão do WhatsApp precisa de você"
+        body = "Há uma nova etapa disponível para revisar sua conexão."
     else:
-        title = "Novo agendamento automático"
-        body = "Um novo agendamento foi confirmado."
+        title = "Atualização na Alovia"
+        body = "Abra a Alovia para revisar uma atualização."
     return json.dumps(
         {
             "type": event.event_type,
