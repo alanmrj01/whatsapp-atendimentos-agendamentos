@@ -129,6 +129,11 @@ class WhatsAppModePreferenceRequest(StrictRequest):
     preferred_mode: Literal["coexistence", "api_only"] | None = None
 
 
+class WhatsAppPrepareCoexistenceRequest(StrictRequest):
+    confirm_temporary_interruption: bool = Field(strict=True)
+    confirm_phone_available: bool = Field(strict=True)
+
+
 class MetaEmbeddedSignupStartResponse(BaseModel):
     app_id: str
     configuration_id: str
