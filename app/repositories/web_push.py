@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import (
     AuthSession,
     BusinessUserMembership,
+    Conversation,
     User,
     WebPushDelivery,
     WebPushEvent,
@@ -164,6 +165,26 @@ class WebPushRepository:
                 )
             ).all()
         )
+
+    async def should_deliver(self, event: WebPushEvent) -> bool:
+        # System push is reserved for something the operator must act on.
+        if event.event_type == "automatic_booking":
+            return False
+        if event.event_type != "inbound_message":
+            return True
+        raw_id = event.target_path.rsplit("/", 1)[-1].split("?", 1)[0]
+        try:
+            conversation_id = uuid.UUID(raw_id)
+        except ValueError:
+            return False
+        handoff_status = await self.session.scalar(
+            select(Conversation.handoff_status).where(
+                Conversation.business_id == event.business_id,
+                Conversation.id == conversation_id,
+                Conversation.deleted_at.is_(None),
+            )
+        )
+        return handoff_status == "waiting"
 
     async def claim_delivery(
         self,
