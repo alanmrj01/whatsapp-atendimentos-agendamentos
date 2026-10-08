@@ -93,7 +93,7 @@ PASSWORD_RESET_MIGRATION_PATH = (
     PROJECT_ROOT
     / "alembic"
     / "versions"
-    / "20261004_0029_password_reset_tokens.py"
+    / "20261008_0030_password_reset_tokens.py"
 )
 
 
@@ -127,7 +127,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261004_0029"]
+    assert script.get_heads() == ["20261008_0030"]
 
 
 def test_password_reset_migration_is_additive_and_reversible() -> None:
