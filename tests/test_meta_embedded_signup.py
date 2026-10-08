@@ -337,6 +337,11 @@ async def test_review_decision_never_changes_connection_lifecycle() -> None:
         disconnected_at=None,
         display_phone_number="+55 12 99999-1234",
         last_error_code=None,
+        meta_review_status=None,
+        preferred_mode=None,
+        mode_switch_requested_at=None,
+        mode_switch_last_checked_at=None,
+        mode_switch_next_check_at=None,
     )
     administration = WhatsAppConnectionAdministrationService(
         FlushOnlySession()
@@ -350,6 +355,7 @@ async def test_review_decision_never_changes_connection_lifecycle() -> None:
     assert approved is not None
     assert connection.status == WhatsAppConnectionStatus.CONNECTED.value
     assert connection.last_error_code is None
+    assert connection.meta_review_status == "approved"
 
     rejected = await administration.record_meta_review_decision(
         WABA_ID,
@@ -358,6 +364,7 @@ async def test_review_decision_never_changes_connection_lifecycle() -> None:
     assert rejected is not None
     assert connection.status == WhatsAppConnectionStatus.CONNECTED.value
     assert connection.last_error_code is None
+    assert connection.meta_review_status == "rejected"
 
 
 def graph_transport(*, waba_id: str = WABA_ID, phone_id: str = PHONE_ID):
@@ -386,6 +393,33 @@ def graph_transport(*, waba_id: str = WABA_ID, phone_id: str = PHONE_ID):
         return httpx.Response(404, json={"error": {"message": "not found"}})
 
     return httpx.MockTransport(handler), calls
+
+
+@pytest.mark.asyncio
+async def test_graph_reads_account_review_status_without_changing_connection() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(f"/{WABA_ID}"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": WABA_ID,
+                    "account_review_status": "APPROVED",
+                },
+            )
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://graph.facebook.com/v25.0/",
+    ) as client:
+        status_value = await MetaEmbeddedSignupGateway(
+            configuration(), client=client
+        ).fetch_account_review_status(
+            WABA_ID,
+            SecretStr(RAW_TOKEN),
+        )
+
+    assert status_value == "approved"
 
 
 @pytest.mark.asyncio
