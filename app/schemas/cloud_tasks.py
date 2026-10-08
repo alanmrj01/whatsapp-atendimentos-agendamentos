@@ -28,3 +28,9 @@ class LifecycleOutreachSweepPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+
+
+class ActionAlertSweepPayload(BaseModel):
+    limit: int = Field(default=100, ge=1, le=500)
+
+    model_config = ConfigDict(extra="forbid")

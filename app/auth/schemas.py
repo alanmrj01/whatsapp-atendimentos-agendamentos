@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
@@ -112,11 +113,20 @@ class AccessResponse(BaseModel):
     session: MeResponse
 
 
+class WhatsAppPreferencesRequest(StrictRequest):
+    desired_mode: Literal["coexistence", "api_only"]
+    setup_source: Literal["business_app", "migrated_to_business", "exclusive"] | None = None
+
+
 class PublicConnectionResponse(BaseModel):
     status: Literal["disconnected", "pending", "connected", "error"]
     mode: Literal["coexistence", "api_only"] | None = None
     display_phone_number: str | None = None
     pending_state: Literal["authorization_pending"] | None = None
+    desired_mode: Literal["coexistence", "api_only"] | None = None
+    setup_source: Literal["business_app", "migrated_to_business", "exclusive"] | None = None
+    review_status: Literal["unknown", "pending", "approved", "rejected"] | None = None
+    review_checked_at: datetime | None = None
 
 
 class MetaEmbeddedSignupStartResponse(BaseModel):

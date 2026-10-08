@@ -141,6 +141,22 @@ async def receive_whatsapp_webhook(
                 },
             )
         await session.commit()
+        for review in review_updates:
+            if review.decision.strip().upper() != "APPROVED":
+                continue
+            view = await WhatsAppConnectionAdministrationService(
+                session
+            ).connection_by_waba(review.meta_waba_id)
+            if view is None:
+                continue
+            try:
+                await dispatch_pending_web_push(
+                    session,
+                    f"whatsapp-review-approved:{view.business_id}:{review.meta_waba_id}",
+                    settings,
+                )
+            except WebPushDispatchError:
+                pass
 
     events = normalize_webhook_payload(payload)
     if not settings.cloud_tasks_enabled:

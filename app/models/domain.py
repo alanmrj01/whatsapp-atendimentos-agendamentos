@@ -105,6 +105,18 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "AND weekend_holiday_end_time > weekend_holiday_start_time)",
             name="weekend_holiday_hours_valid",
         ),
+        CheckConstraint(
+            "whatsapp_desired_mode IS NULL OR whatsapp_desired_mode IN ('coexistence', 'api_only')",
+            name="whatsapp_desired_mode_allowed",
+        ),
+        CheckConstraint(
+            "whatsapp_setup_source IS NULL OR whatsapp_setup_source IN ('business_app', 'migrated_to_business', 'exclusive')",
+            name="whatsapp_setup_source_allowed",
+        ),
+        CheckConstraint(
+            "whatsapp_review_status IS NULL OR whatsapp_review_status IN ('unknown', 'pending', 'approved', 'rejected')",
+            name="whatsapp_review_status_allowed",
+        ),
         Index("ix_businesses_active", "active"),
     )
 
@@ -120,6 +132,15 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(255), unique=True, nullable=True
     )
     meta_waba_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    whatsapp_desired_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    whatsapp_setup_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    whatsapp_review_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    whatsapp_review_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    whatsapp_review_notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     slot_interval_minutes: Mapped[int] = mapped_column(
         Integer, default=30, server_default="30", nullable=False
     )

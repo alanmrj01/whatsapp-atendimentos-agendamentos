@@ -34,6 +34,8 @@ class PushRepository(Protocol):
         self, business_id: UUID
     ) -> list[WebPushSubscription]: ...
 
+    async def should_deliver(self, event: WebPushEvent) -> bool: ...
+
     async def claim_delivery(
         self, subscription: WebPushSubscription, event: WebPushEvent
     ) -> bool: ...
@@ -67,6 +69,9 @@ class WebPushDispatcher:
             trigger.business_id
         )
         for event in events:
+            if not await self.repository.should_deliver(event):
+                await self.repository.complete_event(event.id)
+                continue
             payload = _payload(event)
             for subscription in subscriptions:
                 if subscription.id in invalid_subscriptions:
@@ -122,12 +127,31 @@ async def dispatch_pending_web_push(
 
 
 def _payload(event: WebPushEvent) -> str:
-    if event.event_type == "inbound_message":
-        title = "Nova mensagem no Alovia"
-        body = "Você recebeu uma nova mensagem."
-    else:
-        title = "Novo agendamento automático"
-        body = "Um novo agendamento foi confirmado."
+    content = {
+        "inbound_message": (
+            "Atendimento precisa de você",
+            "Uma conversa precisa de intervenção da sua equipe.",
+        ),
+        "billing_due": (
+            "Mensalidade próxima do vencimento",
+            "Confira sua assinatura para manter a operação sem interrupções.",
+        ),
+        "billing_past_due": (
+            "Pagamento precisa de atenção",
+            "Há uma pendência de pagamento na sua assinatura Alovia.",
+        ),
+        "whatsapp_coexistence_ready": (
+            "Novidade na sua conexão do WhatsApp",
+            "A Meta concluiu a análise desta conta. Você já pode tentar usar Alovia e WhatsApp Business juntos.",
+        ),
+        "whatsapp_connection_attention": (
+            "Conexão do WhatsApp precisa de atenção",
+            "Abra a Alovia para concluir a próxima etapa da conexão.",
+        ),
+    }.get(event.event_type)
+    if content is None:
+        content = ("Alovia", "Existe uma ação que precisa da sua atenção.")
+    title, body = content
     return json.dumps(
         {
             "type": event.event_type,
