@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +37,11 @@ class WhatsAppConnectionStatusView:
     disconnected_at: datetime | None
     last_error_code: str | None
     masked_display_phone_number: str | None = None
+    meta_review_status: str | None = None
+    preferred_mode: WhatsAppConnectionMode | None = None
+    mode_switch_requested_at: datetime | None = None
+    mode_switch_last_checked_at: datetime | None = None
+    mode_switch_next_check_at: datetime | None = None
 
 
 META_ONBOARDING_PENDING = "META_ONBOARDING_PENDING"
@@ -127,10 +132,65 @@ class WhatsAppConnectionAdministrationService:
         if normalized_decision not in {"APPROVED", "REJECTED", "DECLINED"}:
             return _status_view(connection)
 
-        # Meta account review is independent from the Embedded Signup
-        # connection lifecycle. A review event is observable here, but it must
-        # never turn a technically connected number into pending/error or mark
-        # a pending connection as connected.
+        now = datetime.now(timezone.utc)
+        connection.meta_review_status = (
+            "approved" if normalized_decision == "APPROVED" else "rejected"
+        )
+        connection.mode_switch_last_checked_at = now
+        if (
+            connection.preferred_mode == WhatsAppConnectionMode.COEXISTENCE.value
+            and connection.mode != WhatsAppConnectionMode.COEXISTENCE.value
+        ):
+            connection.mode_switch_next_check_at = (
+                now
+                if normalized_decision == "APPROVED"
+                else now + timedelta(days=3)
+            )
+        await self._session.flush()
+
+        # Meta account review remains independent from the technical connection.
+        # The decision only informs the assisted mode-switch journey.
+        return _status_view(connection)
+
+    async def request_mode_switch(
+        self,
+        business_id: uuid.UUID,
+        mode: WhatsAppConnectionMode,
+    ) -> WhatsAppConnectionStatusView:
+        connection = await self._require_connection(business_id)
+        requested_mode = _validated_mode(mode)
+        if connection.status != WhatsAppConnectionStatus.CONNECTED.value:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp mode switch requires an active connection"
+            )
+        if connection.mode == requested_mode.value:
+            connection.preferred_mode = None
+            connection.mode_switch_requested_at = None
+            connection.mode_switch_last_checked_at = None
+            connection.mode_switch_next_check_at = None
+        else:
+            now = datetime.now(timezone.utc)
+            connection.preferred_mode = requested_mode.value
+            connection.mode_switch_requested_at = now
+            connection.mode_switch_last_checked_at = None
+            connection.mode_switch_next_check_at = (
+                now + timedelta(days=3)
+                if requested_mode is WhatsAppConnectionMode.COEXISTENCE
+                else None
+            )
+        await self._session.flush()
+        return _status_view(connection)
+
+    async def clear_mode_switch_request(
+        self,
+        business_id: uuid.UUID,
+    ) -> WhatsAppConnectionStatusView:
+        connection = await self._require_connection(business_id)
+        connection.preferred_mode = None
+        connection.mode_switch_requested_at = None
+        connection.mode_switch_last_checked_at = None
+        connection.mode_switch_next_check_at = None
+        await self._session.flush()
         return _status_view(connection)
 
     async def create_pending_connection(
@@ -241,6 +301,11 @@ class WhatsAppConnectionAdministrationService:
         connection.connected_at = datetime.now(timezone.utc)
         connection.disconnected_at = None
         connection.last_error_code = None
+        if connection.preferred_mode == connection.mode:
+            connection.preferred_mode = None
+            connection.mode_switch_requested_at = None
+            connection.mode_switch_last_checked_at = None
+            connection.mode_switch_next_check_at = None
         await self._session.flush()
         return _status_view(connection)
 
@@ -320,6 +385,15 @@ def _status_view(
         masked_display_phone_number=_mask_display_phone_number(
             connection.display_phone_number
         ),
+        meta_review_status=connection.meta_review_status,
+        preferred_mode=(
+            WhatsAppConnectionMode(connection.preferred_mode)
+            if connection.preferred_mode is not None
+            else None
+        ),
+        mode_switch_requested_at=connection.mode_switch_requested_at,
+        mode_switch_last_checked_at=connection.mode_switch_last_checked_at,
+        mode_switch_next_check_at=connection.mode_switch_next_check_at,
     )
 
 
