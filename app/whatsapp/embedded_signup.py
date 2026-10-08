@@ -172,6 +172,36 @@ class MetaEmbeddedSignupGateway:
             display_phone_number=display_phone_number,
         )
 
+    async def fetch_account_review_status(
+        self,
+        waba_id: str,
+        access_token: SecretStr,
+    ) -> str | None:
+        normalized_waba_id = _numeric_meta_id(waba_id)
+        payload = await self._request_json(
+            "GET",
+            normalized_waba_id,
+            headers={
+                "Authorization": f"Bearer {access_token.get_secret_value()}"
+            },
+            params={"fields": "id,account_review_status"},
+        )
+        if str(payload.get("id", "")) != normalized_waba_id:
+            raise MetaEmbeddedSignupRejected(
+                "Meta business account is invalid"
+            )
+        raw_status = payload.get("account_review_status")
+        normalized = (
+            raw_status.strip().upper()
+            if isinstance(raw_status, str)
+            else ""
+        )
+        if normalized == "APPROVED":
+            return "approved"
+        if normalized in {"REJECTED", "DECLINED"}:
+            return "rejected"
+        return None
+
     async def subscribe_app(self, assets: MetaAuthorizedAssets) -> None:
         payload = await self._request_json(
             "POST",
