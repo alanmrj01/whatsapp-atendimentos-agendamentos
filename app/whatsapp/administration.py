@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Business, BusinessWhatsAppConnection
+from app.models import Business, BusinessWhatsAppConnection, WebPushEvent
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.connections import (
     WhatsAppConnectionMode,
@@ -127,11 +128,54 @@ class WhatsAppConnectionAdministrationService:
         if normalized_decision not in {"APPROVED", "REJECTED", "DECLINED"}:
             return _status_view(connection)
 
-        # Meta account review is independent from the Embedded Signup
-        # connection lifecycle. A review event is observable here, but it must
-        # never turn a technically connected number into pending/error or mark
-        # a pending connection as connected.
+        # Meta review is stored independently from the technical connection.
+        # It must never flip connected/pending/error on its own.
+        if isinstance(self._session, AsyncSession):
+            business = await self._session.get(Business, connection.business_id)
+            if business is not None:
+                business.whatsapp_review_status = (
+                    "approved" if normalized_decision == "APPROVED" else "rejected"
+                )
+                business.whatsapp_review_checked_at = datetime.now(timezone.utc)
+                if (
+                    normalized_decision == "APPROVED"
+                    and business.whatsapp_desired_mode == WhatsAppConnectionMode.COEXISTENCE.value
+                    and connection.mode == WhatsAppConnectionMode.API_ONLY.value
+                ):
+                    await self._session.execute(
+                        postgresql_insert(WebPushEvent)
+                        .values(
+                            id=uuid.uuid4(),
+                            business_id=business.id,
+                            event_key=f"whatsapp-review-approved:{business.id}:{normalized_waba_id}",
+                            event_type="whatsapp_coexistence_ready",
+                            target_path="/app/whatsapp?alterar=coexistence",
+                        )
+                        .on_conflict_do_nothing(
+                            constraint="uq_web_push_events_event_key"
+                        )
+                    )
         return _status_view(connection)
+
+    async def update_business_preferences(
+        self,
+        business_id: uuid.UUID,
+        *,
+        desired_mode: WhatsAppConnectionMode,
+        setup_source: str | None,
+    ) -> None:
+        business = await self._session.get(Business, business_id)
+        if business is None:
+            raise WhatsAppConnectionAdministrationError("Business is not available")
+        if setup_source not in {None, "business_app", "migrated_to_business", "exclusive"}:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp setup source is invalid"
+            )
+        business.whatsapp_desired_mode = _validated_mode(desired_mode).value
+        business.whatsapp_setup_source = setup_source
+        if desired_mode is WhatsAppConnectionMode.COEXISTENCE:
+            business.whatsapp_review_status = business.whatsapp_review_status or "unknown"
+        await self._session.flush()
 
     async def create_pending_connection(
         self,
@@ -276,6 +320,72 @@ class WhatsAppConnectionAdministrationService:
             ) from None
         await self._session.flush()
         return _status_view(connection)
+
+    async def transition_connected_connection(
+        self,
+        business_id: uuid.UUID,
+        *,
+        mode: WhatsAppConnectionMode,
+        meta_waba_id: str,
+        meta_phone_number_id: str,
+        display_phone_number: str | None,
+        graph_version: str,
+        credential_secret_ref: str,
+    ) -> WhatsAppConnectionStatusView:
+        connection = await self._require_connection(business_id)
+        if connection.status != WhatsAppConnectionStatus.CONNECTED.value:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp connection is not active"
+            )
+        if connection.mode == mode.value:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp connection already uses this mode"
+            )
+        try:
+            next_waba = validate_meta_identifier(meta_waba_id)
+            next_phone = validate_meta_identifier(meta_phone_number_id)
+            next_graph = validate_graph_version(graph_version)
+            next_secret = validate_credential_secret_ref(credential_secret_ref)
+        except ValueError:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp transition configuration is invalid"
+            ) from None
+        if (
+            next_waba is None
+            or next_phone is None
+            or next_graph is None
+            or next_secret is None
+            or connection.meta_phone_number_id != next_phone
+        ):
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp transition must keep the same phone number"
+            )
+        connection.mode = _validated_mode(mode).value
+        connection.meta_waba_id = next_waba
+        connection.meta_phone_number_id = next_phone
+        connection.display_phone_number = display_phone_number
+        connection.graph_version = next_graph
+        connection.credential_secret_ref = next_secret
+        connection.connected_at = datetime.now(timezone.utc)
+        connection.disconnected_at = None
+        connection.last_error_code = None
+        await self._session.flush()
+        return _status_view(connection)
+
+    async def connection_by_waba(
+        self,
+        meta_waba_id: str,
+    ) -> WhatsAppConnectionStatusView | None:
+        try:
+            normalized = validate_meta_identifier(meta_waba_id)
+        except ValueError:
+            return None
+        if normalized is None:
+            return None
+        connection = await self._repository.get_active_connection_by_waba_id(
+            normalized
+        )
+        return _status_view(connection) if connection is not None else None
 
     async def change_mode(
         self,
