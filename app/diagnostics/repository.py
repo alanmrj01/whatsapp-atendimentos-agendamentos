@@ -32,7 +32,7 @@ class DiagnosticsRepository:
         await self._read("SELECT 1")
 
     async def revisions(self) -> list[str]:
-        rows = await self._read("SELECT version_num FROM public.alembic_version LIMIT 2")
+        rows = await self._read("SELECT version_num FROM alembic_version LIMIT 2")
         return [row["version_num"] for row in rows]
 
     async def whatsapp_summary(self, phone_id: str | None) -> dict[str, Any]:
