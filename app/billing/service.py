@@ -652,7 +652,7 @@ class BillingService:
                 subscription.status = "active"
         await self.db.commit()
 
-    async def apply_payment_event(self, event_type: str, payload: dict) -> None:
+    async def apply_payment_event(self, event_type: str, payload: dict) -> UUID | None:
         checkout = await self._capture_credit_card_checkout_refs(payload)
         if checkout is not None:
             if (
@@ -669,7 +669,7 @@ class BillingService:
             # Persist any provider references captured above and wait for the
             # complementary webhook instead of polling Asaas.
             await self.db.commit()
-            return
+            return checkout.business_id if checkout is not None else None
 
         if event_type in {"PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"}:
             expected = get_offer(subscription.plan_code, subscription.billing_cycle).amount_cents
@@ -698,6 +698,7 @@ class BillingService:
             subscription.status = "suspended"
             subscription.access_until = min(subscription.access_until, datetime.now(UTC))
         await self.db.commit()
+        return subscription.business_id
 
     async def _capture_credit_card_checkout_refs(
         self, payload: dict
