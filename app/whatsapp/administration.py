@@ -66,9 +66,14 @@ class WhatsAppConnectionAdministrationService:
             return _status_view(connection)
 
         if current.status == WhatsAppConnectionStatus.CONNECTED.value:
-            raise WhatsAppConnectionAdministrationError(
-                "Business already has an active WhatsApp connection"
-            )
+            if current.mode == normalized_mode.value:
+                raise WhatsAppConnectionAdministrationError(
+                    "Business already uses this WhatsApp connection mode"
+                )
+            # Keep the current production connection untouched while Meta
+            # authorizes the replacement mode. The mode is swapped only after
+            # the provider confirms the new setup.
+            return _status_view(current)
         if current.mode != normalized_mode.value:
             raise WhatsAppConnectionAdministrationError(
                 "Pending WhatsApp connection uses a different mode"
@@ -274,6 +279,25 @@ class WhatsAppConnectionAdministrationService:
             raise WhatsAppConnectionAdministrationError(
                 "Credential secret reference is invalid"
             ) from None
+        await self._session.flush()
+        return _status_view(connection)
+
+    async def replace_connected_mode(
+        self,
+        business_id: uuid.UUID,
+        mode: WhatsAppConnectionMode,
+    ) -> WhatsAppConnectionStatusView:
+        connection = await self._require_connection(business_id)
+        if connection.status != WhatsAppConnectionStatus.CONNECTED.value:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp connection is not active"
+            )
+        normalized_mode = _validated_mode(mode)
+        if connection.mode == normalized_mode.value:
+            raise WhatsAppConnectionAdministrationError(
+                "Business already uses this WhatsApp connection mode"
+            )
+        connection.mode = normalized_mode.value
         await self._session.flush()
         return _status_view(connection)
 

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.billing.asaas import AsaasGateway
 from app.billing.service import BillingService
 from app.models import BillingWebhookEvent
+from app.repositories.web_push import WebPushRepository
 
 CHECKOUT_EVENTS = {
     "CHECKOUT_CREATED",
@@ -20,6 +21,13 @@ SUBSCRIPTION_EVENTS = {
     "SUBSCRIPTION_INACTIVATED",
     "SUBSCRIPTION_DELETED",
 }
+BILLING_ATTENTION_EVENTS = {
+    "PAYMENT_OVERDUE",
+    "PAYMENT_REFUNDED",
+    "PAYMENT_CHARGEBACK_REQUESTED",
+    "PAYMENT_AWAITING_CHARGEBACK_REVERSAL",
+}
+
 PAYMENT_EVENTS = {
     "PAYMENT_CREATED",
     "PAYMENT_UPDATED",
@@ -58,7 +66,7 @@ class BillingWebhookService:
         self.billing = BillingService(db, gateway)
         self.provider_environment = self.billing.provider_environment
 
-    async def process(self, payload: dict) -> None:
+    async def process(self, payload: dict) -> str | None:
         event_id = payload.get("id")
         event_type = payload.get("event")
         if (
@@ -107,12 +115,25 @@ class BillingWebhookService:
             existing.provider_payment_id = provider_payment_id
             existing.provider_authorization_id = provider_authorization_id
 
+        action_event_key: str | None = None
         if event_type in CHECKOUT_EVENTS:
             await self._checkout(event_type, resource)
         elif event_type in SUBSCRIPTION_EVENTS:
             await self.billing.apply_subscription_event(event_type, resource)
         elif event_type in PAYMENT_EVENTS:
-            await self.billing.apply_payment_event(event_type, resource)
+            business_id = await self.billing.apply_payment_event(
+                event_type, resource
+            )
+            if event_type in BILLING_ATTENTION_EVENTS and business_id is not None:
+                action_event_key = f"billing:{storage_event_id}"
+                await WebPushRepository(self.db).enqueue_action_event(
+                    business_id=business_id,
+                    event_key=action_event_key,
+                    event_type="billing_attention",
+                    target_path="/app/mais/plano",
+                )
+            else:
+                action_event_key = None
         elif event_type in PIX_AUTHORIZATION_EVENTS:
             await self.billing.apply_pix_authorization_event(event_type, resource)
         # Instruction events correlate authorization -> payment. Access changes only
@@ -120,6 +141,7 @@ class BillingWebhookService:
 
         existing.processed_at = datetime.now(UTC)
         await self.db.commit()
+        return action_event_key
 
     async def _checkout(self, event_type: str, checkout: dict) -> None:
         provider_id = checkout.get("id")

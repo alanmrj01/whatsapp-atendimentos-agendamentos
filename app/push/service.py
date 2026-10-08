@@ -30,6 +30,8 @@ class PushRepository(Protocol):
 
     async def pending_events(self, business_id: UUID) -> list[WebPushEvent]: ...
 
+    async def should_deliver(self, event: WebPushEvent) -> bool: ...
+
     async def active_subscriptions(
         self, business_id: UUID
     ) -> list[WebPushSubscription]: ...
@@ -67,6 +69,9 @@ class WebPushDispatcher:
             trigger.business_id
         )
         for event in events:
+            if not await self.repository.should_deliver(event):
+                await self.repository.complete_event(event.id)
+                continue
             payload = _payload(event)
             for subscription in subscriptions:
                 if subscription.id in invalid_subscriptions:
@@ -123,11 +128,17 @@ async def dispatch_pending_web_push(
 
 def _payload(event: WebPushEvent) -> str:
     if event.event_type == "inbound_message":
-        title = "Nova mensagem no Alovia"
-        body = "Você recebeu uma nova mensagem."
+        title = "Atendimento precisa de você"
+        body = "A Alovia precisa da sua intervenção em uma conversa."
+    elif event.event_type == "billing_attention":
+        title = "Pagamento precisa de atenção"
+        body = "Há uma pendência na sua assinatura. Abra a Alovia para revisar."
+    elif event.event_type == "whatsapp_connection_attention":
+        title = "Conexão do WhatsApp precisa de você"
+        body = "Há uma nova etapa disponível para revisar sua conexão."
     else:
-        title = "Novo agendamento automático"
-        body = "Um novo agendamento foi confirmado."
+        title = "Atualização na Alovia"
+        body = "Abra a Alovia para revisar uma atualização."
     return json.dumps(
         {
             "type": event.event_type,

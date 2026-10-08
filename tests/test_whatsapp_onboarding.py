@@ -100,6 +100,17 @@ class FakeAdministration:
         assert self.current is not None
         return self.current
 
+    async def replace_connected_mode(
+        self,
+        business_id: uuid.UUID,
+        mode: WhatsAppConnectionMode,
+    ) -> WhatsAppConnectionStatusView:
+        self.calls.append(("replace_connected_mode", mode))
+        assert self.current is not None
+        assert self.current.status is WhatsAppConnectionStatus.CONNECTED
+        self.current = view(mode=mode, status=WhatsAppConnectionStatus.CONNECTED)
+        return self.current
+
     async def change_mode(
         self,
         business_id: uuid.UUID,
@@ -248,6 +259,33 @@ async def test_existing_number_api_only_requires_impact_confirmation() -> None:
                 impact_confirmed=False,
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_connected_account_can_switch_only_after_provider_confirms_new_mode() -> None:
+    administration = FakeAdministration(
+        view(
+            mode=WhatsAppConnectionMode.API_ONLY,
+            status=WhatsAppConnectionStatus.CONNECTED,
+        )
+    )
+    service = WhatsAppOnboardingService(administration)
+
+    result = await service.complete_provider_onboarding(
+        BUSINESS_ID,
+        completion(
+            intent=WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+        ),
+    )
+
+    assert result.status is WhatsAppConnectionStatus.CONNECTED
+    assert result.mode is WhatsAppConnectionMode.COEXISTENCE
+    assert (
+        "replace_connected_mode",
+        WhatsAppConnectionMode.COEXISTENCE,
+    ) in administration.calls
+    assert not any(name == "create_pending_connection" for name, _ in administration.calls)
 
 
 @pytest.mark.asyncio

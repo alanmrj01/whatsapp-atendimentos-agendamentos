@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -11,8 +12,10 @@ from app.billing.asaas import AsaasGateway
 from app.billing.webhooks import BillingWebhookService
 from app.core.config import AsaasConfigurationError, Settings, get_settings
 from app.core.database import get_db
+from app.push.service import WebPushDispatchError, dispatch_pending_web_push
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
+logger = logging.getLogger(__name__)
 Db = Annotated[AsyncSession, Depends(get_db)]
 Config = Annotated[Settings, Depends(get_settings)]
 
@@ -45,5 +48,18 @@ async def asaas_webhook(
     # Keep the webhook path deterministic and local: provider webhooks are the
     # source of truth for checkout/payment state, so no secondary Asaas polling
     # is performed before acknowledging the delivery.
-    await BillingWebhookService(db, AsaasGateway(configuration)).process(payload)
+    action_event_key = await BillingWebhookService(
+        db, AsaasGateway(configuration)
+    ).process(payload)
+    if action_event_key is not None:
+        try:
+            await dispatch_pending_web_push(
+                db,
+                action_event_key,
+                settings,
+            )
+        except WebPushDispatchError:
+            # Billing state is authoritative. A transient notification failure
+            # must not make Asaas retry an already-applied financial event.
+            logger.warning("billing_action_push_delivery_failed")
     return Response(status_code=200)
