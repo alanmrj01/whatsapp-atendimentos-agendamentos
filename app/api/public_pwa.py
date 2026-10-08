@@ -526,22 +526,13 @@ async def start_meta_embedded_signup(
     configuration = _embedded_signup_configuration(settings)
     administration = WhatsAppConnectionAdministrationService(db)
     current = await administration.get_connection(business.business_id)
-    if (
-        current is not None
-        and current.status.value == "connected"
-        and current.mode.value == "coexistence"
-    ):
-        raise HTTPException(409, "WhatsApp account is already connected in this mode")
-    if (
-        current is not None
-        and current.status.value == "connected"
-        and current.mode.value == "api_only"
-    ):
-        await administration.request_mode_switch(
-            business.business_id,
-            WhatsAppConnectionMode.COEXISTENCE,
+    if current is not None and current.status.value == "connected":
+        detail = (
+            "WhatsApp account is already connected in this mode"
+            if current.mode.value == "coexistence"
+            else "Use the assisted mode-switch flow before coexistence onboarding"
         )
-        await db.commit()
+        raise HTTPException(409, detail)
     plan = WhatsAppOnboardingService(administration).plan(
         WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
     )
@@ -574,28 +565,24 @@ async def begin_meta_embedded_signup_attempt(
         business.business_id,
         for_update=True,
     )
-    if (
-        current is not None
-        and current.status.value == "connected"
-        and current.mode.value == "coexistence"
-    ):
-        raise HTTPException(409, "WhatsApp account is already connected in this mode")
+    if current is not None and current.status.value == "connected":
+        detail = (
+            "WhatsApp account is already connected in this mode"
+            if current.mode.value == "coexistence"
+            else "Use the assisted mode-switch flow before coexistence onboarding"
+        )
+        raise HTTPException(409, detail)
     plan = WhatsAppOnboardingService(administration).plan(
         WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
     )
     if not plan.ready_to_continue or plan.requested_mode.value != "coexistence":
         raise HTTPException(409, "WhatsApp onboarding path is unavailable")
     try:
-        if current is not None and current.status.value == "connected":
-            # During a mode switch the existing connection remains operational
-            # until Meta confirms the replacement. No pending row is created.
-            view = current
-        else:
-            view = await administration.begin_pending_connection(
-                business.business_id,
-                plan.requested_mode,
-            )
-            await db.commit()
+        view = await administration.begin_pending_connection(
+            business.business_id,
+            plan.requested_mode,
+        )
+        await db.commit()
     except WhatsAppConnectionAdministrationError:
         await db.rollback()
         raise HTTPException(
@@ -684,14 +671,13 @@ async def complete_meta_embedded_signup(
         current = await WhatsAppConnectionAdministrationService(
             db
         ).get_connection(business.business_id, for_update=True)
-        if (
-            current is not None
-            and current.status.value == "connected"
-            and current.mode.value == "coexistence"
-        ):
-            raise HTTPException(
-                409, "WhatsApp account is already connected in this mode"
+        if current is not None and current.status.value == "connected":
+            detail = (
+                "WhatsApp account is already connected in this mode"
+                if current.mode.value == "coexistence"
+                else "Use the assisted mode-switch flow before coexistence onboarding"
             )
+            raise HTTPException(409, detail)
         service, gateway = _embedded_signup_service(db, configuration)
         view = await service.complete_coexistence(
             business.business_id,
