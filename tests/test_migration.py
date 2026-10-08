@@ -95,6 +95,12 @@ PASSWORD_RESET_MIGRATION_PATH = (
     / "versions"
     / "20261004_0029_password_reset_tokens.py"
 )
+WHATSAPP_ONBOARDING_PREFERENCES_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261007_0030_whatsapp_onboarding_preferences.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -127,7 +133,33 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261004_0029"]
+    assert script.get_heads() == ["20261007_0030"]
+
+
+def test_whatsapp_onboarding_preferences_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", WHATSAPP_ONBOARDING_PREFERENCES_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", WHATSAPP_ONBOARDING_PREFERENCES_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    for column_name in (
+        "whatsapp_desired_mode",
+        "whatsapp_setup_source",
+        "whatsapp_review_status",
+        "whatsapp_review_checked_at",
+        "whatsapp_review_notified_at",
+    ):
+        assert f"add column {column_name}" in upgrade
+        assert f"drop column {column_name}" in downgrade
+    assert "whatsapp_coexistence_ready" in upgrade
+    assert "billing_past_due" in upgrade
+    assert "event_type_allowed" in upgrade
+    assert "drop table" not in upgrade
 
 
 def test_password_reset_migration_is_additive_and_reversible() -> None:
