@@ -16,6 +16,17 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.drop_constraint(
+        op.f("ck_web_push_events_event_type_allowed"),
+        "web_push_events",
+        type_="check",
+    )
+    op.create_check_constraint(
+        op.f("ck_web_push_events_event_type_allowed"),
+        "web_push_events",
+        "event_type IN ('inbound_message', 'automatic_booking', "
+        "'human_intervention', 'connection_action', 'billing_action')",
+    )
     op.add_column(
         "business_whatsapp_connections",
         sa.Column("meta_review_status", sa.String(length=16), nullable=True),
@@ -57,6 +68,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_constraint(
+        op.f("ck_web_push_events_event_type_allowed"),
+        "web_push_events",
+        type_="check",
+    )
+    op.create_check_constraint(
+        op.f("ck_web_push_events_event_type_allowed"),
+        "web_push_events",
+        "event_type IN ('inbound_message', 'automatic_booking')",
+    )
     op.drop_index(
         "ix_business_whatsapp_connections_mode_switch_due",
         table_name="business_whatsapp_connections",
