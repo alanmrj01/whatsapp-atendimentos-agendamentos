@@ -172,6 +172,25 @@ class MetaEmbeddedSignupGateway:
             display_phone_number=display_phone_number,
         )
 
+    async def deregister_phone(
+        self,
+        phone_number_id: str,
+        access_token: SecretStr,
+    ) -> None:
+        normalized_phone_number_id = _numeric_meta_id(phone_number_id)
+        payload = await self._request_json(
+            "POST",
+            f"{normalized_phone_number_id}/deregister",
+            headers={
+                "Authorization": f"Bearer {access_token.get_secret_value()}"
+            },
+        )
+        if payload.get("success") not in {True, "true"}:
+            raise MetaEmbeddedSignupRejected(
+                "Meta phone deregistration was not confirmed"
+            )
+        _log_stage("phone_deregistration_ok")
+
     async def fetch_account_review_status(
         self,
         waba_id: str,
