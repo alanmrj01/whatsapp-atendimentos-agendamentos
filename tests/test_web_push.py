@@ -43,17 +43,22 @@ def subscription(business_id=BUSINESS_A) -> WebPushSubscription:
     )
 
 
-def push_event(event_type="inbound_message") -> WebPushEvent:
+def push_event(event_type="human_intervention") -> WebPushEvent:
+    target_path = (
+        f"/app/conversas/{uuid4()}"
+        if event_type in {"inbound_message", "human_intervention"}
+        else "/app/whatsapp"
+        if event_type == "connection_action"
+        else "/app/mais/plano"
+        if event_type == "billing_action"
+        else "/app/agenda"
+    )
     return WebPushEvent(
         id=uuid4(),
         business_id=BUSINESS_A,
         event_key="inbound:provider-id",
         event_type=event_type,
-        target_path=(
-            f"/app/conversas/{uuid4()}"
-            if event_type == "inbound_message"
-            else "/app/agenda"
-        ),
+        target_path=target_path,
     )
 
 
@@ -126,9 +131,24 @@ async def test_dispatch_is_tenant_scoped_deduplicated_and_payload_is_safe():
     assert len(sender.calls) == 1
     payload = sender.calls[0][1]
     assert payload["target_path"] == event.target_path
-    assert payload["body"] == "Você recebeu uma nova mensagem."
+    assert payload["body"] == "Abra a conversa para continuar o atendimento."
     assert "phone" not in json.dumps(payload).casefold()
     assert "message_body" not in payload
+    assert repository.completed == [event.id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["inbound_message", "automatic_booking"])
+async def test_non_action_events_do_not_interrupt_the_device(event_type):
+    event = push_event(event_type)
+    target = subscription()
+    repository = FakeRepository(event, [target])
+    sender = RecordingSender()
+
+    assert await WebPushDispatcher(repository, sender).dispatch_pending_from(
+        event.event_key
+    ) == 0
+    assert sender.calls == []
     assert repository.completed == [event.id]
 
 
@@ -149,7 +169,7 @@ async def test_invalid_subscription_is_removed_without_retrying_delivery():
 
 @pytest.mark.asyncio
 async def test_transient_push_failure_stays_retryable():
-    event = push_event("automatic_booking")
+    event = push_event("connection_action")
     target = subscription()
     repository = FakeRepository(event, [target])
     sender = RecordingSender(WebPushDeliveryError())
