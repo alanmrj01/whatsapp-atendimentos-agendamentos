@@ -84,6 +84,12 @@ class WhatsAppOnboardingAdministrationPort(Protocol):
         credential_secret_ref: str,
     ) -> WhatsAppConnectionStatusView: ...
 
+    async def replace_connected_mode(
+        self,
+        business_id: uuid.UUID,
+        mode: WhatsAppConnectionMode,
+    ) -> WhatsAppConnectionStatusView: ...
+
     async def change_mode(
         self,
         business_id: uuid.UUID,
@@ -232,8 +238,13 @@ class WhatsAppOnboardingService:
                 completion.confirmed_mode,
             )
         elif current.status is WhatsAppConnectionStatus.CONNECTED:
-            raise WhatsAppOnboardingError(
-                "Business already has a connected WhatsApp account"
+            if current.mode is completion.confirmed_mode:
+                raise WhatsAppOnboardingError(
+                    "Business already uses this WhatsApp connection mode"
+                )
+            await self._administration.replace_connected_mode(
+                business_id,
+                completion.confirmed_mode,
             )
         elif current.mode is not completion.confirmed_mode:
             await self._administration.change_mode(
