@@ -285,8 +285,774 @@ class BusinessWhatsAppConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         CheckConstraint(
             "last_error_code IS NULL OR "
-            "last_error_code ~ '^[A-Za-z0-9._-]{1,64}$'",
+            "last_error_code ~ '^[A-Za-z0-9._-]{1,64}            "business_id",
+            unique=True,
+            postgresql_where=text("status <> 'disconnected'"),
+        ),
+        Index(
+            "uq_business_whatsapp_connections_meta_phone_present",
+            "meta_phone_number_id",
+            unique=True,
+            postgresql_where=text("meta_phone_number_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_business_whatsapp_connections_business_status",
+            "business_id",
+            "status",
+        ),
+        Index(
+            "ix_business_whatsapp_connections_mode_switch_due",
+            "preferred_mode",
+            "mode_switch_next_check_at",
+            postgresql_where=text(
+                "preferred_mode IS NOT NULL AND status = 'connected'"
+            ),
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(
+        String(16), default="meta", server_default="meta", nullable=False
+    )
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending", nullable=False
+    )
+    meta_waba_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    meta_phone_number_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    display_phone_number: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    credential_secret_ref: Mapped[str | None] = mapped_column(
+        String(512), nullable=True
+    )
+    graph_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    connected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    disconnected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    meta_review_status: Mapped[str | None] = mapped_column(
+        String(16), nullable=True
+    )
+    preferred_mode: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    mode_switch_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    mode_switch_last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    mode_switch_next_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class BusinessAutomationExclusion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "business_automation_exclusions"
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('ignore', 'human_only')",
+            name="mode_allowed",
+        ),
+        CheckConstraint(
+            "whatsapp_id ~ '^[1-9][0-9]{6,14}$'",
+            name="whatsapp_id_normalized",
+        ),
+        UniqueConstraint(
+            "business_id",
+            "whatsapp_id",
+            name="uq_business_automation_exclusions_business_whatsapp",
+        ),
+        Index(
+            "ix_business_automation_exclusions_lookup",
+            "business_id",
+            "whatsapp_id",
+            "active",
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    whatsapp_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+
+
+class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "customers"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id", "whatsapp_id", name="uq_customers_business_whatsapp"
+        ),
+        UniqueConstraint(
+            "business_id", "id", name="uq_customers_business_id_id"
+        ),
+        Index("ix_customers_business_id", "business_id"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    whatsapp_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone_e164: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    name_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    whatsapp_profile_name: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+
+
+class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "conversations"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id", "customer_id", name="uq_conversations_business_customer"
+        ),
+        UniqueConstraint(
+            "business_id", "id", name="uq_conversations_business_id_id"
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            name="fk_conversations_business_customer_customers",
+        ),
+        CheckConstraint(
+            "suppression_reason IS NULL OR "
+            "suppression_reason = 'manual_business_message'",
+            name="suppression_reason_allowed",
+        ),
+        CheckConstraint(
+            "conversation_initiated_by IS NULL OR "
+            "conversation_initiated_by IN ('customer', 'business')",
+            name="initiated_by_allowed",
+        ),
+        Index("ix_conversations_business_id", "business_id"),
+        Index("ix_conversations_customer_id", "customer_id"),
+        Index("ix_conversations_state", "state"),
+        Index("ix_conversations_handoff_status", "handoff_status"),
+        Index("ix_conversations_last_interaction_at", "last_interaction_at"),
+        Index(
+            "ix_conversations_automation_suppressed_until",
+            "automation_suppressed_until",
+        ),
+        Index("ix_conversations_pinned_at", "pinned_at"),
+        Index("ix_conversations_deleted_at", "deleted_at"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    state: Mapped[str] = mapped_column(String(64), nullable=False)
+    context: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        nullable=False,
+    )
+    automation_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    handoff_status: Mapped[str] = mapped_column(
+        String(32), default="none", server_default="none", nullable=False
+    )
+    last_interaction_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    automation_suppressed_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    suppression_reason: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    human_control_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_human_message_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    conversation_initiated_by: Mapped[str | None] = mapped_column(
+        String(16), nullable=True
+    )
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    manual_unread: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "services"
+    __table_args__ = (
+        CheckConstraint("duration_minutes > 0", name="duration_minutes_positive"),
+        CheckConstraint(
+            "pricing_type IN ('fixed', 'estimated', 'human_quote')",
+            name="pricing_type_allowed",
+        ),
+        CheckConstraint(
+            "included_quantity > 0", name="included_quantity_positive"
+        ),
+        CheckConstraint(
+            "additional_unit_duration_minutes >= 0",
+            name="additional_unit_duration_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "additional_unit_price IS NULL OR additional_unit_price >= 0",
+            name="additional_unit_price_nonnegative",
+        ),
+        CheckConstraint(
+            "difficult_access_duration_minutes >= 0",
+            name="difficult_access_duration_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "difficult_access_price IS NULL OR difficult_access_price >= 0",
+            name="difficult_access_price_nonnegative",
+        ),
+        CheckConstraint(
+            "duration_margin_minutes >= 0",
+            name="duration_margin_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "unknown_access_policy IN ('standard', 'conservative', 'human_quote')",
+            name="unknown_access_policy_allowed",
+        ),
+        UniqueConstraint("business_id", "id", name="uq_services_business_id_id"),
+        Index("ix_services_business_id", "business_id"),
+        Index("ix_services_active", "active"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    pricing_type: Mapped[str] = mapped_column(
+        String(32), default="estimated", server_default="estimated", nullable=False
+    )
+    automatic_booking: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    included_quantity: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    additional_unit_duration_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    additional_unit_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    requires_address: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    requires_quantity: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    considers_difficult_access: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    difficult_access_duration_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    difficult_access_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    unknown_access_policy: Mapped[str] = mapped_column(
+        String(32),
+        default="conservative",
+        server_default="conservative",
+        nullable=False,
+    )
+    duration_margin_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    asks_site_time_limit: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    asks_tubing_length: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    included_tubing_meters: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 2), nullable=True
+    )
+    intent_examples: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+
+
+class BusinessCatalogItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "business_catalog_items"
+    __table_args__ = (
+        CheckConstraint("kind IN ('material', 'equipment')", name="kind_allowed"),
+        CheckConstraint("price IS NULL OR price >= 0", name="price_nonnegative"),
+        UniqueConstraint(
+            "business_id", "preset_key", name="uq_business_catalog_items_business_preset"
+        ),
+        Index("ix_business_catalog_items_business_id", "business_id"),
+        Index("ix_business_catalog_items_active", "active"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    unit_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    preset_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    image_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    image_mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    specifications: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+
+
+class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "employees"
+    __table_args__ = (
+        CheckConstraint(
+            "operational_role IN ('technician', 'assistant', 'administrator')",
+            name="operational_role_allowed",
+        ),
+        UniqueConstraint("business_id", "id", name="uq_employees_business_id_id"),
+        Index("ix_employees_business_id", "business_id"),
+        Index("ix_employees_active", "active"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    operational_role: Mapped[str] = mapped_column(
+        String(32), default="technician", server_default="technician", nullable=False
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+
+
+class EmployeeService(Base):
+    __tablename__ = "employee_services"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_employee_services_business_employee_employees",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "service_id"],
+            ["services.business_id", "services.id"],
+            name="fk_employee_services_business_service_services",
+        ),
+        Index("ix_employee_services_business_id", "business_id"),
+        Index("ix_employee_services_service_id", "service_id"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+    )
+    service_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+    )
+
+
+class WorkingHours(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "working_hours"
+    __table_args__ = (
+        CheckConstraint("weekday BETWEEN 0 AND 6", name="weekday_range"),
+        CheckConstraint("end_time > start_time", name="end_time_after_start_time"),
+        ForeignKeyConstraint(
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_working_hours_business_employee_employees",
+        ),
+        Index("ix_working_hours_business_id", "business_id"),
+        Index("ix_working_hours_employee_weekday", "employee_id", "weekday"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    weekday: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+
+
+class ScheduleBlock(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "schedule_blocks"
+    __table_args__ = (
+        CheckConstraint("ends_at > starts_at", name="ends_at_after_starts_at"),
+        ForeignKeyConstraint(
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_schedule_blocks_business_employee_employees",
+        ),
+        Index("ix_schedule_blocks_business_id", "business_id"),
+        Index("ix_schedule_blocks_employee_starts_at", "employee_id", "starts_at"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "appointments"
+    __table_args__ = (
+        CheckConstraint("ends_at > starts_at", name="ends_at_after_starts_at"),
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'cancelled', 'completed')",
+            name="status_allowed",
+        ),
+        CheckConstraint("quantity > 0", name="quantity_positive"),
+        CheckConstraint(
+            "estimated_duration_minutes > 0",
+            name="estimated_duration_minutes_positive",
+        ),
+        CheckConstraint(
+            "travel_before_minutes >= 0",
+            name="travel_before_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "travel_after_minutes >= 0",
+            name="travel_after_minutes_nonnegative",
+        ),
+        CheckConstraint(
+            "pricing_type IN ('fixed', 'estimated', 'human_quote')",
+            name="pricing_type_allowed",
+        ),
+        CheckConstraint(
+            "access_condition IN ('normal', 'difficult', 'unknown')",
+            name="access_condition_allowed",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            name="fk_appointments_business_customer_customers",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "service_id"],
+            ["services.business_id", "services.id"],
+            name="fk_appointments_business_service_services",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "employee_id"],
+            ["employees.business_id", "employees.id"],
+            name="fk_appointments_business_employee_employees",
+        ),
+        UniqueConstraint(
+            "business_id", "id", name="uq_appointments_business_id_id"
+        ),
+        ExcludeConstraint(
+            ("employee_id", "="),
+            (
+                text(
+                    "tstzrange("
+                    "public.booking_add_minutes_immutable("
+                    "starts_at, -travel_before_minutes), "
+                    "public.booking_add_minutes_immutable("
+                    "ends_at, travel_after_minutes), "
+                    "'[)')"
+                ),
+                "&&",
+            ),
+            where=text("status = 'confirmed'"),
+            using="gist",
+            name="excl_appointments_employee_confirmed_overlap",
+        ),
+        Index("ix_appointments_business_id", "business_id"),
+        Index("ix_appointments_customer_id", "customer_id"),
+        Index("ix_appointments_service_id", "service_id"),
+        Index("ix_appointments_employee_starts_at", "employee_id", "starts_at"),
+        Index("ix_appointments_status", "status"),
+        Index("ix_appointments_starts_at", "starts_at"),
+        Index(
+            "uq_appointments_idempotency_key_present",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    service_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    service_address: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    quantity: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    tubing_meters: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 2), nullable=True
+    )
+    access_condition: Mapped[str] = mapped_column(
+        String(16), default="normal", server_default="normal", nullable=False
+    )
+    estimated_duration_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+    travel_before_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    travel_after_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    estimated_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    pricing_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    estimate_details: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        nullable=False,
+    )
+    site_allowed_end: Mapped[time | None] = mapped_column(Time, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+
+
+class BusinessNotification(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "business_notifications"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type = 'automatic_booking_confirmed'",
+            name="event_type_allowed",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "appointment_id"],
+            ["appointments.business_id", "appointments.id"],
+            name=(
+                "fk_business_notifications_business_appointment_appointments"
+            ),
+        ),
+        UniqueConstraint(
+            "business_id",
+            "appointment_id",
+            "event_type",
+            name="uq_business_notifications_appointment_event",
+        ),
+        Index(
+            "ix_business_notifications_business_created_at",
+            "business_id",
+            "created_at",
+        ),
+        Index(
+            "ix_business_notifications_business_read_at",
+            "business_id",
+            "read_at",
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
+    )
+    appointment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(
+        String(64),
+        default="automatic_booking_confirmed",
+        server_default="automatic_booking_confirmed",
+        nullable=False,
+    )
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CustomerOutreach(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "customer_outreach"
+    __table_args__ = (
+        CheckConstraint(
+            "outreach_type IN ('incomplete_24h', 'cleaning_6m')",
+            name="outreach_type_allowed",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'skipped', 'responded', 'accepted', 'declined', 'failed')",
+            name="status_allowed",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            name="fk_customer_outreach_business_customer_customers",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "conversation_id"],
+            ["conversations.business_id", "conversations.id"],
+            name="fk_customer_outreach_business_conversation_conversations",
+        ),
+        Index("ix_customer_outreach_business_due", "business_id", "due_at"),
+        Index("ix_customer_outreach_conversation", "conversation_id"),
+        Index("ix_customer_outreach_status", "status"),
+        Index(
+            "uq_customer_outreach_idempotency_key",
+            "idempotency_key",
+            unique=True,
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_appointment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=True
+    )
+    outreach_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    trigger_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending", nullable=False
+    )
+    service_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result_appointment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=True
+    )
+
+
+class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint(
+            "direction IN ('inbound', 'outbound')", name="direction_allowed"
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "conversation_id"],
+            ["conversations.business_id", "conversations.id"],
+            name="fk_messages_business_conversation_conversations",
+        ),
+        Index("ix_messages_business_id", "business_id"),
+        Index("ix_messages_conversation_id", "conversation_id"),
+        Index("ix_messages_status", "status"),
+        Index("ix_messages_created_at", "created_at"),
+        Index(
+            "uq_messages_provider_message_id_present",
+            "provider_message_id",
+            unique=True,
+            postgresql_where=text("provider_message_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_messages_idempotency_key_present",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    provider_message_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    message_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    interactive_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    media_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    media_mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    media_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    media_sha256: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    outbound_payload: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class ProcessedWebhook(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "processed_webhooks"
+    __table_args__ = (
+        Index("ix_processed_webhooks_provider_message_id", "provider_message_id"),
+        Index("ix_processed_webhooks_status", "status"),
+        Index("ix_processed_webhooks_received_at", "received_at"),
+    )
+
+    event_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    provider_message_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+",
             name="last_error_code_sanitized",
+        ),
+        CheckConstraint(
+            "meta_review_status IS NULL OR "
+            "meta_review_status IN ('approved', 'rejected')",
+            name="meta_review_status_allowed",
+        ),
+        CheckConstraint(
+            "preferred_mode IS NULL OR "
+            "preferred_mode IN ('coexistence', 'api_only')",
+            name="preferred_mode_allowed",
         ),
         Index(
             "uq_business_whatsapp_connections_active_business",
