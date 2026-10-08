@@ -17,7 +17,7 @@ from app.conversations.types import (
     ConversationSnapshot,
     ConversationTransition,
 )
-from app.models import Business, Conversation, Customer, Message
+from app.models import Business, Conversation, Customer, Message, WebPushEvent
 
 
 def build_lock_conversation_statement(
@@ -259,6 +259,26 @@ class ConversationRepository:
                 handoff_status=transition.handoff_status,
             )
         )
+        if (
+            transition.handoff_status == "waiting"
+            and snapshot.handoff_status != "waiting"
+        ):
+            intervention_key = (
+                "human-intervention:"
+                + hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+            )
+            await self.session.execute(
+                postgresql_insert(WebPushEvent)
+                .values(
+                    business_id=snapshot.business_id,
+                    event_key=intervention_key,
+                    event_type="human_intervention",
+                    target_path=f"/app/conversas/{snapshot.conversation_id}",
+                )
+                .on_conflict_do_nothing(
+                    constraint="uq_web_push_events_event_key"
+                )
+            )
         if transition.customer_name is not None:
             await self.session.execute(
                 update(Customer)
