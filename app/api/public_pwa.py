@@ -83,20 +83,31 @@ def _public_pending_state(error_code: str | None) -> str | None:
 
 
 def _public_connection(view) -> PublicConnectionResponse:
+    preferred_mode = getattr(view, "preferred_mode", None)
     return PublicConnectionResponse(
         status=view.status.value,
         mode=view.mode.value,
-        display_phone_number=view.masked_display_phone_number,
-        pending_state=_public_pending_state(view.last_error_code),
-        review_status=view.meta_review_status,
+        display_phone_number=getattr(
+            view, "masked_display_phone_number", None
+        ),
+        pending_state=_public_pending_state(
+            getattr(view, "last_error_code", None)
+        ),
+        review_status=getattr(view, "meta_review_status", None),
         preferred_mode=(
-            view.preferred_mode.value
-            if view.preferred_mode is not None
+            preferred_mode.value
+            if preferred_mode is not None
             else None
         ),
-        mode_switch_requested_at=view.mode_switch_requested_at,
-        mode_switch_last_checked_at=view.mode_switch_last_checked_at,
-        mode_switch_next_check_at=view.mode_switch_next_check_at,
+        mode_switch_requested_at=getattr(
+            view, "mode_switch_requested_at", None
+        ),
+        mode_switch_last_checked_at=getattr(
+            view, "mode_switch_last_checked_at", None
+        ),
+        mode_switch_next_check_at=getattr(
+            view, "mode_switch_next_check_at", None
+        ),
     )
 
 
