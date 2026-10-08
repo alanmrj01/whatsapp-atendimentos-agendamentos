@@ -35,7 +35,7 @@ from app.billing.schemas import (
     CreditCardCheckoutResponse,
     SubscriptionStatusResponse,
 )
-from app.models import BillingCheckout, Business, BusinessAccess, CommercialSubscription
+from app.models import BillingCheckout, Business, BusinessAccess, CommercialSubscription, WebPushEvent
 from app.models.billing import billing_provider_environment
 
 
@@ -652,7 +652,7 @@ class BillingService:
                 subscription.status = "active"
         await self.db.commit()
 
-    async def apply_payment_event(self, event_type: str, payload: dict) -> None:
+    async def apply_payment_event(self, event_type: str, payload: dict) -> str | None:
         checkout = await self._capture_credit_card_checkout_refs(payload)
         if checkout is not None:
             if (
@@ -669,13 +669,14 @@ class BillingService:
             # Persist any provider references captured above and wait for the
             # complementary webhook instead of polling Asaas.
             await self.db.commit()
-            return
+            return None
 
+        action_event_key: str | None = None
         if event_type in {"PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"}:
             expected = get_offer(subscription.plan_code, subscription.billing_cycle).amount_cents
             if _payment_value_cents(payload.get("value")) != expected:
                 await self.db.commit()
-                return
+                return None
             due_date = _parse_due_date(payload.get("dueDate"))
             anchor = (
                 datetime.combine(due_date, datetime.min.time(), tzinfo=UTC)
@@ -689,7 +690,26 @@ class BillingService:
             subscription.status = "active"
             await self._record_operational_history(subscription.business_id)
         elif event_type == "PAYMENT_OVERDUE":
+            was_past_due = subscription.status == "past_due"
             subscription.status = "past_due"
+            provider_payment_id = payload.get("id")
+            if (
+                not was_past_due
+                and isinstance(provider_payment_id, str)
+                and 0 < len(provider_payment_id) <= 100
+            ):
+                action_event_key = (
+                    f"billing-overdue:{self.provider_environment}:"
+                    f"{provider_payment_id}"
+                )
+                self.db.add(
+                    WebPushEvent(
+                        business_id=subscription.business_id,
+                        event_key=action_event_key,
+                        event_type="billing_action",
+                        target_path="/app/mais/plano",
+                    )
+                )
         elif event_type in {
             "PAYMENT_REFUNDED",
             "PAYMENT_CHARGEBACK_REQUESTED",
@@ -698,6 +718,7 @@ class BillingService:
             subscription.status = "suspended"
             subscription.access_until = min(subscription.access_until, datetime.now(UTC))
         await self.db.commit()
+        return action_event_key
 
     async def _capture_credit_card_checkout_refs(
         self, payload: dict
