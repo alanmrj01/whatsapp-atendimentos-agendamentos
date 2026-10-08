@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -104,6 +105,7 @@ async def recheck_due_coexistence_preferences(
                 inserted = await session.scalar(
                     postgresql_insert(WebPushEvent)
                     .values(
+                        id=uuid.uuid4(),
                         business_id=current.business_id,
                         event_key=event_key,
                         event_type="connection_action",
