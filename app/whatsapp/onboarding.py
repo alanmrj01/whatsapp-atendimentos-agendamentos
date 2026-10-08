@@ -90,6 +90,18 @@ class WhatsAppOnboardingAdministrationPort(Protocol):
         mode: WhatsAppConnectionMode,
     ) -> WhatsAppConnectionStatusView: ...
 
+    async def transition_connected_connection(
+        self,
+        business_id: uuid.UUID,
+        *,
+        mode: WhatsAppConnectionMode,
+        meta_waba_id: str,
+        meta_phone_number_id: str,
+        display_phone_number: str | None,
+        graph_version: str,
+        credential_secret_ref: str,
+    ) -> WhatsAppConnectionStatusView: ...
+
     async def mark_connected(
         self,
         business_id: uuid.UUID,
@@ -232,8 +244,18 @@ class WhatsAppOnboardingService:
                 completion.confirmed_mode,
             )
         elif current.status is WhatsAppConnectionStatus.CONNECTED:
-            raise WhatsAppOnboardingError(
-                "Business already has a connected WhatsApp account"
+            if current.mode is completion.confirmed_mode:
+                raise WhatsAppOnboardingError(
+                    "Business already has this WhatsApp connection mode"
+                )
+            return await self._administration.transition_connected_connection(
+                business_id,
+                mode=completion.confirmed_mode,
+                meta_waba_id=meta_waba_id,
+                meta_phone_number_id=meta_phone_number_id,
+                display_phone_number=completion.display_phone_number,
+                graph_version=graph_version,
+                credential_secret_ref=credential_secret_ref,
             )
         elif current.mode is not completion.confirmed_mode:
             await self._administration.change_mode(
