@@ -11,6 +11,7 @@ from app.conversations.ports import BookingAvailabilityPort
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.schemas.cloud_tasks import (
+    ActionAlertSweepPayload,
     LifecycleOutreachSweepPayload,
     TaskAcknowledgement,
     WhatsAppEventTaskPayload,
@@ -34,6 +35,7 @@ from app.automation.lifecycle import create_due_lifecycle_outreach
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.sender import build_business_sender_resolver
 from app.push.service import dispatch_pending_web_push
+from app.whatsapp.review_watch import create_due_action_alerts
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/tasks", tags=["internal-tasks"])
@@ -163,3 +165,33 @@ async def process_lifecycle_outreach_task(
         ) from None
     return TaskAcknowledgement(status="accepted")
 
+
+
+@router.post(
+    "/action-alerts",
+    response_model=TaskAcknowledgement,
+    dependencies=[Depends(require_cloud_tasks_oidc)],
+)
+async def process_action_alerts_task(
+    payload: ActionAlertSweepPayload,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TaskAcknowledgement:
+    try:
+        event_keys = await create_due_action_alerts(
+            session,
+            settings,
+            limit=payload.limit,
+        )
+        for event_key in event_keys:
+            await dispatch_pending_web_push(session, event_key, settings)
+    except Exception as exc:
+        logger.warning(
+            "action_alert_sweep_failed",
+            extra={"error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Action alert sweep failed",
+        ) from None
+    return TaskAcknowledgement(status="accepted")
