@@ -396,6 +396,32 @@ def graph_transport(*, waba_id: str = WABA_ID, phone_id: str = PHONE_ID):
 
 
 @pytest.mark.asyncio
+async def test_graph_deregisters_phone_only_after_explicit_server_call() -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        if request.method == "POST" and request.url.path.endswith(
+            f"/{PHONE_ID}/deregister"
+        ):
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://graph.facebook.com/v25.0/",
+    ) as client:
+        await MetaEmbeddedSignupGateway(
+            configuration(), client=client
+        ).deregister_phone(
+            PHONE_ID,
+            SecretStr(RAW_TOKEN),
+        )
+
+    assert seen == [("POST", f"/v25.0/{PHONE_ID}/deregister")]
+
+
+@pytest.mark.asyncio
 async def test_graph_reads_account_review_status_without_changing_connection() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith(f"/{WABA_ID}"):
