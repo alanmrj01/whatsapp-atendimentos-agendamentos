@@ -270,6 +270,7 @@ class ConversationRepository:
             await self.session.execute(
                 postgresql_insert(WebPushEvent)
                 .values(
+                    id=uuid.uuid4(),
                     business_id=snapshot.business_id,
                     event_key=intervention_key,
                     event_type="human_intervention",
