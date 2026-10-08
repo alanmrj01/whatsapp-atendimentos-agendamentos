@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.automation.lifecycle import create_due_lifecycle_outreach, mark_outreach_response
 from app.booking.availability import PostgresBookingAvailabilityPort
 from app.conversations.ports import SlotUnavailable
+from app.diagnostics.models import EXPECTED_SCHEMA_REVISION
 from app.models import Appointment, BusinessAccess, Conversation, CustomerOutreach, Message, ScheduleBlock
 from app.repositories.outbound_tasks import OutboundTaskRepository
 from tests.integration.test_booking_postgresql import (
@@ -56,7 +57,7 @@ async def test_physical_schema_is_at_head_with_immutable_exclude_support(
             )
         )
 
-    assert revision == "20261003_0028"
+    assert revision == EXPECTED_SCHEMA_REVISION
     assert volatility == "i"
     assert constraint is not None
     assert "tstzrange" in constraint
