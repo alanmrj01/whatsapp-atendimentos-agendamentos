@@ -367,6 +367,32 @@ async def test_review_decision_never_changes_connection_lifecycle() -> None:
     assert connection.meta_review_status == "rejected"
 
 
+def test_public_connection_marks_review_wait_after_meta_assets_are_observed() -> None:
+    pending = SimpleNamespace(
+        status=WhatsAppConnectionStatus.PENDING,
+        mode=WhatsAppConnectionMode.COEXISTENCE,
+        masked_display_phone_number=None,
+        last_error_code=META_ONBOARDING_PENDING,
+        has_phone_number_id=True,
+        meta_review_status=None,
+        preferred_mode=None,
+        mode_switch_requested_at=None,
+        mode_switch_last_checked_at=None,
+        mode_switch_next_check_at=None,
+    )
+    response = public_pwa._public_connection(pending)
+    assert response.pending_state == "meta_review_pending"
+
+    pending.has_phone_number_id = False
+    response = public_pwa._public_connection(pending)
+    assert response.pending_state == "authorization_pending"
+
+    pending.has_phone_number_id = True
+    pending.meta_review_status = "approved"
+    response = public_pwa._public_connection(pending)
+    assert response.pending_state == "authorization_pending"
+
+
 def graph_transport(*, waba_id: str = WABA_ID, phone_id: str = PHONE_ID):
     calls: list[httpx.Request] = []
 
