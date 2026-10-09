@@ -58,7 +58,7 @@ class BillingWebhookService:
         self.billing = BillingService(db, gateway)
         self.provider_environment = self.billing.provider_environment
 
-    async def process(self, payload: dict) -> None:
+    async def process(self, payload: dict) -> list[str]:
         event_id = payload.get("id")
         event_type = payload.get("event")
         if (
@@ -68,21 +68,21 @@ class BillingWebhookService:
             or not event_type
             or len(event_type) > 80
         ):
-            return
+            return []
         if event_type not in SUPPORTED_EVENTS:
-            return
+            return []
 
         storage_event_id = self._event_storage_id(
             self.provider_environment, event_id
         )
         if len(storage_event_id) > 160:
-            return
+            return []
 
         existing = await self.db.get(
             BillingWebhookEvent, storage_event_id
         )
         if existing is not None and existing.processed_at is not None:
-            return
+            return []
 
         resource_type, resource = self._resource(payload, event_type)
         resource_id = resource.get("id") if isinstance(resource, dict) else None
@@ -107,12 +107,15 @@ class BillingWebhookService:
             existing.provider_payment_id = provider_payment_id
             existing.provider_authorization_id = provider_authorization_id
 
+        action_event_key: str | None = None
         if event_type in CHECKOUT_EVENTS:
             await self._checkout(event_type, resource)
         elif event_type in SUBSCRIPTION_EVENTS:
             await self.billing.apply_subscription_event(event_type, resource)
         elif event_type in PAYMENT_EVENTS:
-            await self.billing.apply_payment_event(event_type, resource)
+            action_event_key = await self.billing.apply_payment_event(
+                event_type, resource
+            )
         elif event_type in PIX_AUTHORIZATION_EVENTS:
             await self.billing.apply_pix_authorization_event(event_type, resource)
         # Instruction events correlate authorization -> payment. Access changes only
@@ -120,6 +123,7 @@ class BillingWebhookService:
 
         existing.processed_at = datetime.now(UTC)
         await self.db.commit()
+        return [action_event_key] if action_event_key is not None else []
 
     async def _checkout(self, event_type: str, checkout: dict) -> None:
         provider_id = checkout.get("id")

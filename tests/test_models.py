@@ -415,6 +415,11 @@ def test_business_whatsapp_connections_are_scoped_and_secret_free() -> None:
         "connected_at",
         "disconnected_at",
         "last_error_code",
+        "meta_review_status",
+        "preferred_mode",
+        "mode_switch_requested_at",
+        "mode_switch_last_checked_at",
+        "mode_switch_next_check_at",
     } <= set(table.c.keys())
     assert not ({"access_token", "token", "credential"} & set(table.c.keys()))
 
@@ -429,6 +434,7 @@ def test_business_whatsapp_connections_are_scoped_and_secret_free() -> None:
     assert indexes[
         "uq_business_whatsapp_connections_meta_phone_present"
     ].unique is True
+    assert "ix_business_whatsapp_connections_mode_switch_due" in indexes
     assert str(
         indexes["uq_business_whatsapp_connections_meta_phone_present"]
         .dialect_options["postgresql"]["where"]
@@ -445,6 +451,8 @@ def test_business_whatsapp_connections_are_scoped_and_secret_free() -> None:
         "ck_business_whatsapp_connections_status_allowed",
         "ck_business_whatsapp_connections_graph_version_format",
         "ck_business_whatsapp_connections_last_error_code_sanitized",
+        "ck_business_whatsapp_connections_meta_review_status_allowed",
+        "ck_business_whatsapp_connections_preferred_mode_allowed",
     }
 
 

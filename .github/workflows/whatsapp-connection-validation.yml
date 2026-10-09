@@ -1,0 +1,79 @@
+name: WhatsApp connection validation
+
+on:
+  pull_request:
+    paths:
+      - 'app/api/public_pwa.py'
+      - 'app/api/internal_tasks.py'
+      - 'app/api/asaas_webhook.py'
+      - 'app/billing/**'
+      - 'app/auth/schemas.py'
+      - 'app/diagnostics/**'
+      - 'app/models/**'
+      - 'app/push/**'
+      - 'app/repositories/conversations.py'
+      - 'app/schemas/cloud_tasks.py'
+      - 'app/whatsapp/**'
+      - 'alembic/versions/**'
+      - 'tests/test_meta_embedded_signup.py'
+      - 'tests/test_whatsapp_onboarding.py'
+      - 'tests/test_web_push.py'
+      - 'tests/test_billing_foundation.py'
+      - 'tests/test_migration.py'
+      - 'tests/test_schema_rollout_compat.py'
+      - '.github/workflows/whatsapp-connection-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: alovia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d alovia_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: test
+      TEST_DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/alovia_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Compile application and tests
+        run: python -m compileall -q app tests
+      - name: Focused WhatsApp tests
+        run: >-
+          pytest
+          tests/test_meta_embedded_signup.py
+          tests/test_whatsapp_onboarding.py
+          tests/test_web_push.py
+          tests/test_billing_foundation.py
+          tests/test_migration.py
+          tests/test_schema_rollout_compat.py
+          tests/test_whatsapp_webhook.py
+          -q -p no:cacheprovider
+      - name: Full backend suite
+        run: pytest -q -p no:cacheprovider
+      - name: Dependency check
+        run: python -m pip check
+      - name: Diff check
+        run: git diff --check

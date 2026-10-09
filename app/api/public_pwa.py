@@ -31,6 +31,8 @@ from app.auth.schemas import (
     PasswordResetRequest,
     PublicConnectionResponse,
     PublicPlanRequest,
+    WhatsAppModePreferenceRequest,
+    WhatsAppPrepareCoexistenceRequest,
     SignupRequest,
 )
 from app.auth.security import COOKIE_NAME, COOKIE_PATH, access_token
@@ -51,13 +53,21 @@ from app.whatsapp.administration import (
     WhatsAppConnectionAdministrationService,
 )
 from app.whatsapp.client import WhatsAppConfigurationError
-from app.whatsapp.credentials import GoogleSecretManagerCredentialStore
+from app.whatsapp.connections import WhatsAppConnectionMode
+from app.whatsapp.credentials import (
+    BusinessWhatsAppCredentialProvider,
+    GoogleSecretManagerCredentialStore,
+)
 from app.whatsapp.embedded_signup import (
     MetaEmbeddedSignupError,
     MetaEmbeddedSignupGateway,
     MetaEmbeddedSignupRejected,
     MetaEmbeddedSignupService,
     MetaEmbeddedSignupUnavailable,
+)
+from app.repositories.whatsapp_connections import (
+    WhatsAppConnectionRepository,
+    connection_record,
 )
 from app.whatsapp.onboarding import (
     WhatsAppOnboardingError,
@@ -72,11 +82,46 @@ Config = Annotated[Settings, Depends(require_auth_config)]
 Identity = Annotated[Principal, Depends(require_principal)]
 
 
-def _public_pending_state(error_code: str | None) -> str | None:
-    return (
-        "authorization_pending"
-        if error_code == META_ONBOARDING_PENDING
-        else None
+def _public_pending_state(view) -> str | None:
+    if getattr(view, "last_error_code", None) != META_ONBOARDING_PENDING:
+        return None
+    status = getattr(getattr(view, "status", None), "value", None)
+    mode = getattr(getattr(view, "mode", None), "value", None)
+    review_status = getattr(view, "meta_review_status", None)
+    if (
+        status == "pending"
+        and mode == "coexistence"
+        and getattr(view, "has_phone_number_id", False)
+        and review_status is None
+    ):
+        return "meta_review_pending"
+    return "authorization_pending"
+
+
+def _public_connection(view) -> PublicConnectionResponse:
+    preferred_mode = getattr(view, "preferred_mode", None)
+    return PublicConnectionResponse(
+        status=view.status.value,
+        mode=view.mode.value,
+        display_phone_number=getattr(
+            view, "masked_display_phone_number", None
+        ),
+        pending_state=_public_pending_state(view),
+        review_status=getattr(view, "meta_review_status", None),
+        preferred_mode=(
+            preferred_mode.value
+            if preferred_mode is not None
+            else None
+        ),
+        mode_switch_requested_at=getattr(
+            view, "mode_switch_requested_at", None
+        ),
+        mode_switch_last_checked_at=getattr(
+            view, "mode_switch_last_checked_at", None
+        ),
+        mode_switch_next_check_at=getattr(
+            view, "mode_switch_next_check_at", None
+        ),
     )
 
 
@@ -263,18 +308,110 @@ async def active_business(payload: ActiveBusinessRequest, principal: Identity, d
 async def whatsapp_connection(principal: Identity, db: Db):
     business = principal.active_membership()
     connection = await WhatsAppConnectionAdministrationService(db).get_connection(business.business_id)
-    return PublicConnectionResponse(
-        status=connection.status.value if connection else "disconnected",
-        mode=connection.mode.value if connection else None,
-        display_phone_number=(
-            connection.masked_display_phone_number if connection else None
-        ),
-        pending_state=(
-            _public_pending_state(connection.last_error_code)
-            if connection
-            else None
-        ),
+    if connection is None:
+        return PublicConnectionResponse(status="disconnected")
+    return _public_connection(connection)
+
+
+@router.post(
+    "/whatsapp/mode-switch/prepare-coexistence",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def prepare_whatsapp_coexistence_switch(
+    payload: WhatsAppPrepareCoexistenceRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    membership = _require_paid_whatsapp_administrator(principal)
+    if not (
+        payload.confirm_temporary_interruption
+        and payload.confirm_phone_available
+    ):
+        raise HTTPException(
+            422,
+            "Explicit migration confirmations are required",
+        )
+
+    repository = WhatsAppConnectionRepository(db)
+    current = await repository.get_connection(
+        membership.business_id,
+        for_update=True,
     )
+    if (
+        current is None
+        or current.status != "connected"
+        or current.mode != "api_only"
+        or current.meta_phone_number_id is None
+    ):
+        raise HTTPException(
+            409,
+            "Exclusive WhatsApp connection is not available for migration",
+        )
+
+    administration = WhatsAppConnectionAdministrationService(db)
+    await administration.request_mode_switch(
+        membership.business_id,
+        WhatsAppConnectionMode.COEXISTENCE,
+    )
+
+    try:
+        access_token = await BusinessWhatsAppCredentialProvider(
+            settings
+        ).resolve(connection_record(current))
+        configuration = _embedded_signup_configuration(settings)
+        gateway = MetaEmbeddedSignupGateway(configuration)
+        try:
+            await gateway.deregister_phone(
+                current.meta_phone_number_id,
+                access_token,
+            )
+        finally:
+            await gateway.aclose()
+    except (WhatsAppConfigurationError, MetaEmbeddedSignupError):
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Meta could not prepare the WhatsApp mode change",
+        ) from None
+
+    view = await administration.mark_disconnected(
+        membership.business_id
+    )
+    business = await db.get(Business, membership.business_id)
+    if business is not None:
+        business.meta_phone_number_id = None
+        business.meta_waba_id = None
+    await db.commit()
+    return _public_connection(view)
+
+
+@router.post(
+    "/whatsapp/mode-preference",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def set_whatsapp_mode_preference(
+    payload: WhatsAppModePreferenceRequest,
+    principal: Identity,
+    db: Db,
+):
+    membership = _require_paid_whatsapp_administrator(principal)
+    administration = WhatsAppConnectionAdministrationService(db)
+    if payload.preferred_mode is None:
+        view = await administration.clear_mode_switch_request(
+            membership.business_id
+        )
+    else:
+        view = await administration.request_mode_switch(
+            membership.business_id,
+            WhatsAppConnectionMode(payload.preferred_mode),
+        )
+    await db.commit()
+    return _public_connection(view)
 
 
 @router.post(
@@ -396,7 +533,12 @@ async def start_meta_embedded_signup(
     administration = WhatsAppConnectionAdministrationService(db)
     current = await administration.get_connection(business.business_id)
     if current is not None and current.status.value == "connected":
-        raise HTTPException(409, "WhatsApp account is already connected")
+        detail = (
+            "WhatsApp account is already connected in this mode"
+            if current.mode.value == "coexistence"
+            else "Use the assisted mode-switch flow before coexistence onboarding"
+        )
+        raise HTTPException(409, detail)
     plan = WhatsAppOnboardingService(administration).plan(
         WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
     )
@@ -430,7 +572,12 @@ async def begin_meta_embedded_signup_attempt(
         for_update=True,
     )
     if current is not None and current.status.value == "connected":
-        raise HTTPException(409, "WhatsApp account is already connected")
+        detail = (
+            "WhatsApp account is already connected in this mode"
+            if current.mode.value == "coexistence"
+            else "Use the assisted mode-switch flow before coexistence onboarding"
+        )
+        raise HTTPException(409, detail)
     plan = WhatsAppOnboardingService(administration).plan(
         WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
     )
@@ -447,11 +594,7 @@ async def begin_meta_embedded_signup_attempt(
         raise HTTPException(
             409, "WhatsApp onboarding could not be started"
         ) from None
-    return PublicConnectionResponse(
-        status=view.status.value,
-        mode=view.mode.value,
-        pending_state=_public_pending_state(view.last_error_code),
-    )
+    return _public_connection(view)
 
 
 @router.post(
@@ -535,9 +678,12 @@ async def complete_meta_embedded_signup(
             db
         ).get_connection(business.business_id, for_update=True)
         if current is not None and current.status.value == "connected":
-            raise HTTPException(
-                409, "WhatsApp account is already connected"
+            detail = (
+                "WhatsApp account is already connected in this mode"
+                if current.mode.value == "coexistence"
+                else "Use the assisted mode-switch flow before coexistence onboarding"
             )
+            raise HTTPException(409, detail)
         service, gateway = _embedded_signup_service(db, configuration)
         view = await service.complete_coexistence(
             business.business_id,
@@ -578,11 +724,7 @@ async def complete_meta_embedded_signup(
         _log_embedded_signup_stage(
             "complete_request_succeeded" if completed else "complete_request_failed"
         )
-    return PublicConnectionResponse(
-        status=view.status.value,
-        mode=view.mode.value,
-        display_phone_number=view.masked_display_phone_number,
-    )
+    return _public_connection(view)
 
 
 @router.post(
@@ -606,8 +748,22 @@ async def start_meta_api_only_signup(
         )
     administration = WhatsAppConnectionAdministrationService(db)
     current = await administration.get_connection(business.business_id)
-    if current is not None and current.status.value == "connected":
-        raise HTTPException(409, "WhatsApp account is already connected")
+    if (
+        current is not None
+        and current.status.value == "connected"
+        and current.mode.value == "api_only"
+    ):
+        raise HTTPException(409, "WhatsApp account is already connected in this mode")
+    if (
+        current is not None
+        and current.status.value == "connected"
+        and current.mode.value == "coexistence"
+    ):
+        await administration.request_mode_switch(
+            business.business_id,
+            WhatsAppConnectionMode.API_ONLY,
+        )
+        await db.commit()
     plan = WhatsAppOnboardingService(administration).plan(
         payload.intent,
         platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
@@ -645,8 +801,12 @@ async def complete_meta_api_only_signup(
     current = await administration.get_connection(
         business.business_id, for_update=True
     )
-    if current is not None and current.status.value == "connected":
-        raise HTTPException(409, "WhatsApp account is already connected")
+    if (
+        current is not None
+        and current.status.value == "connected"
+        and current.mode.value == "api_only"
+    ):
+        raise HTTPException(409, "WhatsApp account is already connected in this mode")
     plan = WhatsAppOnboardingService(administration).plan(
         payload.intent,
         platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
@@ -725,11 +885,7 @@ async def complete_meta_api_only_signup(
                 )
             },
         )
-    return PublicConnectionResponse(
-        status=view.status.value,
-        mode=view.mode.value,
-        display_phone_number=view.masked_display_phone_number,
-    )
+    return _public_connection(view)
 
 
 def _log_embedded_signup_rejection(exc: Exception) -> None:

@@ -68,6 +68,9 @@ class WebPushDispatcher:
         )
         for event in events:
             payload = _payload(event)
+            if payload is None:
+                await self.repository.complete_event(event.id)
+                continue
             for subscription in subscriptions:
                 if subscription.id in invalid_subscriptions:
                     continue
@@ -121,13 +124,27 @@ async def dispatch_pending_web_push(
     ).dispatch_pending_from(event_key)
 
 
-def _payload(event: WebPushEvent) -> str:
-    if event.event_type == "inbound_message":
-        title = "Nova mensagem no Alovia"
-        body = "Você recebeu uma nova mensagem."
-    else:
-        title = "Novo agendamento automático"
-        body = "Um novo agendamento foi confirmado."
+def _payload(event: WebPushEvent) -> str | None:
+    action_copy = {
+        "human_intervention": (
+            "Atendimento precisa de você",
+            "Abra a conversa para continuar o atendimento.",
+        ),
+        "connection_action": (
+            "WhatsApp pronto para a próxima etapa",
+            "A Meta concluiu uma revisão da conta. Abra a Alovia para tentar ativar o uso conjunto.",
+        ),
+        "billing_action": (
+            "Pagamento precisa de atenção",
+            "Abra a Alovia para revisar sua assinatura.",
+        ),
+    }
+    content = action_copy.get(event.event_type)
+    if content is None:
+        # Incoming messages and automatic bookings stay visible inside Alovia,
+        # but they do not interrupt the device unless human action is required.
+        return None
+    title, body = content
     return json.dumps(
         {
             "type": event.event_type,

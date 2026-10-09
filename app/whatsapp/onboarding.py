@@ -232,8 +232,13 @@ class WhatsAppOnboardingService:
                 completion.confirmed_mode,
             )
         elif current.status is WhatsAppConnectionStatus.CONNECTED:
-            raise WhatsAppOnboardingError(
-                "Business already has a connected WhatsApp account"
+            if current.mode is completion.confirmed_mode:
+                raise WhatsAppOnboardingError(
+                    "Business is already connected in the requested WhatsApp mode"
+                )
+            await self._administration.change_mode(
+                business_id,
+                completion.confirmed_mode,
             )
         elif current.mode is not completion.confirmed_mode:
             await self._administration.change_mode(
