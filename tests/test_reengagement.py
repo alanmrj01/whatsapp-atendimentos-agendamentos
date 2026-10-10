@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -101,3 +102,21 @@ async def test_rejected_meta_review_routes_to_guidance_not_restart(
     assert campaign == "whatsapp_activation"
     assert path == "/app/whatsapp"
     assert "Não reconecte" in hint
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_first_reminder_uses_paid_activation_when_available() -> None:
+    paid_at = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+
+    class FakeDb:
+        async def scalar(self, _statement):
+            return paid_at
+
+    service = reengagement.ReengagementService(FakeDb())
+    anchor = await service._whatsapp_activation_anchor(
+        business_id="business",
+        fallback=datetime(2026, 10, 1, 12, 0, tzinfo=UTC),
+        now=datetime(2026, 10, 10, 13, 0, tzinfo=UTC),
+    )
+
+    assert anchor == paid_at
