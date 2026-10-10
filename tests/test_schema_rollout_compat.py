@@ -10,11 +10,11 @@ def test_readiness_requires_whatsapp_mode_schema_revision() -> None:
     current = migration_result([EXPECTED_SCHEMA_REVISION], 1)
     previous = migration_result(["20261004_0029"], 1)
 
-    assert EXPECTED_SCHEMA_REVISION == "20261008_0030"
+    assert EXPECTED_SCHEMA_REVISION == "20261010_0031"
 
     assert current.status is Status.OK
     assert current.code is Code.MIGRATION_OK
-    assert current.details.current_revision == "20261008_0030"
+    assert current.details.current_revision == "20261010_0031"
 
     assert previous.status is Status.ERROR
     assert previous.code is Code.MIGRATION_BEHIND
