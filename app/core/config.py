@@ -363,6 +363,13 @@ class Settings(BaseSettings):
         self,
     ) -> PasswordResetEmailConfiguration:
         self.require_password_recovery_enabled()
+        return self.require_application_email_configuration()
+
+    def require_application_email_configuration(
+        self,
+    ) -> PasswordResetEmailConfiguration:
+        # Reuse the already deployed Brevo sender/base URL settings without
+        # coupling lifecycle messages to the password-recovery feature toggle.
         api_key = (
             self.brevo_api_key.get_secret_value().strip()
             if self.brevo_api_key is not None
@@ -397,7 +404,7 @@ class Settings(BaseSettings):
             or not valid_base
         ):
             raise PasswordRecoveryConfigurationError(
-                "Password reset email configuration is incomplete"
+                "Application email configuration is incomplete"
             )
         return PasswordResetEmailConfiguration(
             api_key=SecretStr(api_key),
