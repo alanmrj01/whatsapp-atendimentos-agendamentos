@@ -5,17 +5,20 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.schemas import MembershipResponse
 from app.auth.service import AuthService
 from app.core.config import PasswordRecoveryConfigurationError, Settings
 from app.models import (
+    BillingCheckout,
     BusinessUserMembership,
+    CommercialSubscription,
     ReengagementDelivery,
     User,
 )
+from app.models.billing import billing_provider_environment
 from app.reengagement.email import BrevoReengagementMailer, ReengagementEmailError
 from app.reengagement.schemas import ReengagementPromptResponse
 from app.whatsapp.administration import (
@@ -380,7 +383,16 @@ class ReengagementService:
                 return last
         else:
             next_step = 1
-            due_at = user.created_at + FIRST_DELAY[campaign]
+            anchor = (
+                await self._whatsapp_activation_anchor(
+                    business_id=business_id,
+                    fallback=user.created_at,
+                    now=now,
+                )
+                if campaign == "whatsapp_activation"
+                else user.created_at
+            )
+            due_at = anchor + FIRST_DELAY[campaign]
             if now < due_at:
                 return None
 
@@ -400,3 +412,27 @@ class ReengagementService:
         self.db.add(delivery)
         await self.db.flush()
         return delivery
+
+    async def _whatsapp_activation_anchor(
+        self,
+        *,
+        business_id: UUID,
+        fallback: datetime,
+        now: datetime,
+    ) -> datetime:
+        paid_at = await self.db.scalar(
+            select(func.max(BillingCheckout.paid_at))
+            .join(
+                CommercialSubscription,
+                CommercialSubscription.checkout_id == BillingCheckout.id,
+            )
+            .where(
+                CommercialSubscription.business_id == business_id,
+                CommercialSubscription.provider_environment
+                == billing_provider_environment(),
+                CommercialSubscription.status.in_(("active", "canceled")),
+                CommercialSubscription.access_until > now,
+                BillingCheckout.paid_at.is_not(None),
+            )
+        )
+        return paid_at or fallback
