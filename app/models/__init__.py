@@ -20,6 +20,7 @@ from app.models.domain import (
     WorkingHours,
 )
 from app.models.push import WebPushDelivery, WebPushEvent, WebPushSubscription
+from app.models.reengagement import ReengagementDelivery
 
 __all__ = [
     "AuthSession",
@@ -29,6 +30,7 @@ __all__ = [
     "BusinessUserMembership",
     "CommercialSubscription",
     "PasswordResetToken",
+    "ReengagementDelivery",
     "User",
     "Appointment",
     "Base",
