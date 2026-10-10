@@ -91,13 +91,15 @@ def _public_pending_state(view) -> str | None:
         status_value == "pending"
         and mode_value == "coexistence"
         and getattr(view, "has_phone_number_id", False)
-        and getattr(view, "meta_review_status", None) is None
     ):
-        # Once Meta has returned the selected WABA/phone assets, the user has
-        # completed the local selection flow. Keep this distinct from an
-        # authorization that was merely started so the PWA does not tell the
-        # user to restart the Meta flow while the account is being reviewed.
-        return "meta_review_pending"
+        review_status = getattr(view, "meta_review_status", None)
+        if review_status == "rejected":
+            return "meta_review_rejected"
+        if review_status is None:
+            # Once Meta has returned the selected WABA/phone assets, the user
+            # has completed the local selection flow. Do not ask them to
+            # restart the provider flow while the account is being reviewed.
+            return "meta_review_pending"
     return "authorization_pending"
 
 
@@ -114,6 +116,8 @@ def _public_connection_journey(
         return ("error", True, "resolve_connection")
     if pending_state == "meta_review_pending":
         return ("meta_review_pending", False, "wait_for_meta_review")
+    if pending_state == "meta_review_rejected":
+        return ("meta_review_rejected", True, "review_meta_rejection")
     # Any other pending connection still needs the customer to complete the
     # provider authorization. This also fails safe for older pending records
     # that predate the explicit pending_state distinction.
