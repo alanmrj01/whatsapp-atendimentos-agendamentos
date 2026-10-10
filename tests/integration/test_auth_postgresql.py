@@ -227,7 +227,13 @@ async def test_login_cookie_hash_me_and_no_sensitive_logs(auth_env, caplog):
     for value in private:
         assert value not in caplog.text and value not in me.text
     connection = await env.client.get("/api/v1/whatsapp/connection")
-    assert connection.json() == {"status":"connected","mode":"coexistence"}
+    assert connection.json() == {
+        "status": "connected",
+        "mode": "coexistence",
+        "journey_state": "connected",
+        "requires_user_action": False,
+        "next_action": "none",
+    }
     assert "credential" not in connection.text and "phone" not in connection.text
 
 
@@ -298,6 +304,9 @@ async def test_roles_and_tenant_input_rejected(auth_env, role):
     assert tenant_override.json() == {
         "status": "connected",
         "mode": "coexistence",
+        "journey_state": "connected",
+        "requires_user_action": False,
+        "next_action": "none",
     }
     assert (await env.client.post("/api/v1/auth/active-business",json={"business_id":str(env.b)})).status_code == 403
     assert (await env.client.get("/api/v1/me")).json()["active_business_id"] == str(env.a)
@@ -311,7 +320,13 @@ async def test_multiple_business_selection_is_persisted_and_rechecked(auth_env):
     r = await env.client.post("/api/v1/auth/active-business", json={"business_id":str(env.b)})
     assert r.status_code == 200 and r.json()["active_business_id"] == str(env.b)
     r = await env.client.get("/api/v1/whatsapp/connection")
-    assert r.json() == {"status":"pending","mode":"api_only"}
+    assert r.json() == {
+        "status": "pending",
+        "mode": "api_only",
+        "journey_state": "authorization_pending",
+        "requires_user_action": True,
+        "next_action": "continue_authorization",
+    }
     assert (await env.client.post("/api/v1/whatsapp/onboarding/plan", json={"intent":"keep_whatsapp_business"})).status_code == 403
     assert (await env.client.post("/api/v1/auth/refresh", json={})).status_code == 200
     assert (await env.client.get("/api/v1/me")).json()["active_business_id"] == str(env.b)
@@ -461,6 +476,9 @@ async def test_embedded_signup_completion_is_tenant_scoped_and_secret_free(
         "status": "connected",
         "mode": "coexistence",
         "display_phone_number": "•••• 1234",
+        "journey_state": "connected",
+        "requires_user_action": False,
+        "next_action": "none",
     }
     assert gateway.closed is True
     async with env.factory() as db:
