@@ -199,6 +199,40 @@ async def test_begin_attempt_and_assets_are_persisted_before_final_completion(
     assert db.commits == 2
 
 
+def test_public_connection_distinguishes_meta_review_from_started_authorization() -> None:
+    review_pending = public_pwa._public_connection(
+        SimpleNamespace(
+            status=WhatsAppConnectionStatus.PENDING,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code=META_ONBOARDING_PENDING,
+            has_phone_number_id=True,
+            masked_display_phone_number=None,
+            meta_review_status=None,
+            preferred_mode=None,
+            mode_switch_requested_at=None,
+            mode_switch_last_checked_at=None,
+            mode_switch_next_check_at=None,
+        )
+    )
+    assert review_pending.pending_state == "meta_review_pending"
+
+    authorization_pending = public_pwa._public_connection(
+        SimpleNamespace(
+            status=WhatsAppConnectionStatus.PENDING,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code=META_ONBOARDING_PENDING,
+            has_phone_number_id=False,
+            masked_display_phone_number=None,
+            meta_review_status=None,
+            preferred_mode=None,
+            mode_switch_requested_at=None,
+            mode_switch_last_checked_at=None,
+            mode_switch_next_check_at=None,
+        )
+    )
+    assert authorization_pending.pending_state == "authorization_pending"
+
+
 @pytest.mark.asyncio
 async def test_only_paid_owner_and_admin_can_start_embedded_signup(
     monkeypatch,
