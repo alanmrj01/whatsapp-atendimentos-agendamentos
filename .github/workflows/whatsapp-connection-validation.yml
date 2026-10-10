@@ -15,6 +15,7 @@ on:
       - 'app/schemas/cloud_tasks.py'
       - 'app/whatsapp/**'
       - 'alembic/versions/**'
+      - 'tests/integration/test_auth_postgresql.py'
       - 'tests/test_meta_embedded_signup.py'
       - 'tests/test_whatsapp_onboarding.py'
       - 'tests/test_web_push.py'
