@@ -215,6 +215,9 @@ def test_public_connection_distinguishes_meta_review_from_started_authorization(
         )
     )
     assert review_pending.pending_state == "meta_review_pending"
+    assert review_pending.journey_state == "meta_review_pending"
+    assert review_pending.requires_user_action is False
+    assert review_pending.next_action == "wait_for_meta_review"
 
     authorization_pending = public_pwa._public_connection(
         SimpleNamespace(
@@ -231,6 +234,63 @@ def test_public_connection_distinguishes_meta_review_from_started_authorization(
         )
     )
     assert authorization_pending.pending_state == "authorization_pending"
+    assert authorization_pending.journey_state == "authorization_pending"
+    assert authorization_pending.requires_user_action is True
+    assert authorization_pending.next_action == "continue_authorization"
+
+    disconnected = public_pwa._public_connection(
+        SimpleNamespace(
+            status=WhatsAppConnectionStatus.DISCONNECTED,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code=None,
+            has_phone_number_id=False,
+            masked_display_phone_number=None,
+            meta_review_status=None,
+            preferred_mode=None,
+            mode_switch_requested_at=None,
+            mode_switch_last_checked_at=None,
+            mode_switch_next_check_at=None,
+        )
+    )
+    assert disconnected.journey_state == "not_started"
+    assert disconnected.requires_user_action is True
+    assert disconnected.next_action == "choose_mode"
+
+    connected = public_pwa._public_connection(
+        SimpleNamespace(
+            status=WhatsAppConnectionStatus.CONNECTED,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code=None,
+            has_phone_number_id=True,
+            masked_display_phone_number="(**) *****-1234",
+            meta_review_status="approved",
+            preferred_mode=None,
+            mode_switch_requested_at=None,
+            mode_switch_last_checked_at=None,
+            mode_switch_next_check_at=None,
+        )
+    )
+    assert connected.journey_state == "connected"
+    assert connected.requires_user_action is False
+    assert connected.next_action == "none"
+
+    errored = public_pwa._public_connection(
+        SimpleNamespace(
+            status=WhatsAppConnectionStatus.ERROR,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code="META_AUTHORIZATION_FAILED",
+            has_phone_number_id=False,
+            masked_display_phone_number=None,
+            meta_review_status=None,
+            preferred_mode=None,
+            mode_switch_requested_at=None,
+            mode_switch_last_checked_at=None,
+            mode_switch_next_check_at=None,
+        )
+    )
+    assert errored.journey_state == "error"
+    assert errored.requires_user_action is True
+    assert errored.next_action == "resolve_connection"
 
 
 @pytest.mark.asyncio
