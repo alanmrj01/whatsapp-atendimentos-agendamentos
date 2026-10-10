@@ -123,6 +123,25 @@ class PublicConnectionResponse(BaseModel):
     mode_switch_requested_at: datetime | None = None
     mode_switch_last_checked_at: datetime | None = None
     mode_switch_next_check_at: datetime | None = None
+    # Additive journey fields keep the backend as the source of truth for
+    # whether the customer must act, wait, or is already connected. Older PWA
+    # builds can ignore them safely while newer clients avoid inferring the
+    # next step from status text.
+    journey_state: Literal[
+        "not_started",
+        "authorization_pending",
+        "meta_review_pending",
+        "connected",
+        "error",
+    ] | None = None
+    requires_user_action: bool | None = None
+    next_action: Literal[
+        "choose_mode",
+        "continue_authorization",
+        "wait_for_meta_review",
+        "resolve_connection",
+        "none",
+    ] | None = None
 
 
 class WhatsAppModePreferenceRequest(StrictRequest):
