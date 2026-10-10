@@ -101,15 +101,39 @@ def _public_pending_state(view) -> str | None:
     return "authorization_pending"
 
 
+def _public_connection_journey(
+    view,
+    pending_state: str | None,
+) -> tuple[str, bool, str]:
+    status_value = getattr(getattr(view, "status", None), "value", None)
+    if status_value == "connected":
+        return ("connected", False, "none")
+    if status_value == "disconnected":
+        return ("not_started", True, "choose_mode")
+    if status_value == "error":
+        return ("error", True, "resolve_connection")
+    if pending_state == "meta_review_pending":
+        return ("meta_review_pending", False, "wait_for_meta_review")
+    # Any other pending connection still needs the customer to complete the
+    # provider authorization. This also fails safe for older pending records
+    # that predate the explicit pending_state distinction.
+    return ("authorization_pending", True, "continue_authorization")
+
+
 def _public_connection(view) -> PublicConnectionResponse:
     preferred_mode = getattr(view, "preferred_mode", None)
+    pending_state = _public_pending_state(view)
+    journey_state, requires_user_action, next_action = _public_connection_journey(
+        view,
+        pending_state,
+    )
     return PublicConnectionResponse(
         status=view.status.value,
         mode=view.mode.value,
         display_phone_number=getattr(
             view, "masked_display_phone_number", None
         ),
-        pending_state=_public_pending_state(view),
+        pending_state=pending_state,
         review_status=getattr(view, "meta_review_status", None),
         preferred_mode=(
             preferred_mode.value
@@ -125,6 +149,9 @@ def _public_connection(view) -> PublicConnectionResponse:
         mode_switch_next_check_at=getattr(
             view, "mode_switch_next_check_at", None
         ),
+        journey_state=journey_state,
+        requires_user_action=requires_user_action,
+        next_action=next_action,
     )
 
 
