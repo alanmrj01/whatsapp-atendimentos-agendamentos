@@ -26,7 +26,6 @@ class ReengagementDelivery(UUIDPrimaryKeyMixin, TimestampMixin, Base):
                 "business_user_memberships.business_id",
             ],
             name="fk_reengagement_deliveries_user_business_membership",
-            ondelete="CASCADE",
         ),
         UniqueConstraint(
             "user_id",
