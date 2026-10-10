@@ -12,6 +12,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.schemas.cloud_tasks import (
     LifecycleOutreachSweepPayload,
+    ReengagementSweepPayload,
     TaskAcknowledgement,
     WhatsAppEventTaskPayload,
     WhatsAppOutboundTaskPayload,
@@ -36,6 +37,7 @@ from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.sender import build_business_sender_resolver
 from app.push.service import dispatch_pending_web_push
 from app.whatsapp.mode_switch import recheck_due_coexistence_preferences
+from app.reengagement.service import ReengagementService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/tasks", tags=["internal-tasks"])
@@ -165,6 +167,34 @@ async def process_lifecycle_outreach_task(
         ) from None
     return TaskAcknowledgement(status="accepted")
 
+
+
+@router.post(
+    "/reengagement-sweep",
+    response_model=TaskAcknowledgement,
+    dependencies=[Depends(require_cloud_tasks_oidc)],
+)
+async def process_reengagement_sweep_task(
+    payload: ReengagementSweepPayload,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TaskAcknowledgement:
+    try:
+        sent = await ReengagementService(session).send_due_emails(
+            settings,
+            limit=payload.limit,
+        )
+        logger.info("reengagement_sweep_completed", extra={"email_count": sent})
+    except Exception as exc:
+        logger.warning(
+            "reengagement_sweep_failed",
+            extra={"error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Reengagement sweep failed",
+        ) from None
+    return TaskAcknowledgement(status="accepted")
 
 
 @router.post(
