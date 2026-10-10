@@ -238,6 +238,25 @@ def test_public_connection_distinguishes_meta_review_from_started_authorization(
     assert authorization_pending.requires_user_action is True
     assert authorization_pending.next_action == "continue_authorization"
 
+    review_rejected = public_pwa._public_connection(
+        SimpleNamespace(
+            status=WhatsAppConnectionStatus.PENDING,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code=META_ONBOARDING_PENDING,
+            has_phone_number_id=True,
+            masked_display_phone_number=None,
+            meta_review_status="rejected",
+            preferred_mode=None,
+            mode_switch_requested_at=None,
+            mode_switch_last_checked_at=None,
+            mode_switch_next_check_at=None,
+        )
+    )
+    assert review_rejected.pending_state == "meta_review_rejected"
+    assert review_rejected.journey_state == "meta_review_rejected"
+    assert review_rejected.requires_user_action is True
+    assert review_rejected.next_action == "review_meta_rejection"
+
     disconnected = public_pwa._public_connection(
         SimpleNamespace(
             status=WhatsAppConnectionStatus.DISCONNECTED,
