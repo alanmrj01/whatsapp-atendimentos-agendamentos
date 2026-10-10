@@ -77,7 +77,9 @@ class BrevoReengagementMailer:
             "subject": subject,
             "textContent": text,
             "htmlContent": html,
-            "headers": {"idempotencyKey": f"reengagement-{delivery_id}"},
+            # Brevo requires a UUID idempotency key. Reusing the delivery UUID
+            # makes retries within the provider TTL safe as well.
+            "headers": {"idempotencyKey": str(delivery_id)},
         }
         headers = {
             "Accept": "application/json",
