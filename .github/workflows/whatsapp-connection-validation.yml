@@ -11,12 +11,14 @@ on:
       - 'app/diagnostics/**'
       - 'app/models/**'
       - 'app/push/**'
+      - 'app/reengagement/**'
       - 'app/repositories/conversations.py'
       - 'app/schemas/cloud_tasks.py'
       - 'app/whatsapp/**'
       - 'alembic/versions/**'
       - 'tests/integration/test_auth_postgresql.py'
       - 'tests/test_meta_embedded_signup.py'
+      - 'tests/test_reengagement.py'
       - 'tests/test_whatsapp_onboarding.py'
       - 'tests/test_web_push.py'
       - 'tests/test_billing_foundation.py'
@@ -65,6 +67,7 @@ jobs:
         run: >-
           pytest
           tests/test_meta_embedded_signup.py
+          tests/test_reengagement.py
           tests/test_whatsapp_onboarding.py
           tests/test_web_push.py
           tests/test_billing_foundation.py
