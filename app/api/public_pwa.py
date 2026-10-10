@@ -82,12 +82,20 @@ Config = Annotated[Settings, Depends(require_auth_config)]
 Identity = Annotated[Principal, Depends(require_principal)]
 
 
-def _public_pending_state(error_code: str | None) -> str | None:
-    return (
-        "authorization_pending"
-        if error_code == META_ONBOARDING_PENDING
-        else None
-    )
+def _public_pending_state(view) -> str | None:
+    if getattr(view, "last_error_code", None) != META_ONBOARDING_PENDING:
+        return None
+    if (
+        getattr(view, "status", None).value == "pending"
+        and getattr(view, "mode", None).value == "coexistence"
+        and getattr(view, "has_phone_number_id", False)
+    ):
+        # Once Meta has returned the selected WABA/phone assets, the user has
+        # completed the local selection flow. Keep this distinct from an
+        # authorization that was merely started so the PWA does not tell the
+        # user to restart the Meta flow while the account is being reviewed.
+        return "meta_review_pending"
+    return "authorization_pending"
 
 
 def _public_connection(view) -> PublicConnectionResponse:
@@ -98,9 +106,7 @@ def _public_connection(view) -> PublicConnectionResponse:
         display_phone_number=getattr(
             view, "masked_display_phone_number", None
         ),
-        pending_state=_public_pending_state(
-            getattr(view, "last_error_code", None)
-        ),
+        pending_state=_public_pending_state(view),
         review_status=getattr(view, "meta_review_status", None),
         preferred_mode=(
             preferred_mode.value
