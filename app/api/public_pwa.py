@@ -89,6 +89,7 @@ def _public_pending_state(view) -> str | None:
         getattr(view, "status", None).value == "pending"
         and getattr(view, "mode", None).value == "coexistence"
         and getattr(view, "has_phone_number_id", False)
+        and getattr(view, "meta_review_status", None) is None
     ):
         # Once Meta has returned the selected WABA/phone assets, the user has
         # completed the local selection flow. Keep this distinct from an
