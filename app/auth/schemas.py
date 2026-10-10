@@ -117,7 +117,11 @@ class PublicConnectionResponse(BaseModel):
     status: Literal["disconnected", "pending", "connected", "error"]
     mode: Literal["coexistence", "api_only"] | None = None
     display_phone_number: str | None = None
-    pending_state: Literal["authorization_pending", "meta_review_pending"] | None = None
+    pending_state: Literal[
+        "authorization_pending",
+        "meta_review_pending",
+        "meta_review_rejected",
+    ] | None = None
     review_status: Literal["approved", "rejected"] | None = None
     preferred_mode: Literal["coexistence", "api_only"] | None = None
     mode_switch_requested_at: datetime | None = None
@@ -131,6 +135,7 @@ class PublicConnectionResponse(BaseModel):
         "not_started",
         "authorization_pending",
         "meta_review_pending",
+        "meta_review_rejected",
         "connected",
         "error",
     ] | None = None
@@ -139,6 +144,7 @@ class PublicConnectionResponse(BaseModel):
         "choose_mode",
         "continue_authorization",
         "wait_for_meta_review",
+        "review_meta_rejection",
         "resolve_connection",
         "none",
     ] | None = None
