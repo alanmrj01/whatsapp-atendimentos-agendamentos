@@ -53,5 +53,7 @@ class ReengagementDelivery(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     step: Mapped[int] = mapped_column(Integer, nullable=False)
     popup_shown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     popup_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    email_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     email_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    email_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cta_clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
