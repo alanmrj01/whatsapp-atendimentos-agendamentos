@@ -142,6 +142,12 @@ class PlatformAdminService:
             is_active=True,
             platform_role=None,
         )
+        access = BusinessAccess(
+            business_id=business.id,
+            access_mode="paid",
+            has_had_operational_access=True,
+            admin_full_access=True,
+        )
         membership = BusinessUserMembership(
             user_id=owner.id,
             business_id=business.id,
@@ -153,7 +159,7 @@ class PlatformAdminService:
             # the membership that references both foreign keys.
             await self.db.flush()
             self.db.add_all(
-                [membership, *default_services_for_business(business.id)]
+                [access, membership, *default_services_for_business(business.id)]
             )
             await self.db.commit()
         except IntegrityError:
@@ -207,12 +213,14 @@ class PlatformAdminService:
                 business_id=business_id,
                 access_mode=access_mode,
                 has_had_operational_access=True,
+                admin_full_access=(access_mode == "paid"),
             )
             .on_conflict_do_update(
                 index_elements=[BusinessAccess.business_id],
                 set_={
                     "access_mode": access_mode,
                     "has_had_operational_access": history_on_update,
+                    "admin_full_access": (access_mode == "paid"),
                 },
             )
             .returning(BusinessAccess.business_id, BusinessAccess.access_mode)

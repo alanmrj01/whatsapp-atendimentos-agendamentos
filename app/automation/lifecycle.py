@@ -8,6 +8,10 @@ from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.billing.entitlements import (
+    active_operational_access_exists,
+    plus_features_access_exists,
+)
 from app.models import (
     Appointment,
     Business,
@@ -86,6 +90,10 @@ async def _create_incomplete_followups(
                 ),
                 Business.active.is_(True),
                 Business.assistant_enabled.is_(True),
+                active_operational_access_exists(
+                    Conversation.business_id,
+                    at=reference,
+                ),
                 ~exists(
                     select(BusinessAutomationExclusion.id).where(
                         BusinessAutomationExclusion.business_id == Conversation.business_id,
@@ -211,6 +219,14 @@ async def _create_cleaning_followups(
                 ),
                 Business.active.is_(True),
                 Business.assistant_enabled.is_(True),
+                active_operational_access_exists(
+                    Appointment.business_id,
+                    at=reference,
+                ),
+                plus_features_access_exists(
+                    Appointment.business_id,
+                    at=reference,
+                ),
                 ~exists(
                     select(BusinessAutomationExclusion.id).where(
                         BusinessAutomationExclusion.business_id == Appointment.business_id,

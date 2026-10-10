@@ -67,7 +67,10 @@ class WebPushEvent(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "web_push_events"
     __table_args__ = (
         CheckConstraint(
-            "event_type IN ('inbound_message', 'automatic_booking')",
+            "event_type IN ("
+            "'inbound_message', 'automatic_booking', "
+            "'human_intervention', 'connection_action', 'billing_action'"
+            ")",
             name="event_type_allowed",
         ),
         UniqueConstraint("event_key", name="uq_web_push_events_event_key"),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 from typing import Annotated
 
@@ -17,6 +18,7 @@ from app.core.config import (
     get_settings,
 )
 from app.core.database import get_db
+from app.whatsapp.administration import WhatsAppConnectionAdministrationService
 from app.schemas.whatsapp_webhook import (
     WebhookAcknowledgement,
     WhatsAppWebhookPayload,
@@ -37,12 +39,14 @@ from app.whatsapp.processor import (
 from app.whatsapp.webhook import (
     InboundMessageEvent,
     is_individual_whatsapp_id,
+    normalize_waba_review_updates,
     normalize_webhook_payload,
     verify_meta_signature,
 )
 from app.push.service import WebPushDispatchError, dispatch_pending_web_push
 
 router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp-webhook"])
+logger = logging.getLogger(__name__)
 
 
 def build_event_task_enqueuer(settings: Settings) -> EventTaskEnqueuer:
@@ -116,6 +120,27 @@ async def receive_whatsapp_webhook(
             status_code=422,
             detail="Invalid request",
         ) from None
+
+    review_updates = normalize_waba_review_updates(payload)
+    if review_updates:
+        administration = WhatsAppConnectionAdministrationService(session)
+        for review in review_updates:
+            view = await administration.record_meta_review_decision(
+                review.meta_waba_id,
+                review.decision,
+            )
+            logger.info(
+                "meta_waba_review_update",
+                extra={
+                    "review_decision": review.decision,
+                    "stage": (
+                        "matched_pending_connection"
+                        if view is not None
+                        else "unmatched_or_already_connected"
+                    ),
+                },
+            )
+        await session.commit()
 
     events = normalize_webhook_payload(payload)
     if not settings.cloud_tasks_enabled:

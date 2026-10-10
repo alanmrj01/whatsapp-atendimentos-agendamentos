@@ -1,6 +1,7 @@
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
+from app.diagnostics.models import EXPECTED_SCHEMA_REVISION
 from app.operations.defaults import DEFAULT_OPERATIONAL_SERVICES
 from tests.test_migration import PROJECT_ROOT, render_migration_sql
 
@@ -16,7 +17,7 @@ MIGRATION_PATH = (
 def test_operational_conversations_migration_precedes_onboarding_chain() -> None:
     script = ScriptDirectory.from_config(Config(str(PROJECT_ROOT / "alembic.ini")))
 
-    assert script.get_heads() == ["20261001_0026"]
+    assert script.get_heads() == [EXPECTED_SCHEMA_REVISION]
     assert script.get_revision("20260923_0018").down_revision == "20260923_0017"
     assert script.get_revision("20260923_0017").down_revision == "20260923_0016"
     assert script.get_revision("20260923_0016").down_revision == "20260922_0015"

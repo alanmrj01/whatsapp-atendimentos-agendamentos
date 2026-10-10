@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
@@ -53,6 +54,25 @@ class SignupRequest(StrictRequest):
         return normalize_email(value)
 
 
+class PasswordChangeRequest(StrictRequest):
+    current_password: SecretStr = Field(min_length=1, max_length=1024)
+    new_password: SecretStr = Field(min_length=12, max_length=1024)
+
+
+class PasswordResetRequest(StrictRequest):
+    email: str = Field(max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def normalized_email(cls, value: str) -> str:
+        return normalize_email(value)
+
+
+class PasswordResetConfirmRequest(StrictRequest):
+    token: SecretStr = Field(min_length=32, max_length=256)
+    new_password: SecretStr = Field(min_length=12, max_length=1024)
+
+
 class EmptyRequest(StrictRequest):
     pass
 
@@ -72,6 +92,8 @@ class MembershipResponse(BaseModel):
     role: MembershipRole
     access_mode: AccessMode = "free"
     has_had_operational_access: bool = False
+    admin_full_access: bool = False
+    account_state: Literal["demo", "active", "payment_blocked"] = "demo"
 
 
 class MeResponse(BaseModel):
@@ -95,6 +117,46 @@ class PublicConnectionResponse(BaseModel):
     status: Literal["disconnected", "pending", "connected", "error"]
     mode: Literal["coexistence", "api_only"] | None = None
     display_phone_number: str | None = None
+    pending_state: Literal[
+        "authorization_pending",
+        "meta_review_pending",
+        "meta_review_rejected",
+    ] | None = None
+    review_status: Literal["approved", "rejected"] | None = None
+    preferred_mode: Literal["coexistence", "api_only"] | None = None
+    mode_switch_requested_at: datetime | None = None
+    mode_switch_last_checked_at: datetime | None = None
+    mode_switch_next_check_at: datetime | None = None
+    # Additive journey fields keep the backend as the source of truth for
+    # whether the customer must act, wait, or is already connected. Older PWA
+    # builds can ignore them safely while newer clients avoid inferring the
+    # next step from status text.
+    journey_state: Literal[
+        "not_started",
+        "authorization_pending",
+        "meta_review_pending",
+        "meta_review_rejected",
+        "connected",
+        "error",
+    ] | None = None
+    requires_user_action: bool | None = None
+    next_action: Literal[
+        "choose_mode",
+        "continue_authorization",
+        "wait_for_meta_review",
+        "review_meta_rejection",
+        "resolve_connection",
+        "none",
+    ] | None = None
+
+
+class WhatsAppModePreferenceRequest(StrictRequest):
+    preferred_mode: Literal["coexistence", "api_only"] | None = None
+
+
+class WhatsAppPrepareCoexistenceRequest(StrictRequest):
+    confirm_temporary_interruption: bool = Field(strict=True)
+    confirm_phone_available: bool = Field(strict=True)
 
 
 class MetaEmbeddedSignupStartResponse(BaseModel):
@@ -132,7 +194,51 @@ class MetaEmbeddedSignupTelemetryRequest(StrictRequest):
     intermediate_step_received: bool | None = Field(default=None, strict=True)
 
 
+class MetaEmbeddedSignupAssetsRequest(StrictRequest):
+    waba_id: str = Field(min_length=1, max_length=32)
+    phone_number_id: str | None = Field(default=None, min_length=1, max_length=32)
+
+
 class MetaEmbeddedSignupCompleteRequest(StrictRequest):
     authorization_code: SecretStr = Field(min_length=1, max_length=4096)
     waba_id: str = Field(min_length=1, max_length=32)
     phone_number_id: str | None = Field(default=None, min_length=1, max_length=32)
+
+
+class MetaApiOnlyEmbeddedSignupStartRequest(StrictRequest):
+    intent: WhatsAppOnboardingIntent
+    platform_only_impact_confirmed: bool = Field(default=False, strict=True)
+
+    @field_validator("intent")
+    @classmethod
+    def api_only_intent(cls, value: WhatsAppOnboardingIntent) -> WhatsAppOnboardingIntent:
+        if value not in {
+            WhatsAppOnboardingIntent.USE_NEW_OR_DEDICATED_NUMBER,
+            WhatsAppOnboardingIntent.USE_EXISTING_NUMBER_PLATFORM_ONLY,
+        }:
+            raise ValueError("API-only onboarding intent is invalid")
+        return value
+
+
+class MetaApiOnlyEmbeddedSignupStartResponse(BaseModel):
+    app_id: str
+    configuration_id: str
+    graph_version: str
+    embedded_signup_version: str
+    mode: Literal["api_only"] = "api_only"
+    intent: WhatsAppOnboardingIntent
+
+
+class MetaApiOnlyEmbeddedSignupCompleteRequest(MetaApiOnlyEmbeddedSignupStartRequest):
+    authorization_code: SecretStr = Field(min_length=1, max_length=4096)
+    waba_id: str = Field(min_length=1, max_length=32)
+    phone_number_id: str | None = Field(default=None, min_length=1, max_length=32)
+    registration_pin: SecretStr = Field(min_length=6, max_length=6)
+
+    @field_validator("registration_pin")
+    @classmethod
+    def six_digit_registration_pin(cls, value: SecretStr) -> SecretStr:
+        raw = value.get_secret_value()
+        if len(raw) != 6 or not raw.isdigit():
+            raise ValueError("Registration PIN must contain exactly 6 digits")
+        return value

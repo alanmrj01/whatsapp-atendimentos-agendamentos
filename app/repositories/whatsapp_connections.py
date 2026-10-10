@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import case, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.billing.entitlements import active_operational_access_exists
 from app.models import Business, BusinessWhatsAppConnection
 from app.whatsapp.connections import (
     WhatsAppConnectionMode,
@@ -45,6 +46,30 @@ class WhatsAppConnectionRepository:
             statement = statement.with_for_update()
         return await self.session.scalar(statement)
 
+    async def get_active_connection_by_waba_id(
+        self,
+        meta_waba_id: str,
+        *,
+        for_update: bool = False,
+    ) -> BusinessWhatsAppConnection | None:
+        statement = (
+            select(BusinessWhatsAppConnection)
+            .where(
+                BusinessWhatsAppConnection.meta_waba_id == meta_waba_id,
+                BusinessWhatsAppConnection.status
+                != WhatsAppConnectionStatus.DISCONNECTED.value,
+            )
+            .order_by(
+                BusinessWhatsAppConnection.created_at.desc(),
+                BusinessWhatsAppConnection.id.desc(),
+            )
+            .limit(2)
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        rows = list((await self.session.scalars(statement)).all())
+        return rows[0] if len(rows) == 1 else None
+
     async def get_connection_record(
         self, business_id: uuid.UUID
     ) -> WhatsAppConnectionRecord | None:
@@ -78,33 +103,44 @@ class WhatsAppConnectionRepository:
                 == WhatsAppConnectionStatus.CONNECTED.value,
             )
         )
+
+        candidate: uuid.UUID | None = None
         if connection_business_id is not None:
             if (
                 legacy_business_id is not None
                 and legacy_business_id != connection_business_id
             ):
                 return None
-            return connection_business_id
-        known_connection = await self.session.scalar(
-            select(BusinessWhatsAppConnection.id).where(
-                BusinessWhatsAppConnection.meta_phone_number_id
-                == meta_phone_number_id
+            candidate = connection_business_id
+        else:
+            known_connection = await self.session.scalar(
+                select(BusinessWhatsAppConnection.id).where(
+                    BusinessWhatsAppConnection.meta_phone_number_id
+                    == meta_phone_number_id
+                )
             )
-        )
-        if known_connection is not None:
-            return None
-        if legacy_business_id is None:
-            return None
-        return await self.session.scalar(
-            select(Business.id).where(
-                Business.id == legacy_business_id,
-                ~exists(
-                    select(BusinessWhatsAppConnection.id).where(
-                        BusinessWhatsAppConnection.business_id == Business.id
-                    )
-                ),
+            if known_connection is not None:
+                return None
+            if legacy_business_id is None:
+                return None
+            candidate = await self.session.scalar(
+                select(Business.id).where(
+                    Business.id == legacy_business_id,
+                    ~exists(
+                        select(BusinessWhatsAppConnection.id).where(
+                            BusinessWhatsAppConnection.business_id == Business.id
+                        )
+                    ),
+                )
             )
+
+        if candidate is None:
+            return None
+
+        entitled = await self.session.scalar(
+            select(active_operational_access_exists(candidate))
         )
+        return candidate if bool(entitled) else None
 
 
 def connection_record(

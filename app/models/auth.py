@@ -46,6 +46,11 @@ class BusinessAccess(Base):
     access_mode: Mapped[str] = mapped_column(
         String(16), default="free", server_default=text("'free'"), nullable=False
     )
+    # Explicit administrative override. This is distinct from a commercial
+    # subscription and wins over plan limits while enabled.
+    admin_full_access: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
     # Sticky history flag: once a business has had real operational access, revoking
     # paid access must never turn it back into a demo account or overwrite its data.
     has_had_operational_access: Mapped[bool] = mapped_column(
@@ -64,4 +69,17 @@ class AuthSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     active_business_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("businesses.id"), index=True)
     refresh_token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PasswordResetToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (
+        CheckConstraint("token_hash ~ '^[0-9a-f]{64}$'", name="password_reset_hash_format"),
+        Index("ix_password_reset_tokens_user_created_at", "user_id", "created_at"),
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

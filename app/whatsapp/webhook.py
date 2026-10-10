@@ -42,6 +42,12 @@ INDIVIDUAL_CONVERSATION_KINDS = {
 
 
 @dataclass(frozen=True, slots=True)
+class WabaReviewUpdateEvent:
+    meta_waba_id: str
+    decision: str
+
+
+@dataclass(frozen=True, slots=True)
 class InboundMessageEvent:
     event_key: str
     event_type: str
@@ -106,6 +112,43 @@ def verify_meta_signature(
 def build_event_key(event_kind: str, *parts: str) -> str:
     fingerprint = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
     return f"whatsapp:{event_kind}:{fingerprint}"
+
+
+def normalize_waba_review_updates(
+    payload: WhatsAppWebhookPayload,
+) -> list[WabaReviewUpdateEvent]:
+    if payload.object != "whatsapp_business_account":
+        return []
+
+    updates: list[WabaReviewUpdateEvent] = []
+    for entry in payload.entry:
+        meta_waba_id = _identifier(entry.get("id"), 255)
+        if meta_waba_id is None:
+            continue
+        changes = entry.get("changes")
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            if change.get("field") != "account_review_update":
+                continue
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+            raw_decision = _identifier(value.get("decision"), 32)
+            if raw_decision is None:
+                continue
+            decision = raw_decision.upper()
+            if decision not in {"APPROVED", "REJECTED", "DECLINED"}:
+                continue
+            updates.append(
+                WabaReviewUpdateEvent(
+                    meta_waba_id=meta_waba_id,
+                    decision=decision,
+                )
+            )
+    return updates
 
 
 def normalize_webhook_payload(

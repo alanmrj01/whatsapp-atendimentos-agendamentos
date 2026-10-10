@@ -14,6 +14,12 @@ _SAFE_EXTRA_FIELDS = (
     "duration_ms",
     "error_type",
     "environment",
+    "stage",
+    "authorization_code_received",
+    "waba_id_received",
+    "phone_number_id_received",
+    "intermediate_step_received",
+    "review_decision",
 )
 
 

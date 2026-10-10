@@ -251,6 +251,38 @@ async def test_existing_number_api_only_requires_impact_confirmation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_connected_account_can_switch_mode_after_provider_confirmation() -> None:
+    administration = FakeAdministration(
+        view(
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            status=WhatsAppConnectionStatus.CONNECTED,
+        )
+    )
+    service = WhatsAppOnboardingService(administration)
+
+    result = await service.complete_provider_onboarding(
+        BUSINESS_ID,
+        completion(
+            intent=WhatsAppOnboardingIntent.USE_EXISTING_NUMBER_PLATFORM_ONLY,
+            mode=WhatsAppConnectionMode.API_ONLY,
+            impact_confirmed=True,
+        ),
+    )
+
+    assert result.status is WhatsAppConnectionStatus.CONNECTED
+    assert result.mode is WhatsAppConnectionMode.API_ONLY
+    assert (
+        "change_mode",
+        WhatsAppConnectionMode.API_ONLY,
+    ) in administration.calls
+    assert any(
+        name == "set_credential_secret_ref"
+        for name, _ in administration.calls
+    )
+    assert administration.calls[-1][0] == "mark_connected"
+
+
+@pytest.mark.asyncio
 async def test_connected_account_cannot_be_recompleted() -> None:
     service = WhatsAppOnboardingService(
         FakeAdministration(

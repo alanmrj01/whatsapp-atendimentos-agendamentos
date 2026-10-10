@@ -285,8 +285,9 @@ async def test_create_business_flushes_parents_before_membership(monkeypatch) ->
             assert any(isinstance(item, User) for item in items)
             events.append("parents")
         else:
-            assert len(items) == 6
+            assert len(items) == 7
             assert sum(isinstance(item, Service) for item in items) == 5
+            assert any(isinstance(item, BusinessAccess) for item in items)
             assert any(isinstance(item, BusinessUserMembership) for item in items)
             events.append("membership_and_services")
 

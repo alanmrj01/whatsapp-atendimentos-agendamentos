@@ -10,19 +10,29 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_auth_config, require_origin, require_principal
-from app.auth.rate_limit import login_rate_limiter
+from app.auth.password_email import BrevoPasswordResetMailer, PasswordResetEmailError
+from app.auth.rate_limit import login_rate_limiter, password_reset_rate_limiter
 from app.auth.schemas import (
     AccessResponse,
     ActiveBusinessRequest,
     EmptyRequest,
     LoginRequest,
+    MetaApiOnlyEmbeddedSignupCompleteRequest,
+    MetaApiOnlyEmbeddedSignupStartRequest,
+    MetaApiOnlyEmbeddedSignupStartResponse,
+    MetaEmbeddedSignupAssetsRequest,
     MetaEmbeddedSignupCompleteRequest,
     MetaEmbeddedSignupStartResponse,
     MetaEmbeddedSignupTelemetryRequest,
     MeResponse,
     MembershipRole,
+    PasswordChangeRequest,
+    PasswordResetConfirmRequest,
+    PasswordResetRequest,
     PublicConnectionResponse,
     PublicPlanRequest,
+    WhatsAppModePreferenceRequest,
+    WhatsAppPrepareCoexistenceRequest,
     SignupRequest,
 )
 from app.auth.security import COOKIE_NAME, COOKIE_PATH, access_token
@@ -31,23 +41,33 @@ from app.core.config import (
     Environment,
     MetaConfigurationError,
     MetaEmbeddedSignupConfiguration,
+    PasswordRecoveryConfigurationError,
     Settings,
 )
 from app.core.database import get_db
 from app.models import AuthSession, Business, User
 from app.schemas.whatsapp_onboarding import WhatsAppOnboardingPlanResponse, onboarding_plan_response
 from app.whatsapp.administration import (
+    META_ONBOARDING_PENDING,
     WhatsAppConnectionAdministrationError,
     WhatsAppConnectionAdministrationService,
 )
 from app.whatsapp.client import WhatsAppConfigurationError
-from app.whatsapp.credentials import GoogleSecretManagerCredentialStore
+from app.whatsapp.connections import WhatsAppConnectionMode
+from app.whatsapp.credentials import (
+    BusinessWhatsAppCredentialProvider,
+    GoogleSecretManagerCredentialStore,
+)
 from app.whatsapp.embedded_signup import (
     MetaEmbeddedSignupError,
     MetaEmbeddedSignupGateway,
     MetaEmbeddedSignupRejected,
     MetaEmbeddedSignupService,
     MetaEmbeddedSignupUnavailable,
+)
+from app.repositories.whatsapp_connections import (
+    WhatsAppConnectionRepository,
+    connection_record,
 )
 from app.whatsapp.onboarding import (
     WhatsAppOnboardingError,
@@ -60,6 +80,104 @@ logger = logging.getLogger(__name__)
 Db = Annotated[AsyncSession, Depends(get_db)]
 Config = Annotated[Settings, Depends(require_auth_config)]
 Identity = Annotated[Principal, Depends(require_principal)]
+
+
+def _public_pending_state(view) -> str | None:
+    if getattr(view, "last_error_code", None) != META_ONBOARDING_PENDING:
+        return None
+    status_value = getattr(getattr(view, "status", None), "value", None)
+    mode_value = getattr(getattr(view, "mode", None), "value", None)
+    if (
+        status_value == "pending"
+        and mode_value == "coexistence"
+        and getattr(view, "has_phone_number_id", False)
+    ):
+        review_status = getattr(view, "meta_review_status", None)
+        if review_status == "rejected":
+            return "meta_review_rejected"
+        if review_status is None:
+            # Once Meta has returned the selected WABA/phone assets, the user
+            # has completed the local selection flow. Do not ask them to
+            # restart the provider flow while the account is being reviewed.
+            return "meta_review_pending"
+    return "authorization_pending"
+
+
+def _public_connection_journey(
+    view,
+    pending_state: str | None,
+) -> tuple[str, bool, str]:
+    status_value = getattr(getattr(view, "status", None), "value", None)
+    if status_value == "connected":
+        return ("connected", False, "none")
+    if status_value == "disconnected":
+        return ("not_started", True, "choose_mode")
+    if status_value == "error":
+        return ("error", True, "resolve_connection")
+    if pending_state == "meta_review_pending":
+        return ("meta_review_pending", False, "wait_for_meta_review")
+    if pending_state == "meta_review_rejected":
+        return ("meta_review_rejected", True, "review_meta_rejection")
+    # Any other pending connection still needs the customer to complete the
+    # provider authorization. This also fails safe for older pending records
+    # that predate the explicit pending_state distinction.
+    return ("authorization_pending", True, "continue_authorization")
+
+
+def _public_connection(view) -> PublicConnectionResponse:
+    preferred_mode = getattr(view, "preferred_mode", None)
+    pending_state = _public_pending_state(view)
+    journey_state, requires_user_action, next_action = _public_connection_journey(
+        view,
+        pending_state,
+    )
+    return PublicConnectionResponse(
+        status=view.status.value,
+        mode=view.mode.value,
+        display_phone_number=getattr(
+            view, "masked_display_phone_number", None
+        ),
+        pending_state=pending_state,
+        review_status=getattr(view, "meta_review_status", None),
+        preferred_mode=(
+            preferred_mode.value
+            if preferred_mode is not None
+            else None
+        ),
+        mode_switch_requested_at=getattr(
+            view, "mode_switch_requested_at", None
+        ),
+        mode_switch_last_checked_at=getattr(
+            view, "mode_switch_last_checked_at", None
+        ),
+        mode_switch_next_check_at=getattr(
+            view, "mode_switch_next_check_at", None
+        ),
+        journey_state=journey_state,
+        requires_user_action=requires_user_action,
+        next_action=next_action,
+    )
+
+
+def _require_password_recovery(settings: Settings) -> None:
+    try:
+        settings.require_password_recovery_enabled()
+    except PasswordRecoveryConfigurationError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Password recovery is temporarily unavailable",
+        ) from None
+
+
+def _password_reset_mailer(settings: Settings) -> BrevoPasswordResetMailer:
+    try:
+        configuration = settings.require_password_reset_email_configuration()
+    except PasswordRecoveryConfigurationError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Password recovery is temporarily unavailable",
+        ) from None
+    return BrevoPasswordResetMailer(configuration)
 
 
 async def token_response(
@@ -127,6 +245,71 @@ async def refresh(payload: EmptyRequest, request: Request, response: Response, s
     return await token_response(response, settings, user, session, replacement, db)
 
 
+@router.post(
+    "/auth/password/forgot",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_origin)],
+)
+async def forgot_password(
+    payload: PasswordResetRequest,
+    settings: Config,
+    db: Db,
+):
+    mailer = _password_reset_mailer(settings)
+    await password_reset_rate_limiter.acquire(payload.email)
+    service = AuthService(db)
+    issue = await service.issue_password_reset(payload.email)
+    if issue is not None:
+        try:
+            await mailer.send(
+                reset_id=issue.id,
+                email=issue.email,
+                token=issue.token,
+            )
+        except PasswordResetEmailError:
+            await service.revoke_password_reset(issue.id)
+            logger.error("password_reset_delivery_failed")
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post(
+    "/auth/password/reset",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def reset_password(
+    payload: PasswordResetConfirmRequest,
+    settings: Config,
+    db: Db,
+):
+    _require_password_recovery(settings)
+    await AuthService(db).reset_password(
+        payload.token.get_secret_value(),
+        payload.new_password.get_secret_value(),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/auth/password/change",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def change_password(
+    payload: PasswordChangeRequest,
+    settings: Config,
+    principal: Identity,
+    db: Db,
+):
+    _require_password_recovery(settings)
+    await AuthService(db).change_password(
+        principal,
+        payload.current_password.get_secret_value(),
+        payload.new_password.get_secret_value(),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/auth/logout", status_code=204, dependencies=[Depends(require_origin)])
 async def logout(payload: EmptyRequest, request: Request, settings: Config, db: Db):
     await AuthService(db).logout(request.cookies.get(COOKIE_NAME))
@@ -159,13 +342,110 @@ async def active_business(payload: ActiveBusinessRequest, principal: Identity, d
 async def whatsapp_connection(principal: Identity, db: Db):
     business = principal.active_membership()
     connection = await WhatsAppConnectionAdministrationService(db).get_connection(business.business_id)
-    return PublicConnectionResponse(
-        status=connection.status.value if connection else "disconnected",
-        mode=connection.mode.value if connection else None,
-        display_phone_number=(
-            connection.masked_display_phone_number if connection else None
-        ),
+    if connection is None:
+        return PublicConnectionResponse(status="disconnected")
+    return _public_connection(connection)
+
+
+@router.post(
+    "/whatsapp/mode-switch/prepare-coexistence",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def prepare_whatsapp_coexistence_switch(
+    payload: WhatsAppPrepareCoexistenceRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    membership = _require_paid_whatsapp_administrator(principal)
+    if not (
+        payload.confirm_temporary_interruption
+        and payload.confirm_phone_available
+    ):
+        raise HTTPException(
+            422,
+            "Explicit migration confirmations are required",
+        )
+
+    repository = WhatsAppConnectionRepository(db)
+    current = await repository.get_connection(
+        membership.business_id,
+        for_update=True,
     )
+    if (
+        current is None
+        or current.status != "connected"
+        or current.mode != "api_only"
+        or current.meta_phone_number_id is None
+    ):
+        raise HTTPException(
+            409,
+            "Exclusive WhatsApp connection is not available for migration",
+        )
+
+    administration = WhatsAppConnectionAdministrationService(db)
+    await administration.request_mode_switch(
+        membership.business_id,
+        WhatsAppConnectionMode.COEXISTENCE,
+    )
+
+    try:
+        access_token = await BusinessWhatsAppCredentialProvider(
+            settings
+        ).resolve(connection_record(current))
+        configuration = _embedded_signup_configuration(settings)
+        gateway = MetaEmbeddedSignupGateway(configuration)
+        try:
+            await gateway.deregister_phone(
+                current.meta_phone_number_id,
+                access_token,
+            )
+        finally:
+            await gateway.aclose()
+    except (WhatsAppConfigurationError, MetaEmbeddedSignupError):
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Meta could not prepare the WhatsApp mode change",
+        ) from None
+
+    view = await administration.mark_disconnected(
+        membership.business_id
+    )
+    business = await db.get(Business, membership.business_id)
+    if business is not None:
+        business.meta_phone_number_id = None
+        business.meta_waba_id = None
+    await db.commit()
+    return _public_connection(view)
+
+
+@router.post(
+    "/whatsapp/mode-preference",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def set_whatsapp_mode_preference(
+    payload: WhatsAppModePreferenceRequest,
+    principal: Identity,
+    db: Db,
+):
+    membership = _require_paid_whatsapp_administrator(principal)
+    administration = WhatsAppConnectionAdministrationService(db)
+    if payload.preferred_mode is None:
+        view = await administration.clear_mode_switch_request(
+            membership.business_id
+        )
+    else:
+        view = await administration.request_mode_switch(
+            membership.business_id,
+            WhatsAppConnectionMode(payload.preferred_mode),
+        )
+    await db.commit()
+    return _public_connection(view)
 
 
 @router.post(
@@ -263,6 +543,14 @@ def _embedded_signup_configuration(
         ) from None
 
 
+def _require_api_only_fallback(settings: Settings) -> None:
+    if not settings.whatsapp_api_only_fallback_enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "WhatsApp exclusive connection is temporarily unavailable",
+        )
+
+
 @router.post(
     "/whatsapp/onboarding/embedded-signup/start",
     response_model=MetaEmbeddedSignupStartResponse,
@@ -279,7 +567,12 @@ async def start_meta_embedded_signup(
     administration = WhatsAppConnectionAdministrationService(db)
     current = await administration.get_connection(business.business_id)
     if current is not None and current.status.value == "connected":
-        raise HTTPException(409, "WhatsApp account is already connected")
+        detail = (
+            "WhatsApp account is already connected in this mode"
+            if current.mode.value == "coexistence"
+            else "Use the assisted mode-switch flow before coexistence onboarding"
+        )
+        raise HTTPException(409, detail)
     plan = WhatsAppOnboardingService(administration).plan(
         WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
     )
@@ -291,6 +584,81 @@ async def start_meta_embedded_signup(
         graph_version=configuration.graph_version,
         embedded_signup_version=configuration.embedded_signup_version,
     )
+
+
+@router.post(
+    "/whatsapp/onboarding/embedded-signup/attempt",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def begin_meta_embedded_signup_attempt(
+    payload: EmptyRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    _embedded_signup_configuration(settings)
+    administration = WhatsAppConnectionAdministrationService(db)
+    current = await administration.get_connection(
+        business.business_id,
+        for_update=True,
+    )
+    if current is not None and current.status.value == "connected":
+        detail = (
+            "WhatsApp account is already connected in this mode"
+            if current.mode.value == "coexistence"
+            else "Use the assisted mode-switch flow before coexistence onboarding"
+        )
+        raise HTTPException(409, detail)
+    plan = WhatsAppOnboardingService(administration).plan(
+        WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
+    )
+    if not plan.ready_to_continue or plan.requested_mode.value != "coexistence":
+        raise HTTPException(409, "WhatsApp onboarding path is unavailable")
+    try:
+        view = await administration.begin_pending_connection(
+            business.business_id,
+            plan.requested_mode,
+        )
+        await db.commit()
+    except WhatsAppConnectionAdministrationError:
+        await db.rollback()
+        raise HTTPException(
+            409, "WhatsApp onboarding could not be started"
+        ) from None
+    return _public_connection(view)
+
+
+@router.post(
+    "/whatsapp/onboarding/embedded-signup/assets",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_origin)],
+)
+async def record_meta_embedded_signup_assets(
+    payload: MetaEmbeddedSignupAssetsRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+) -> Response:
+    business = _require_paid_whatsapp_administrator(principal)
+    configuration = _embedded_signup_configuration(settings)
+    administration = WhatsAppConnectionAdministrationService(db)
+    try:
+        await administration.record_pending_meta_assets(
+            business.business_id,
+            meta_waba_id=payload.waba_id,
+            meta_phone_number_id=payload.phone_number_id,
+            graph_version=configuration.graph_version,
+        )
+        await db.commit()
+    except WhatsAppConnectionAdministrationError:
+        await db.rollback()
+        raise HTTPException(
+            409, "WhatsApp onboarding progress could not be saved"
+        ) from None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -344,9 +712,12 @@ async def complete_meta_embedded_signup(
             db
         ).get_connection(business.business_id, for_update=True)
         if current is not None and current.status.value == "connected":
-            raise HTTPException(
-                409, "WhatsApp account is already connected"
+            detail = (
+                "WhatsApp account is already connected in this mode"
+                if current.mode.value == "coexistence"
+                else "Use the assisted mode-switch flow before coexistence onboarding"
             )
+            raise HTTPException(409, detail)
         service, gateway = _embedded_signup_service(db, configuration)
         view = await service.complete_coexistence(
             business.business_id,
@@ -387,11 +758,168 @@ async def complete_meta_embedded_signup(
         _log_embedded_signup_stage(
             "complete_request_succeeded" if completed else "complete_request_failed"
         )
-    return PublicConnectionResponse(
-        status=view.status.value,
-        mode=view.mode.value,
-        display_phone_number=view.masked_display_phone_number,
+    return _public_connection(view)
+
+
+@router.post(
+    "/whatsapp/onboarding/api-only/start",
+    response_model=MetaApiOnlyEmbeddedSignupStartResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def start_meta_api_only_signup(
+    payload: MetaApiOnlyEmbeddedSignupStartRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    _require_api_only_fallback(settings)
+    configuration = _embedded_signup_configuration(settings)
+    if configuration.embedded_signup_version != "v4":
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "WhatsApp exclusive connection requires Embedded Signup v4",
+        )
+    administration = WhatsAppConnectionAdministrationService(db)
+    current = await administration.get_connection(business.business_id)
+    if (
+        current is not None
+        and current.status.value == "connected"
+        and current.mode.value == "api_only"
+    ):
+        raise HTTPException(409, "WhatsApp account is already connected in this mode")
+    if (
+        current is not None
+        and current.status.value == "connected"
+        and current.mode.value == "coexistence"
+    ):
+        await administration.request_mode_switch(
+            business.business_id,
+            WhatsAppConnectionMode.API_ONLY,
+        )
+        await db.commit()
+    plan = WhatsAppOnboardingService(administration).plan(
+        payload.intent,
+        platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
     )
+    if not plan.ready_to_continue or plan.requested_mode.value != "api_only":
+        raise HTTPException(
+            409,
+            "Explicit confirmation is required before exclusive connection",
+        )
+    return MetaApiOnlyEmbeddedSignupStartResponse(
+        app_id=configuration.app_id,
+        configuration_id=configuration.configuration_id,
+        graph_version=configuration.graph_version,
+        embedded_signup_version=configuration.embedded_signup_version,
+        intent=payload.intent,
+    )
+
+
+@router.post(
+    "/whatsapp/onboarding/api-only/complete",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def complete_meta_api_only_signup(
+    payload: MetaApiOnlyEmbeddedSignupCompleteRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    _require_api_only_fallback(settings)
+    configuration = _embedded_signup_configuration(settings)
+    administration = WhatsAppConnectionAdministrationService(db)
+    current = await administration.get_connection(
+        business.business_id, for_update=True
+    )
+    if (
+        current is not None
+        and current.status.value == "connected"
+        and current.mode.value == "api_only"
+    ):
+        raise HTTPException(409, "WhatsApp account is already connected in this mode")
+    plan = WhatsAppOnboardingService(administration).plan(
+        payload.intent,
+        platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
+    )
+    if not plan.ready_to_continue or plan.requested_mode.value != "api_only":
+        raise HTTPException(
+            409,
+            "Explicit confirmation is required before exclusive connection",
+        )
+
+    gateway: MetaEmbeddedSignupGateway | None = None
+    completed = False
+    logger.info(
+        "meta_api_only_signup_progress",
+        extra={
+            "stage": "complete_request_started",
+            "intent": payload.intent.value,
+            "waba_id_received": bool(payload.waba_id),
+            "phone_number_id_received": payload.phone_number_id is not None,
+        },
+    )
+    try:
+        service, gateway = _embedded_signup_service(db, configuration)
+        view = await service.complete_api_only(
+            business.business_id,
+            payload.authorization_code,
+            intent=payload.intent,
+            platform_only_impact_confirmed=payload.platform_only_impact_confirmed,
+            registration_pin=payload.registration_pin,
+            waba_id_hint=payload.waba_id,
+            phone_number_id_hint=payload.phone_number_id,
+        )
+        await db.commit()
+        completed = True
+    except HTTPException:
+        await db.rollback()
+        raise
+    except MetaEmbeddedSignupRejected as exc:
+        await db.rollback()
+        _log_embedded_signup_rejection(exc)
+        raise HTTPException(
+            400, "Meta exclusive connection could not be validated"
+        ) from None
+    except (
+        MetaEmbeddedSignupUnavailable,
+        WhatsAppConfigurationError,
+    ) as exc:
+        await db.rollback()
+        _log_embedded_signup_rejection(exc)
+        raise HTTPException(
+            503, "Meta onboarding is temporarily unavailable"
+        ) from None
+    except (
+        MetaEmbeddedSignupError,
+        WhatsAppOnboardingError,
+        WhatsAppConnectionAdministrationError,
+    ) as exc:
+        await db.rollback()
+        _log_embedded_signup_rejection(exc)
+        raise HTTPException(
+            409, "WhatsApp exclusive connection could not be completed"
+        ) from None
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        if gateway is not None:
+            await gateway.aclose()
+        logger.info(
+            "meta_api_only_signup_progress",
+            extra={
+                "stage": (
+                    "complete_request_succeeded"
+                    if completed
+                    else "complete_request_failed"
+                )
+            },
+        )
+    return _public_connection(view)
 
 
 def _log_embedded_signup_rejection(exc: Exception) -> None:

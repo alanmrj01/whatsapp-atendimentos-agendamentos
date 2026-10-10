@@ -27,6 +27,7 @@ class LoginRateLimiter:
         email_limit: int = 8,
         email_window_seconds: int = 15 * 60,
         max_email_buckets: int = 4096,
+        detail: str = "Too many login attempts",
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.global_limit = global_limit
@@ -34,6 +35,7 @@ class LoginRateLimiter:
         self.email_limit = email_limit
         self.email_window_seconds = email_window_seconds
         self.max_email_buckets = max_email_buckets
+        self.detail = detail
         self.clock = clock
         self._lock = asyncio.Lock()
         self._global: deque[float] = deque()
@@ -45,11 +47,10 @@ class LoginRateLimiter:
         while bucket and bucket[0] <= cutoff:
             bucket.popleft()
 
-    @staticmethod
-    def _limited(retry_after: float) -> HTTPException:
+    def _limited(self, retry_after: float) -> HTTPException:
         return HTTPException(
             status_code=429,
-            detail="Too many login attempts",
+            detail=self.detail,
             headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
         )
 
@@ -96,3 +97,12 @@ class LoginRateLimiter:
 
 
 login_rate_limiter = LoginRateLimiter()
+
+password_reset_rate_limiter = LoginRateLimiter(
+    global_limit=60,
+    global_window_seconds=60,
+    email_limit=5,
+    email_window_seconds=60 * 60,
+    detail="Too many password reset attempts",
+)
+

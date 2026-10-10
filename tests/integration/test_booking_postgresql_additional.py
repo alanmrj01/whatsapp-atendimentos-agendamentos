@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.automation.lifecycle import create_due_lifecycle_outreach, mark_outreach_response
 from app.booking.availability import PostgresBookingAvailabilityPort
 from app.conversations.ports import SlotUnavailable
-from app.models import Appointment, Conversation, CustomerOutreach, Message, ScheduleBlock
+from app.diagnostics.models import EXPECTED_SCHEMA_REVISION
+from app.models import Appointment, BusinessAccess, Conversation, CustomerOutreach, Message, ScheduleBlock
 from app.repositories.outbound_tasks import OutboundTaskRepository
 from tests.integration.test_booking_postgresql import (
     TEST_DATABASE_URL,
@@ -56,7 +57,7 @@ async def test_physical_schema_is_at_head_with_immutable_exclude_support(
             )
         )
 
-    assert revision == "20261001_0026"
+    assert revision == EXPECTED_SCHEMA_REVISION
     assert volatility == "i"
     assert constraint is not None
     assert "tstzrange" in constraint
@@ -220,6 +221,20 @@ async def test_preventive_outreach_can_be_fast_forwarded_without_waiting_six_mon
         "additional:preventive:completed",
     )
     completed.status = "completed"
+
+    # Cleaning follow-up is a Plus-only capability. This physical test validates
+    # lifecycle timing, not billing eligibility, so grant explicit admin full
+    # access to exercise the feature without fabricating a commercial charge.
+    async with sessions() as session:
+        async with session.begin():
+            session.add(
+                BusinessAccess(
+                    business_id=business_id,
+                    access_mode="paid",
+                    admin_full_access=True,
+                    has_had_operational_access=True,
+                )
+            )
 
     async with sessions() as session:
         async with session.begin():

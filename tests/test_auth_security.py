@@ -6,11 +6,31 @@ import jwt
 import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 
 from app.auth.dependencies import require_auth_config
-from app.auth.security import access_token, decode_access, hash_password, token_hash, verify_password
-from app.auth.schemas import AccessResponse, LoginRequest, MeResponse
-from app.core.config import Settings, get_settings
+from app.auth.password_email import BrevoPasswordResetMailer
+from app.auth.security import (
+    access_token,
+    decode_access,
+    hash_password,
+    new_password_reset_token,
+    token_hash,
+    verify_password,
+)
+from app.auth.schemas import (
+    AccessResponse,
+    LoginRequest,
+    MeResponse,
+    PasswordChangeRequest,
+    PasswordResetConfirmRequest,
+)
+from app.core.config import (
+    PasswordRecoveryConfigurationError,
+    PasswordResetEmailConfiguration,
+    Settings,
+    get_settings,
+)
 from app.main import create_app
 from tests.test_migration import PROJECT_ROOT, render_migration_sql
 
@@ -24,6 +44,18 @@ def test_argon2id_random_salt_and_no_plaintext():
     assert not verify_password(password, None)
     assert len(token_hash(password)) == 64 and token_hash(password) != password
     assert password not in repr(LoginRequest(email="user@example.test", password=password))
+    reset_token = new_password_reset_token()
+    assert len(reset_token) >= 32
+    assert len(token_hash(reset_token)) == 64
+    assert reset_token not in repr(
+        PasswordResetConfirmRequest(token=reset_token, new_password=password)
+    )
+    assert password not in repr(
+        PasswordChangeRequest(
+            current_password=password,
+            new_password=secrets.token_urlsafe(24),
+        )
+    )
 
 
 @pytest.mark.parametrize("kind", ["expired", "forged", "none", "missing", "invalid_uuid"])
@@ -126,3 +158,151 @@ def test_auth_migration_sql():
         assert f"drop table {table}" in downgrade
     assert "refresh_token_hash" in upgrade and "argon2id" in upgrade
     assert "insert into" not in upgrade and "cascade" not in upgrade
+
+
+
+def test_password_reset_email_configuration_is_explicit_and_origin_bound():
+    disabled = Settings(
+        _env_file=None,
+        ENVIRONMENT="production",
+        PWA_ALLOWED_ORIGINS="https://app.example.test",
+    )
+    with pytest.raises(PasswordRecoveryConfigurationError):
+        disabled.require_password_reset_email_configuration()
+
+    configured = Settings(
+        _env_file=None,
+        ENVIRONMENT="production",
+        PWA_ALLOWED_ORIGINS="https://app.example.test",
+        PASSWORD_RECOVERY_ENABLED=True,
+        BREVO_API_KEY="xkeysib-test-secret",
+        PASSWORD_RESET_FROM_EMAIL="no-reply@example.test",
+        PASSWORD_RESET_FROM_NAME="Alovia",
+        PASSWORD_RESET_PUBLIC_BASE_URL="https://app.example.test",
+    )
+    email = configured.require_password_reset_email_configuration()
+    assert email.public_base_url == "https://app.example.test"
+    assert email.api_key.get_secret_value() == "xkeysib-test-secret"
+    assert email.from_email == "no-reply@example.test"
+    assert email.from_name == "Alovia"
+
+    wrong_origin = configured.model_copy(
+        update={"password_reset_public_base_url": "https://evil.example.test"}
+    )
+    with pytest.raises(PasswordRecoveryConfigurationError):
+        wrong_origin.require_password_reset_email_configuration()
+
+
+
+@pytest.mark.asyncio
+async def test_password_reset_email_keeps_token_in_fragment_and_is_idempotent(
+    monkeypatch,
+):
+    from app.auth import password_email
+
+    class Response:
+        status_code = 201
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, *, headers, json):
+            self.calls.append((url, headers, json))
+            return Response()
+
+    client = Client()
+    monkeypatch.setattr(
+        password_email.httpx,
+        "AsyncClient",
+        lambda **_kwargs: client,
+    )
+    reset_id = uuid4()
+    token = new_password_reset_token()
+    mailer = BrevoPasswordResetMailer(
+        PasswordResetEmailConfiguration(
+            api_key=SecretStr("xkeysib-test-secret"),
+            from_email="no-reply@example.test",
+            from_name="Alovia",
+            public_base_url="https://app.example.test",
+        )
+    )
+
+    await mailer.send(
+        reset_id=reset_id,
+        email="member@example.test",
+        token=token,
+    )
+
+    assert len(client.calls) == 1
+    url, headers, payload = client.calls[0]
+    assert url == "https://api.brevo.com/v3/smtp/email"
+    assert headers["api-key"] == "xkeysib-test-secret"
+    assert payload["headers"]["idempotencyKey"] == str(reset_id)
+    assert payload["sender"] == {
+        "name": "Alovia",
+        "email": "no-reply@example.test",
+    }
+    assert payload["to"] == [{"email": "member@example.test"}]
+    assert "xkeysib-test-secret" not in repr(payload)
+    assert f"/redefinir-senha#token={token}" in payload["textContent"]
+    assert "?token=" not in payload["textContent"]
+    assert f"/redefinir-senha#token={token}" in payload["htmlContent"]
+    assert 'src="https://app.example.test/app-icon-192.png"' in payload["htmlContent"]
+    assert "Redefina sua senha" in payload["htmlContent"]
+    assert "Recuperação de acesso" in payload["htmlContent"]
+    assert "30 minutos" in payload["htmlContent"]
+    assert "uma única vez" in payload["htmlContent"]
+    assert "Sua senha atual continuará a mesma." in payload["htmlContent"]
+    assert "Equipe Alovia" in payload["htmlContent"]
+
+
+@pytest.mark.asyncio
+async def test_brevo_password_reset_does_not_retry_ambiguous_transport_failure(
+    monkeypatch,
+):
+    from app.auth import password_email
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            self.calls += 1
+            raise password_email.httpx.ConnectError("synthetic transport failure")
+
+    client = Client()
+    monkeypatch.setattr(
+        password_email.httpx,
+        "AsyncClient",
+        lambda **_kwargs: client,
+    )
+    mailer = BrevoPasswordResetMailer(
+        PasswordResetEmailConfiguration(
+            api_key=SecretStr("xkeysib-test-secret"),
+            from_email="no-reply@example.test",
+            from_name="Alovia",
+            public_base_url="https://app.example.test",
+        )
+    )
+
+    with pytest.raises(password_email.PasswordResetEmailError):
+        await mailer.send(
+            reset_id=uuid4(),
+            email="member@example.test",
+            token=new_password_reset_token(),
+        )
+
+    assert client.calls == 1

@@ -15,6 +15,7 @@ from app.diagnostics.models import (
     ComponentResult, DatabaseDetails, DiagnosticCode as Code,
     DiagnosticStatus as Status, EXPECTED_SCHEMA_REVISION,
 )
+from app.diagnostics.repository import DiagnosticsRepository
 from app.diagnostics.service import DiagnosticsService, migration_result
 from app.main import app
 from app.tasks import auth
@@ -80,6 +81,22 @@ async def test_probe_has_short_timeout(monkeypatch):
     assert result.database.code is Code.DB_TIMEOUT
     assert result.database.latency_ms < 1000
     assert not result.ready
+
+
+@pytest.mark.asyncio
+async def test_revision_lookup_respects_active_database_search_path(monkeypatch):
+    repo = DiagnosticsRepository(lambda: None)  # engine is not used by the stubbed reader
+    seen: list[str] = []
+
+    async def capture(sql: str, parameters=None):
+        seen.append(sql)
+        return [{"version_num": EXPECTED_SCHEMA_REVISION}]
+
+    monkeypatch.setattr(repo, "_read", capture)
+    assert await repo.revisions() == [EXPECTED_SCHEMA_REVISION]
+    assert len(seen) == 1
+    assert "public." not in seen[0].casefold()
+    assert "from alembic_version" in seen[0].casefold()
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.billing.entitlements import active_operational_access_exists
 from app.models import (
     Business,
     BusinessAutomationExclusion,
@@ -43,7 +44,10 @@ def _automation_blocked_for_message(
     outbound_payload: dict[str, Any] | None,
     active_ignore: bool,
     standard_automation_blocked: bool,
+    entitlement_blocked: bool = False,
 ) -> bool:
+    if entitlement_blocked:
+        return True
     if active_ignore:
         return True
 
@@ -81,6 +85,9 @@ class OutboundTaskRepository:
                 BusinessAutomationExclusion.mode == "ignore",
             )
         )
+        entitlement_blocked = ~active_operational_access_exists(
+            Message.business_id
+        )
         standard_automation_blocked = or_(
             Conversation.automation_enabled.is_(False),
             Business.assistant_enabled.is_(False),
@@ -93,6 +100,7 @@ class OutboundTaskRepository:
                 Customer.whatsapp_id,
                 active_ignore.label("active_ignore"),
                 standard_automation_blocked.label("standard_automation_blocked"),
+                entitlement_blocked.label("entitlement_blocked"),
             )
             .join(
                 Conversation,
@@ -118,12 +126,19 @@ class OutboundTaskRepository:
         row = result.one_or_none()
         if row is None:
             return None
-        message, recipient, active_ignore_value, standard_blocked_value = row
+        (
+            message,
+            recipient,
+            active_ignore_value,
+            standard_blocked_value,
+            entitlement_blocked_value,
+        ) = row
         automation_blocked = _automation_blocked_for_message(
             idempotency_key=message.idempotency_key,
             outbound_payload=message.outbound_payload,
             active_ignore=bool(active_ignore_value),
             standard_automation_blocked=bool(standard_blocked_value),
+            entitlement_blocked=bool(entitlement_blocked_value),
         )
         return StoredOutboundMessage(
             message_id=message.id,

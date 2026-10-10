@@ -288,6 +288,16 @@ class BusinessWhatsAppConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "last_error_code ~ '^[A-Za-z0-9._-]{1,64}$'",
             name="last_error_code_sanitized",
         ),
+        CheckConstraint(
+            "meta_review_status IS NULL OR "
+            "meta_review_status IN ('approved', 'rejected')",
+            name="meta_review_status_allowed",
+        ),
+        CheckConstraint(
+            "preferred_mode IS NULL OR "
+            "preferred_mode IN ('coexistence', 'api_only')",
+            name="preferred_mode_allowed",
+        ),
         Index(
             "uq_business_whatsapp_connections_active_business",
             "business_id",
@@ -304,6 +314,14 @@ class BusinessWhatsAppConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "ix_business_whatsapp_connections_business_status",
             "business_id",
             "status",
+        ),
+        Index(
+            "ix_business_whatsapp_connections_mode_switch_due",
+            "preferred_mode",
+            "mode_switch_next_check_at",
+            postgresql_where=text(
+                "preferred_mode IS NOT NULL AND status = 'connected'"
+            ),
         ),
     )
 
@@ -336,6 +354,21 @@ class BusinessWhatsAppConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     last_error_code: Mapped[str | None] = mapped_column(
         String(64), nullable=True
+    )
+    meta_review_status: Mapped[str | None] = mapped_column(
+        String(16), nullable=True
+    )
+    preferred_mode: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    mode_switch_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    mode_switch_last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    mode_switch_next_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 

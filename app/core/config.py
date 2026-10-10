@@ -29,8 +29,24 @@ class CloudTasksConfigurationError(RuntimeError):
     """Erro seguro para configuração ausente do Cloud Tasks."""
 
 
+class AsaasConfigurationError(RuntimeError):
+    """Erro seguro para configuração ausente ou inválida do Asaas."""
+
+
 class WebPushConfigurationError(RuntimeError):
     """Erro seguro para configuração ausente do Web Push."""
+
+
+class PasswordRecoveryConfigurationError(RuntimeError):
+    """Erro seguro para configuração ausente da recuperação de senha."""
+
+
+@dataclass(frozen=True, slots=True)
+class PasswordResetEmailConfiguration:
+    api_key: SecretStr
+    from_email: str
+    from_name: str
+    public_base_url: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +70,13 @@ class CloudTasksConfiguration:
 
 
 @dataclass(frozen=True, slots=True)
+class AsaasConfiguration:
+    api_key: SecretStr
+    api_base_url: str
+    checkout_base_url: str
+
+
+@dataclass(frozen=True, slots=True)
 class WebPushConfiguration:
     public_key: str
     private_key: SecretStr
@@ -63,6 +86,22 @@ class WebPushConfiguration:
 class Settings(BaseSettings):
     auth_jwt_secret: SecretStr | None = Field(default=None, validation_alias="AUTH_JWT_SECRET")
     pwa_allowed_origins: str = Field(default="", validation_alias="PWA_ALLOWED_ORIGINS")
+    password_recovery_enabled: bool = Field(
+        default=False, validation_alias="PASSWORD_RECOVERY_ENABLED"
+    )
+    whatsapp_api_only_fallback_enabled: bool = Field(
+        default=False, validation_alias="WHATSAPP_API_ONLY_FALLBACK_ENABLED"
+    )
+    brevo_api_key: SecretStr | None = Field(default=None, validation_alias="BREVO_API_KEY")
+    password_reset_from_email: str | None = Field(
+        default=None, validation_alias="PASSWORD_RESET_FROM_EMAIL"
+    )
+    password_reset_from_name: str = Field(
+        default="Alovia", validation_alias="PASSWORD_RESET_FROM_NAME"
+    )
+    password_reset_public_base_url: str | None = Field(
+        default=None, validation_alias="PASSWORD_RESET_PUBLIC_BASE_URL"
+    )
     web_push_enabled: bool = Field(default=False, validation_alias="WEB_PUSH_ENABLED")
     vapid_public_key: str | None = Field(default=None, validation_alias="VAPID_PUBLIC_KEY")
     vapid_private_key: SecretStr | None = Field(
@@ -132,6 +171,12 @@ class Settings(BaseSettings):
     )
     meta_verify_token: SecretStr | None = Field(
         default=None, validation_alias="META_VERIFY_TOKEN"
+    )
+    asaas_api_key: SecretStr | None = Field(
+        default=None, validation_alias="ASAAS_API_KEY"
+    )
+    asaas_webhook_token: SecretStr | None = Field(
+        default=None, validation_alias="ASAAS_WEBHOOK_TOKEN"
     )
     gcp_project_id: str | None = Field(
         default=None, validation_alias="GCP_PROJECT_ID"
@@ -232,6 +277,28 @@ class Settings(BaseSettings):
     def require_meta_verify_token(self) -> str:
         return self._require_meta_secret(self.meta_verify_token)
 
+    def require_asaas_configuration(self) -> AsaasConfiguration:
+        raw = self.asaas_api_key.get_secret_value().strip() if self.asaas_api_key else ""
+        if raw.startswith("$aact_hmlg_"):
+            api_base_url = "https://api-sandbox.asaas.com/v3"
+            checkout_base_url = "https://sandbox.asaas.com"
+        elif raw.startswith("$aact_prod_"):
+            api_base_url = "https://api.asaas.com/v3"
+            checkout_base_url = "https://asaas.com"
+        else:
+            raise AsaasConfigurationError("Asaas API key is not configured")
+        return AsaasConfiguration(
+            api_key=SecretStr(raw),
+            api_base_url=api_base_url,
+            checkout_base_url=checkout_base_url,
+        )
+
+    def require_asaas_webhook_token(self) -> str:
+        raw = self.asaas_webhook_token.get_secret_value().strip() if self.asaas_webhook_token else ""
+        if len(raw) < 32 or len(raw) > 255:
+            raise AsaasConfigurationError("Asaas webhook token is not configured")
+        return raw
+
     def require_meta_embedded_signup_configuration(
         self,
     ) -> MetaEmbeddedSignupConfiguration:
@@ -284,6 +351,66 @@ class Settings(BaseSettings):
             queue=self.cloud_tasks_outbound_queue,
             target_url=self.cloud_tasks_outbound_target_url,
             disabled_message="Outbound tasks are disabled",
+        )
+
+    def require_password_recovery_enabled(self) -> None:
+        if not self.password_recovery_enabled:
+            raise PasswordRecoveryConfigurationError(
+                "Password recovery is disabled"
+            )
+
+    def require_password_reset_email_configuration(
+        self,
+    ) -> PasswordResetEmailConfiguration:
+        self.require_password_recovery_enabled()
+        return self.require_application_email_configuration()
+
+    def require_application_email_configuration(
+        self,
+    ) -> PasswordResetEmailConfiguration:
+        # Reuse the already deployed Brevo sender/base URL settings without
+        # coupling lifecycle messages to the password-recovery feature toggle.
+        api_key = (
+            self.brevo_api_key.get_secret_value().strip()
+            if self.brevo_api_key is not None
+            else ""
+        )
+        from_email = (self.password_reset_from_email or "").strip()
+        from_name = self.password_reset_from_name.strip()
+        public_base_url = (self.password_reset_public_base_url or "").strip().rstrip("/")
+        try:
+            parsed = urlsplit(public_base_url)
+            valid_base = (
+                parsed.scheme in {"http", "https"}
+                and bool(parsed.hostname)
+                and not parsed.username
+                and not parsed.password
+                and not parsed.path
+                and not parsed.query
+                and not parsed.fragment
+                and (self.environment is not Environment.production or parsed.scheme == "https")
+                and public_base_url in self.allowed_pwa_origins()
+            )
+        except ValueError:
+            valid_base = False
+        valid_email = bool(
+            re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", from_email)
+        )
+        if (
+            not api_key
+            or not valid_email
+            or not from_name
+            or len(from_name) > 70
+            or not valid_base
+        ):
+            raise PasswordRecoveryConfigurationError(
+                "Application email configuration is incomplete"
+            )
+        return PasswordResetEmailConfiguration(
+            api_key=SecretStr(api_key),
+            from_email=from_email,
+            from_name=from_name,
+            public_base_url=public_base_url,
         )
 
     def require_web_push_configuration(self) -> WebPushConfiguration:
