@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.schemas import MembershipResponse
@@ -168,12 +169,23 @@ class ReengagementService:
             campaign=campaign,
             now=datetime.now(UTC),
         )
-        if delivery is None or delivery.popup_shown_at is not None:
+        if delivery is None:
             return None
-        delivery.popup_shown_at = datetime.now(UTC)
+        claimed_step = await self.db.scalar(
+            update(ReengagementDelivery)
+            .where(
+                ReengagementDelivery.id == delivery.id,
+                ReengagementDelivery.popup_shown_at.is_(None),
+            )
+            .values(popup_shown_at=datetime.now(UTC))
+            .returning(ReengagementDelivery.step)
+        )
+        if claimed_step is None:
+            await self.db.rollback()
+            return None
         message = campaign_message(
             campaign,
-            delivery.step,
+            claimed_step,
             cta_path=cta_path,
             action_hint=action_hint,
         )
@@ -181,7 +193,7 @@ class ReengagementService:
         return ReengagementPromptResponse(
             id=delivery.id,
             campaign=campaign,  # type: ignore[arg-type]
-            step=delivery.step,
+            step=claimed_step,
             title=message.title,
             body=message.body,
             cta_label=message.cta_label,
@@ -260,11 +272,14 @@ class ReengagementService:
                 campaign=campaign,
                 now=datetime.now(UTC),
             )
-            if delivery is None or delivery.email_sent_at is not None:
+            if delivery is None:
+                continue
+            claimed_step = await self._claim_email_delivery(delivery.id)
+            if claimed_step is None:
                 continue
             message = campaign_message(
                 campaign,
-                delivery.step,
+                claimed_step,
                 cta_path=cta_path,
                 action_hint=action_hint,
             )
@@ -280,13 +295,25 @@ class ReengagementService:
                     footer=message.footer,
                 )
             except ReengagementEmailError:
-                await self.db.rollback()
+                await self.db.execute(
+                    update(ReengagementDelivery)
+                    .where(
+                        ReengagementDelivery.id == delivery.id,
+                        ReengagementDelivery.email_sent_at.is_(None),
+                    )
+                    .values(email_failed_at=datetime.now(UTC))
+                )
+                await self.db.commit()
                 logger.warning(
                     "reengagement_email_failed",
-                    extra={"campaign": campaign, "step": delivery.step},
+                    extra={"campaign": campaign, "step": claimed_step},
                 )
                 continue
-            delivery.email_sent_at = datetime.now(UTC)
+            await self.db.execute(
+                update(ReengagementDelivery)
+                .where(ReengagementDelivery.id == delivery.id)
+                .values(email_sent_at=datetime.now(UTC))
+            )
             await self.db.commit()
             sent += 1
         return sent
@@ -402,16 +429,53 @@ class ReengagementService:
         )
         if existing is not None:
             return existing
-        delivery = ReengagementDelivery(
-            id=uuid4(),
-            user_id=user.id,
-            business_id=business_id,
-            campaign=campaign,
-            step=next_step,
+
+        candidate_id = uuid4()
+        await self.db.execute(
+            postgresql_insert(ReengagementDelivery)
+            .values(
+                id=candidate_id,
+                user_id=user.id,
+                business_id=business_id,
+                campaign=campaign,
+                step=next_step,
+            )
+            .on_conflict_do_nothing(
+                constraint="uq_reengagement_deliveries_user_business_campaign_step"
+            )
         )
-        self.db.add(delivery)
-        await self.db.flush()
-        return delivery
+        # A concurrent tab/worker may have won the insert. Resolve the single
+        # canonical row instead of surfacing an integrity error.
+        return await self.db.scalar(
+            select(ReengagementDelivery).where(
+                ReengagementDelivery.user_id == user.id,
+                ReengagementDelivery.business_id == business_id,
+                ReengagementDelivery.campaign == campaign,
+                ReengagementDelivery.step == next_step,
+            )
+        )
+
+    async def _claim_email_delivery(self, delivery_id: UUID) -> int | None:
+        # Claim and commit before the network call. This prevents two Cloud Run
+        # instances from sending the same delivery concurrently. A failed or
+        # ambiguous provider call is intentionally not retried for the same
+        # step; the next campaign step remains available later.
+        claimed_step = await self.db.scalar(
+            update(ReengagementDelivery)
+            .where(
+                ReengagementDelivery.id == delivery_id,
+                ReengagementDelivery.email_claimed_at.is_(None),
+                ReengagementDelivery.email_sent_at.is_(None),
+                ReengagementDelivery.email_failed_at.is_(None),
+            )
+            .values(email_claimed_at=datetime.now(UTC))
+            .returning(ReengagementDelivery.step)
+        )
+        if claimed_step is None:
+            await self.db.rollback()
+            return None
+        await self.db.commit()
+        return claimed_step
 
     async def _whatsapp_activation_anchor(
         self,
