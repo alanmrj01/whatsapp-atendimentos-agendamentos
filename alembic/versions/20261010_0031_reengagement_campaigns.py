@@ -41,7 +41,6 @@ def upgrade() -> None:
             ["user_id", "business_id"],
             ["business_user_memberships.user_id", "business_user_memberships.business_id"],
             name="fk_reengagement_deliveries_user_business_membership",
-            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_reengagement_deliveries"),
         sa.UniqueConstraint(
