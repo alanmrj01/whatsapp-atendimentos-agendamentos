@@ -25,7 +25,9 @@ def upgrade() -> None:
         sa.Column("step", sa.Integer(), nullable=False),
         sa.Column("popup_shown_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("popup_dismissed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("email_claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("email_sent_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("email_failed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("cta_clicked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -56,7 +58,7 @@ def upgrade() -> None:
     op.create_index(
         "ix_reengagement_deliveries_email_pending",
         "reengagement_deliveries",
-        ["email_sent_at", "created_at"],
+        ["email_claimed_at", "email_sent_at", "created_at"],
     )
     op.execute(
         'ALTER TABLE public."reengagement_deliveries" ENABLE ROW LEVEL SECURITY'
