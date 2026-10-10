@@ -85,9 +85,11 @@ Identity = Annotated[Principal, Depends(require_principal)]
 def _public_pending_state(view) -> str | None:
     if getattr(view, "last_error_code", None) != META_ONBOARDING_PENDING:
         return None
+    status_value = getattr(getattr(view, "status", None), "value", None)
+    mode_value = getattr(getattr(view, "mode", None), "value", None)
     if (
-        getattr(view, "status", None).value == "pending"
-        and getattr(view, "mode", None).value == "coexistence"
+        status_value == "pending"
+        and mode_value == "coexistence"
         and getattr(view, "has_phone_number_id", False)
         and getattr(view, "meta_review_status", None) is None
     ):
