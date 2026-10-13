@@ -104,10 +104,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["connection_id"],
             ["business_whatsapp_connections.id"],
-            name=(
-                "fk_whatsapp_onboarding_attempts_connection_id_"
-                "business_whatsapp_connections"
-            ),
+            name="fk_wa_onboarding_attempt_connection",
         ),
         sa.PrimaryKeyConstraint(
             "id",
