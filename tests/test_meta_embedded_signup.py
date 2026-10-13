@@ -25,6 +25,7 @@ from app.auth.schemas import (
 from app.core.config import MetaEmbeddedSignupConfiguration, Settings
 from app.core.logging import JsonFormatter
 from app.whatsapp.administration import (
+    META_AUTHORIZATION_INCOMPLETE,
     META_ONBOARDING_PENDING,
     WhatsAppConnectionAdministrationService,
 )
@@ -202,6 +203,87 @@ async def test_late_assets_after_success_are_idempotent() -> None:
     assert view.status is WhatsAppConnectionStatus.CONNECTED
     assert view.has_phone_number_id is True
     assert view.has_credential_reference is True
+
+
+@pytest.mark.asyncio
+async def test_mark_authorization_incomplete_moves_empty_pending_attempt_to_error() -> None:
+    connection = SimpleNamespace(
+        id=uuid.UUID("22222222-2222-2222-2222-222222222222"),
+        business_id=BUSINESS_ID,
+        provider="meta",
+        mode=WhatsAppConnectionMode.COEXISTENCE.value,
+        status=WhatsAppConnectionStatus.PENDING.value,
+        meta_waba_id=None,
+        meta_phone_number_id=None,
+        credential_secret_ref=None,
+        connected_at=None,
+        disconnected_at=None,
+        last_error_code=META_ONBOARDING_PENDING,
+        display_phone_number=None,
+        meta_review_status=None,
+        preferred_mode=None,
+        mode_switch_requested_at=None,
+        mode_switch_last_checked_at=None,
+        mode_switch_next_check_at=None,
+    )
+
+    class PendingRepository:
+        async def get_connection(self, business_id, *, for_update=False):
+            assert business_id == BUSINESS_ID
+            assert for_update is True
+            return connection
+
+    class Session:
+        async def flush(self):
+            return None
+
+    service = WhatsAppConnectionAdministrationService(Session())
+    service._repository = PendingRepository()
+
+    view = await service.mark_authorization_incomplete(BUSINESS_ID)
+
+    assert view.status is WhatsAppConnectionStatus.ERROR
+    assert view.last_error_code == META_AUTHORIZATION_INCOMPLETE
+
+
+class IncompleteAdministration(EmptyAdministration):
+    async def mark_authorization_incomplete(self, business_id):
+        assert business_id == BUSINESS_ID
+        return SimpleNamespace(
+            status=WhatsAppConnectionStatus.ERROR,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code=META_AUTHORIZATION_INCOMPLETE,
+            has_phone_number_id=False,
+            masked_display_phone_number=None,
+            meta_review_status=None,
+            preferred_mode=None,
+            mode_switch_requested_at=None,
+            mode_switch_last_checked_at=None,
+            mode_switch_next_check_at=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_empty_meta_callback_endpoint_returns_recoverable_error(monkeypatch) -> None:
+    administration = IncompleteAdministration()
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        lambda _: administration,
+    )
+    db = FakeDb()
+
+    response = await public_pwa.mark_meta_embedded_signup_incomplete(
+        EmptyRequest(),
+        FakePrincipal(),
+        db,
+    )
+
+    assert response.status == "error"
+    assert response.error_reason == "authorization_incomplete"
+    assert response.journey_state == "error"
+    assert response.next_action == "resolve_connection"
+    assert db.commits == 1
 
 
 @pytest.mark.asyncio
