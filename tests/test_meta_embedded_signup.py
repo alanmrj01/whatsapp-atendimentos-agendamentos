@@ -182,6 +182,32 @@ class FakeAttemptService:
         assert business_id == BUSINESS_ID
         return self.current
 
+    async def record_event(
+        self,
+        business_id,
+        attempt_id,
+        *,
+        stage,
+        authorization_code_received=None,
+        waba_id_received=None,
+        phone_number_id_received=None,
+    ):
+        assert business_id == BUSINESS_ID
+        assert attempt_id == ATTEMPT_ID
+        assert self.current is not None
+        self.current.last_stage = stage
+        if authorization_code_received is True:
+            self.current.authorization_code_received = True
+            self.current.state = "code_received"
+        elif (
+            stage == "login_callback_received"
+            and authorization_code_received is False
+            and not self.current.authorization_code_received
+        ):
+            self.current.state = "authorization_incomplete"
+            self.current.failure_code = META_AUTHORIZATION_INCOMPLETE
+        return self.current
+
     async def record_assets(
         self,
         business_id,
@@ -420,6 +446,33 @@ def test_public_connection_distinguishes_meta_review_from_started_authorization(
     assert review_pending.requires_user_action is False
     assert review_pending.next_action == "wait_for_meta_review"
 
+    orchestrated = public_pwa._public_connection(
+        SimpleNamespace(
+            status=WhatsAppConnectionStatus.PENDING,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code=META_ONBOARDING_PENDING,
+            has_phone_number_id=True,
+            masked_display_phone_number=None,
+            meta_review_status=None,
+            preferred_mode=None,
+            mode_switch_requested_at=None,
+            mode_switch_last_checked_at=None,
+            mode_switch_next_check_at=None,
+        ),
+        SimpleNamespace(
+            id=ATTEMPT_ID,
+            state="code_received",
+            last_stage="login_callback_received",
+            authorization_code_received=True,
+            last_event_at=None,
+            expires_at=None,
+        ),
+    )
+    assert orchestrated.pending_state == "authorization_pending"
+    assert orchestrated.journey_state == "validating_connection"
+    assert orchestrated.requires_user_action is False
+    assert orchestrated.next_action == "wait_for_completion"
+
     authorization_pending = public_pwa._public_connection(
         SimpleNamespace(
             status=WhatsAppConnectionStatus.PENDING,
@@ -572,6 +625,56 @@ async def test_client_telemetry_is_sanitized_and_access_controlled(caplog) -> No
             payload, FakePrincipal(role=MembershipRole.VIEWER), FakeDb()
         )
     assert read_only.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_correlated_empty_callback_is_persisted_by_backend(
+    monkeypatch,
+) -> None:
+    attempts = FakeAttemptService()
+    attempts.current = SimpleNamespace(
+        id=ATTEMPT_ID,
+        business_id=BUSINESS_ID,
+        connection_id=CONNECTION_ID,
+        mode="coexistence",
+        state="provider_opened",
+        last_stage="login_opened",
+        authorization_code_received=False,
+        waba_id_received=False,
+        phone_number_id_received=False,
+        failure_code=None,
+        last_event_at=None,
+        expires_at=None,
+        terminal_at=None,
+        created_at=None,
+    )
+    administration = IncompleteAdministration()
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppOnboardingAttemptService",
+        lambda _: attempts,
+    )
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        lambda _: administration,
+    )
+    db = FakeDb()
+
+    response = await public_pwa.meta_embedded_signup_telemetry(
+        MetaEmbeddedSignupTelemetryRequest(
+            attempt_id=ATTEMPT_ID,
+            stage="login_callback_received",
+            authorization_code_received=False,
+        ),
+        FakePrincipal(),
+        db,
+    )
+
+    assert response.status_code == 204
+    assert attempts.current.state == "authorization_incomplete"
+    assert attempts.current.failure_code == META_AUTHORIZATION_INCOMPLETE
+    assert db.commits == 1
 
 
 def test_json_formatter_preserves_only_safe_meta_onboarding_fields() -> None:
