@@ -201,7 +201,10 @@ class MetaEmbeddedSignupAssetsRequest(StrictRequest):
 
 class MetaEmbeddedSignupCompleteRequest(StrictRequest):
     authorization_code: SecretStr = Field(min_length=1, max_length=4096)
-    waba_id: str = Field(min_length=1, max_length=32)
+    # SessionInfo is helpful but not authoritative: browsers can lose the
+    # postMessage while still receiving the OAuth code. The backend can
+    # discover a single granted WABA from the exchanged token when omitted.
+    waba_id: str | None = Field(default=None, min_length=1, max_length=32)
     phone_number_id: str | None = Field(default=None, min_length=1, max_length=32)
 
 

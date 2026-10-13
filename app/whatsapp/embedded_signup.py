@@ -47,7 +47,7 @@ class MetaEmbeddedSignupPort(Protocol):
         self,
         authorization_code: SecretStr,
         *,
-        waba_id_hint: str,
+        waba_id_hint: str | None,
         phone_number_id_hint: str | None,
     ) -> MetaAuthorizedAssets: ...
 
@@ -89,10 +89,14 @@ class MetaEmbeddedSignupGateway:
         self,
         authorization_code: SecretStr,
         *,
-        waba_id_hint: str,
+        waba_id_hint: str | None,
         phone_number_id_hint: str | None,
     ) -> MetaAuthorizedAssets:
-        waba_id = _numeric_meta_id(waba_id_hint)
+        waba_id = (
+            _numeric_meta_id(waba_id_hint)
+            if waba_id_hint is not None
+            else None
+        )
         phone_number_id = (
             _numeric_meta_id(phone_number_id_hint)
             if phone_number_id_hint is not None
@@ -129,6 +133,10 @@ class MetaEmbeddedSignupGateway:
         headers = {
             "Authorization": f"Bearer {access_token.get_secret_value()}"
         }
+
+        if waba_id is None:
+            waba_id = await self._discover_single_waba(access_token)
+            _log_stage("waba_discovery_ok")
 
         waba_payload = await self._request_json(
             "GET",
@@ -190,6 +198,52 @@ class MetaEmbeddedSignupGateway:
                 "Meta phone deregistration was not confirmed"
             )
         _log_stage("phone_deregistration_ok")
+
+    async def _discover_single_waba(
+        self,
+        access_token: SecretStr,
+    ) -> str:
+        app_access_token = (
+            f"{self._configuration.app_id}|"
+            f"{self._configuration.app_secret.get_secret_value()}"
+        )
+        payload = await self._request_json(
+            "GET",
+            "debug_token",
+            headers={"Authorization": f"Bearer {app_access_token}"},
+            params={"input_token": access_token.get_secret_value()},
+        )
+        data = payload.get("data")
+        if not isinstance(data, dict) or data.get("is_valid") is not True:
+            raise MetaEmbeddedSignupRejected("Meta authorization is invalid")
+        raw_scopes = data.get("granular_scopes")
+        if not isinstance(raw_scopes, list):
+            raise MetaEmbeddedSignupRejected(
+                "Meta business account could not be discovered"
+            )
+        target_ids: list[str] = []
+        for raw_scope in raw_scopes:
+            if not isinstance(raw_scope, dict):
+                continue
+            if raw_scope.get("scope") != "whatsapp_business_management":
+                continue
+            raw_targets = raw_scope.get("target_ids")
+            if not isinstance(raw_targets, list):
+                continue
+            for raw_target in raw_targets:
+                if not isinstance(raw_target, str):
+                    continue
+                try:
+                    normalized = _numeric_meta_id(raw_target)
+                except MetaEmbeddedSignupRejected:
+                    continue
+                if normalized not in target_ids:
+                    target_ids.append(normalized)
+        if len(target_ids) != 1:
+            raise MetaEmbeddedSignupRejected(
+                "Meta business account selection is ambiguous"
+            )
+        return target_ids[0]
 
     async def fetch_account_review_status(
         self,
@@ -334,7 +388,7 @@ class MetaEmbeddedSignupService:
         business_id: uuid.UUID,
         authorization_code: SecretStr,
         *,
-        waba_id_hint: str,
+        waba_id_hint: str | None,
         phone_number_id_hint: str | None,
     ) -> WhatsAppConnectionStatusView:
         assets = await self._gateway.exchange_and_validate(
