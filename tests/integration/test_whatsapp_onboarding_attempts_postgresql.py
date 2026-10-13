@@ -178,6 +178,32 @@ async def test_empty_callback_remains_resumable_until_real_expiry(
     assert still_active.terminal_at is None
 
 
+async def test_browser_timeout_does_not_expire_server_attempt(
+    onboarding_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = uuid.uuid4()
+    connection_id = await _create_pending(onboarding_sessions, business_id)
+
+    async with onboarding_sessions() as session:
+        async with session.begin():
+            attempts = WhatsAppOnboardingAttemptService(session)
+            attempt = await attempts.begin(
+                business_id,
+                connection_id,
+                WhatsAppConnectionMode.COEXISTENCE,
+                request_id=uuid.uuid4(),
+            )
+            timed = await attempts.record_event(
+                business_id,
+                attempt.id,
+                stage="timeout",
+            )
+
+    assert timed.state in {"created", "awaiting_provider", "provider_opened"}
+    assert timed.failure_code is None
+    assert timed.terminal_at is None
+
+
 async def test_event_journal_records_sanitized_attempt_lifecycle(
     onboarding_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
