@@ -220,6 +220,10 @@ class MetaEmbeddedSignupTelemetryRequest(StrictRequest):
     intermediate_step_received: bool | None = Field(default=None, strict=True)
 
 
+class MetaEmbeddedSignupAttemptRequest(StrictRequest):
+    attempt_id: UUID | None = None
+
+
 class MetaEmbeddedSignupAssetsRequest(StrictRequest):
     attempt_id: UUID | None = None
     waba_id: str = Field(min_length=1, max_length=32)
