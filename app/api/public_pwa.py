@@ -382,10 +382,25 @@ async def active_business(payload: ActiveBusinessRequest, principal: Identity, d
 )
 async def whatsapp_connection(principal: Identity, db: Db):
     business = principal.active_membership()
-    connection = await WhatsAppConnectionAdministrationService(db).get_connection(business.business_id)
+    administration = WhatsAppConnectionAdministrationService(db)
+    attempts = WhatsAppOnboardingAttemptService(db)
+
+    attempt = await attempts.reconcile_expired(business.business_id)
+    if attempt is not None and attempt.state == "expired":
+        try:
+            await administration.mark_onboarding_error(
+                business.business_id,
+                META_ONBOARDING_EXPIRED,
+            )
+            await db.commit()
+        except WhatsAppConnectionAdministrationError:
+            await db.rollback()
+
+    connection = await administration.get_connection(business.business_id)
     if connection is None:
         return PublicConnectionResponse(status="disconnected")
-    return _public_connection(connection)
+    latest_attempt = await attempts.latest(business.business_id)
+    return _public_connection(connection, latest_attempt)
 
 
 @router.post(
