@@ -1055,8 +1055,18 @@ async def complete_meta_embedded_signup(
             for_update=True,
         )
         if current is not None and current.status.value == "connected":
-            completed = True
+            if payload.attempt_id is None:
+                raise HTTPException(
+                    409,
+                    "WhatsApp account is already connected in this mode",
+                )
             latest = await attempts.latest(business.business_id)
+            if latest is None or latest.id != payload.attempt_id:
+                raise HTTPException(
+                    409,
+                    "WhatsApp onboarding attempt is no longer active",
+                )
+            completed = True
             return _public_connection(current, latest)
 
         if payload.attempt_id is not None:
