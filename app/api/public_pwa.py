@@ -826,33 +826,30 @@ async def mark_meta_embedded_signup_incomplete(
     attempt: WhatsAppOnboardingAttemptView | None = None
     try:
         await attempts.lock_business(business.business_id)
+        view = await administration.get_connection(
+            business.business_id,
+            for_update=True,
+        )
+        if view is None:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp business connection is not available"
+            )
+
         if payload.attempt_id is not None:
             active = await attempts.active(
                 business.business_id,
                 for_update=True,
             )
             if active is not None and active.id == payload.attempt_id:
-                attempt = await attempts.mark_authorization_incomplete(
-                    business.business_id,
-                    payload.attempt_id,
-                )
-                view = await administration.mark_authorization_incomplete(
-                    business.business_id,
-                )
+                attempt = active
             else:
-                view = await administration.get_connection(
-                    business.business_id,
-                    for_update=True,
-                )
-                if view is None:
-                    raise WhatsAppConnectionAdministrationError(
-                        "WhatsApp business connection is not available"
-                    )
+                attempt = await attempts.latest(business.business_id)
         else:
-            # Backward compatibility during rolling frontend deployments.
-            view = await administration.mark_authorization_incomplete(
-                business.business_id,
-            )
+            # Backward compatibility for older browser bundles. An empty
+            # callback is not authoritative on mobile/custom-tab flows, so a
+            # legacy client signal must never downgrade the server lifecycle.
+            attempt = await attempts.latest(business.business_id)
+
         await db.commit()
     except (
         WhatsAppOnboardingAttemptError,
@@ -863,18 +860,17 @@ async def mark_meta_embedded_signup_incomplete(
             409, "WhatsApp onboarding state could not be updated"
         ) from None
 
-    latest = attempt or await attempts.latest(business.business_id)
     logger.info(
         "meta_embedded_signup_progress",
         extra={
-            "stage": "authorization_incomplete",
+            "stage": "authorization_incomplete_client_signal_ignored",
             "business_id": str(business.business_id),
             "attempt_id": (
                 str(payload.attempt_id) if payload.attempt_id else None
             ),
         },
     )
-    return _public_connection(view, latest)
+    return _public_connection(view, attempt)
 
 
 @router.post(
