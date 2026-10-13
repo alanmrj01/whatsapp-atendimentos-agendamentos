@@ -161,6 +161,7 @@ class PublicConnectionResponse(BaseModel):
         "authorization_pending",
         "meta_review_pending",
         "meta_review_rejected",
+        "validating_connection",
         "connected",
         "error",
     ] | None = None
@@ -170,6 +171,7 @@ class PublicConnectionResponse(BaseModel):
         "continue_authorization",
         "wait_for_meta_review",
         "review_meta_rejection",
+        "wait_for_completion",
         "resolve_connection",
         "none",
     ] | None = None
