@@ -107,9 +107,10 @@ class WhatsAppConnectionAdministrationService:
             return _status_view(current)
         if current.status != WhatsAppConnectionStatus.PENDING.value:
             return _status_view(current)
-        if current.meta_phone_number_id is not None or current.credential_secret_ref is not None:
-            # Once provider assets or credentials exist, the attempt has moved
-            # beyond the empty OAuth callback case and must not be downgraded.
+        if current.credential_secret_ref is not None:
+            # A credential means token exchange already succeeded. Do not
+            # downgrade a concurrently completing connection from a late
+            # browser callback.
             return _status_view(current)
 
         current.status = WhatsAppConnectionStatus.ERROR.value
