@@ -58,6 +58,7 @@ async def onboarding_sessions() -> AsyncIterator[
     yield factory
     async with factory() as session:
         async with session.begin():
+            await session.execute(delete(WhatsAppOnboardingAttemptEvent))
             await session.execute(delete(WhatsAppOnboardingAttempt))
             await session.execute(delete(BusinessWhatsAppConnection))
             await session.execute(delete(Business))
