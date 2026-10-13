@@ -56,6 +56,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("failure_code", sa.String(length=64), nullable=True),
+        sa.Column("empty_callback_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "last_event_at",
             sa.DateTime(timezone=True),
