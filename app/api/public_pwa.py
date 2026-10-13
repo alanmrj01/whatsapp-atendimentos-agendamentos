@@ -394,6 +394,7 @@ async def whatsapp_connection(principal: Identity, db: Db):
     administration = WhatsAppConnectionAdministrationService(db)
     attempts = WhatsAppOnboardingAttemptService(db)
 
+    await attempts.lock_business(business.business_id)
     attempt = await attempts.reconcile_expired(business.business_id)
     if attempt is not None and attempt.state == "expired":
         try:
@@ -809,6 +810,7 @@ async def mark_meta_embedded_signup_incomplete(
     attempts = WhatsAppOnboardingAttemptService(db)
     attempt: WhatsAppOnboardingAttemptView | None = None
     try:
+        await attempts.lock_business(business.business_id)
         if payload.attempt_id is not None:
             active = await attempts.active(
                 business.business_id,
@@ -878,6 +880,7 @@ async def record_meta_embedded_signup_assets(
     administration = WhatsAppConnectionAdministrationService(db)
     attempts = WhatsAppOnboardingAttemptService(db)
     try:
+        await attempts.lock_business(business.business_id)
         if payload.attempt_id is not None:
             active = await attempts.active(
                 business.business_id,
@@ -962,6 +965,7 @@ async def meta_embedded_signup_telemetry(
     attempts = WhatsAppOnboardingAttemptService(db)
     administration = WhatsAppConnectionAdministrationService(db)
     try:
+        await attempts.lock_business(business.business_id)
         active = await attempts.active(
             business.business_id,
             for_update=True,
@@ -1044,6 +1048,7 @@ async def complete_meta_embedded_signup(
         },
     )
     try:
+        await attempts.lock_business(business.business_id)
         current = await administration.get_connection(
             business.business_id,
             for_update=True,
