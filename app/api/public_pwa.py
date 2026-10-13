@@ -21,6 +21,7 @@ from app.auth.schemas import (
     MetaApiOnlyEmbeddedSignupStartRequest,
     MetaApiOnlyEmbeddedSignupStartResponse,
     MetaEmbeddedSignupAssetsRequest,
+    MetaEmbeddedSignupAttemptRequest,
     MetaEmbeddedSignupCompleteRequest,
     MetaEmbeddedSignupStartResponse,
     MetaEmbeddedSignupTelemetryRequest,
@@ -49,7 +50,11 @@ from app.models import AuthSession, Business, User
 from app.schemas.whatsapp_onboarding import WhatsAppOnboardingPlanResponse, onboarding_plan_response
 from app.whatsapp.administration import (
     META_AUTHORIZATION_INCOMPLETE,
+    META_ONBOARDING_EXPIRED,
+    META_ONBOARDING_FAILED,
     META_ONBOARDING_PENDING,
+    META_PROVIDER_REJECTED,
+    META_PROVIDER_UNAVAILABLE,
     WhatsAppConnectionAdministrationError,
     WhatsAppConnectionAdministrationService,
 )
@@ -74,6 +79,12 @@ from app.whatsapp.onboarding import (
     WhatsAppOnboardingError,
     WhatsAppOnboardingIntent,
     WhatsAppOnboardingService,
+)
+from app.whatsapp.onboarding_attempts import (
+    TERMINAL_STATES as ONBOARDING_TERMINAL_STATES,
+    WhatsAppOnboardingAttemptError,
+    WhatsAppOnboardingAttemptService,
+    WhatsAppOnboardingAttemptView,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["pwa"])
