@@ -25,6 +25,7 @@ class MetaEmbeddedSignupRedirectState:
     business_id: uuid.UUID
     attempt_id: uuid.UUID
     redirect_uri: str
+    return_to_onboarding: bool
     expires_at: datetime
 
 
@@ -64,6 +65,7 @@ def build_meta_embedded_signup_redirect_state(
     business_id: uuid.UUID,
     attempt_id: uuid.UUID,
     redirect_uri: str,
+    return_to_onboarding: bool,
     expires_at: datetime,
 ) -> str:
     expiry = expires_at.astimezone(UTC)
@@ -72,6 +74,7 @@ def build_meta_embedded_signup_redirect_state(
         "business_id": str(business_id),
         "attempt_id": str(attempt_id),
         "redirect_uri": redirect_uri,
+        "return_to_onboarding": return_to_onboarding,
         "exp": int(expiry.timestamp()),
         "nonce": secrets.token_urlsafe(12),
     }
@@ -116,10 +119,12 @@ def parse_meta_embedded_signup_redirect_state(
         business_id = uuid.UUID(str(payload["business_id"]))
         attempt_id = uuid.UUID(str(payload["attempt_id"]))
         redirect_uri = payload["redirect_uri"]
+        return_to_onboarding = payload["return_to_onboarding"]
         expiry_value = payload["exp"]
         nonce = payload["nonce"]
         if (
             not isinstance(redirect_uri, str)
+            or not isinstance(return_to_onboarding, bool)
             or not isinstance(expiry_value, int)
             or not isinstance(nonce, str)
             or not nonce
@@ -148,6 +153,7 @@ def parse_meta_embedded_signup_redirect_state(
         business_id=business_id,
         attempt_id=attempt_id,
         redirect_uri=redirect_uri,
+        return_to_onboarding=return_to_onboarding,
         expires_at=expires_at,
     )
 
