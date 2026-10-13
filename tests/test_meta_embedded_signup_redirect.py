@@ -54,6 +54,7 @@ def test_redirect_state_round_trip_and_authorization_url_are_bound_to_attempt() 
         business_id=BUSINESS_ID,
         attempt_id=ATTEMPT_ID,
         redirect_uri=redirect_uri,
+        return_to_onboarding=True,
         expires_at=now + timedelta(minutes=15),
     )
     parsed = parse_meta_embedded_signup_redirect_state(
@@ -65,6 +66,7 @@ def test_redirect_state_round_trip_and_authorization_url_are_bound_to_attempt() 
     assert parsed.business_id == BUSINESS_ID
     assert parsed.attempt_id == ATTEMPT_ID
     assert parsed.redirect_uri == REDIRECT_URI
+    assert parsed.return_to_onboarding is True
     assert parsed.expires_at == now + timedelta(minutes=15)
 
     authorization_url = build_meta_embedded_signup_authorization_url(
@@ -98,6 +100,7 @@ def test_redirect_state_rejects_tampering_expiry_and_untrusted_return_urls() -> 
         business_id=BUSINESS_ID,
         attempt_id=ATTEMPT_ID,
         redirect_uri=REDIRECT_URI,
+        return_to_onboarding=False,
         expires_at=now + timedelta(minutes=1),
     )
 
