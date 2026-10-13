@@ -143,7 +143,7 @@ async def test_same_business_reuses_single_active_attempt(
     assert first.id == second.id
 
 
-async def test_empty_callback_uses_grace_then_becomes_connection_error(
+async def test_empty_callback_remains_resumable_until_real_expiry(
     onboarding_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     business_id = uuid.uuid4()
@@ -152,7 +152,6 @@ async def test_empty_callback_uses_grace_then_becomes_connection_error(
     async with onboarding_sessions() as session:
         async with session.begin():
             attempts = WhatsAppOnboardingAttemptService(session)
-            administration = WhatsAppConnectionAdministrationService(session)
             attempt = await attempts.begin(
                 business_id,
                 connection_id,
@@ -170,20 +169,17 @@ async def test_empty_callback_uses_grace_then_becomes_connection_error(
             model = await session.get(WhatsAppOnboardingAttempt, attempt.id)
             assert model is not None
             model.empty_callback_at = (
-                datetime.now(timezone.utc) - timedelta(seconds=6)
+                datetime.now(timezone.utc) - timedelta(minutes=5)
             )
+            model.expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
             await session.flush()
 
-            terminal = await attempts.reconcile(business_id)
-            assert terminal is not None
-            connection = await administration.mark_authorization_incomplete(
-                business_id,
-            )
+            still_active = await attempts.reconcile(business_id)
 
-    assert terminal.state == "authorization_incomplete"
-    assert terminal.failure_code == META_AUTHORIZATION_INCOMPLETE
-    assert connection.status is WhatsAppConnectionStatus.ERROR
-    assert connection.last_error_code == META_AUTHORIZATION_INCOMPLETE
+    assert still_active is not None
+    assert still_active.state == "awaiting_provider"
+    assert still_active.failure_code is None
+    assert still_active.terminal_at is None
 
 
 async def test_event_journal_records_sanitized_attempt_lifecycle(
@@ -231,7 +227,7 @@ async def test_event_journal_records_sanitized_attempt_lifecycle(
     assert not hasattr(events[-1], "access_token")
 
 
-async def test_global_sweep_closes_empty_callback_without_browser(
+async def test_global_sweep_expires_stale_empty_callback_only_at_ttl(
     onboarding_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     business_id = uuid.uuid4()
@@ -255,8 +251,9 @@ async def test_global_sweep_closes_empty_callback_without_browser(
             model = await session.get(WhatsAppOnboardingAttempt, attempt.id)
             assert model is not None
             model.empty_callback_at = (
-                datetime.now(timezone.utc) - timedelta(seconds=6)
+                datetime.now(timezone.utc) - timedelta(minutes=10)
             )
+            model.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
 
         result = await reconcile_due_onboarding_attempts(session, limit=10)
 
@@ -278,11 +275,13 @@ async def test_global_sweep_closes_empty_callback_without_browser(
     assert result.reconciled == 1
     assert result.failed == 0
     assert terminal is not None
-    assert terminal.state == "authorization_incomplete"
+    assert terminal.state == "expired"
+    assert terminal.failure_code == "META_ONBOARDING_EXPIRED"
     assert connection is not None
     assert connection.status == WhatsAppConnectionStatus.ERROR.value
-    assert connection.last_error_code == META_AUTHORIZATION_INCOMPLETE
-    assert "server_empty_callback_reconciled" in stages
+    assert connection.last_error_code == "META_ONBOARDING_EXPIRED"
+    assert "server_expired" in stages
+    assert "server_empty_callback_reconciled" not in stages
 
 
 async def test_expired_attempt_is_reconciled_server_side(
