@@ -102,6 +102,14 @@ class WhatsAppConnectionAdministrationService:
         current = await self._repository.get_connection(
             business_id, for_update=True
         )
+        if (
+            current is not None
+            and current.status == WhatsAppConnectionStatus.CONNECTED.value
+        ):
+            # SessionInfo can arrive milliseconds after /complete has already
+            # committed the same connection. Treat that late browser event as
+            # an idempotent no-op instead of surfacing a misleading 409.
+            return _status_view(current)
         if current is None or current.status != WhatsAppConnectionStatus.PENDING.value:
             raise WhatsAppConnectionAdministrationError(
                 "Pending WhatsApp connection is not available"

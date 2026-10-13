@@ -163,6 +163,48 @@ class PendingAdministration(EmptyAdministration):
 
 
 @pytest.mark.asyncio
+async def test_late_assets_after_success_are_idempotent() -> None:
+    connection = SimpleNamespace(
+        id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        business_id=BUSINESS_ID,
+        provider="meta",
+        mode=WhatsAppConnectionMode.COEXISTENCE.value,
+        status=WhatsAppConnectionStatus.CONNECTED.value,
+        meta_phone_number_id=PHONE_ID,
+        credential_secret_ref="projects/test-project/secrets/token/versions/1",
+        connected_at=None,
+        disconnected_at=None,
+        last_error_code=None,
+        display_phone_number="+55 12 99999-1234",
+        meta_review_status=None,
+        preferred_mode=None,
+        mode_switch_requested_at=None,
+        mode_switch_last_checked_at=None,
+        mode_switch_next_check_at=None,
+    )
+
+    class ConnectedRepository:
+        async def get_connection(self, business_id, *, for_update=False):
+            assert business_id == BUSINESS_ID
+            assert for_update is True
+            return connection
+
+    service = WhatsAppConnectionAdministrationService(object())
+    service._repository = ConnectedRepository()
+
+    view = await service.record_pending_meta_assets(
+        BUSINESS_ID,
+        meta_waba_id=WABA_ID,
+        meta_phone_number_id=PHONE_ID,
+        graph_version="v25.0",
+    )
+
+    assert view.status is WhatsAppConnectionStatus.CONNECTED
+    assert view.has_phone_number_id is True
+    assert view.has_credential_reference is True
+
+
+@pytest.mark.asyncio
 async def test_begin_attempt_and_assets_are_persisted_before_final_completion(
     monkeypatch,
 ) -> None:
