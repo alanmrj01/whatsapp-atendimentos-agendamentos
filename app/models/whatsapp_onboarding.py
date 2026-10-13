@@ -89,7 +89,10 @@ class WhatsAppOnboardingAttempt(Base):
     )
     connection_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("business_whatsapp_connections.id"),
+        ForeignKey(
+            "business_whatsapp_connections.id",
+            name="fk_wa_onboarding_attempt_connection",
+        ),
         nullable=False,
     )
     request_id: Mapped[uuid.UUID | None] = mapped_column(
