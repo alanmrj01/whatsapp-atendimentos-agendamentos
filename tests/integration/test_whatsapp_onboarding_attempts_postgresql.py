@@ -178,6 +178,60 @@ async def test_empty_callback_remains_resumable_until_real_expiry(
     assert still_active.terminal_at is None
 
 
+async def test_passive_events_never_extend_or_revive_expired_attempt(
+    onboarding_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = uuid.uuid4()
+    connection_id = await _create_pending(onboarding_sessions, business_id)
+
+    async with onboarding_sessions() as session:
+        async with session.begin():
+            attempts = WhatsAppOnboardingAttemptService(session)
+            attempt = await attempts.begin(
+                business_id,
+                connection_id,
+                WhatsAppConnectionMode.COEXISTENCE,
+                request_id=uuid.uuid4(),
+            )
+            model = await session.get(WhatsAppOnboardingAttempt, attempt.id)
+            assert model is not None
+
+            deadline = datetime.now(timezone.utc) + timedelta(minutes=5)
+            model.expires_at = deadline
+            await session.flush()
+
+            passive = await attempts.record_event(
+                business_id,
+                attempt.id,
+                stage="sdk_ready",
+            )
+            assert passive.expires_at == deadline
+            assert passive.state != "expired"
+
+            model.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+            await session.flush()
+
+            expired = await attempts.record_event(
+                business_id,
+                attempt.id,
+                stage="page_hidden",
+            )
+
+        stages = (
+            await session.scalars(
+                select(WhatsAppOnboardingAttemptEvent.stage)
+                .where(WhatsAppOnboardingAttemptEvent.attempt_id == attempt.id)
+                .order_by(WhatsAppOnboardingAttemptEvent.created_at)
+            )
+        ).all()
+
+    assert expired.state == "expired"
+    assert expired.failure_code == "META_ONBOARDING_EXPIRED"
+    assert expired.terminal_at is not None
+    assert expired.last_stage == "server_expired_before_client_event"
+    assert stages[-1] == "server_expired_before_client_event"
+
+
 async def test_browser_timeout_does_not_expire_server_attempt(
     onboarding_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
