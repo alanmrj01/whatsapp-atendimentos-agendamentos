@@ -23,6 +23,8 @@ from app.auth.schemas import (
     MetaEmbeddedSignupAssetsRequest,
     MetaEmbeddedSignupAttemptRequest,
     MetaEmbeddedSignupCompleteRequest,
+    MetaEmbeddedSignupRedirectStartRequest,
+    MetaEmbeddedSignupRedirectStartResponse,
     MetaEmbeddedSignupStartResponse,
     MetaEmbeddedSignupTelemetryRequest,
     MeResponse,
@@ -71,6 +73,12 @@ from app.whatsapp.embedded_signup import (
     MetaEmbeddedSignupService,
     MetaEmbeddedSignupUnavailable,
     meta_onboarding_log_context,
+)
+from app.whatsapp.embedded_signup_redirect import (
+    build_meta_embedded_signup_authorization_url,
+    build_meta_embedded_signup_redirect_state,
+    parse_meta_embedded_signup_redirect_state,
+    validate_meta_embedded_signup_redirect_uri,
 )
 from app.repositories.whatsapp_connections import (
     WhatsAppConnectionRepository,
@@ -807,6 +815,80 @@ async def begin_meta_embedded_signup_attempt(
         },
     )
     return _public_connection(view, attempt)
+
+
+@router.post(
+    "/whatsapp/onboarding/embedded-signup/redirect/start",
+    response_model=MetaEmbeddedSignupRedirectStartResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def start_meta_embedded_signup_redirect(
+    payload: MetaEmbeddedSignupRedirectStartRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    configuration = _embedded_signup_configuration(settings)
+    try:
+        redirect_uri = validate_meta_embedded_signup_redirect_uri(
+            payload.redirect_uri,
+            allowed_origins=settings.allowed_pwa_origins(),
+        )
+    except MetaEmbeddedSignupRejected:
+        raise HTTPException(400, "Meta redirect URI is invalid") from None
+
+    attempts = WhatsAppOnboardingAttemptService(db)
+    try:
+        await attempts.lock_business(business.business_id)
+        attempt = await attempts.reconcile(business.business_id)
+        if (
+            attempt is None
+            or attempt.id != payload.attempt_id
+            or attempt.state not in {
+                "created",
+                "provider_opened",
+                "awaiting_provider",
+            }
+        ):
+            raise HTTPException(
+                409, "WhatsApp onboarding attempt is no longer active"
+            )
+
+        state = build_meta_embedded_signup_redirect_state(
+            configuration,
+            business_id=business.business_id,
+            attempt_id=attempt.id,
+            redirect_uri=redirect_uri,
+            expires_at=attempt.expires_at,
+        )
+        authorization_url = build_meta_embedded_signup_authorization_url(
+            configuration,
+            state=state,
+            redirect_uri=redirect_uri,
+        )
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except (WhatsAppOnboardingAttemptError, MetaEmbeddedSignupRejected):
+        await db.rollback()
+        raise HTTPException(
+            409, "WhatsApp onboarding redirect could not be started"
+        ) from None
+
+    logger.info(
+        "meta_embedded_signup_redirect_started",
+        extra={
+            "stage": "redirect_started",
+            "business_id": str(business.business_id),
+            "attempt_id": str(attempt.id),
+        },
+    )
+    return MetaEmbeddedSignupRedirectStartResponse(
+        attempt_id=attempt.id,
+        authorization_url=authorization_url,
+    )
 
 
 @router.post(
