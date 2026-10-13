@@ -312,12 +312,11 @@ class WhatsAppOnboardingAttemptService:
                 now=now,
             )
         elif stage == "timeout":
-            _finish(
-                attempt,
-                state="expired",
-                failure_code=META_ONBOARDING_EXPIRED,
-                now=now,
-            )
+            # Browser timers are not authoritative for a provider flow. Mobile
+            # tabs/custom tabs may suspend or delay JavaScript timers, so keep
+            # the attempt active and let server-side expires_at decide expiry.
+            if attempt.state == "created":
+                attempt.state = "awaiting_provider"
 
         self._journal(
             attempt,
