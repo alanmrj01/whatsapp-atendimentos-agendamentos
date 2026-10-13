@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "businesses",
     "business_automation_exclusions",
     "business_whatsapp_connections",
+    "whatsapp_onboarding_attempts",
     "conversations",
     "customers",
     "employee_services",
