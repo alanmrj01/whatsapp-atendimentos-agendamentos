@@ -73,7 +73,13 @@ class WhatsAppOnboardingAttemptService:
         self._session = session
 
     async def lock_business(self, business_id: uuid.UUID) -> None:
-        await self.lock_business(business_id)
+        business = await self._session.scalar(
+            select(Business)
+            .where(Business.id == business_id)
+            .with_for_update()
+        )
+        if business is None:
+            raise WhatsAppOnboardingAttemptError("Business is not available")
 
     async def latest(
         self,
