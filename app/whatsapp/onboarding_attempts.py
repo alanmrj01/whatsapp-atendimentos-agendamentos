@@ -333,6 +333,31 @@ class WhatsAppOnboardingAttemptService:
         await self._session.flush()
         return _view(attempt)
 
+    async def mark_authorization_incomplete(
+        self,
+        business_id: uuid.UUID,
+        attempt_id: uuid.UUID,
+    ) -> WhatsAppOnboardingAttemptView:
+        attempt = await self._require_model(
+            business_id,
+            attempt_id,
+            for_update=True,
+        )
+        if attempt.state == "connected":
+            return _view(attempt)
+        if attempt.state in TERMINAL_STATES:
+            return _view(attempt)
+        now = datetime.now(timezone.utc)
+        _finish(
+            attempt,
+            state="authorization_incomplete",
+            failure_code=META_AUTHORIZATION_INCOMPLETE,
+            now=now,
+        )
+        attempt.last_stage = "authorization_incomplete"
+        await self._session.flush()
+        return _view(attempt)
+
     async def mark_connected(
         self,
         business_id: uuid.UUID,
