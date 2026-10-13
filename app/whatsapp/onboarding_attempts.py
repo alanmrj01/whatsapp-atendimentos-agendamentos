@@ -223,6 +223,7 @@ class WhatsAppOnboardingAttemptService:
             attempt.phone_number_id_received = True
 
         if stage == "login_opened":
+            attempt.empty_callback_at = None
             attempt.state = "provider_opened"
         elif stage in {
             "page_hidden",
@@ -244,6 +245,7 @@ class WhatsAppOnboardingAttemptService:
         elif stage == "login_callback_received":
             if authorization_code_received is True:
                 attempt.authorization_code_received = True
+                attempt.empty_callback_at = None
                 attempt.state = "code_received"
             elif (
                 authorization_code_received is False
