@@ -148,7 +148,7 @@ class FakeAttemptService:
     async def lock_business(self, business_id):
         assert business_id == BUSINESS_ID
 
-    async def reconcile_expired(self, business_id):
+    async def reconcile(self, business_id):
         assert business_id == BUSINESS_ID
         return self.current
 
@@ -171,6 +171,7 @@ class FakeAttemptService:
             waba_id_received=False,
             phone_number_id_received=False,
             failure_code=None,
+            empty_callback_at=None,
             last_event_at=None,
             expires_at=None,
             terminal_at=None,
@@ -204,8 +205,16 @@ class FakeAttemptService:
             and authorization_code_received is False
             and not self.current.authorization_code_received
         ):
-            self.current.state = "authorization_incomplete"
-            self.current.failure_code = META_AUTHORIZATION_INCOMPLETE
+            self.current.state = "awaiting_provider"
+            self.current.empty_callback_at = object()
+        return self.current
+
+    async def mark_authorization_incomplete(self, business_id, attempt_id):
+        assert business_id == BUSINESS_ID
+        assert attempt_id == ATTEMPT_ID
+        assert self.current is not None
+        self.current.state = "authorization_incomplete"
+        self.current.failure_code = META_AUTHORIZATION_INCOMPLETE
         return self.current
 
     async def record_assets(
@@ -628,7 +637,7 @@ async def test_client_telemetry_is_sanitized_and_access_controlled(caplog) -> No
 
 
 @pytest.mark.asyncio
-async def test_correlated_empty_callback_is_persisted_by_backend(
+async def test_correlated_empty_callback_is_recorded_without_premature_failure(
     monkeypatch,
 ) -> None:
     attempts = FakeAttemptService()
@@ -643,6 +652,7 @@ async def test_correlated_empty_callback_is_persisted_by_backend(
         waba_id_received=False,
         phone_number_id_received=False,
         failure_code=None,
+        empty_callback_at=None,
         last_event_at=None,
         expires_at=None,
         terminal_at=None,
@@ -672,8 +682,9 @@ async def test_correlated_empty_callback_is_persisted_by_backend(
     )
 
     assert response.status_code == 204
-    assert attempts.current.state == "authorization_incomplete"
-    assert attempts.current.failure_code == META_AUTHORIZATION_INCOMPLETE
+    assert attempts.current.state == "awaiting_provider"
+    assert attempts.current.empty_callback_at is not None
+    assert attempts.current.failure_code is None
     assert db.commits == 1
 
 
