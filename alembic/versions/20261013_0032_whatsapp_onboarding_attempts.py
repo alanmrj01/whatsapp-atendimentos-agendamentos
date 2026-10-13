@@ -178,7 +178,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["attempt_id"],
             ["whatsapp_onboarding_attempts.id"],
-            ondelete="CASCADE",
             name="fk_wa_onboarding_event_attempt",
         ),
         sa.ForeignKeyConstraint(
