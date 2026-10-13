@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -22,7 +22,6 @@ from app.whatsapp.connections import WhatsAppConnectionMode, sanitize_error_code
 
 
 ATTEMPT_TTL = timedelta(minutes=15)
-EMPTY_CALLBACK_GRACE = timedelta(seconds=5)
 
 ACTIVE_STATES = frozenset(
     {
@@ -125,20 +124,11 @@ class WhatsAppOnboardingAttemptService:
 
     async def due_business_ids(self, *, limit: int = 100) -> list[uuid.UUID]:
         now = datetime.now(timezone.utc)
-        empty_callback_due = and_(
-            WhatsAppOnboardingAttempt.authorization_code_received.is_(False),
-            WhatsAppOnboardingAttempt.empty_callback_at.is_not(None),
-            WhatsAppOnboardingAttempt.empty_callback_at
-            <= now - EMPTY_CALLBACK_GRACE,
-        )
         rows = await self._session.scalars(
             select(WhatsAppOnboardingAttempt.business_id)
             .where(
                 WhatsAppOnboardingAttempt.state.in_(ACTIVE_STATES),
-                or_(
-                    WhatsAppOnboardingAttempt.expires_at <= now,
-                    empty_callback_due,
-                ),
+                WhatsAppOnboardingAttempt.expires_at <= now,
             )
             .order_by(
                 WhatsAppOnboardingAttempt.expires_at,
@@ -297,9 +287,11 @@ class WhatsAppOnboardingAttemptService:
                 authorization_code_received is False
                 and not attempt.authorization_code_received
             ):
-                # Mobile/PWA can emit a transient empty callback. Persist the
-                # observation and let server reconciliation decide after the
-                # grace period. The browser is no longer authoritative here.
+                # Mobile/PWA can emit a transient empty callback before the
+                # provider flow is actually complete. Persist the observation,
+                # keep the attempt resumable and let only the real attempt TTL
+                # decide terminal expiry. A short grace period is unsafe on
+                # Android/custom-tab flows.
                 attempt.empty_callback_at = attempt.empty_callback_at or now
                 attempt.state = "awaiting_provider"
         elif stage == "embedded_signup_ready_to_complete":
@@ -320,12 +312,11 @@ class WhatsAppOnboardingAttemptService:
                 now=now,
             )
         elif stage == "timeout":
-            _finish(
-                attempt,
-                state="expired",
-                failure_code=META_ONBOARDING_EXPIRED,
-                now=now,
-            )
+            # Browser timers are not authoritative for a provider flow. Mobile
+            # tabs/custom tabs may suspend or delay JavaScript timers, so keep
+            # the attempt active and let server-side expires_at decide expiry.
+            if attempt.state == "created":
+                attempt.state = "awaiting_provider"
 
         self._journal(
             attempt,
@@ -489,25 +480,6 @@ class WhatsAppOnboardingAttemptService:
         if attempt is None:
             return None
         now = datetime.now(timezone.utc)
-        if (
-            not attempt.authorization_code_received
-            and attempt.empty_callback_at is not None
-            and attempt.empty_callback_at + EMPTY_CALLBACK_GRACE <= now
-        ):
-            _finish(
-                attempt,
-                state="authorization_incomplete",
-                failure_code=META_AUTHORIZATION_INCOMPLETE,
-                now=now,
-            )
-            attempt.last_stage = "server_empty_callback_reconciled"
-            self._journal(
-                attempt,
-                source="server",
-                stage=attempt.last_stage,
-            )
-            await self._session.flush()
-            return _view(attempt)
         if attempt.expires_at <= now:
             _finish(
                 attempt,
