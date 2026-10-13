@@ -81,7 +81,6 @@ from app.whatsapp.onboarding import (
     WhatsAppOnboardingService,
 )
 from app.whatsapp.onboarding_attempts import (
-    TERMINAL_STATES as ONBOARDING_TERMINAL_STATES,
     WhatsAppOnboardingAttemptError,
     WhatsAppOnboardingAttemptService,
     WhatsAppOnboardingAttemptView,
