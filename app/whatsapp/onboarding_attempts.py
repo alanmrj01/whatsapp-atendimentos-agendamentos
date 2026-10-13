@@ -72,6 +72,9 @@ class WhatsAppOnboardingAttemptService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def lock_business(self, business_id: uuid.UUID) -> None:
+        await self.lock_business(business_id)
+
     async def latest(
         self,
         business_id: uuid.UUID,
