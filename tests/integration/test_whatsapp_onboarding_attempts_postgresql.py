@@ -16,11 +16,7 @@ from app.models import (
     WhatsAppOnboardingAttempt,
     WhatsAppOnboardingAttemptEvent,
 )
-from app.whatsapp.administration import (
-    META_AUTHORIZATION_INCOMPLETE,
-    META_ONBOARDING_PENDING,
-    WhatsAppConnectionAdministrationService,
-)
+from app.whatsapp.administration import META_ONBOARDING_PENDING
 from app.whatsapp.connections import WhatsAppConnectionMode, WhatsAppConnectionStatus
 from app.whatsapp.onboarding_attempts import (
     WhatsAppOnboardingAttemptService,
