@@ -36,6 +36,12 @@ class ReengagementSweepPayload(BaseModel):
 
 
 
+class WhatsAppOnboardingReconcilePayload(BaseModel):
+    limit: int = Field(default=100, ge=1, le=500)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class WhatsAppModeRecheckPayload(BaseModel):
     limit: int = Field(default=100, ge=1, le=500)
 
