@@ -197,6 +197,7 @@ class MetaEmbeddedSignupStartResponse(BaseModel):
 class MetaEmbeddedSignupRedirectStartRequest(StrictRequest):
     attempt_id: UUID
     redirect_uri: str = Field(min_length=1, max_length=2048)
+    return_to_onboarding: bool = Field(default=False, strict=True)
 
 
 class MetaEmbeddedSignupRedirectStartResponse(BaseModel):
