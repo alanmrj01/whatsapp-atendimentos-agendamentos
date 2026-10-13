@@ -137,7 +137,7 @@ async def test_same_business_reuses_single_active_attempt(
     assert first.id == second.id
 
 
-async def test_empty_callback_becomes_terminal_and_connection_error(
+async def test_empty_callback_uses_grace_then_becomes_connection_error(
     onboarding_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     business_id = uuid.uuid4()
@@ -153,12 +153,23 @@ async def test_empty_callback_becomes_terminal_and_connection_error(
                 WhatsAppConnectionMode.COEXISTENCE,
                 request_id=uuid.uuid4(),
             )
-            terminal = await attempts.record_event(
+            observed = await attempts.record_event(
                 business_id,
                 attempt.id,
                 stage="login_callback_received",
                 authorization_code_received=False,
             )
+            assert observed.state == "awaiting_provider"
+
+            model = await session.get(WhatsAppOnboardingAttempt, attempt.id)
+            assert model is not None
+            model.empty_callback_at = (
+                datetime.now(timezone.utc) - timedelta(seconds=6)
+            )
+            await session.flush()
+
+            terminal = await attempts.reconcile(business_id)
+            assert terminal is not None
             connection = await administration.mark_authorization_incomplete(
                 business_id,
             )
@@ -190,7 +201,7 @@ async def test_expired_attempt_is_reconciled_server_side(
             await session.flush()
 
             service = WhatsAppOnboardingAttemptService(session)
-            expired = await service.reconcile_expired(business_id)
+            expired = await service.reconcile(business_id)
 
     assert expired is not None
     assert expired.state == "expired"
