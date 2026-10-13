@@ -94,24 +94,35 @@ Config = Annotated[Settings, Depends(require_auth_config)]
 Identity = Annotated[Principal, Depends(require_principal)]
 
 
-def _public_pending_state(view) -> str | None:
+def _public_pending_state(
+    view,
+    attempt: WhatsAppOnboardingAttemptView | None = None,
+) -> str | None:
     if getattr(view, "last_error_code", None) != META_ONBOARDING_PENDING:
         return None
     status_value = getattr(getattr(view, "status", None), "value", None)
     mode_value = getattr(getattr(view, "mode", None), "value", None)
+    if status_value != "pending":
+        return None
+
+    review_status = getattr(view, "meta_review_status", None)
+    if review_status == "rejected":
+        return "meta_review_rejected"
+
+    if attempt is not None:
+        # A persisted attempt is authoritative. Receiving WABA/phone assets
+        # during Embedded Signup does not itself mean Meta's account review is
+        # blocking the technical connection.
+        return "authorization_pending"
+
     if (
-        status_value == "pending"
-        and mode_value == "coexistence"
+        mode_value == "coexistence"
         and getattr(view, "has_phone_number_id", False)
+        and review_status is None
     ):
-        review_status = getattr(view, "meta_review_status", None)
-        if review_status == "rejected":
-            return "meta_review_rejected"
-        if review_status is None:
-            # Once Meta has returned the selected WABA/phone assets, the user
-            # has completed the local selection flow. Do not ask them to
-            # restart the provider flow while the account is being reviewed.
-            return "meta_review_pending"
+        # Backward compatibility for pending rows created before attempt
+        # orchestration existed. New attempts never infer review from assets.
+        return "meta_review_pending"
     return "authorization_pending"
 
 
@@ -130,30 +141,43 @@ def _public_connection_journey(
         return ("meta_review_pending", False, "wait_for_meta_review")
     if pending_state == "meta_review_rejected":
         return ("meta_review_rejected", True, "review_meta_rejection")
-    # Any other pending connection still needs the customer to complete the
-    # provider authorization. This also fails safe for older pending records
-    # that predate the explicit pending_state distinction.
     return ("authorization_pending", True, "continue_authorization")
 
 
-def _public_connection(view) -> PublicConnectionResponse:
+_ERROR_REASON_BY_CODE = {
+    META_AUTHORIZATION_INCOMPLETE: "authorization_incomplete",
+    META_ONBOARDING_EXPIRED: "onboarding_expired",
+    META_PROVIDER_REJECTED: "provider_rejected",
+    META_PROVIDER_UNAVAILABLE: "provider_unavailable",
+    META_ONBOARDING_FAILED: "onboarding_failed",
+}
+
+
+def _public_connection(
+    view,
+    attempt: WhatsAppOnboardingAttemptView | None = None,
+) -> PublicConnectionResponse:
     preferred_mode = getattr(view, "preferred_mode", None)
-    pending_state = _public_pending_state(view)
+    pending_state = _public_pending_state(view, attempt)
     journey_state, requires_user_action, next_action = _public_connection_journey(
         view,
         pending_state,
     )
+    last_error_code = getattr(view, "last_error_code", None)
     return PublicConnectionResponse(
         status=view.status.value,
         mode=view.mode.value,
         display_phone_number=getattr(
             view, "masked_display_phone_number", None
         ),
-        error_reason=(
-            "authorization_incomplete"
-            if getattr(view, "last_error_code", None) == META_AUTHORIZATION_INCOMPLETE
-            else None
+        error_reason=_ERROR_REASON_BY_CODE.get(last_error_code),
+        onboarding_attempt_id=attempt.id if attempt is not None else None,
+        onboarding_attempt_state=attempt.state if attempt is not None else None,
+        onboarding_last_stage=attempt.last_stage if attempt is not None else None,
+        onboarding_last_event_at=(
+            attempt.last_event_at if attempt is not None else None
         ),
+        onboarding_expires_at=attempt.expires_at if attempt is not None else None,
         pending_state=pending_state,
         review_status=getattr(view, "meta_review_status", None),
         preferred_mode=(
