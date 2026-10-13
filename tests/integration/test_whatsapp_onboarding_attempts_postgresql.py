@@ -229,6 +229,10 @@ async def test_old_terminal_attempt_cannot_become_active_again(
                 stage="login_callback_received",
                 authorization_code_received=False,
             )
+            await service.mark_authorization_incomplete(
+                business_id,
+                first.id,
+            )
 
             second = await service.begin(
                 business_id,
