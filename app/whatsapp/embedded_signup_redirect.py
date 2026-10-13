@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -125,7 +126,16 @@ def parse_meta_embedded_signup_redirect_state(
         ):
             raise ValueError
         expires_at = datetime.fromtimestamp(expiry_value, tz=UTC)
-    except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        binascii.Error,
+    ):
         raise MetaEmbeddedSignupRejected(
             "Meta authorization state is invalid"
         ) from None
