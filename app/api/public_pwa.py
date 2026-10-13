@@ -129,6 +129,7 @@ def _public_pending_state(
 def _public_connection_journey(
     view,
     pending_state: str | None,
+    attempt: WhatsAppOnboardingAttemptView | None = None,
 ) -> tuple[str, bool, str]:
     status_value = getattr(getattr(view, "status", None), "value", None)
     if status_value == "connected":
@@ -141,6 +142,14 @@ def _public_connection_journey(
         return ("meta_review_pending", False, "wait_for_meta_review")
     if pending_state == "meta_review_rejected":
         return ("meta_review_rejected", True, "review_meta_rejection")
+    if attempt is not None and (
+        attempt.state in {"code_received", "completing"}
+        or (
+            attempt.state == "assets_received"
+            and attempt.authorization_code_received
+        )
+    ):
+        return ("validating_connection", False, "wait_for_completion")
     return ("authorization_pending", True, "continue_authorization")
 
 
@@ -162,6 +171,7 @@ def _public_connection(
     journey_state, requires_user_action, next_action = _public_connection_journey(
         view,
         pending_state,
+        attempt,
     )
     last_error_code = getattr(view, "last_error_code", None)
     return PublicConnectionResponse(
