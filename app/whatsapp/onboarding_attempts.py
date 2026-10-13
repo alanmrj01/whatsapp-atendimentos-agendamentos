@@ -4,13 +4,19 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Business, WhatsAppOnboardingAttempt
+from app.models import (
+    Business,
+    WhatsAppOnboardingAttempt,
+    WhatsAppOnboardingAttemptEvent,
+)
 from app.whatsapp.administration import (
     META_AUTHORIZATION_INCOMPLETE,
     META_ONBOARDING_EXPIRED,
+    WhatsAppConnectionAdministrationError,
+    WhatsAppConnectionAdministrationService,
 )
 from app.whatsapp.connections import WhatsAppConnectionMode, sanitize_error_code
 
@@ -63,6 +69,13 @@ class WhatsAppOnboardingAttemptView:
     created_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class WhatsAppOnboardingSweepResult:
+    scanned: int
+    reconciled: int
+    failed: int
+
+
 class WhatsAppOnboardingAttemptService:
     """Coordinates concurrent Embedded Signup attempts server-side.
 
@@ -104,22 +117,36 @@ class WhatsAppOnboardingAttemptService:
         *,
         for_update: bool = False,
     ) -> WhatsAppOnboardingAttemptView | None:
-        statement = (
-            select(WhatsAppOnboardingAttempt)
+        attempt = await self._active_model(
+            business_id,
+            for_update=for_update,
+        )
+        return _view(attempt) if attempt is not None else None
+
+    async def due_business_ids(self, *, limit: int = 100) -> list[uuid.UUID]:
+        now = datetime.now(timezone.utc)
+        empty_callback_due = and_(
+            WhatsAppOnboardingAttempt.authorization_code_received.is_(False),
+            WhatsAppOnboardingAttempt.empty_callback_at.is_not(None),
+            WhatsAppOnboardingAttempt.empty_callback_at
+            <= now - EMPTY_CALLBACK_GRACE,
+        )
+        rows = await self._session.scalars(
+            select(WhatsAppOnboardingAttempt.business_id)
             .where(
-                WhatsAppOnboardingAttempt.business_id == business_id,
                 WhatsAppOnboardingAttempt.state.in_(ACTIVE_STATES),
+                or_(
+                    WhatsAppOnboardingAttempt.expires_at <= now,
+                    empty_callback_due,
+                ),
             )
             .order_by(
-                WhatsAppOnboardingAttempt.created_at.desc(),
-                WhatsAppOnboardingAttempt.id.desc(),
+                WhatsAppOnboardingAttempt.expires_at,
+                WhatsAppOnboardingAttempt.created_at,
             )
-            .limit(1)
+            .limit(max(1, min(limit, 500)))
         )
-        if for_update:
-            statement = statement.with_for_update()
-        attempt = await self._session.scalar(statement)
-        return _view(attempt) if attempt is not None else None
+        return list(rows)
 
     async def begin(
         self,
@@ -162,6 +189,12 @@ class WhatsAppOnboardingAttemptService:
                     failure_code=META_ONBOARDING_EXPIRED,
                     now=now,
                 )
+                active.last_stage = "server_expired_on_restart"
+                self._journal(
+                    active,
+                    source="server",
+                    stage=active.last_stage,
+                )
                 await self._session.flush()
             elif (
                 active.connection_id == connection_id
@@ -177,6 +210,12 @@ class WhatsAppOnboardingAttemptService:
                     failure_code="META_ONBOARDING_SUPERSEDED",
                     now=now,
                 )
+                active.last_stage = "server_superseded"
+                self._journal(
+                    active,
+                    source="server",
+                    stage=active.last_stage,
+                )
                 await self._session.flush()
 
         attempt = WhatsAppOnboardingAttempt(
@@ -185,10 +224,17 @@ class WhatsAppOnboardingAttemptService:
             request_id=request_id,
             mode=mode.value,
             state="created",
+            last_stage="attempt_started",
             last_event_at=now,
             expires_at=now + ATTEMPT_TTL,
         )
         self._session.add(attempt)
+        await self._session.flush()
+        self._journal(
+            attempt,
+            source="server",
+            stage="attempt_started",
+        )
         await self._session.flush()
         return _view(attempt)
 
@@ -251,9 +297,9 @@ class WhatsAppOnboardingAttemptService:
                 authorization_code_received is False
                 and not attempt.authorization_code_received
             ):
-                # Empty callbacks can be transient on mobile/PWA. Persist the
-                # observation and let server reconciliation close the attempt
-                # after a short grace period if no valid code arrives.
+                # Mobile/PWA can emit a transient empty callback. Persist the
+                # observation and let server reconciliation decide after the
+                # grace period. The browser is no longer authoritative here.
                 attempt.empty_callback_at = attempt.empty_callback_at or now
                 attempt.state = "awaiting_provider"
         elif stage == "embedded_signup_ready_to_complete":
@@ -281,6 +327,14 @@ class WhatsAppOnboardingAttemptService:
                 now=now,
             )
 
+        self._journal(
+            attempt,
+            source="client",
+            stage=stage,
+            authorization_code_received=authorization_code_received,
+            waba_id_received=waba_id_received,
+            phone_number_id_received=phone_number_id_received,
+        )
         await self._session.flush()
         return _view(attempt)
 
@@ -308,6 +362,13 @@ class WhatsAppOnboardingAttemptService:
         attempt.last_event_at = now
         attempt.expires_at = now + ATTEMPT_TTL
         attempt.state = "assets_received"
+        self._journal(
+            attempt,
+            source="server",
+            stage="assets_persisted",
+            waba_id_received=has_waba_id,
+            phone_number_id_received=has_phone_number_id,
+        )
         await self._session.flush()
         return _view(attempt)
 
@@ -332,6 +393,11 @@ class WhatsAppOnboardingAttemptService:
         attempt.last_stage = "complete_request_started"
         attempt.last_event_at = now
         attempt.expires_at = now + ATTEMPT_TTL
+        self._journal(
+            attempt,
+            source="server",
+            stage="complete_request_started",
+        )
         await self._session.flush()
         return _view(attempt)
 
@@ -357,6 +423,11 @@ class WhatsAppOnboardingAttemptService:
             now=now,
         )
         attempt.last_stage = "authorization_incomplete"
+        self._journal(
+            attempt,
+            source="server",
+            stage=attempt.last_stage,
+        )
         await self._session.flush()
         return _view(attempt)
 
@@ -375,6 +446,11 @@ class WhatsAppOnboardingAttemptService:
         now = datetime.now(timezone.utc)
         _finish(attempt, state="connected", failure_code=None, now=now)
         attempt.last_stage = "complete_request_succeeded"
+        self._journal(
+            attempt,
+            source="server",
+            stage=attempt.last_stage,
+        )
         await self._session.flush()
         return _view(attempt)
 
@@ -397,6 +473,11 @@ class WhatsAppOnboardingAttemptService:
         now = datetime.now(timezone.utc)
         _finish(attempt, state="failed", failure_code=normalized, now=now)
         attempt.last_stage = "complete_request_failed"
+        self._journal(
+            attempt,
+            source="server",
+            stage=attempt.last_stage,
+        )
         await self._session.flush()
         return _view(attempt)
 
@@ -420,6 +501,11 @@ class WhatsAppOnboardingAttemptService:
                 now=now,
             )
             attempt.last_stage = "server_empty_callback_reconciled"
+            self._journal(
+                attempt,
+                source="server",
+                stage=attempt.last_stage,
+            )
             await self._session.flush()
             return _view(attempt)
         if attempt.expires_at <= now:
@@ -430,6 +516,11 @@ class WhatsAppOnboardingAttemptService:
                 now=now,
             )
             attempt.last_stage = "server_expired"
+            self._journal(
+                attempt,
+                source="server",
+                stage=attempt.last_stage,
+            )
             await self._session.flush()
         return _view(attempt)
 
@@ -474,6 +565,93 @@ class WhatsAppOnboardingAttemptService:
                 "WhatsApp onboarding attempt is not available"
             )
         return attempt
+
+    def _journal(
+        self,
+        attempt: WhatsAppOnboardingAttempt,
+        *,
+        source: str,
+        stage: str,
+        authorization_code_received: bool | None = None,
+        waba_id_received: bool | None = None,
+        phone_number_id_received: bool | None = None,
+    ) -> None:
+        self._session.add(
+            WhatsAppOnboardingAttemptEvent(
+                attempt_id=attempt.id,
+                business_id=attempt.business_id,
+                source=source,
+                stage=stage,
+                state_after=attempt.state,
+                authorization_code_received=authorization_code_received,
+                waba_id_received=waba_id_received,
+                phone_number_id_received=phone_number_id_received,
+                failure_code=attempt.failure_code,
+            )
+        )
+
+
+async def reconcile_due_onboarding_attempts(
+    session: AsyncSession,
+    *,
+    limit: int = 100,
+) -> WhatsAppOnboardingSweepResult:
+    """Reconcile attempts independently from the browser.
+
+    Candidate discovery does not lock attempts. Each business is then locked
+    using the same business -> attempt -> connection ordering as interactive
+    onboarding, preventing cross-worker deadlocks while allowing unrelated
+    tenants to progress concurrently.
+    """
+
+    attempts = WhatsAppOnboardingAttemptService(session)
+    business_ids = await attempts.due_business_ids(limit=limit)
+    await session.commit()
+
+    reconciled = 0
+    failed = 0
+    for business_id in business_ids:
+        try:
+            async with session.begin():
+                attempts = WhatsAppOnboardingAttemptService(session)
+                administration = WhatsAppConnectionAdministrationService(session)
+                await attempts.lock_business(business_id)
+                attempt = await attempts.reconcile(business_id)
+                if attempt is None or attempt.state not in {
+                    "authorization_incomplete",
+                    "expired",
+                }:
+                    continue
+
+                connection = await administration.get_connection(
+                    business_id,
+                    for_update=True,
+                )
+                if (
+                    connection is not None
+                    and connection.id == attempt.connection_id
+                    and connection.status.value != "connected"
+                ):
+                    await administration.mark_onboarding_error(
+                        business_id,
+                        (
+                            META_AUTHORIZATION_INCOMPLETE
+                            if attempt.state == "authorization_incomplete"
+                            else META_ONBOARDING_EXPIRED
+                        ),
+                    )
+                reconciled += 1
+        except (
+            WhatsAppOnboardingAttemptError,
+            WhatsAppConnectionAdministrationError,
+        ):
+            failed += 1
+
+    return WhatsAppOnboardingSweepResult(
+        scanned=len(business_ids),
+        reconciled=reconciled,
+        failed=failed,
+    )
 
 
 def _finish(
