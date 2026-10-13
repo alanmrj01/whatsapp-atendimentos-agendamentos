@@ -70,6 +70,7 @@ from app.whatsapp.embedded_signup import (
     MetaEmbeddedSignupRejected,
     MetaEmbeddedSignupService,
     MetaEmbeddedSignupUnavailable,
+    meta_onboarding_log_context,
 )
 from app.repositories.whatsapp_connections import (
     WhatsAppConnectionRepository,
@@ -1054,6 +1055,7 @@ async def complete_meta_embedded_signup(
             for_update=True,
         )
         if current is not None and current.status.value == "connected":
+            completed = True
             latest = await attempts.latest(business.business_id)
             return _public_connection(current, latest)
 
@@ -1078,12 +1080,16 @@ async def complete_meta_embedded_signup(
             )
 
         service, gateway = _embedded_signup_service(db, configuration)
-        view = await service.complete_coexistence(
+        with meta_onboarding_log_context(
             business.business_id,
-            payload.authorization_code,
-            waba_id_hint=payload.waba_id,
-            phone_number_id_hint=payload.phone_number_id,
-        )
+            payload.attempt_id,
+        ):
+            view = await service.complete_coexistence(
+                business.business_id,
+                payload.authorization_code,
+                waba_id_hint=payload.waba_id,
+                phone_number_id_hint=payload.phone_number_id,
+            )
         if payload.attempt_id is not None:
             attempt = await attempts.mark_connected(
                 business.business_id,
