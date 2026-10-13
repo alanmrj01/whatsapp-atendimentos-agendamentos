@@ -343,13 +343,13 @@ async def test_mark_authorization_incomplete_moves_empty_pending_attempt_to_erro
     assert view.last_error_code == META_AUTHORIZATION_INCOMPLETE
 
 
-class IncompleteAdministration(EmptyAdministration):
-    async def mark_authorization_incomplete(self, business_id):
-        assert business_id == BUSINESS_ID
-        return SimpleNamespace(
-            status=WhatsAppConnectionStatus.ERROR,
+class NonAuthoritativeIncompleteAdministration(EmptyAdministration):
+    def __init__(self) -> None:
+        self.view = SimpleNamespace(
+            id=CONNECTION_ID,
+            status=WhatsAppConnectionStatus.PENDING,
             mode=WhatsAppConnectionMode.COEXISTENCE,
-            last_error_code=META_AUTHORIZATION_INCOMPLETE,
+            last_error_code=META_ONBOARDING_PENDING,
             has_phone_number_id=False,
             masked_display_phone_number=None,
             meta_review_status=None,
@@ -359,17 +359,24 @@ class IncompleteAdministration(EmptyAdministration):
             mode_switch_next_check_at=None,
         )
 
+    async def get_connection(self, business_id, *, for_update=False):
+        assert business_id == BUSINESS_ID
+        assert for_update is True
+        return self.view
+
+    async def mark_authorization_incomplete(self, business_id):
+        raise AssertionError("browser incomplete signal must not downgrade connection")
+
 
 @pytest.mark.asyncio
-async def test_empty_meta_callback_endpoint_returns_recoverable_error(monkeypatch) -> None:
-    administration = IncompleteAdministration()
+async def test_legacy_empty_callback_endpoint_does_not_downgrade_pending(monkeypatch) -> None:
+    administration = NonAuthoritativeIncompleteAdministration()
     monkeypatch.setattr(
         public_pwa,
         "WhatsAppConnectionAdministrationService",
         lambda _: administration,
     )
     db = FakeDb()
-
     attempts = FakeAttemptService()
     monkeypatch.setattr(
         public_pwa,
@@ -383,10 +390,57 @@ async def test_empty_meta_callback_endpoint_returns_recoverable_error(monkeypatc
         db,
     )
 
-    assert response.status == "error"
-    assert response.error_reason == "authorization_incomplete"
-    assert response.journey_state == "error"
-    assert response.next_action == "resolve_connection"
+    assert response.status == "pending"
+    assert response.error_reason is None
+    assert response.journey_state == "authorization_pending"
+    assert response.next_action == "continue_authorization"
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_correlated_empty_callback_signal_preserves_active_attempt(monkeypatch) -> None:
+    administration = NonAuthoritativeIncompleteAdministration()
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        lambda _: administration,
+    )
+    db = FakeDb()
+    attempts = FakeAttemptService()
+    attempts.current = SimpleNamespace(
+        id=ATTEMPT_ID,
+        business_id=BUSINESS_ID,
+        connection_id=CONNECTION_ID,
+        mode="coexistence",
+        state="awaiting_provider",
+        last_stage="login_callback_received",
+        authorization_code_received=False,
+        waba_id_received=False,
+        phone_number_id_received=False,
+        failure_code=None,
+        empty_callback_at=object(),
+        last_event_at=None,
+        expires_at=None,
+        terminal_at=None,
+        created_at=None,
+    )
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppOnboardingAttemptService",
+        lambda _: attempts,
+    )
+
+    response = await public_pwa.mark_meta_embedded_signup_incomplete(
+        MetaEmbeddedSignupAttemptRequest(attempt_id=ATTEMPT_ID),
+        FakePrincipal(),
+        db,
+    )
+
+    assert attempts.current.state == "awaiting_provider"
+    assert attempts.current.failure_code is None
+    assert response.status == "pending"
+    assert response.onboarding_attempt_state == "awaiting_provider"
+    assert response.next_action == "continue_authorization"
     assert db.commits == 1
 
 
