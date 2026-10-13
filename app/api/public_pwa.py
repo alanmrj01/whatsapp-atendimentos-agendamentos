@@ -396,12 +396,19 @@ async def whatsapp_connection(principal: Identity, db: Db):
     attempts = WhatsAppOnboardingAttemptService(db)
 
     await attempts.lock_business(business.business_id)
-    attempt = await attempts.reconcile_expired(business.business_id)
-    if attempt is not None and attempt.state == "expired":
+    attempt = await attempts.reconcile(business.business_id)
+    if attempt is not None and attempt.state in {
+        "expired",
+        "authorization_incomplete",
+    }:
         try:
             await administration.mark_onboarding_error(
                 business.business_id,
-                META_ONBOARDING_EXPIRED,
+                (
+                    META_ONBOARDING_EXPIRED
+                    if attempt.state == "expired"
+                    else META_AUTHORIZATION_INCOMPLETE
+                ),
             )
             await db.commit()
         except WhatsAppConnectionAdministrationError:
@@ -713,12 +720,19 @@ async def begin_meta_embedded_signup_attempt(
     try:
         await attempts.lock_business(business.business_id)
 
-        expired = await attempts.reconcile_expired(business.business_id)
-        if expired is not None and expired.state == "expired":
+        reconciled = await attempts.reconcile(business.business_id)
+        if reconciled is not None and reconciled.state in {
+            "expired",
+            "authorization_incomplete",
+        }:
             try:
                 await administration.mark_onboarding_error(
                     business.business_id,
-                    META_ONBOARDING_EXPIRED,
+                    (
+                        META_ONBOARDING_EXPIRED
+                        if reconciled.state == "expired"
+                        else META_AUTHORIZATION_INCOMPLETE
+                    ),
                 )
             except WhatsAppConnectionAdministrationError:
                 pass
@@ -818,11 +832,9 @@ async def mark_meta_embedded_signup_incomplete(
                 for_update=True,
             )
             if active is not None and active.id == payload.attempt_id:
-                attempt = await attempts.record_event(
+                attempt = await attempts.mark_authorization_incomplete(
                     business.business_id,
                     payload.attempt_id,
-                    stage="login_callback_received",
-                    authorization_code_received=False,
                 )
                 view = await administration.mark_authorization_incomplete(
                     business.business_id,
