@@ -44,6 +44,15 @@ TERMINAL_STATES = frozenset(
     }
 )
 
+TTL_REFRESH_STAGES = frozenset(
+    {
+        "login_opened",
+        "wa_session_event_received",
+        "intermediate_step_received",
+        "embedded_signup_ready_to_complete",
+    }
+)
+
 
 class WhatsAppOnboardingAttemptError(RuntimeError):
     """Sanitized lifecycle error for a Meta onboarding attempt."""
@@ -247,9 +256,32 @@ class WhatsAppOnboardingAttemptService:
             return _view(attempt)
 
         now = datetime.now(timezone.utc)
+        if attempt.expires_at <= now:
+            _finish(
+                attempt,
+                state="expired",
+                failure_code=META_ONBOARDING_EXPIRED,
+                now=now,
+            )
+            attempt.last_stage = "server_expired_before_client_event"
+            self._journal(
+                attempt,
+                source="server",
+                stage=attempt.last_stage,
+            )
+            await self._session.flush()
+            return _view(attempt)
+
         attempt.last_stage = stage
         attempt.last_event_at = now
-        attempt.expires_at = now + ATTEMPT_TTL
+        if (
+            stage in TTL_REFRESH_STAGES
+            or (
+                stage == "login_callback_received"
+                and authorization_code_received is True
+            )
+        ):
+            attempt.expires_at = now + ATTEMPT_TTL
 
         if authorization_code_received is True:
             attempt.authorization_code_received = True
