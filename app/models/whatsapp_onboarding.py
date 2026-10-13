@@ -181,7 +181,6 @@ class WhatsAppOnboardingAttemptEvent(Base):
         UUID(as_uuid=True),
         ForeignKey(
             "whatsapp_onboarding_attempts.id",
-            ondelete="CASCADE",
             name="fk_wa_onboarding_event_attempt",
         ),
         nullable=False,
