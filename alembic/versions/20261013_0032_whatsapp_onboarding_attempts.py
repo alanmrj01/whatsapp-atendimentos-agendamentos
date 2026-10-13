@@ -140,6 +140,7 @@ def upgrade() -> None:
     op.execute(
         'ALTER TABLE public."whatsapp_onboarding_attempts" ENABLE ROW LEVEL SECURITY'
     )
+
     op.create_table(
         "whatsapp_onboarding_attempt_events",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -163,96 +164,15 @@ def upgrade() -> None:
             name="ck_whatsapp_onboarding_attempt_events_source_allowed",
         ),
         sa.CheckConstraint(
-            "stage ~ '^[A-Za-z0-9._-]{1,64}
-
-def downgrade() -> None:
-    op.execute(
-        'ALTER TABLE public."whatsapp_onboarding_attempt_events" DISABLE ROW LEVEL SECURITY'
-    )
-    op.drop_index(
-        "ix_whatsapp_onboarding_attempt_events_business_created",
-        table_name="whatsapp_onboarding_attempt_events",
-    )
-    op.drop_index(
-        "ix_whatsapp_onboarding_attempt_events_attempt_created",
-        table_name="whatsapp_onboarding_attempt_events",
-    )
-    op.drop_table("whatsapp_onboarding_attempt_events")
-    op.execute(
-        'ALTER TABLE public."whatsapp_onboarding_attempts" DISABLE ROW LEVEL SECURITY'
-    )
-    op.drop_index(
-        "ix_whatsapp_onboarding_attempts_expires_active",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_index(
-        "ix_whatsapp_onboarding_attempts_business_created",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_index(
-        "uq_whatsapp_onboarding_attempts_request_id_present",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_index(
-        "uq_whatsapp_onboarding_attempts_active_business",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_table("whatsapp_onboarding_attempts")
-",
+            "stage ~ '^[A-Za-z0-9._-]{1,64}$'",
             name="ck_whatsapp_onboarding_attempt_events_stage_sanitized",
         ),
         sa.CheckConstraint(
-            "state_after ~ '^[A-Za-z0-9._-]{1,32}
-
-def downgrade() -> None:
-    op.execute(
-        'ALTER TABLE public."whatsapp_onboarding_attempts" DISABLE ROW LEVEL SECURITY'
-    )
-    op.drop_index(
-        "ix_whatsapp_onboarding_attempts_expires_active",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_index(
-        "ix_whatsapp_onboarding_attempts_business_created",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_index(
-        "uq_whatsapp_onboarding_attempts_request_id_present",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_index(
-        "uq_whatsapp_onboarding_attempts_active_business",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_table("whatsapp_onboarding_attempts")
-",
+            "state_after ~ '^[A-Za-z0-9._-]{1,32}$'",
             name="ck_whatsapp_onboarding_attempt_events_state_after_sanitized",
         ),
         sa.CheckConstraint(
-            "failure_code IS NULL OR failure_code ~ '^[A-Za-z0-9._-]{1,64}
-
-def downgrade() -> None:
-    op.execute(
-        'ALTER TABLE public."whatsapp_onboarding_attempts" DISABLE ROW LEVEL SECURITY'
-    )
-    op.drop_index(
-        "ix_whatsapp_onboarding_attempts_expires_active",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_index(
-        "ix_whatsapp_onboarding_attempts_business_created",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_index(
-        "uq_whatsapp_onboarding_attempts_request_id_present",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_index(
-        "uq_whatsapp_onboarding_attempts_active_business",
-        table_name="whatsapp_onboarding_attempts",
-    )
-    op.drop_table("whatsapp_onboarding_attempts")
-",
+            "failure_code IS NULL OR failure_code ~ '^[A-Za-z0-9._-]{1,64}$'",
             name="ck_whatsapp_onboarding_attempt_events_failure_code_sanitized",
         ),
         sa.ForeignKeyConstraint(
@@ -287,6 +207,19 @@ def downgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        'ALTER TABLE public."whatsapp_onboarding_attempt_events" DISABLE ROW LEVEL SECURITY'
+    )
+    op.drop_index(
+        "ix_whatsapp_onboarding_attempt_events_business_created",
+        table_name="whatsapp_onboarding_attempt_events",
+    )
+    op.drop_index(
+        "ix_whatsapp_onboarding_attempt_events_attempt_created",
+        table_name="whatsapp_onboarding_attempt_events",
+    )
+    op.drop_table("whatsapp_onboarding_attempt_events")
+
     op.execute(
         'ALTER TABLE public."whatsapp_onboarding_attempts" DISABLE ROW LEVEL SECURITY'
     )
