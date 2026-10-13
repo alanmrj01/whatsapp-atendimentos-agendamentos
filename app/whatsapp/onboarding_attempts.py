@@ -16,6 +16,7 @@ from app.whatsapp.connections import WhatsAppConnectionMode, sanitize_error_code
 
 
 ATTEMPT_TTL = timedelta(minutes=15)
+EMPTY_CALLBACK_GRACE = timedelta(seconds=5)
 
 ACTIVE_STATES = frozenset(
     {
@@ -55,6 +56,7 @@ class WhatsAppOnboardingAttemptView:
     waba_id_received: bool
     phone_number_id_received: bool
     failure_code: str | None
+    empty_callback_at: datetime | None
     last_event_at: datetime
     expires_at: datetime
     terminal_at: datetime | None
@@ -241,17 +243,17 @@ class WhatsAppOnboardingAttemptService:
             )
         elif stage == "login_callback_received":
             if authorization_code_received is True:
+                attempt.authorization_code_received = True
                 attempt.state = "code_received"
             elif (
                 authorization_code_received is False
                 and not attempt.authorization_code_received
             ):
-                _finish(
-                    attempt,
-                    state="authorization_incomplete",
-                    failure_code=META_AUTHORIZATION_INCOMPLETE,
-                    now=now,
-                )
+                # Empty callbacks can be transient on mobile/PWA. Persist the
+                # observation and let server reconciliation close the attempt
+                # after a short grace period if no valid code arrives.
+                attempt.empty_callback_at = attempt.empty_callback_at or now
+                attempt.state = "awaiting_provider"
         elif stage == "embedded_signup_ready_to_complete":
             attempt.state = (
                 "assets_received"
@@ -371,7 +373,7 @@ class WhatsAppOnboardingAttemptService:
         await self._session.flush()
         return _view(attempt)
 
-    async def reconcile_expired(
+    async def reconcile(
         self,
         business_id: uuid.UUID,
     ) -> WhatsAppOnboardingAttemptView | None:
@@ -379,16 +381,29 @@ class WhatsAppOnboardingAttemptService:
         if attempt is None:
             return None
         now = datetime.now(timezone.utc)
-        if attempt.expires_at > now:
+        if (
+            not attempt.authorization_code_received
+            and attempt.empty_callback_at is not None
+            and attempt.empty_callback_at + EMPTY_CALLBACK_GRACE <= now
+        ):
+            _finish(
+                attempt,
+                state="authorization_incomplete",
+                failure_code=META_AUTHORIZATION_INCOMPLETE,
+                now=now,
+            )
+            attempt.last_stage = "server_empty_callback_reconciled"
+            await self._session.flush()
             return _view(attempt)
-        _finish(
-            attempt,
-            state="expired",
-            failure_code=META_ONBOARDING_EXPIRED,
-            now=now,
-        )
-        attempt.last_stage = "server_expired"
-        await self._session.flush()
+        if attempt.expires_at <= now:
+            _finish(
+                attempt,
+                state="expired",
+                failure_code=META_ONBOARDING_EXPIRED,
+                now=now,
+            )
+            attempt.last_stage = "server_expired"
+            await self._session.flush()
         return _view(attempt)
 
     async def _active_model(
@@ -460,6 +475,7 @@ def _view(attempt: WhatsAppOnboardingAttempt) -> WhatsAppOnboardingAttemptView:
         waba_id_received=attempt.waba_id_received,
         phone_number_id_received=attempt.phone_number_id_received,
         failure_code=attempt.failure_code,
+        empty_callback_at=attempt.empty_callback_at,
         last_event_at=attempt.last_event_at,
         expires_at=attempt.expires_at,
         terminal_at=attempt.terminal_at,
