@@ -48,6 +48,7 @@ from app.core.database import get_db
 from app.models import AuthSession, Business, User
 from app.schemas.whatsapp_onboarding import WhatsAppOnboardingPlanResponse, onboarding_plan_response
 from app.whatsapp.administration import (
+    META_AUTHORIZATION_INCOMPLETE,
     META_ONBOARDING_PENDING,
     WhatsAppConnectionAdministrationError,
     WhatsAppConnectionAdministrationService,
@@ -136,6 +137,11 @@ def _public_connection(view) -> PublicConnectionResponse:
         mode=view.mode.value,
         display_phone_number=getattr(
             view, "masked_display_phone_number", None
+        ),
+        error_reason=(
+            "authorization_incomplete"
+            if getattr(view, "last_error_code", None) == META_AUTHORIZATION_INCOMPLETE
+            else None
         ),
         pending_state=pending_state,
         review_status=getattr(view, "meta_review_status", None),
@@ -628,6 +634,36 @@ async def begin_meta_embedded_signup_attempt(
         raise HTTPException(
             409, "WhatsApp onboarding could not be started"
         ) from None
+    return _public_connection(view)
+
+
+@router.post(
+    "/whatsapp/onboarding/embedded-signup/incomplete",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def mark_meta_embedded_signup_incomplete(
+    payload: EmptyRequest,
+    principal: Identity,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    administration = WhatsAppConnectionAdministrationService(db)
+    try:
+        view = await administration.mark_authorization_incomplete(
+            business.business_id,
+        )
+        await db.commit()
+    except WhatsAppConnectionAdministrationError:
+        await db.rollback()
+        raise HTTPException(
+            409, "WhatsApp onboarding state could not be updated"
+        ) from None
+    logger.info(
+        "meta_embedded_signup_progress",
+        extra={"stage": "authorization_incomplete"},
+    )
     return _public_connection(view)
 
 
