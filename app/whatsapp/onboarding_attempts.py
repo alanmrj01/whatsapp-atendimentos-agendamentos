@@ -236,7 +236,10 @@ class WhatsAppOnboardingAttemptService:
         elif stage == "login_callback_received":
             if authorization_code_received is True:
                 attempt.state = "code_received"
-            elif authorization_code_received is False:
+            elif (
+                authorization_code_received is False
+                and not attempt.authorization_code_received
+            ):
                 _finish(
                     attempt,
                     state="authorization_incomplete",
