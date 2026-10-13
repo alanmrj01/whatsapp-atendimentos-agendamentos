@@ -134,3 +134,73 @@ class WhatsAppOnboardingAttempt(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class WhatsAppOnboardingAttemptEvent(Base):
+    """Sanitized lifecycle event for one onboarding attempt.
+
+    The event journal intentionally stores only boolean presence flags and
+    state metadata. OAuth codes, access tokens and Meta asset identifiers are
+    never persisted here.
+    """
+
+    __tablename__ = "whatsapp_onboarding_attempt_events"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('client','server')",
+            name="source_allowed",
+        ),
+        CheckConstraint(
+            "stage ~ '^[A-Za-z0-9._-]{1,64}$'",
+            name="stage_sanitized",
+        ),
+        CheckConstraint(
+            "state_after ~ '^[A-Za-z0-9._-]{1,32}$'",
+            name="state_after_sanitized",
+        ),
+        CheckConstraint(
+            "failure_code IS NULL OR failure_code ~ '^[A-Za-z0-9._-]{1,64}$'",
+            name="failure_code_sanitized",
+        ),
+        Index(
+            "ix_whatsapp_onboarding_attempt_events_attempt_created",
+            "attempt_id",
+            "created_at",
+        ),
+        Index(
+            "ix_whatsapp_onboarding_attempt_events_business_created",
+            "business_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "whatsapp_onboarding_attempts.id",
+            name="fk_wa_onboarding_event_attempt",
+        ),
+        nullable=False,
+    )
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("businesses.id"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    stage: Mapped[str] = mapped_column(String(64), nullable=False)
+    state_after: Mapped[str] = mapped_column(String(32), nullable=False)
+    authorization_code_received: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True
+    )
+    waba_id_received: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    phone_number_id_received: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

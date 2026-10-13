@@ -16,6 +16,7 @@ from app.schemas.cloud_tasks import (
     TaskAcknowledgement,
     WhatsAppEventTaskPayload,
     WhatsAppOutboundTaskPayload,
+    WhatsAppOnboardingReconcilePayload,
     WhatsAppModeRecheckPayload,
 )
 from app.tasks.auth import (
@@ -37,6 +38,7 @@ from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
 from app.whatsapp.sender import build_business_sender_resolver
 from app.push.service import dispatch_pending_web_push
 from app.whatsapp.mode_switch import recheck_due_coexistence_preferences
+from app.whatsapp.onboarding_attempts import reconcile_due_onboarding_attempts
 from app.reengagement.service import ReengagementService
 
 logger = logging.getLogger(__name__)
@@ -193,6 +195,40 @@ async def process_reengagement_sweep_task(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Reengagement sweep failed",
+        ) from None
+    return TaskAcknowledgement(status="accepted")
+
+
+@router.post(
+    "/whatsapp-onboarding-reconcile",
+    response_model=TaskAcknowledgement,
+    dependencies=[Depends(require_cloud_tasks_oidc)],
+)
+async def process_whatsapp_onboarding_reconcile_task(
+    payload: WhatsAppOnboardingReconcilePayload,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskAcknowledgement:
+    try:
+        result = await reconcile_due_onboarding_attempts(
+            session,
+            limit=payload.limit,
+        )
+        logger.info(
+            "whatsapp_onboarding_reconcile_completed",
+            extra={
+                "scanned": result.scanned,
+                "reconciled": result.reconciled,
+                "failed": result.failed,
+            },
+        )
+    except Exception as exc:
+        logger.warning(
+            "whatsapp_onboarding_reconcile_failed",
+            extra={"error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp onboarding reconciliation failed",
         ) from None
     return TaskAcknowledgement(status="accepted")
 

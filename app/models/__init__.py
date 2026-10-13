@@ -21,7 +21,7 @@ from app.models.domain import (
 )
 from app.models.push import WebPushDelivery, WebPushEvent, WebPushSubscription
 from app.models.reengagement import ReengagementDelivery
-from app.models.whatsapp_onboarding import WhatsAppOnboardingAttempt
+from app.models.whatsapp_onboarding import WhatsAppOnboardingAttempt, WhatsAppOnboardingAttemptEvent
 
 __all__ = [
     "AuthSession",
@@ -51,6 +51,7 @@ __all__ = [
     "Service",
     "WorkingHours",
     "WhatsAppOnboardingAttempt",
+    "WhatsAppOnboardingAttemptEvent",
     "WebPushDelivery",
     "WebPushEvent",
     "WebPushSubscription",
