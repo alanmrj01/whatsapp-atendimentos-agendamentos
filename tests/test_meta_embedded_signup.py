@@ -712,7 +712,7 @@ async def test_correlated_empty_callback_is_recorded_without_premature_failure(
         terminal_at=None,
         created_at=None,
     )
-    administration = IncompleteAdministration()
+    administration = NonAuthoritativeIncompleteAdministration()
     monkeypatch.setattr(
         public_pwa,
         "WhatsAppOnboardingAttemptService",
