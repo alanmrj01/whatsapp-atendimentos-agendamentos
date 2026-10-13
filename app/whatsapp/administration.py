@@ -45,6 +45,7 @@ class WhatsAppConnectionStatusView:
 
 
 META_ONBOARDING_PENDING = "META_ONBOARDING_PENDING"
+META_AUTHORIZATION_INCOMPLETE = "META_AUTHORIZATION_INCOMPLETE"
 
 
 class WhatsAppConnectionAdministrationService:
@@ -88,6 +89,32 @@ class WhatsAppConnectionAdministrationService:
         current.status = WhatsAppConnectionStatus.PENDING.value
         current.disconnected_at = None
         current.last_error_code = META_ONBOARDING_PENDING
+        await self._session.flush()
+        return _status_view(current)
+
+    async def mark_authorization_incomplete(
+        self,
+        business_id: uuid.UUID,
+    ) -> WhatsAppConnectionStatusView:
+        current = await self._repository.get_connection(
+            business_id, for_update=True
+        )
+        if current is None:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp business connection is not available"
+            )
+        if current.status == WhatsAppConnectionStatus.CONNECTED.value:
+            return _status_view(current)
+        if current.status != WhatsAppConnectionStatus.PENDING.value:
+            return _status_view(current)
+        if current.meta_phone_number_id is not None or current.credential_secret_ref is not None:
+            # Once provider assets or credentials exist, the attempt has moved
+            # beyond the empty OAuth callback case and must not be downgraded.
+            return _status_view(current)
+
+        current.status = WhatsAppConnectionStatus.ERROR.value
+        current.last_error_code = META_AUTHORIZATION_INCOMPLETE
+        current.disconnected_at = None
         await self._session.flush()
         return _status_view(current)
 
