@@ -117,6 +117,7 @@ class PublicConnectionResponse(BaseModel):
     status: Literal["disconnected", "pending", "connected", "error"]
     mode: Literal["coexistence", "api_only"] | None = None
     display_phone_number: str | None = None
+    error_reason: Literal["authorization_incomplete"] | None = None
     pending_state: Literal[
         "authorization_pending",
         "meta_review_pending",
