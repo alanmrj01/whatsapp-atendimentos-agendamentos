@@ -602,6 +602,106 @@ async def test_graph_exchange_validates_assets_and_subscribes_without_logging_se
 
 
 @pytest.mark.asyncio
+async def test_graph_discovers_single_waba_when_session_info_is_missing() -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.url.path.endswith("/oauth/access_token"):
+            return httpx.Response(200, json={"access_token": RAW_TOKEN})
+        if request.url.path.endswith("/debug_token"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "is_valid": True,
+                        "granular_scopes": [
+                            {
+                                "scope": "whatsapp_business_management",
+                                "target_ids": [WABA_ID],
+                            }
+                        ],
+                    }
+                },
+            )
+        if request.url.path.endswith(f"/{WABA_ID}"):
+            return httpx.Response(200, json={"id": WABA_ID})
+        if request.url.path.endswith(f"/{WABA_ID}/phone_numbers"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": PHONE_ID,
+                            "display_phone_number": "+55 12 99999-1234",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"unexpected Graph request: {request.url.path}")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://graph.facebook.com/v25.0/",
+    ) as client:
+        assets = await MetaEmbeddedSignupGateway(
+            configuration(), client=client
+        ).exchange_and_validate(
+            SecretStr(RAW_CODE),
+            waba_id_hint=None,
+            phone_number_id_hint=None,
+        )
+
+    assert assets.waba_id == WABA_ID
+    assert assets.phone_number_id == PHONE_ID
+    assert [request.url.path for request in calls] == [
+        "/v25.0/oauth/access_token",
+        "/v25.0/debug_token",
+        f"/v25.0/{WABA_ID}",
+        f"/v25.0/{WABA_ID}/phone_numbers",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_graph_rejects_ambiguous_waba_discovery() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/oauth/access_token"):
+            return httpx.Response(200, json={"access_token": RAW_TOKEN})
+        if request.url.path.endswith("/debug_token"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "is_valid": True,
+                        "granular_scopes": [
+                            {
+                                "scope": "whatsapp_business_management",
+                                "target_ids": [WABA_ID, "999999999999999"],
+                            }
+                        ],
+                    }
+                },
+            )
+        raise AssertionError(f"unexpected Graph request: {request.url.path}")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://graph.facebook.com/v25.0/",
+    ) as client:
+        with pytest.raises(
+            MetaEmbeddedSignupRejected,
+            match="Meta business account selection is ambiguous",
+        ):
+            await MetaEmbeddedSignupGateway(
+                configuration(), client=client
+            ).exchange_and_validate(
+                SecretStr(RAW_CODE),
+                waba_id_hint=None,
+                phone_number_id_hint=None,
+            )
+
+
+@pytest.mark.asyncio
 async def test_graph_resolves_the_only_phone_when_session_info_omits_it() -> None:
     transport, _ = graph_transport()
     async with httpx.AsyncClient(
