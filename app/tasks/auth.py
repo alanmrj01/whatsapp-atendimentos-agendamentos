@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import secrets
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
 from fastapi import Depends, Header, HTTPException, status
 from google.auth.transport.requests import Request as GoogleAuthRequest
@@ -37,6 +39,51 @@ async def require_cloud_tasks_oidc(
         ) from None
 
     await _require_oidc_identity(configuration, authorization)
+
+
+async def require_scheduled_job_oidc(
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    """Authenticate Scheduler-style HTTP jobs without enabling Cloud Tasks queues."""
+
+    scheme, separator, token = (authorization or "").partition(" ")
+    if scheme.casefold() != "bearer" or not separator or not token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized scheduled job request",
+        )
+
+    audience = (settings.cloud_tasks_oidc_audience or "").strip()
+    invoker_email = (settings.cloud_tasks_invoker_email or "").strip()
+    try:
+        parsed = urlsplit(audience)
+        valid = (
+            parsed.scheme == "https"
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.query
+            and not parsed.fragment
+            and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", invoker_email)
+            is not None
+        )
+    except ValueError:
+        valid = False
+
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduled job authorization unavailable",
+        )
+
+    await require_service_oidc_identity(
+        audience,
+        invoker_email,
+        authorization,
+        unauthorized_detail="Unauthorized scheduled job request",
+        forbidden_detail="Forbidden scheduled job identity",
+    )
 
 
 async def require_outbound_tasks_oidc(
