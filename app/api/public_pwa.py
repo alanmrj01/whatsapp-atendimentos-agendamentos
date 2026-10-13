@@ -860,6 +860,7 @@ async def start_meta_embedded_signup_redirect(
             business_id=business.business_id,
             attempt_id=attempt.id,
             redirect_uri=redirect_uri,
+            return_to_onboarding=payload.return_to_onboarding,
             expires_at=attempt.expires_at,
         )
         authorization_url = build_meta_embedded_signup_authorization_url(
