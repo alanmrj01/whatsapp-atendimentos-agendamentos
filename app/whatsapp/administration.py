@@ -46,6 +46,10 @@ class WhatsAppConnectionStatusView:
 
 META_ONBOARDING_PENDING = "META_ONBOARDING_PENDING"
 META_AUTHORIZATION_INCOMPLETE = "META_AUTHORIZATION_INCOMPLETE"
+META_ONBOARDING_EXPIRED = "META_ONBOARDING_EXPIRED"
+META_PROVIDER_REJECTED = "META_PROVIDER_REJECTED"
+META_PROVIDER_UNAVAILABLE = "META_PROVIDER_UNAVAILABLE"
+META_ONBOARDING_FAILED = "META_ONBOARDING_FAILED"
 
 
 class WhatsAppConnectionAdministrationService:
@@ -92,6 +96,31 @@ class WhatsAppConnectionAdministrationService:
         await self._session.flush()
         return _status_view(current)
 
+    async def mark_onboarding_error(
+        self,
+        business_id: uuid.UUID,
+        error_code: str,
+    ) -> WhatsAppConnectionStatusView:
+        current = await self._repository.get_connection(
+            business_id, for_update=True
+        )
+        if current is None:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp business connection is not available"
+            )
+        if current.status == WhatsAppConnectionStatus.CONNECTED.value:
+            return _status_view(current)
+        normalized_error = sanitize_error_code(error_code)
+        if normalized_error is None:
+            raise WhatsAppConnectionAdministrationError(
+                "WhatsApp onboarding error code is invalid"
+            )
+        current.status = WhatsAppConnectionStatus.ERROR.value
+        current.last_error_code = normalized_error
+        current.disconnected_at = None
+        await self._session.flush()
+        return _status_view(current)
+
     async def mark_authorization_incomplete(
         self,
         business_id: uuid.UUID,
@@ -113,11 +142,10 @@ class WhatsAppConnectionAdministrationService:
             # browser callback.
             return _status_view(current)
 
-        current.status = WhatsAppConnectionStatus.ERROR.value
-        current.last_error_code = META_AUTHORIZATION_INCOMPLETE
-        current.disconnected_at = None
-        await self._session.flush()
-        return _status_view(current)
+        return await self.mark_onboarding_error(
+            business_id,
+            META_AUTHORIZATION_INCOMPLETE,
+        )
 
     async def record_pending_meta_assets(
         self,
