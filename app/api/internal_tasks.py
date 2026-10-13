@@ -22,6 +22,7 @@ from app.schemas.cloud_tasks import (
 from app.tasks.auth import (
     require_cloud_tasks_oidc,
     require_outbound_tasks_oidc,
+    require_scheduled_job_oidc,
 )
 from app.tasks.outbound import (
     build_outbound_task_enqueuer,
@@ -140,7 +141,7 @@ async def process_whatsapp_outbound_task(
 @router.post(
     "/lifecycle-outreach",
     response_model=TaskAcknowledgement,
-    dependencies=[Depends(require_cloud_tasks_oidc)],
+    dependencies=[Depends(require_scheduled_job_oidc)],
 )
 async def process_lifecycle_outreach_task(
     payload: LifecycleOutreachSweepPayload,
@@ -174,7 +175,7 @@ async def process_lifecycle_outreach_task(
 @router.post(
     "/reengagement-sweep",
     response_model=TaskAcknowledgement,
-    dependencies=[Depends(require_cloud_tasks_oidc)],
+    dependencies=[Depends(require_scheduled_job_oidc)],
 )
 async def process_reengagement_sweep_task(
     payload: ReengagementSweepPayload,
@@ -202,7 +203,7 @@ async def process_reengagement_sweep_task(
 @router.post(
     "/whatsapp-onboarding-reconcile",
     response_model=TaskAcknowledgement,
-    dependencies=[Depends(require_cloud_tasks_oidc)],
+    dependencies=[Depends(require_scheduled_job_oidc)],
 )
 async def process_whatsapp_onboarding_reconcile_task(
     payload: WhatsAppOnboardingReconcilePayload,
@@ -236,7 +237,7 @@ async def process_whatsapp_onboarding_reconcile_task(
 @router.post(
     "/whatsapp-mode-recheck",
     response_model=TaskAcknowledgement,
-    dependencies=[Depends(require_cloud_tasks_oidc)],
+    dependencies=[Depends(require_scheduled_job_oidc)],
 )
 async def process_whatsapp_mode_recheck_task(
     payload: WhatsAppModeRecheckPayload,
