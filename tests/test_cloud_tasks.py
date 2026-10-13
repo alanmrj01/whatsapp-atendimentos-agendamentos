@@ -27,7 +27,7 @@ from app.repositories.cloud_tasks import StoredTaskEvent
 from app.schemas.cloud_tasks import WhatsAppEventTaskPayload
 from app.tasks import auth as task_auth
 from app.tasks import cloud_tasks as cloud_tasks_module
-from app.tasks.auth import require_cloud_tasks_oidc
+from app.tasks.auth import require_cloud_tasks_oidc, require_scheduled_job_oidc
 from app.tasks.cloud_tasks import (
     CloudTasksEnqueueError,
     CloudTasksEventEnqueuer,
@@ -188,6 +188,55 @@ async def test_oidc_validates_audience_and_expected_email(
         "token": "signed-id-token",
         "audience": "https://service.example.run.app",
     }
+
+
+@pytest.mark.asyncio
+async def test_scheduled_job_oidc_works_with_cloud_tasks_disabled(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def verify(token: str, audience: str) -> dict[str, Any]:
+        captured.update(token=token, audience=audience)
+        return {"email": INVOKER_EMAIL, "email_verified": True}
+
+    monkeypatch.setattr(task_auth, "_verify_google_oidc_token", verify)
+    settings = Settings(_env_file=None).model_copy(
+        update={
+            "cloud_tasks_enabled": False,
+            "cloud_tasks_oidc_audience": "https://service.example.run.app",
+            "cloud_tasks_invoker_email": INVOKER_EMAIL,
+        }
+    )
+
+    await require_scheduled_job_oidc(
+        settings,
+        "Bearer signed-id-token",
+    )
+
+    assert captured == {
+        "token": "signed-id-token",
+        "audience": "https://service.example.run.app",
+    }
+
+
+@pytest.mark.asyncio
+async def test_scheduled_job_oidc_requires_identity_configuration() -> None:
+    settings = Settings(_env_file=None).model_copy(
+        update={
+            "cloud_tasks_enabled": False,
+            "cloud_tasks_oidc_audience": None,
+            "cloud_tasks_invoker_email": None,
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await require_scheduled_job_oidc(
+            settings,
+            "Bearer signed-id-token",
+        )
+
+    assert exc_info.value.status_code == 503
 
 
 @pytest.mark.asyncio
