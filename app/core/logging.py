@@ -20,6 +20,10 @@ _SAFE_EXTRA_FIELDS = (
     "phone_number_id_received",
     "intermediate_step_received",
     "review_decision",
+    "business_id",
+    "attempt_id",
+    "failure_code",
+    "onboarding_state",
 )
 
 

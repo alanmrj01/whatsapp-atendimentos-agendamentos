@@ -117,7 +117,31 @@ class PublicConnectionResponse(BaseModel):
     status: Literal["disconnected", "pending", "connected", "error"]
     mode: Literal["coexistence", "api_only"] | None = None
     display_phone_number: str | None = None
-    error_reason: Literal["authorization_incomplete"] | None = None
+    error_reason: Literal[
+        "authorization_incomplete",
+        "onboarding_expired",
+        "provider_rejected",
+        "provider_unavailable",
+        "onboarding_failed",
+    ] | None = None
+    onboarding_attempt_id: UUID | None = None
+    onboarding_attempt_state: Literal[
+        "created",
+        "provider_opened",
+        "awaiting_provider",
+        "code_received",
+        "assets_received",
+        "completing",
+        "connected",
+        "authorization_incomplete",
+        "cancelled",
+        "failed",
+        "expired",
+        "superseded",
+    ] | None = None
+    onboarding_last_stage: str | None = None
+    onboarding_last_event_at: datetime | None = None
+    onboarding_expires_at: datetime | None = None
     pending_state: Literal[
         "authorization_pending",
         "meta_review_pending",
@@ -137,6 +161,7 @@ class PublicConnectionResponse(BaseModel):
         "authorization_pending",
         "meta_review_pending",
         "meta_review_rejected",
+        "validating_connection",
         "connected",
         "error",
     ] | None = None
@@ -146,6 +171,7 @@ class PublicConnectionResponse(BaseModel):
         "continue_authorization",
         "wait_for_meta_review",
         "review_meta_rejection",
+        "wait_for_completion",
         "resolve_connection",
         "none",
     ] | None = None
@@ -188,6 +214,7 @@ MetaEmbeddedSignupTelemetryStage = Literal[
 
 
 class MetaEmbeddedSignupTelemetryRequest(StrictRequest):
+    attempt_id: UUID | None = None
     stage: MetaEmbeddedSignupTelemetryStage
     authorization_code_received: bool | None = Field(default=None, strict=True)
     waba_id_received: bool | None = Field(default=None, strict=True)
@@ -195,12 +222,18 @@ class MetaEmbeddedSignupTelemetryRequest(StrictRequest):
     intermediate_step_received: bool | None = Field(default=None, strict=True)
 
 
+class MetaEmbeddedSignupAttemptRequest(StrictRequest):
+    attempt_id: UUID | None = None
+
+
 class MetaEmbeddedSignupAssetsRequest(StrictRequest):
+    attempt_id: UUID | None = None
     waba_id: str = Field(min_length=1, max_length=32)
     phone_number_id: str | None = Field(default=None, min_length=1, max_length=32)
 
 
 class MetaEmbeddedSignupCompleteRequest(StrictRequest):
+    attempt_id: UUID | None = None
     authorization_code: SecretStr = Field(min_length=1, max_length=4096)
     # SessionInfo is helpful but not authoritative: browsers can lose the
     # postMessage while still receiving the OAuth code. The backend can

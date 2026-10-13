@@ -21,6 +21,7 @@ from app.auth.schemas import (
     MetaApiOnlyEmbeddedSignupStartRequest,
     MetaApiOnlyEmbeddedSignupStartResponse,
     MetaEmbeddedSignupAssetsRequest,
+    MetaEmbeddedSignupAttemptRequest,
     MetaEmbeddedSignupCompleteRequest,
     MetaEmbeddedSignupStartResponse,
     MetaEmbeddedSignupTelemetryRequest,
@@ -49,7 +50,11 @@ from app.models import AuthSession, Business, User
 from app.schemas.whatsapp_onboarding import WhatsAppOnboardingPlanResponse, onboarding_plan_response
 from app.whatsapp.administration import (
     META_AUTHORIZATION_INCOMPLETE,
+    META_ONBOARDING_EXPIRED,
+    META_ONBOARDING_FAILED,
     META_ONBOARDING_PENDING,
+    META_PROVIDER_REJECTED,
+    META_PROVIDER_UNAVAILABLE,
     WhatsAppConnectionAdministrationError,
     WhatsAppConnectionAdministrationService,
 )
@@ -65,6 +70,7 @@ from app.whatsapp.embedded_signup import (
     MetaEmbeddedSignupRejected,
     MetaEmbeddedSignupService,
     MetaEmbeddedSignupUnavailable,
+    meta_onboarding_log_context,
 )
 from app.repositories.whatsapp_connections import (
     WhatsAppConnectionRepository,
@@ -75,6 +81,11 @@ from app.whatsapp.onboarding import (
     WhatsAppOnboardingIntent,
     WhatsAppOnboardingService,
 )
+from app.whatsapp.onboarding_attempts import (
+    WhatsAppOnboardingAttemptError,
+    WhatsAppOnboardingAttemptService,
+    WhatsAppOnboardingAttemptView,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["pwa"])
 logger = logging.getLogger(__name__)
@@ -83,30 +94,42 @@ Config = Annotated[Settings, Depends(require_auth_config)]
 Identity = Annotated[Principal, Depends(require_principal)]
 
 
-def _public_pending_state(view) -> str | None:
+def _public_pending_state(
+    view,
+    attempt: WhatsAppOnboardingAttemptView | None = None,
+) -> str | None:
     if getattr(view, "last_error_code", None) != META_ONBOARDING_PENDING:
         return None
     status_value = getattr(getattr(view, "status", None), "value", None)
     mode_value = getattr(getattr(view, "mode", None), "value", None)
+    if status_value != "pending":
+        return None
+
+    review_status = getattr(view, "meta_review_status", None)
+    if review_status == "rejected":
+        return "meta_review_rejected"
+
+    if attempt is not None:
+        # A persisted attempt is authoritative. Receiving WABA/phone assets
+        # during Embedded Signup does not itself mean Meta's account review is
+        # blocking the technical connection.
+        return "authorization_pending"
+
     if (
-        status_value == "pending"
-        and mode_value == "coexistence"
+        mode_value == "coexistence"
         and getattr(view, "has_phone_number_id", False)
+        and review_status is None
     ):
-        review_status = getattr(view, "meta_review_status", None)
-        if review_status == "rejected":
-            return "meta_review_rejected"
-        if review_status is None:
-            # Once Meta has returned the selected WABA/phone assets, the user
-            # has completed the local selection flow. Do not ask them to
-            # restart the provider flow while the account is being reviewed.
-            return "meta_review_pending"
+        # Backward compatibility for pending rows created before attempt
+        # orchestration existed. New attempts never infer review from assets.
+        return "meta_review_pending"
     return "authorization_pending"
 
 
 def _public_connection_journey(
     view,
     pending_state: str | None,
+    attempt: WhatsAppOnboardingAttemptView | None = None,
 ) -> tuple[str, bool, str]:
     status_value = getattr(getattr(view, "status", None), "value", None)
     if status_value == "connected":
@@ -119,30 +142,52 @@ def _public_connection_journey(
         return ("meta_review_pending", False, "wait_for_meta_review")
     if pending_state == "meta_review_rejected":
         return ("meta_review_rejected", True, "review_meta_rejection")
-    # Any other pending connection still needs the customer to complete the
-    # provider authorization. This also fails safe for older pending records
-    # that predate the explicit pending_state distinction.
+    if attempt is not None and (
+        attempt.state in {"code_received", "completing"}
+        or (
+            attempt.state == "assets_received"
+            and attempt.authorization_code_received
+        )
+    ):
+        return ("validating_connection", False, "wait_for_completion")
     return ("authorization_pending", True, "continue_authorization")
 
 
-def _public_connection(view) -> PublicConnectionResponse:
+_ERROR_REASON_BY_CODE = {
+    META_AUTHORIZATION_INCOMPLETE: "authorization_incomplete",
+    META_ONBOARDING_EXPIRED: "onboarding_expired",
+    META_PROVIDER_REJECTED: "provider_rejected",
+    META_PROVIDER_UNAVAILABLE: "provider_unavailable",
+    META_ONBOARDING_FAILED: "onboarding_failed",
+}
+
+
+def _public_connection(
+    view,
+    attempt: WhatsAppOnboardingAttemptView | None = None,
+) -> PublicConnectionResponse:
     preferred_mode = getattr(view, "preferred_mode", None)
-    pending_state = _public_pending_state(view)
+    pending_state = _public_pending_state(view, attempt)
     journey_state, requires_user_action, next_action = _public_connection_journey(
         view,
         pending_state,
+        attempt,
     )
+    last_error_code = getattr(view, "last_error_code", None)
     return PublicConnectionResponse(
         status=view.status.value,
         mode=view.mode.value,
         display_phone_number=getattr(
             view, "masked_display_phone_number", None
         ),
-        error_reason=(
-            "authorization_incomplete"
-            if getattr(view, "last_error_code", None) == META_AUTHORIZATION_INCOMPLETE
-            else None
+        error_reason=_ERROR_REASON_BY_CODE.get(last_error_code),
+        onboarding_attempt_id=attempt.id if attempt is not None else None,
+        onboarding_attempt_state=attempt.state if attempt is not None else None,
+        onboarding_last_stage=attempt.last_stage if attempt is not None else None,
+        onboarding_last_event_at=(
+            attempt.last_event_at if attempt is not None else None
         ),
+        onboarding_expires_at=attempt.expires_at if attempt is not None else None,
         pending_state=pending_state,
         review_status=getattr(view, "meta_review_status", None),
         preferred_mode=(
@@ -347,10 +392,33 @@ async def active_business(payload: ActiveBusinessRequest, principal: Identity, d
 )
 async def whatsapp_connection(principal: Identity, db: Db):
     business = principal.active_membership()
-    connection = await WhatsAppConnectionAdministrationService(db).get_connection(business.business_id)
+    administration = WhatsAppConnectionAdministrationService(db)
+    attempts = WhatsAppOnboardingAttemptService(db)
+
+    await attempts.lock_business(business.business_id)
+    attempt = await attempts.reconcile(business.business_id)
+    if attempt is not None and attempt.state in {
+        "expired",
+        "authorization_incomplete",
+    }:
+        try:
+            await administration.mark_onboarding_error(
+                business.business_id,
+                (
+                    META_ONBOARDING_EXPIRED
+                    if attempt.state == "expired"
+                    else META_AUTHORIZATION_INCOMPLETE
+                ),
+            )
+            await db.commit()
+        except WhatsAppConnectionAdministrationError:
+            await db.rollback()
+
+    connection = await administration.get_connection(business.business_id)
     if connection is None:
         return PublicConnectionResponse(status="disconnected")
-    return _public_connection(connection)
+    latest_attempt = await attempts.latest(business.business_id)
+    return _public_connection(connection, latest_attempt)
 
 
 @router.post(
@@ -557,6 +625,46 @@ def _require_api_only_fallback(settings: Settings) -> None:
         )
 
 
+async def _persist_embedded_signup_failure(
+    db: AsyncSession,
+    business_id: UUID,
+    attempt_id: UUID | None,
+    error_code: str,
+) -> None:
+    """Persist a recoverable failure without corrupting a newer attempt."""
+    attempts = WhatsAppOnboardingAttemptService(db)
+    administration = WhatsAppConnectionAdministrationService(db)
+    try:
+        if attempt_id is not None:
+            active = await attempts.active(business_id, for_update=True)
+            if active is None or active.id != attempt_id:
+                await db.rollback()
+                return
+            await attempts.mark_failed(
+                business_id,
+                attempt_id,
+                error_code,
+            )
+        await administration.mark_onboarding_error(
+            business_id,
+            error_code,
+        )
+        await db.commit()
+    except (
+        WhatsAppOnboardingAttemptError,
+        WhatsAppConnectionAdministrationError,
+    ):
+        await db.rollback()
+        logger.exception(
+            "meta_embedded_signup_failure_state_persist_failed",
+            extra={
+                "business_id": str(business_id),
+                "attempt_id": str(attempt_id) if attempt_id else None,
+                "failure_code": error_code,
+            },
+        )
+
+
 @router.post(
     "/whatsapp/onboarding/embedded-signup/start",
     response_model=MetaEmbeddedSignupStartResponse,
@@ -603,38 +711,102 @@ async def begin_meta_embedded_signup_attempt(
     principal: Identity,
     settings: Config,
     db: Db,
+    idempotency_key: UUID | None = Header(default=None, alias="Idempotency-Key"),
 ):
     business = _require_paid_whatsapp_administrator(principal)
     _embedded_signup_configuration(settings)
     administration = WhatsAppConnectionAdministrationService(db)
-    current = await administration.get_connection(
-        business.business_id,
-        for_update=True,
-    )
-    if current is not None and current.status.value == "connected":
-        detail = (
-            "WhatsApp account is already connected in this mode"
-            if current.mode.value == "coexistence"
-            else "Use the assisted mode-switch flow before coexistence onboarding"
-        )
-        raise HTTPException(409, detail)
-    plan = WhatsAppOnboardingService(administration).plan(
-        WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
-    )
-    if not plan.ready_to_continue or plan.requested_mode.value != "coexistence":
-        raise HTTPException(409, "WhatsApp onboarding path is unavailable")
+    attempts = WhatsAppOnboardingAttemptService(db)
     try:
+        await attempts.lock_business(business.business_id)
+
+        reconciled = await attempts.reconcile(business.business_id)
+        if reconciled is not None and reconciled.state in {
+            "expired",
+            "authorization_incomplete",
+        }:
+            try:
+                await administration.mark_onboarding_error(
+                    business.business_id,
+                    (
+                        META_ONBOARDING_EXPIRED
+                        if reconciled.state == "expired"
+                        else META_AUTHORIZATION_INCOMPLETE
+                    ),
+                )
+            except WhatsAppConnectionAdministrationError:
+                pass
+
+        current = await administration.get_connection(
+            business.business_id,
+            for_update=True,
+        )
+        if current is not None and current.status.value == "connected":
+            detail = (
+                "WhatsApp account is already connected in this mode"
+                if current.mode.value == "coexistence"
+                else "Use the assisted mode-switch flow before coexistence onboarding"
+            )
+            raise HTTPException(409, detail)
+
+        active = await attempts.active(
+            business.business_id,
+            for_update=True,
+        )
+        if (
+            current is not None
+            and current.status.value == "pending"
+            and active is None
+        ):
+            # Legacy stranded pending rows predate attempt orchestration.
+            # Convert them to a retryable error first so begin_pending_connection
+            # clears stale WABA/phone metadata before the new attempt.
+            await administration.mark_onboarding_error(
+                business.business_id,
+                META_ONBOARDING_EXPIRED,
+            )
+
+        plan = WhatsAppOnboardingService(administration).plan(
+            WhatsAppOnboardingIntent.KEEP_WHATSAPP_BUSINESS
+        )
+        if (
+            not plan.ready_to_continue
+            or plan.requested_mode.value != "coexistence"
+        ):
+            raise HTTPException(409, "WhatsApp onboarding path is unavailable")
+
         view = await administration.begin_pending_connection(
             business.business_id,
             plan.requested_mode,
         )
+        attempt = await attempts.begin(
+            business.business_id,
+            view.id,
+            plan.requested_mode,
+            request_id=idempotency_key,
+        )
         await db.commit()
-    except WhatsAppConnectionAdministrationError:
+    except HTTPException:
+        await db.rollback()
+        raise
+    except (
+        WhatsAppOnboardingAttemptError,
+        WhatsAppConnectionAdministrationError,
+    ):
         await db.rollback()
         raise HTTPException(
             409, "WhatsApp onboarding could not be started"
         ) from None
-    return _public_connection(view)
+
+    logger.info(
+        "meta_embedded_signup_attempt",
+        extra={
+            "stage": "attempt_started",
+            "business_id": str(business.business_id),
+            "attempt_id": str(attempt.id),
+        },
+    )
+    return _public_connection(view, attempt)
 
 
 @router.post(
@@ -644,27 +816,65 @@ async def begin_meta_embedded_signup_attempt(
     dependencies=[Depends(require_origin)],
 )
 async def mark_meta_embedded_signup_incomplete(
-    payload: EmptyRequest,
+    payload: MetaEmbeddedSignupAttemptRequest,
     principal: Identity,
     db: Db,
 ):
     business = _require_paid_whatsapp_administrator(principal)
     administration = WhatsAppConnectionAdministrationService(db)
+    attempts = WhatsAppOnboardingAttemptService(db)
+    attempt: WhatsAppOnboardingAttemptView | None = None
     try:
-        view = await administration.mark_authorization_incomplete(
-            business.business_id,
-        )
+        await attempts.lock_business(business.business_id)
+        if payload.attempt_id is not None:
+            active = await attempts.active(
+                business.business_id,
+                for_update=True,
+            )
+            if active is not None and active.id == payload.attempt_id:
+                attempt = await attempts.mark_authorization_incomplete(
+                    business.business_id,
+                    payload.attempt_id,
+                )
+                view = await administration.mark_authorization_incomplete(
+                    business.business_id,
+                )
+            else:
+                view = await administration.get_connection(
+                    business.business_id,
+                    for_update=True,
+                )
+                if view is None:
+                    raise WhatsAppConnectionAdministrationError(
+                        "WhatsApp business connection is not available"
+                    )
+        else:
+            # Backward compatibility during rolling frontend deployments.
+            view = await administration.mark_authorization_incomplete(
+                business.business_id,
+            )
         await db.commit()
-    except WhatsAppConnectionAdministrationError:
+    except (
+        WhatsAppOnboardingAttemptError,
+        WhatsAppConnectionAdministrationError,
+    ):
         await db.rollback()
         raise HTTPException(
             409, "WhatsApp onboarding state could not be updated"
         ) from None
+
+    latest = attempt or await attempts.latest(business.business_id)
     logger.info(
         "meta_embedded_signup_progress",
-        extra={"stage": "authorization_incomplete"},
+        extra={
+            "stage": "authorization_incomplete",
+            "business_id": str(business.business_id),
+            "attempt_id": (
+                str(payload.attempt_id) if payload.attempt_id else None
+            ),
+        },
     )
-    return _public_connection(view)
+    return _public_connection(view, latest)
 
 
 @router.post(
@@ -681,15 +891,51 @@ async def record_meta_embedded_signup_assets(
     business = _require_paid_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
     administration = WhatsAppConnectionAdministrationService(db)
+    attempts = WhatsAppOnboardingAttemptService(db)
     try:
+        await attempts.lock_business(business.business_id)
+        if payload.attempt_id is not None:
+            active = await attempts.active(
+                business.business_id,
+                for_update=True,
+            )
+            if active is None or active.id != payload.attempt_id:
+                await db.rollback()
+                logger.info(
+                    "meta_embedded_signup_stale_event",
+                    extra={
+                        "stage": "assets",
+                        "business_id": str(business.business_id),
+                        "attempt_id": str(payload.attempt_id),
+                    },
+                )
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
+            current = await administration.get_connection(
+                business.business_id,
+                for_update=True,
+            )
+            if current is None or current.id != active.connection_id:
+                await db.rollback()
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
+
         await administration.record_pending_meta_assets(
             business.business_id,
             meta_waba_id=payload.waba_id,
             meta_phone_number_id=payload.phone_number_id,
             graph_version=configuration.graph_version,
         )
+        if payload.attempt_id is not None:
+            await attempts.record_assets(
+                business.business_id,
+                payload.attempt_id,
+                has_waba_id=True,
+                has_phone_number_id=payload.phone_number_id is not None,
+            )
         await db.commit()
-    except WhatsAppConnectionAdministrationError:
+    except (
+        WhatsAppOnboardingAttemptError,
+        WhatsAppConnectionAdministrationError,
+    ):
         await db.rollback()
         raise HTTPException(
             409, "WhatsApp onboarding progress could not be saved"
@@ -705,17 +951,81 @@ async def record_meta_embedded_signup_assets(
 async def meta_embedded_signup_telemetry(
     payload: MetaEmbeddedSignupTelemetryRequest,
     principal: Identity,
+    db: Db,
 ) -> Response:
-    _require_paid_whatsapp_administrator(principal)
+    business = _require_paid_whatsapp_administrator(principal)
     fields = {
-        name: value
+        name: (
+            str(value)
+            if name == "attempt_id" and value is not None
+            else value
+        )
         for name, value in payload.model_dump(exclude={"stage"}).items()
         if value is not None
     }
     logger.info(
         "meta_embedded_signup_client_progress",
-        extra={"stage": payload.stage, **fields},
+        extra={
+            "stage": payload.stage,
+            "business_id": str(business.business_id),
+            **fields,
+        },
     )
+
+    if payload.attempt_id is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    attempts = WhatsAppOnboardingAttemptService(db)
+    administration = WhatsAppConnectionAdministrationService(db)
+    try:
+        await attempts.lock_business(business.business_id)
+        active = await attempts.active(
+            business.business_id,
+            for_update=True,
+        )
+        if active is None or active.id != payload.attempt_id:
+            await db.rollback()
+            logger.info(
+                "meta_embedded_signup_stale_event",
+                extra={
+                    "stage": payload.stage,
+                    "business_id": str(business.business_id),
+                    "attempt_id": str(payload.attempt_id),
+                },
+            )
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+        attempt = await attempts.record_event(
+            business.business_id,
+            payload.attempt_id,
+            stage=payload.stage,
+            authorization_code_received=payload.authorization_code_received,
+            waba_id_received=payload.waba_id_received,
+            phone_number_id_received=payload.phone_number_id_received,
+        )
+        if attempt.state == "authorization_incomplete":
+            await administration.mark_authorization_incomplete(
+                business.business_id,
+            )
+        elif attempt.state == "expired":
+            await administration.mark_onboarding_error(
+                business.business_id,
+                META_ONBOARDING_EXPIRED,
+            )
+        await db.commit()
+    except (
+        WhatsAppOnboardingAttemptError,
+        WhatsAppConnectionAdministrationError,
+    ):
+        await db.rollback()
+        logger.exception(
+            "meta_embedded_signup_telemetry_state_failed",
+            extra={
+                "stage": payload.stage,
+                "business_id": str(business.business_id),
+                "attempt_id": str(payload.attempt_id),
+            },
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -733,34 +1043,80 @@ async def complete_meta_embedded_signup(
 ):
     business = _require_paid_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
+    administration = WhatsAppConnectionAdministrationService(db)
+    attempts = WhatsAppOnboardingAttemptService(db)
     gateway: MetaEmbeddedSignupGateway | None = None
     completed = False
+    attempt: WhatsAppOnboardingAttemptView | None = None
     logger.info(
         "meta_embedded_signup_progress",
         extra={
             "stage": "complete_request_started",
+            "business_id": str(business.business_id),
+            "attempt_id": (
+                str(payload.attempt_id) if payload.attempt_id else None
+            ),
             "waba_id_received": bool(payload.waba_id),
             "phone_number_id_received": payload.phone_number_id is not None,
         },
     )
     try:
-        current = await WhatsAppConnectionAdministrationService(
-            db
-        ).get_connection(business.business_id, for_update=True)
-        if current is not None and current.status.value == "connected":
-            detail = (
-                "WhatsApp account is already connected in this mode"
-                if current.mode.value == "coexistence"
-                else "Use the assisted mode-switch flow before coexistence onboarding"
-            )
-            raise HTTPException(409, detail)
-        service, gateway = _embedded_signup_service(db, configuration)
-        view = await service.complete_coexistence(
+        await attempts.lock_business(business.business_id)
+        current = await administration.get_connection(
             business.business_id,
-            payload.authorization_code,
-            waba_id_hint=payload.waba_id,
-            phone_number_id_hint=payload.phone_number_id,
+            for_update=True,
         )
+        if current is not None and current.status.value == "connected":
+            if payload.attempt_id is None:
+                raise HTTPException(
+                    409,
+                    "WhatsApp account is already connected in this mode",
+                )
+            latest = await attempts.latest(business.business_id)
+            if latest is None or latest.id != payload.attempt_id:
+                raise HTTPException(
+                    409,
+                    "WhatsApp onboarding attempt is no longer active",
+                )
+            completed = True
+            return _public_connection(current, latest)
+
+        if payload.attempt_id is not None:
+            active = await attempts.active(
+                business.business_id,
+                for_update=True,
+            )
+            if (
+                active is None
+                or active.id != payload.attempt_id
+                or current is None
+                or active.connection_id != current.id
+            ):
+                raise HTTPException(
+                    409,
+                    "WhatsApp onboarding attempt is no longer active",
+                )
+            attempt = await attempts.mark_completing(
+                business.business_id,
+                payload.attempt_id,
+            )
+
+        service, gateway = _embedded_signup_service(db, configuration)
+        with meta_onboarding_log_context(
+            business.business_id,
+            payload.attempt_id,
+        ):
+            view = await service.complete_coexistence(
+                business.business_id,
+                payload.authorization_code,
+                waba_id_hint=payload.waba_id,
+                phone_number_id_hint=payload.phone_number_id,
+            )
+        if payload.attempt_id is not None:
+            attempt = await attempts.mark_connected(
+                business.business_id,
+                payload.attempt_id,
+            )
         await db.commit()
         completed = True
     except HTTPException:
@@ -768,33 +1124,69 @@ async def complete_meta_embedded_signup(
         raise
     except MetaEmbeddedSignupRejected as exc:
         await db.rollback()
+        await _persist_embedded_signup_failure(
+            db,
+            business.business_id,
+            payload.attempt_id,
+            META_PROVIDER_REJECTED,
+        )
         _log_embedded_signup_rejection(exc)
-        raise HTTPException(400, "Meta authorization could not be validated") from None
+        raise HTTPException(
+            400, "Meta authorization could not be validated"
+        ) from None
     except (
         MetaEmbeddedSignupUnavailable,
         WhatsAppConfigurationError,
     ) as exc:
         await db.rollback()
+        await _persist_embedded_signup_failure(
+            db,
+            business.business_id,
+            payload.attempt_id,
+            META_PROVIDER_UNAVAILABLE,
+        )
         _log_embedded_signup_rejection(exc)
-        raise HTTPException(503, "Meta onboarding is temporarily unavailable") from None
+        raise HTTPException(
+            503, "Meta onboarding is temporarily unavailable"
+        ) from None
     except (
         MetaEmbeddedSignupError,
         WhatsAppOnboardingError,
         WhatsAppConnectionAdministrationError,
+        WhatsAppOnboardingAttemptError,
     ) as exc:
         await db.rollback()
+        await _persist_embedded_signup_failure(
+            db,
+            business.business_id,
+            payload.attempt_id,
+            META_ONBOARDING_FAILED,
+        )
         _log_embedded_signup_rejection(exc)
-        raise HTTPException(409, "WhatsApp onboarding could not be completed") from None
+        raise HTTPException(
+            409, "WhatsApp onboarding could not be completed"
+        ) from None
     except Exception:
         await db.rollback()
+        await _persist_embedded_signup_failure(
+            db,
+            business.business_id,
+            payload.attempt_id,
+            META_ONBOARDING_FAILED,
+        )
         raise
     finally:
         if gateway is not None:
             await gateway.aclose()
         _log_embedded_signup_stage(
-            "complete_request_succeeded" if completed else "complete_request_failed"
+            "complete_request_succeeded"
+            if completed
+            else "complete_request_failed"
         )
-    return _public_connection(view)
+
+    if attempt is None:
+        attempt = await attempts.latest(business.business_id)
+    return _public_connection(view, attempt)
 
 
 @router.post(

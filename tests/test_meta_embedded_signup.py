@@ -19,6 +19,7 @@ from app.auth.schemas import (
     MetaApiOnlyEmbeddedSignupCompleteRequest,
     MetaApiOnlyEmbeddedSignupStartRequest,
     MetaEmbeddedSignupAssetsRequest,
+    MetaEmbeddedSignupAttemptRequest,
     MetaEmbeddedSignupCompleteRequest,
     MetaEmbeddedSignupTelemetryRequest,
 )
@@ -44,6 +45,8 @@ from app.whatsapp.embedded_signup import (
 )
 
 BUSINESS_ID = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+ATTEMPT_ID = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+CONNECTION_ID = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 WABA_ID = "111111111111111"
 PHONE_ID = "222222222222222"
 RAW_TOKEN = "synthetic-token-value-for-tests"
@@ -138,6 +141,99 @@ class FakeDb:
         self.rollbacks += 1
 
 
+class FakeAttemptService:
+    def __init__(self) -> None:
+        self.current = None
+
+    async def lock_business(self, business_id):
+        assert business_id == BUSINESS_ID
+
+    async def reconcile(self, business_id):
+        assert business_id == BUSINESS_ID
+        return self.current
+
+    async def active(self, business_id, *, for_update=False):
+        assert business_id == BUSINESS_ID
+        return self.current
+
+    async def begin(self, business_id, connection_id, mode, *, request_id=None):
+        assert business_id == BUSINESS_ID
+        assert connection_id == CONNECTION_ID
+        assert mode is WhatsAppConnectionMode.COEXISTENCE
+        self.current = SimpleNamespace(
+            id=ATTEMPT_ID,
+            business_id=BUSINESS_ID,
+            connection_id=CONNECTION_ID,
+            mode="coexistence",
+            state="created",
+            last_stage=None,
+            authorization_code_received=False,
+            waba_id_received=False,
+            phone_number_id_received=False,
+            failure_code=None,
+            empty_callback_at=None,
+            last_event_at=None,
+            expires_at=None,
+            terminal_at=None,
+            created_at=None,
+        )
+        return self.current
+
+    async def latest(self, business_id):
+        assert business_id == BUSINESS_ID
+        return self.current
+
+    async def record_event(
+        self,
+        business_id,
+        attempt_id,
+        *,
+        stage,
+        authorization_code_received=None,
+        waba_id_received=None,
+        phone_number_id_received=None,
+    ):
+        assert business_id == BUSINESS_ID
+        assert attempt_id == ATTEMPT_ID
+        assert self.current is not None
+        self.current.last_stage = stage
+        if authorization_code_received is True:
+            self.current.authorization_code_received = True
+            self.current.state = "code_received"
+        elif (
+            stage == "login_callback_received"
+            and authorization_code_received is False
+            and not self.current.authorization_code_received
+        ):
+            self.current.state = "awaiting_provider"
+            self.current.empty_callback_at = object()
+        return self.current
+
+    async def mark_authorization_incomplete(self, business_id, attempt_id):
+        assert business_id == BUSINESS_ID
+        assert attempt_id == ATTEMPT_ID
+        assert self.current is not None
+        self.current.state = "authorization_incomplete"
+        self.current.failure_code = META_AUTHORIZATION_INCOMPLETE
+        return self.current
+
+    async def record_assets(
+        self,
+        business_id,
+        attempt_id,
+        *,
+        has_waba_id,
+        has_phone_number_id,
+    ):
+        assert business_id == BUSINESS_ID
+        assert attempt_id == ATTEMPT_ID
+        assert has_waba_id is True
+        self.current.state = "assets_received"
+        self.current.waba_id_received = True
+        self.current.phone_number_id_received = has_phone_number_id
+        return self.current
+
+
 class PendingAdministration(EmptyAdministration):
     def __init__(self) -> None:
         self.assets: tuple[str, str | None, str] | None = None
@@ -146,6 +242,7 @@ class PendingAdministration(EmptyAdministration):
         assert business_id == BUSINESS_ID
         assert mode is WhatsAppConnectionMode.COEXISTENCE
         return SimpleNamespace(
+            id=CONNECTION_ID,
             status=WhatsAppConnectionStatus.PENDING,
             mode=WhatsAppConnectionMode.COEXISTENCE,
             last_error_code=META_ONBOARDING_PENDING,
@@ -273,8 +370,15 @@ async def test_empty_meta_callback_endpoint_returns_recoverable_error(monkeypatc
     )
     db = FakeDb()
 
+    attempts = FakeAttemptService()
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppOnboardingAttemptService",
+        lambda _: attempts,
+    )
+
     response = await public_pwa.mark_meta_embedded_signup_incomplete(
-        EmptyRequest(),
+        MetaEmbeddedSignupAttemptRequest(),
         FakePrincipal(),
         db,
     )
@@ -296,6 +400,12 @@ async def test_begin_attempt_and_assets_are_persisted_before_final_completion(
         "WhatsAppConnectionAdministrationService",
         lambda _: administration,
     )
+    attempts = FakeAttemptService()
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppOnboardingAttemptService",
+        lambda _: attempts,
+    )
     db = FakeDb()
 
     pending = await public_pwa.begin_meta_embedded_signup_attempt(
@@ -307,6 +417,8 @@ async def test_begin_attempt_and_assets_are_persisted_before_final_completion(
     assert pending.status == "pending"
     assert pending.mode == "coexistence"
     assert pending.pending_state == "authorization_pending"
+    assert pending.onboarding_attempt_id == ATTEMPT_ID
+    assert pending.onboarding_attempt_state == "created"
     assert db.commits == 1
 
     response = await public_pwa.record_meta_embedded_signup_assets(
@@ -342,6 +454,33 @@ def test_public_connection_distinguishes_meta_review_from_started_authorization(
     assert review_pending.journey_state == "meta_review_pending"
     assert review_pending.requires_user_action is False
     assert review_pending.next_action == "wait_for_meta_review"
+
+    orchestrated = public_pwa._public_connection(
+        SimpleNamespace(
+            status=WhatsAppConnectionStatus.PENDING,
+            mode=WhatsAppConnectionMode.COEXISTENCE,
+            last_error_code=META_ONBOARDING_PENDING,
+            has_phone_number_id=True,
+            masked_display_phone_number=None,
+            meta_review_status=None,
+            preferred_mode=None,
+            mode_switch_requested_at=None,
+            mode_switch_last_checked_at=None,
+            mode_switch_next_check_at=None,
+        ),
+        SimpleNamespace(
+            id=ATTEMPT_ID,
+            state="code_received",
+            last_stage="login_callback_received",
+            authorization_code_received=True,
+            last_event_at=None,
+            expires_at=None,
+        ),
+    )
+    assert orchestrated.pending_state == "authorization_pending"
+    assert orchestrated.journey_state == "validating_connection"
+    assert orchestrated.requires_user_action is False
+    assert orchestrated.next_action == "wait_for_completion"
 
     authorization_pending = public_pwa._public_connection(
         SimpleNamespace(
@@ -469,7 +608,7 @@ async def test_client_telemetry_is_sanitized_and_access_controlled(caplog) -> No
     )
 
     response = await public_pwa.meta_embedded_signup_telemetry(
-        payload, FakePrincipal()
+        payload, FakePrincipal(), FakeDb()
     )
 
     assert response.status_code == 204
@@ -486,15 +625,67 @@ async def test_client_telemetry_is_sanitized_and_access_controlled(caplog) -> No
 
     with pytest.raises(HTTPException) as free:
         await public_pwa.meta_embedded_signup_telemetry(
-            payload, FakePrincipal("free")
+            payload, FakePrincipal("free"), FakeDb()
         )
     assert free.value.status_code == 402
 
     with pytest.raises(HTTPException) as read_only:
         await public_pwa.meta_embedded_signup_telemetry(
-            payload, FakePrincipal(role=MembershipRole.VIEWER)
+            payload, FakePrincipal(role=MembershipRole.VIEWER), FakeDb()
         )
     assert read_only.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_correlated_empty_callback_is_recorded_without_premature_failure(
+    monkeypatch,
+) -> None:
+    attempts = FakeAttemptService()
+    attempts.current = SimpleNamespace(
+        id=ATTEMPT_ID,
+        business_id=BUSINESS_ID,
+        connection_id=CONNECTION_ID,
+        mode="coexistence",
+        state="provider_opened",
+        last_stage="login_opened",
+        authorization_code_received=False,
+        waba_id_received=False,
+        phone_number_id_received=False,
+        failure_code=None,
+        empty_callback_at=None,
+        last_event_at=None,
+        expires_at=None,
+        terminal_at=None,
+        created_at=None,
+    )
+    administration = IncompleteAdministration()
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppOnboardingAttemptService",
+        lambda _: attempts,
+    )
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        lambda _: administration,
+    )
+    db = FakeDb()
+
+    response = await public_pwa.meta_embedded_signup_telemetry(
+        MetaEmbeddedSignupTelemetryRequest(
+            attempt_id=ATTEMPT_ID,
+            stage="login_callback_received",
+            authorization_code_received=False,
+        ),
+        FakePrincipal(),
+        db,
+    )
+
+    assert response.status_code == 204
+    assert attempts.current.state == "awaiting_provider"
+    assert attempts.current.empty_callback_at is not None
+    assert attempts.current.failure_code is None
+    assert db.commits == 1
 
 
 def test_json_formatter_preserves_only_safe_meta_onboarding_fields() -> None:

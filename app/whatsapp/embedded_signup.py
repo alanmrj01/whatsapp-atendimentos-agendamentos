@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -20,6 +22,29 @@ from app.whatsapp.onboarding import (
 
 
 logger = logging.getLogger(__name__)
+
+_meta_business_id: ContextVar[str | None] = ContextVar(
+    "meta_business_id", default=None
+)
+_meta_attempt_id: ContextVar[str | None] = ContextVar(
+    "meta_attempt_id", default=None
+)
+
+
+@contextmanager
+def meta_onboarding_log_context(
+    business_id: uuid.UUID,
+    attempt_id: uuid.UUID | None,
+):
+    business_token = _meta_business_id.set(str(business_id))
+    attempt_token = _meta_attempt_id.set(
+        str(attempt_id) if attempt_id is not None else None
+    )
+    try:
+        yield
+    finally:
+        _meta_business_id.reset(business_token)
+        _meta_attempt_id.reset(attempt_token)
 
 
 class MetaEmbeddedSignupError(RuntimeError):
@@ -503,7 +528,14 @@ def _phone_assets(payload: dict[str, Any]) -> dict[str, str | None]:
 
 
 def _log_stage(stage: str) -> None:
+    extra = {"stage": stage}
+    business_id = _meta_business_id.get()
+    attempt_id = _meta_attempt_id.get()
+    if business_id is not None:
+        extra["business_id"] = business_id
+    if attempt_id is not None:
+        extra["attempt_id"] = attempt_id
     logger.info(
         "meta_embedded_signup_progress",
-        extra={"stage": stage},
+        extra=extra,
     )
