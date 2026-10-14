@@ -196,7 +196,7 @@ class MetaEmbeddedSignupStartResponse(BaseModel):
 
 class MetaEmbeddedSignupRedirectStartRequest(StrictRequest):
     attempt_id: UUID
-    redirect_uri: str = Field(min_length=1, max_length=2048)
+    return_uri: str = Field(min_length=1, max_length=2048)
     return_to_onboarding: bool = Field(default=False, strict=True)
 
 
@@ -246,7 +246,6 @@ class MetaEmbeddedSignupAssetsRequest(StrictRequest):
 class MetaEmbeddedSignupCompleteRequest(StrictRequest):
     attempt_id: UUID | None = None
     authorization_code: SecretStr = Field(min_length=1, max_length=4096)
-    state: str | None = Field(default=None, min_length=1, max_length=2048)
     # SessionInfo is helpful but not authoritative: browsers can lose the
     # postMessage while still receiving the OAuth code. The backend can
     # discover a single granted WABA from the exchanged token when omitted.
