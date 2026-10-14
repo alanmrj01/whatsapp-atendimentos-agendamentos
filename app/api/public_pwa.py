@@ -1233,7 +1233,7 @@ async def complete_meta_embedded_signup(
 ):
     business = _require_paid_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
-    attempt_id = attempt_id
+    attempt_id = payload.attempt_id
     redirect_uri = ""
     if payload.redirect_state is not None:
         state = _verified_meta_redirect_state(
