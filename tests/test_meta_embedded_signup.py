@@ -1274,10 +1274,10 @@ class FakeGateway:
 
     async def exchange_and_validate(self, authorization_code, **hints):
         assert authorization_code.get_secret_value() == RAW_CODE
+        assert hints.pop("redirect_uri", "") == ""
         assert hints == {
             "waba_id_hint": WABA_ID,
             "phone_number_id_hint": PHONE_ID,
-            "redirect_uri": "",
         }
         return MetaAuthorizedAssets(
             access_token=SecretStr(RAW_TOKEN),
