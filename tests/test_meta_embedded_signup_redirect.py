@@ -10,7 +10,8 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from app.auth.schemas import MetaEmbeddedSignupRedirectStartRequest
-from app.core.config import MetaEmbeddedSignupConfiguration
+from app.core.config import MetaEmbeddedSignupConfiguration, Settings, get_settings
+from app.main import app
 from app.whatsapp.embedded_signup import (
     MetaEmbeddedSignupGateway,
     MetaEmbeddedSignupRejected,
@@ -231,3 +232,42 @@ async def test_code_exchange_uses_exact_server_callback_uri() -> None:
     assert assets.waba_id == WABA_ID
     assert assets.phone_number_id == PHONE_ID
     assert len(requests) == 3
+
+
+@pytest.mark.asyncio
+async def test_public_callback_requires_valid_signed_state_not_user_auth(
+    client: httpx.AsyncClient,
+) -> None:
+    test_settings = Settings(
+        _env_file=None,
+        ENVIRONMENT="test",
+        AUTH_JWT_SECRET="x" * 48,
+        PWA_ALLOWED_ORIGINS="https://alovia.netlify.app",
+        META_APP_ID="333333333333333",
+        META_EMBEDDED_SIGNUP_CONFIG_ID="444444444444444",
+        META_EMBEDDED_SIGNUP_VERSION="v4",
+        META_EMBEDDED_SIGNUP_REDIRECT_URI=CALLBACK_URI,
+        META_GRAPH_VERSION="v25.0",
+        META_APP_SECRET="synthetic-app-secret-for-redirect-tests",
+        GCP_PROJECT_ID="test-project",
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    try:
+        missing = await client.get(
+            "/api/v1/whatsapp/onboarding/embedded-signup/redirect/callback"
+        )
+        tampered = await client.get(
+            "/api/v1/whatsapp/onboarding/embedded-signup/redirect/callback",
+            params={"code": RAW_CODE, "state": "tampered-state"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+    assert missing.status_code == 400
+    assert missing.json()["detail"] == "Meta authorization state is missing"
+    assert tampered.status_code == 400
+    assert tampered.json()["detail"] == (
+        "Meta authorization state could not be validated"
+    )
+    assert missing.status_code != 401
+    assert tampered.status_code != 401
