@@ -74,6 +74,7 @@ class MetaEmbeddedSignupPort(Protocol):
         *,
         waba_id_hint: str | None,
         phone_number_id_hint: str | None,
+        redirect_uri: str = "",
     ) -> MetaAuthorizedAssets: ...
 
     async def subscribe_app(
@@ -116,6 +117,7 @@ class MetaEmbeddedSignupGateway:
         *,
         waba_id_hint: str | None,
         phone_number_id_hint: str | None,
+        redirect_uri: str = "",
     ) -> MetaAuthorizedAssets:
         waba_id = (
             _numeric_meta_id(waba_id_hint)
@@ -141,7 +143,7 @@ class MetaEmbeddedSignupGateway:
                 # The current Meta reference implementation includes the
                 # redirect_uri parameter for the code exchange. FB.login does
                 # not provide an application redirect URI, so it is empty.
-                "redirect_uri": "",
+                "redirect_uri": redirect_uri,
                 "client_secret": (
                     self._configuration.app_secret.get_secret_value()
                 ),
@@ -415,11 +417,13 @@ class MetaEmbeddedSignupService:
         *,
         waba_id_hint: str | None,
         phone_number_id_hint: str | None,
+        redirect_uri: str = "",
     ) -> WhatsAppConnectionStatusView:
         assets = await self._gateway.exchange_and_validate(
             authorization_code,
             waba_id_hint=waba_id_hint,
             phone_number_id_hint=phone_number_id_hint,
+            redirect_uri=redirect_uri,
         )
         await self._gateway.subscribe_app(assets)
         credential_secret_ref = await self._credential_store.store(
