@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import logging
@@ -23,6 +24,9 @@ from app.auth.schemas import (
     MetaEmbeddedSignupAssetsRequest,
     MetaEmbeddedSignupAttemptRequest,
     MetaEmbeddedSignupCompleteRequest,
+    MetaEmbeddedSignupRedirectCancelRequest,
+    MetaEmbeddedSignupRedirectStartRequest,
+    MetaEmbeddedSignupRedirectStartResponse,
     MetaEmbeddedSignupStartResponse,
     MetaEmbeddedSignupTelemetryRequest,
     MeResponse,
@@ -71,6 +75,12 @@ from app.whatsapp.embedded_signup import (
     MetaEmbeddedSignupService,
     MetaEmbeddedSignupUnavailable,
     meta_onboarding_log_context,
+)
+from app.whatsapp.embedded_signup_redirect import (
+    MetaEmbeddedSignupRedirectError,
+    MetaEmbeddedSignupRedirectState,
+    build_meta_embedded_signup_redirect,
+    decode_meta_embedded_signup_redirect_state,
 )
 from app.repositories.whatsapp_connections import (
     WhatsAppConnectionRepository,
@@ -617,6 +627,35 @@ def _embedded_signup_configuration(
         ) from None
 
 
+def _verified_meta_redirect_state(
+    settings: Settings,
+    configuration: MetaEmbeddedSignupConfiguration,
+    raw_state: str,
+    business_id: UUID,
+) -> MetaEmbeddedSignupRedirectState:
+    try:
+        state = decode_meta_embedded_signup_redirect_state(
+            configuration,
+            raw_state,
+        )
+    except MetaEmbeddedSignupRedirectError:
+        raise HTTPException(400, "Meta redirect state is invalid or expired") from None
+    if state.business_id != business_id:
+        raise HTTPException(409, "WhatsApp onboarding attempt is no longer active")
+    parsed = urlsplit(state.redirect_uri)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    if (
+        origin not in settings.allowed_pwa_origins()
+        or parsed.path != "/app/whatsapp/meta-return"
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+    ):
+        raise HTTPException(400, "Meta redirect URI is invalid")
+    return state
+
+
 def _require_api_only_fallback(settings: Settings) -> None:
     if not settings.whatsapp_api_only_fallback_enabled:
         raise HTTPException(
@@ -810,6 +849,81 @@ async def begin_meta_embedded_signup_attempt(
 
 
 @router.post(
+    "/whatsapp/onboarding/embedded-signup/redirect/start",
+    response_model=MetaEmbeddedSignupRedirectStartResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def start_meta_embedded_signup_redirect(
+    payload: MetaEmbeddedSignupRedirectStartRequest,
+    request: Request,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    configuration = _embedded_signup_configuration(settings)
+    attempts = WhatsAppOnboardingAttemptService(db)
+    administration = WhatsAppConnectionAdministrationService(db)
+    try:
+        await attempts.lock_business(business.business_id)
+        active = await attempts.active(
+            business.business_id,
+            for_update=True,
+        )
+        current = await administration.get_connection(
+            business.business_id,
+            for_update=True,
+        )
+        if (
+            active is None
+            or active.id != payload.attempt_id
+            or current is None
+            or current.status.value == "connected"
+            or active.connection_id != current.id
+        ):
+            raise HTTPException(
+                409,
+                "WhatsApp onboarding attempt is no longer active",
+            )
+        origin = request.headers.get("origin", "").rstrip("/")
+        redirect_uri = f"{origin}/app/whatsapp/meta-return"
+        authorization_url, _ = build_meta_embedded_signup_redirect(
+            configuration,
+            business_id=business.business_id,
+            attempt_id=active.id,
+            redirect_uri=redirect_uri,
+        )
+        await attempts.record_event(
+            business.business_id,
+            active.id,
+            stage="login_opened",
+        )
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except WhatsAppOnboardingAttemptError:
+        await db.rollback()
+        raise HTTPException(
+            409,
+            "WhatsApp onboarding attempt is no longer active",
+        ) from None
+
+    logger.info(
+        "meta_embedded_signup_progress",
+        extra={
+            "stage": "redirect_authorization_started",
+            "business_id": str(business.business_id),
+            "attempt_id": str(payload.attempt_id),
+        },
+    )
+    return MetaEmbeddedSignupRedirectStartResponse(
+        attempt_id=payload.attempt_id,
+        authorization_url=authorization_url,
+    )
+
+
+@router.post(
     "/whatsapp/onboarding/embedded-signup/incomplete",
     response_model=PublicConnectionResponse,
     response_model_exclude_none=True,
@@ -868,6 +982,86 @@ async def mark_meta_embedded_signup_incomplete(
             "attempt_id": (
                 str(payload.attempt_id) if payload.attempt_id else None
             ),
+        },
+    )
+    return _public_connection(view, attempt)
+
+
+@router.post(
+    "/whatsapp/onboarding/embedded-signup/redirect/cancel",
+    response_model=PublicConnectionResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_origin)],
+)
+async def cancel_meta_embedded_signup_redirect(
+    payload: MetaEmbeddedSignupRedirectCancelRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    business = _require_paid_whatsapp_administrator(principal)
+    configuration = _embedded_signup_configuration(settings)
+    state = _verified_meta_redirect_state(
+        settings,
+        configuration,
+        payload.state,
+        business.business_id,
+    )
+    attempts = WhatsAppOnboardingAttemptService(db)
+    administration = WhatsAppConnectionAdministrationService(db)
+    try:
+        await attempts.lock_business(business.business_id)
+        current = await administration.get_connection(
+            business.business_id,
+            for_update=True,
+        )
+        if current is not None and current.status.value == "connected":
+            latest = await attempts.latest(business.business_id)
+            await db.commit()
+            return _public_connection(current, latest)
+
+        active = await attempts.active(
+            business.business_id,
+            for_update=True,
+        )
+        if (
+            active is None
+            or active.id != state.attempt_id
+            or current is None
+            or active.connection_id != current.id
+        ):
+            raise HTTPException(
+                409,
+                "WhatsApp onboarding attempt is no longer active",
+            )
+        attempt = await attempts.mark_authorization_incomplete(
+            business.business_id,
+            state.attempt_id,
+        )
+        view = await administration.mark_onboarding_error(
+            business.business_id,
+            META_AUTHORIZATION_INCOMPLETE,
+        )
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except (
+        WhatsAppOnboardingAttemptError,
+        WhatsAppConnectionAdministrationError,
+    ):
+        await db.rollback()
+        raise HTTPException(
+            409,
+            "WhatsApp onboarding attempt is no longer active",
+        ) from None
+
+    logger.info(
+        "meta_embedded_signup_progress",
+        extra={
+            "stage": "redirect_authorization_cancelled",
+            "business_id": str(business.business_id),
+            "attempt_id": str(state.attempt_id),
         },
     )
     return _public_connection(view, attempt)
@@ -1039,6 +1233,22 @@ async def complete_meta_embedded_signup(
 ):
     business = _require_paid_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
+    attempt_id = attempt_id
+    redirect_uri = ""
+    if payload.redirect_state is not None:
+        state = _verified_meta_redirect_state(
+            settings,
+            configuration,
+            payload.redirect_state,
+            business.business_id,
+        )
+        if attempt_id is not None and attempt_id != state.attempt_id:
+            raise HTTPException(
+                409,
+                "WhatsApp onboarding attempt is no longer active",
+            )
+        attempt_id = state.attempt_id
+        redirect_uri = state.redirect_uri
     administration = WhatsAppConnectionAdministrationService(db)
     attempts = WhatsAppOnboardingAttemptService(db)
     gateway: MetaEmbeddedSignupGateway | None = None
@@ -1050,7 +1260,7 @@ async def complete_meta_embedded_signup(
             "stage": "complete_request_started",
             "business_id": str(business.business_id),
             "attempt_id": (
-                str(payload.attempt_id) if payload.attempt_id else None
+                str(attempt_id) if attempt_id else None
             ),
             "waba_id_received": bool(payload.waba_id),
             "phone_number_id_received": payload.phone_number_id is not None,
@@ -1063,13 +1273,13 @@ async def complete_meta_embedded_signup(
             for_update=True,
         )
         if current is not None and current.status.value == "connected":
-            if payload.attempt_id is None:
+            if attempt_id is None:
                 raise HTTPException(
                     409,
                     "WhatsApp account is already connected in this mode",
                 )
             latest = await attempts.latest(business.business_id)
-            if latest is None or latest.id != payload.attempt_id:
+            if latest is None or latest.id != attempt_id:
                 raise HTTPException(
                     409,
                     "WhatsApp onboarding attempt is no longer active",
@@ -1077,14 +1287,14 @@ async def complete_meta_embedded_signup(
             completed = True
             return _public_connection(current, latest)
 
-        if payload.attempt_id is not None:
+        if attempt_id is not None:
             active = await attempts.active(
                 business.business_id,
                 for_update=True,
             )
             if (
                 active is None
-                or active.id != payload.attempt_id
+                or active.id != attempt_id
                 or current is None
                 or active.connection_id != current.id
             ):
@@ -1094,24 +1304,25 @@ async def complete_meta_embedded_signup(
                 )
             attempt = await attempts.mark_completing(
                 business.business_id,
-                payload.attempt_id,
+                attempt_id,
             )
 
         service, gateway = _embedded_signup_service(db, configuration)
         with meta_onboarding_log_context(
             business.business_id,
-            payload.attempt_id,
+            attempt_id,
         ):
             view = await service.complete_coexistence(
                 business.business_id,
                 payload.authorization_code,
                 waba_id_hint=payload.waba_id,
                 phone_number_id_hint=payload.phone_number_id,
+                redirect_uri=redirect_uri,
             )
-        if payload.attempt_id is not None:
+        if attempt_id is not None:
             attempt = await attempts.mark_connected(
                 business.business_id,
-                payload.attempt_id,
+                attempt_id,
             )
         await db.commit()
         completed = True
@@ -1123,7 +1334,7 @@ async def complete_meta_embedded_signup(
         await _persist_embedded_signup_failure(
             db,
             business.business_id,
-            payload.attempt_id,
+            attempt_id,
             META_PROVIDER_REJECTED,
         )
         _log_embedded_signup_rejection(exc)
@@ -1138,7 +1349,7 @@ async def complete_meta_embedded_signup(
         await _persist_embedded_signup_failure(
             db,
             business.business_id,
-            payload.attempt_id,
+            attempt_id,
             META_PROVIDER_UNAVAILABLE,
         )
         _log_embedded_signup_rejection(exc)
@@ -1155,7 +1366,7 @@ async def complete_meta_embedded_signup(
         await _persist_embedded_signup_failure(
             db,
             business.business_id,
-            payload.attempt_id,
+            attempt_id,
             META_ONBOARDING_FAILED,
         )
         _log_embedded_signup_rejection(exc)
@@ -1167,7 +1378,7 @@ async def complete_meta_embedded_signup(
         await _persist_embedded_signup_failure(
             db,
             business.business_id,
-            payload.attempt_id,
+            attempt_id,
             META_ONBOARDING_FAILED,
         )
         raise
