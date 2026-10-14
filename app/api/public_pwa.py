@@ -6,7 +6,9 @@ from uuid import UUID
 
 import logging
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi.responses import RedirectResponse
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_auth_config, require_origin, require_principal
@@ -77,8 +79,10 @@ from app.whatsapp.embedded_signup import (
 from app.whatsapp.embedded_signup_redirect import (
     build_meta_embedded_signup_authorization_url,
     build_meta_embedded_signup_redirect_state,
+    build_meta_embedded_signup_return_url,
     parse_meta_embedded_signup_redirect_state,
-    validate_meta_embedded_signup_redirect_uri,
+    validate_meta_embedded_signup_callback_uri,
+    validate_meta_embedded_signup_return_uri,
 )
 from app.repositories.whatsapp_connections import (
     WhatsAppConnectionRepository,
