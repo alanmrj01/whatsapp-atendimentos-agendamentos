@@ -9,34 +9,37 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from app.core.config import MetaEmbeddedSignupConfiguration
 from app.whatsapp.embedded_signup import MetaEmbeddedSignupRejected
 
 
-_STATE_CONTEXT = b"alovia-meta-embedded-signup-redirect-v1\0"
+_STATE_CONTEXT = b"alovia-meta-embedded-signup-redirect-v2\0"
 _MAX_STATE_LENGTH = 2048
+_CALLBACK_PATH = "/api/v1/whatsapp/onboarding/embedded-signup/redirect/callback"
 _RETURN_PATH = "/app/whatsapp/business"
+_RETURN_RESULTS = frozenset({"success", "cancelled", "error"})
 
 
 @dataclass(frozen=True, slots=True)
 class MetaEmbeddedSignupRedirectState:
     business_id: uuid.UUID
     attempt_id: uuid.UUID
-    redirect_uri: str
+    callback_uri: str
+    return_uri: str
     return_to_onboarding: bool
     expires_at: datetime
 
 
-def validate_meta_embedded_signup_redirect_uri(
+def validate_meta_embedded_signup_return_uri(
     value: str,
     *,
     allowed_origins: tuple[str, ...],
 ) -> str:
     candidate = value.strip()
     if not candidate or len(candidate) > 2048:
-        raise MetaEmbeddedSignupRejected("Meta redirect URI is invalid")
+        raise MetaEmbeddedSignupRejected("Meta return URI is invalid")
     try:
         parsed = urlsplit(candidate)
         if (
@@ -51,11 +54,33 @@ def validate_meta_embedded_signup_redirect_uri(
             raise ValueError
         _ = parsed.port
     except ValueError:
-        raise MetaEmbeddedSignupRejected("Meta redirect URI is invalid") from None
+        raise MetaEmbeddedSignupRejected("Meta return URI is invalid") from None
 
     origin = f"{parsed.scheme}://{parsed.netloc}"
     if origin not in allowed_origins:
-        raise MetaEmbeddedSignupRejected("Meta redirect URI is invalid")
+        raise MetaEmbeddedSignupRejected("Meta return URI is invalid")
+    return candidate
+
+
+def validate_meta_embedded_signup_callback_uri(value: str | None) -> str:
+    candidate = value.strip() if isinstance(value, str) else ""
+    if not candidate or len(candidate) > 2048:
+        raise MetaEmbeddedSignupRejected("Meta callback URI is invalid")
+    try:
+        parsed = urlsplit(candidate)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path != _CALLBACK_PATH
+            or (parsed.port is not None and parsed.port != 443)
+        ):
+            raise ValueError
+    except ValueError:
+        raise MetaEmbeddedSignupRejected("Meta callback URI is invalid") from None
     return candidate
 
 
@@ -64,16 +89,18 @@ def build_meta_embedded_signup_redirect_state(
     *,
     business_id: uuid.UUID,
     attempt_id: uuid.UUID,
-    redirect_uri: str,
+    callback_uri: str,
+    return_uri: str,
     return_to_onboarding: bool,
     expires_at: datetime,
 ) -> str:
     expiry = expires_at.astimezone(UTC)
     payload = {
-        "v": 1,
+        "v": 2,
         "business_id": str(business_id),
         "attempt_id": str(attempt_id),
-        "redirect_uri": redirect_uri,
+        "callback_uri": callback_uri,
+        "return_uri": return_uri,
         "return_to_onboarding": return_to_onboarding,
         "exp": int(expiry.timestamp()),
         "nonce": secrets.token_urlsafe(12),
@@ -114,16 +141,18 @@ def parse_meta_embedded_signup_redirect_state(
             raise ValueError
 
         payload = json.loads(_b64decode(encoded_payload).decode("utf-8"))
-        if not isinstance(payload, dict) or payload.get("v") != 1:
+        if not isinstance(payload, dict) or payload.get("v") != 2:
             raise ValueError
         business_id = uuid.UUID(str(payload["business_id"]))
         attempt_id = uuid.UUID(str(payload["attempt_id"]))
-        redirect_uri = payload["redirect_uri"]
+        callback_uri = payload["callback_uri"]
+        return_uri = payload["return_uri"]
         return_to_onboarding = payload["return_to_onboarding"]
         expiry_value = payload["exp"]
         nonce = payload["nonce"]
         if (
-            not isinstance(redirect_uri, str)
+            not isinstance(callback_uri, str)
+            or not isinstance(return_uri, str)
             or not isinstance(return_to_onboarding, bool)
             or not isinstance(expiry_value, int)
             or not isinstance(nonce, str)
@@ -152,7 +181,8 @@ def parse_meta_embedded_signup_redirect_state(
     return MetaEmbeddedSignupRedirectState(
         business_id=business_id,
         attempt_id=attempt_id,
-        redirect_uri=redirect_uri,
+        callback_uri=callback_uri,
+        return_uri=return_uri,
         return_to_onboarding=return_to_onboarding,
         expires_at=expires_at,
     )
@@ -162,12 +192,12 @@ def build_meta_embedded_signup_authorization_url(
     configuration: MetaEmbeddedSignupConfiguration,
     *,
     state: str,
-    redirect_uri: str,
+    callback_uri: str,
 ) -> str:
     params = {
         "client_id": configuration.app_id,
         "config_id": configuration.configuration_id,
-        "redirect_uri": redirect_uri,
+        "redirect_uri": callback_uri,
         "response_type": "code",
         "override_default_response_type": "true",
         "auth_type": "rerequest",
@@ -183,6 +213,28 @@ def build_meta_embedded_signup_authorization_url(
     return (
         f"https://www.facebook.com/{configuration.graph_version}/dialog/oauth?"
         f"{urlencode(params)}"
+    )
+
+
+def build_meta_embedded_signup_return_url(
+    state: MetaEmbeddedSignupRedirectState,
+    *,
+    result: str,
+) -> str:
+    if result not in _RETURN_RESULTS:
+        raise ValueError("Unsupported Meta return result")
+    parsed = urlsplit(state.return_uri)
+    query = {"meta_return": result}
+    if state.return_to_onboarding:
+        query["from"] = "onboarding"
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query),
+            "",
+        )
     )
 
 
