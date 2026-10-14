@@ -388,3 +388,150 @@ async def test_cancel_callback_redirects_cleanly_without_user_session(
     }
     assert "code=" not in location
     assert "state=" not in location
+
+
+@pytest.mark.asyncio
+async def test_success_callback_completes_server_side_and_returns_clean_url(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_settings = Settings(
+        _env_file=None,
+        ENVIRONMENT="test",
+        AUTH_JWT_SECRET="x" * 48,
+        PWA_ALLOWED_ORIGINS="https://alovia.netlify.app",
+        META_APP_ID="333333333333333",
+        META_EMBEDDED_SIGNUP_CONFIG_ID="444444444444444",
+        META_EMBEDDED_SIGNUP_VERSION="v4",
+        META_EMBEDDED_SIGNUP_REDIRECT_URI=CALLBACK_URI,
+        META_GRAPH_VERSION="v25.0",
+        META_APP_SECRET="synthetic-app-secret-for-redirect-tests",
+        GCP_PROJECT_ID="test-project",
+    )
+    state = build_meta_embedded_signup_redirect_state(
+        configuration(),
+        business_id=BUSINESS_ID,
+        attempt_id=ATTEMPT_ID,
+        callback_uri=CALLBACK_URI,
+        return_uri=RETURN_URI,
+        return_to_onboarding=False,
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
+    )
+    connection_id = uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    stages: list[str] = []
+    closed = False
+
+    class FakeAttempts:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def lock_business(self, business_id: uuid.UUID) -> None:
+            assert business_id == BUSINESS_ID
+
+        async def latest(self, business_id: uuid.UUID):
+            assert business_id == BUSINESS_ID
+            return None
+
+        async def active(self, business_id: uuid.UUID, *, for_update: bool):
+            assert business_id == BUSINESS_ID
+            assert for_update is True
+            return SimpleNamespace(
+                id=ATTEMPT_ID,
+                connection_id=connection_id,
+            )
+
+        async def mark_completing(
+            self,
+            business_id: uuid.UUID,
+            attempt_id: uuid.UUID,
+        ):
+            assert business_id == BUSINESS_ID
+            assert attempt_id == ATTEMPT_ID
+            stages.append("completing")
+
+        async def mark_connected(
+            self,
+            business_id: uuid.UUID,
+            attempt_id: uuid.UUID,
+        ):
+            assert business_id == BUSINESS_ID
+            assert attempt_id == ATTEMPT_ID
+            stages.append("connected")
+
+    class FakeAdministration:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_connection(
+            self,
+            business_id: uuid.UUID,
+            *,
+            for_update: bool,
+        ):
+            assert business_id == BUSINESS_ID
+            assert for_update is True
+            return SimpleNamespace(
+                id=connection_id,
+                status=SimpleNamespace(value="pending"),
+            )
+
+    class FakeService:
+        async def complete_coexistence(
+            self,
+            business_id: uuid.UUID,
+            authorization_code: SecretStr,
+            *,
+            waba_id_hint: str | None,
+            phone_number_id_hint: str | None,
+            redirect_uri: str,
+        ):
+            assert business_id == BUSINESS_ID
+            assert authorization_code.get_secret_value() == RAW_CODE
+            assert waba_id_hint is None
+            assert phone_number_id_hint is None
+            assert redirect_uri == CALLBACK_URI
+            stages.append("provider_completed")
+            return SimpleNamespace()
+
+    class FakeGateway:
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppOnboardingAttemptService",
+        FakeAttempts,
+    )
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        FakeAdministration,
+    )
+    monkeypatch.setattr(
+        public_pwa,
+        "_embedded_signup_service",
+        lambda _db, _configuration: (FakeService(), FakeGateway()),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    try:
+        response = await client.get(
+            "/api/v1/whatsapp/onboarding/embedded-signup/redirect/callback",
+            params={"state": state, "code": RAW_CODE},
+        )
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+    assert response.status_code == 303
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert stages == ["completing", "provider_completed", "connected"]
+    assert closed is True
+    location = response.headers["location"]
+    parsed = urlsplit(location)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "alovia.netlify.app"
+    assert parsed.path == "/app/whatsapp/business"
+    assert parse_qs(parsed.query) == {"meta_return": ["success"]}
+    assert RAW_CODE not in location
+    assert "state=" not in location
