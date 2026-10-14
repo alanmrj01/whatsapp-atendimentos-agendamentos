@@ -57,6 +57,7 @@ class MetaEmbeddedSignupConfiguration:
     embedded_signup_version: str
     app_secret: SecretStr
     gcp_project_id: str
+    redirect_uri: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +159,9 @@ class Settings(BaseSettings):
     )
     meta_embedded_signup_version: str | None = Field(
         default=None, validation_alias="META_EMBEDDED_SIGNUP_VERSION"
+    )
+    meta_embedded_signup_redirect_uri: str | None = Field(
+        default=None, validation_alias="META_EMBEDDED_SIGNUP_REDIRECT_URI"
     )
     meta_graph_version: str | None = Field(
         default=None,
@@ -335,6 +339,12 @@ class Settings(BaseSettings):
             embedded_signup_version=normalized["embedded_signup_version"],
             app_secret=self.meta_app_secret,
             gcp_project_id=normalized["gcp_project_id"],
+            redirect_uri=(
+                self.meta_embedded_signup_redirect_uri.strip()
+                if self.meta_embedded_signup_redirect_uri
+                and self.meta_embedded_signup_redirect_uri.strip()
+                else None
+            ),
         )
 
     def require_cloud_tasks_configuration(self) -> CloudTasksConfiguration:

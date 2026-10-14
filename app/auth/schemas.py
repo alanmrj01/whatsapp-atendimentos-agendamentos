@@ -194,6 +194,17 @@ class MetaEmbeddedSignupStartResponse(BaseModel):
     mode: Literal["coexistence"] = "coexistence"
 
 
+class MetaEmbeddedSignupRedirectStartRequest(StrictRequest):
+    attempt_id: UUID
+    return_uri: str = Field(min_length=1, max_length=2048)
+    return_to_onboarding: bool = Field(default=False, strict=True)
+
+
+class MetaEmbeddedSignupRedirectStartResponse(BaseModel):
+    attempt_id: UUID
+    authorization_url: str
+
+
 MetaEmbeddedSignupTelemetryStage = Literal[
     "sdk_ready",
     "login_opened",
