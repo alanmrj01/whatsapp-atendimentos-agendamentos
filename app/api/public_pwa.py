@@ -958,12 +958,12 @@ async def complete_meta_embedded_signup_redirect(
     if not code:
         try:
             await attempts.lock_business(business_id)
+            current = await administration.get_connection(
+                business_id,
+                for_update=True,
+            )
             active = await attempts.active(business_id, for_update=True)
             if active is not None and active.id == attempt_id:
-                current = await administration.get_connection(
-                    business_id,
-                    for_update=True,
-                )
                 await attempts.mark_authorization_incomplete(
                     business_id,
                     attempt_id,
