@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 from pydantic import SecretStr, ValidationError
 
+from app.api import public_pwa
 from app.auth.schemas import MetaEmbeddedSignupRedirectStartRequest
 from app.core.config import MetaEmbeddedSignupConfiguration, Settings, get_settings
 from app.main import app
@@ -271,3 +273,118 @@ async def test_public_callback_requires_valid_signed_state_not_user_auth(
     )
     assert missing.status_code != 401
     assert tampered.status_code != 401
+
+
+@pytest.mark.asyncio
+async def test_cancel_callback_redirects_cleanly_without_user_session(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_settings = Settings(
+        _env_file=None,
+        ENVIRONMENT="test",
+        AUTH_JWT_SECRET="x" * 48,
+        PWA_ALLOWED_ORIGINS="https://alovia.netlify.app",
+        META_APP_ID="333333333333333",
+        META_EMBEDDED_SIGNUP_CONFIG_ID="444444444444444",
+        META_EMBEDDED_SIGNUP_VERSION="v4",
+        META_EMBEDDED_SIGNUP_REDIRECT_URI=CALLBACK_URI,
+        META_GRAPH_VERSION="v25.0",
+        META_APP_SECRET="synthetic-app-secret-for-redirect-tests",
+        GCP_PROJECT_ID="test-project",
+    )
+    state = build_meta_embedded_signup_redirect_state(
+        configuration(),
+        business_id=BUSINESS_ID,
+        attempt_id=ATTEMPT_ID,
+        callback_uri=CALLBACK_URI,
+        return_uri=RETURN_URI,
+        return_to_onboarding=True,
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
+    )
+    connection_id = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+    class FakeAttempts:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def lock_business(self, business_id: uuid.UUID) -> None:
+            assert business_id == BUSINESS_ID
+
+        async def active(self, business_id: uuid.UUID, *, for_update: bool):
+            assert business_id == BUSINESS_ID
+            assert for_update is True
+            return SimpleNamespace(
+                id=ATTEMPT_ID,
+                connection_id=connection_id,
+            )
+
+        async def mark_authorization_incomplete(
+            self,
+            business_id: uuid.UUID,
+            attempt_id: uuid.UUID,
+        ):
+            assert business_id == BUSINESS_ID
+            assert attempt_id == ATTEMPT_ID
+
+    class FakeAdministration:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_connection(
+            self,
+            business_id: uuid.UUID,
+            *,
+            for_update: bool,
+        ):
+            assert business_id == BUSINESS_ID
+            assert for_update is True
+            return SimpleNamespace(
+                id=connection_id,
+                status=SimpleNamespace(value="pending"),
+            )
+
+        async def mark_onboarding_error(
+            self,
+            business_id: uuid.UUID,
+            error_code: str,
+        ) -> None:
+            assert business_id == BUSINESS_ID
+            assert error_code == "META_AUTHORIZATION_INCOMPLETE"
+
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppOnboardingAttemptService",
+        FakeAttempts,
+    )
+    monkeypatch.setattr(
+        public_pwa,
+        "WhatsAppConnectionAdministrationService",
+        FakeAdministration,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    try:
+        response = await client.get(
+            "/api/v1/whatsapp/onboarding/embedded-signup/redirect/callback",
+            params={
+                "state": state,
+                "error": "access_denied",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+    assert response.status_code == 303
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    location = response.headers["location"]
+    parsed = urlsplit(location)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "alovia.netlify.app"
+    assert parsed.path == "/app/whatsapp/business"
+    assert parse_qs(parsed.query) == {
+        "meta_return": ["cancelled"],
+        "from": ["onboarding"],
+    }
+    assert "code=" not in location
+    assert "state=" not in location
