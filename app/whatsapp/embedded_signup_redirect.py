@@ -25,6 +25,7 @@ class MetaEmbeddedSignupRedirectState:
     business_id: UUID
     attempt_id: UUID
     redirect_uri: str
+    return_uri: str
 
 
 def build_meta_embedded_signup_redirect(
@@ -33,6 +34,7 @@ def build_meta_embedded_signup_redirect(
     business_id: UUID,
     attempt_id: UUID,
     redirect_uri: str,
+    return_uri: str,
     now: datetime | None = None,
 ) -> tuple[str, str]:
     state = _encode_state(
@@ -40,6 +42,7 @@ def build_meta_embedded_signup_redirect(
         business_id=business_id,
         attempt_id=attempt_id,
         redirect_uri=redirect_uri,
+        return_uri=return_uri,
         now=now,
     )
     params = {
@@ -84,13 +87,13 @@ def decode_meta_embedded_signup_redirect_state(
         raise MetaEmbeddedSignupRedirectError("Meta redirect state is invalid")
     try:
         payload = json.loads(_b64decode(encoded_payload).decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+    except (UnicodeDecodeError, ValueError):
         raise MetaEmbeddedSignupRedirectError("Meta redirect state is invalid") from None
     if not isinstance(payload, dict) or payload.get("v") != 1:
         raise MetaEmbeddedSignupRedirectError("Meta redirect state is invalid")
     current = now or datetime.now(UTC)
     expires_at = payload.get("exp")
-    if not isinstance(expires_at, int) or expires_at < int(current.timestamp()):
+    if not isinstance(expires_at, int) or expires_at <= int(current.timestamp()):
         raise MetaEmbeddedSignupRedirectError("Meta redirect state expired")
     try:
         business_id = UUID(str(payload["business_id"]))
@@ -98,12 +101,19 @@ def decode_meta_embedded_signup_redirect_state(
     except (KeyError, TypeError, ValueError):
         raise MetaEmbeddedSignupRedirectError("Meta redirect state is invalid") from None
     redirect_uri = payload.get("redirect_uri")
-    if not isinstance(redirect_uri, str) or not (1 <= len(redirect_uri) <= 2048):
+    return_uri = payload.get("return_uri")
+    if (
+        not isinstance(redirect_uri, str)
+        or not (1 <= len(redirect_uri) <= 2048)
+        or not isinstance(return_uri, str)
+        or not (1 <= len(return_uri) <= 2048)
+    ):
         raise MetaEmbeddedSignupRedirectError("Meta redirect state is invalid")
     return MetaEmbeddedSignupRedirectState(
         business_id=business_id,
         attempt_id=attempt_id,
         redirect_uri=redirect_uri,
+        return_uri=return_uri,
     )
 
 
@@ -113,6 +123,7 @@ def _encode_state(
     business_id: UUID,
     attempt_id: UUID,
     redirect_uri: str,
+    return_uri: str,
     now: datetime | None,
 ) -> str:
     current = now or datetime.now(UTC)
@@ -121,6 +132,7 @@ def _encode_state(
         "business_id": str(business_id),
         "attempt_id": str(attempt_id),
         "redirect_uri": redirect_uri,
+        "return_uri": return_uri,
         "exp": int((current + META_REDIRECT_STATE_TTL).timestamp()),
         "nonce": secrets.token_urlsafe(12),
     }
