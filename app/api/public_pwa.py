@@ -948,6 +948,10 @@ async def complete_meta_embedded_signup_redirect(
                 result=result,
             ),
             status_code=status.HTTP_303_SEE_OTHER,
+            headers={
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+            },
         )
 
     business_id = redirect_state.business_id
