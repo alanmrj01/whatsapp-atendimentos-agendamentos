@@ -893,11 +893,16 @@ async def start_meta_embedded_signup_redirect(
             attempt_id=active.id,
             redirect_uri=redirect_uri,
         )
-        await attempts.record_event(
+        observed = await attempts.record_event(
             business.business_id,
             active.id,
             stage="login_opened",
         )
+        if observed.state == "expired":
+            raise HTTPException(
+                409,
+                "WhatsApp onboarding attempt is no longer active",
+            )
         await db.commit()
     except HTTPException:
         await db.rollback()
