@@ -196,15 +196,12 @@ class MetaEmbeddedSignupStartResponse(BaseModel):
 
 class MetaEmbeddedSignupRedirectStartRequest(StrictRequest):
     attempt_id: UUID
+    return_to_onboarding: bool = Field(default=False, strict=True)
 
 
 class MetaEmbeddedSignupRedirectStartResponse(BaseModel):
     attempt_id: UUID
     authorization_url: str
-
-
-class MetaEmbeddedSignupRedirectCancelRequest(StrictRequest):
-    state: str = Field(min_length=1, max_length=4096)
 
 
 MetaEmbeddedSignupTelemetryStage = Literal[
@@ -247,7 +244,6 @@ class MetaEmbeddedSignupAssetsRequest(StrictRequest):
 
 class MetaEmbeddedSignupCompleteRequest(StrictRequest):
     attempt_id: UUID | None = None
-    redirect_state: str | None = Field(default=None, min_length=1, max_length=4096)
     authorization_code: SecretStr = Field(min_length=1, max_length=4096)
     # SessionInfo is helpful but not authoritative: browsers can lose the
     # postMessage while still receiving the OAuth code. The backend can
