@@ -1277,6 +1277,7 @@ class FakeGateway:
         assert hints == {
             "waba_id_hint": WABA_ID,
             "phone_number_id_hint": PHONE_ID,
+            "redirect_uri": "",
         }
         return MetaAuthorizedAssets(
             access_token=SecretStr(RAW_TOKEN),
