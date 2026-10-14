@@ -19,7 +19,11 @@ from app.whatsapp.embedded_signup_redirect import (
 
 BUSINESS_ID = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 ATTEMPT_ID = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-REDIRECT_URI = "https://alovia.netlify.app/app/whatsapp/meta-return"
+REDIRECT_URI = (
+    "https://alovia.netlify.app/api/v1/whatsapp/onboarding/"
+    "embedded-signup/redirect/callback"
+)
+RETURN_URI = "https://alovia.netlify.app/app/whatsapp/business?from=onboarding"
 
 
 def configuration() -> MetaEmbeddedSignupConfiguration:
@@ -40,6 +44,7 @@ def test_redirect_url_is_full_page_oauth_and_preserves_coexistence() -> None:
         business_id=BUSINESS_ID,
         attempt_id=ATTEMPT_ID,
         redirect_uri=REDIRECT_URI,
+        return_uri=RETURN_URI,
         now=now,
     )
 
@@ -66,6 +71,7 @@ def test_redirect_url_is_full_page_oauth_and_preserves_coexistence() -> None:
     assert decoded.business_id == BUSINESS_ID
     assert decoded.attempt_id == ATTEMPT_ID
     assert decoded.redirect_uri == REDIRECT_URI
+    assert decoded.return_uri == RETURN_URI
 
 
 def test_redirect_state_rejects_tampering_and_expiry() -> None:
@@ -75,6 +81,7 @@ def test_redirect_state_rejects_tampering_and_expiry() -> None:
         business_id=BUSINESS_ID,
         attempt_id=ATTEMPT_ID,
         redirect_uri=REDIRECT_URI,
+        return_uri=RETURN_URI,
         now=now,
     )
     payload, signature = state.split(".", 1)
