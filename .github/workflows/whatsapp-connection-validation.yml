@@ -18,6 +18,7 @@ on:
       - 'alembic/versions/**'
       - 'tests/integration/test_auth_postgresql.py'
       - 'tests/test_meta_embedded_signup.py'
+      - 'tests/test_meta_embedded_signup_redirect.py'
       - 'tests/test_reengagement.py'
       - 'tests/test_whatsapp_onboarding.py'
       - 'tests/test_web_push.py'
@@ -67,6 +68,7 @@ jobs:
         run: >-
           pytest
           tests/test_meta_embedded_signup.py
+          tests/test_meta_embedded_signup_redirect.py
           tests/test_reengagement.py
           tests/test_whatsapp_onboarding.py
           tests/test_web_push.py
