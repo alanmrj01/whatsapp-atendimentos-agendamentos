@@ -272,24 +272,37 @@ somente para empresas ainda sem registro novo.
 ### Embedded Signup em coexistência
 
 O fluxo público autenticado aceita somente empresas `paid` e papéis `owner/admin`.
-O PWA recebe apenas App ID, Configuration ID e versão Graph, abre o Facebook Login
-for Business com `featureType=whatsapp_business_app_onboarding` e envia ao backend
-o código curto e os identificadores devolvidos pela sessão. O backend troca o
-código, confirma o WABA e o telefone na Graph API, assina o app no WABA, grava o
-token como uma nova versão no Secret Manager e conclui a conexão como
-`connected/coexistence`. O número retornado ao PWA é mascarado.
+Para coexistência, o PWA cria uma tentativa no backend e recebe uma URL HTTPS
+temporária do Facebook Login for Business com
+`featureType=whatsapp_business_app_onboarding`. O navegador inteiro navega para
+essa URL em mobile, PWA instalada e desktop; não há dependência de popup,
+`window.opener` ou `postMessage` para concluir a autorização.
+
+A Meta retorna o `authorization code` diretamente ao callback HTTPS do backend,
+nunca à URL do PWA. O callback valida um `state` HMAC com expiração e vinculado à
+empresa, tentativa, callback e URL de retorno; depois troca o código usando
+exatamente o mesmo `redirect_uri`, descobre WABA/telefone na Graph API, assina o
+app no WABA, grava o token como nova versão no Secret Manager e conclui a conexão.
+Somente então o backend redireciona o navegador de volta para uma URL limpa da
+Alovia. O fluxo antigo do JavaScript SDK continua disponível para caminhos que
+ainda dependem dele, como o modo API-only.
 
 Configure no Cloud Run `META_APP_ID`, `META_EMBEDDED_SIGNUP_CONFIG_ID`,
-`META_EMBEDDED_SIGNUP_VERSION` (o sample oficial atual recomenda `v4`) e
-`META_GRAPH_VERSION`; mantenha `META_APP_SECRET` exclusivamente no Secret Manager
-do serviço e defina `GCP_PROJECT_ID`. A service account do backend precisa de
-permissão para criar secrets e adicionar/acessar versões no projeto. No painel da
-Meta, o domínio HTTPS do PWA deve estar nos domínios permitidos do JavaScript SDK
-e nos OAuth Redirect URIs, a configuração deve ser do WhatsApp Embedded Signup e
-o app deve ter as permissões aprovadas `whatsapp_business_management` e
-`whatsapp_business_messaging`. O webhook do app deve continuar inscrito em
-`messages`; para Coexistence, habilite também os campos oficiais necessários ao
-espelhamento, incluindo `smb_message_echoes`.
+`META_EMBEDDED_SIGNUP_VERSION`, `META_GRAPH_VERSION` e
+`META_EMBEDDED_SIGNUP_REDIRECT_URI`. Em produção, o último valor deve ser a URL
+HTTPS exata
+`/api/v1/whatsapp/onboarding/embedded-signup/redirect/callback` do serviço
+público estável. Mantenha `META_APP_SECRET` exclusivamente no Secret Manager e
+defina `GCP_PROJECT_ID`. A service account do backend precisa de permissão para
+criar secrets e adicionar/acessar versões no projeto.
+
+No painel da Meta, cadastre exatamente o mesmo
+`META_EMBEDDED_SIGNUP_REDIRECT_URI` em **Valid OAuth Redirect URIs**. O domínio
+HTTPS do PWA permanece nas origens/domínios permitidos e a configuração deve ser
+do WhatsApp Embedded Signup com as permissões aprovadas
+`whatsapp_business_management` e `whatsapp_business_messaging`. O webhook do app
+deve continuar inscrito em `messages`; para Coexistence, habilite também os
+campos oficiais necessários ao espelhamento, incluindo `smb_message_echoes`.
 
 A `0005` deve ser validada com upgrade/downgrade em PostgreSQL local descartável.
 Ela não é aplicada automaticamente no startup e não deve ser aplicada ao
