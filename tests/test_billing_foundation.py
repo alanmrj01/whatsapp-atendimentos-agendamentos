@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import SecretStr, ValidationError
 
-from app.billing.asaas import AsaasGateway, AsaasGatewayError
+from app.billing.asaas import AsaasGateway, AsaasGatewayError, AsaasGatewayTimeoutError
 from app.billing.catalog import (
     BillingCatalogConfigurationError,
     get_offer,
@@ -1554,3 +1554,266 @@ async def test_cancel_pix_gateway_uses_official_delete_contract() -> None:
             {"allow_empty_response": True, "allow_not_found": True},
         )
     ]
+
+@pytest.mark.asyncio
+async def test_pix_authorization_timeout_stays_creating_and_blocks_second_attempt(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+
+    class TimeoutGateway(_CheckoutGateway):
+        async def create_pix_authorization(self, payload):
+            self.pix_creates += 1
+            raise AsaasGatewayTimeoutError("provider timeout")
+
+    db = _CheckoutCreateDb()
+    gateway = TimeoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    with pytest.raises(HTTPException) as first:
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request(),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+
+    assert first.value.status_code == 502
+    assert first.value.detail == "Pix Automatic authorization is being reconciled"
+    assert len(db.checkouts) == 1
+    assert db.checkouts[0].status == "creating"
+    assert gateway.pix_creates == 1
+
+    with pytest.raises(HTTPException) as second:
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request(),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+
+    assert second.value.status_code == 409
+    assert gateway.pix_creates == 1
+
+
+@pytest.mark.asyncio
+async def test_pix_authorization_webhook_recovers_timeout_checkout_by_contract_id(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    checkout = _pix_checkout()
+    checkout.status = "creating"
+    checkout.provider_authorization_id = None
+    checkout.provider_subscription_id = None
+    checkout.provider_customer_id = None
+    checkout.pix_qr_payload = None
+    checkout.pix_conciliation_identifier = None
+    checkout.pix_qr_expires_at = None
+
+    class ContractRecoveryDb(_BillingStateDb):
+        async def scalar(self, statement):
+            if "billing_checkouts.provider_authorization_id =" in str(statement):
+                return None
+            return await super().scalar(statement)
+
+    db = ContractRecoveryDb(checkout)
+    service = BillingService(db, _GatewayMustNotBeCalled())
+
+    await service.apply_pix_authorization_event(
+        "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CREATED",
+        {
+            "id": "auth_recovered",
+            "contractId": checkout.id.hex,
+            "customerId": "cus_recovered",
+            "subscriptionId": "sub_recovered",
+            "payload": "pix-recovered",
+            "immediateQrCode": {
+                "conciliationIdentifier": "conciliation-recovered",
+                "expirationDate": "2026-10-16 18:00:00",
+            },
+        },
+    )
+
+    assert checkout.status == "active"
+    assert checkout.provider_authorization_id == "auth_recovered"
+    assert checkout.provider_subscription_id == "sub_recovered"
+    assert checkout.provider_customer_id == "cus_recovered"
+    assert checkout.pix_qr_payload == "pix-recovered"
+    assert checkout.pix_conciliation_identifier == "conciliation-recovered"
+    assert checkout.pix_qr_expires_at is not None
+    assert db.locks == 1
+
+
+@pytest.mark.asyncio
+async def test_pix_authorization_webhook_ignores_invalid_contract_id(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    checkout = _pix_checkout()
+    checkout.status = "creating"
+    checkout.provider_authorization_id = None
+
+    class MissingAuthorizationDb(_BillingStateDb):
+        async def scalar(self, statement):
+            if "billing_checkouts.provider_authorization_id =" in str(statement):
+                return None
+            return await super().scalar(statement)
+
+    db = MissingAuthorizationDb(checkout)
+    service = BillingService(db, _GatewayMustNotBeCalled())
+
+    await service.apply_pix_authorization_event(
+        "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CREATED",
+        {"id": "auth_unknown", "contractId": "not-a-valid-contract"},
+    )
+
+    assert checkout.provider_authorization_id is None
+    assert checkout.status == "creating"
+    assert db.locks == 0
+
+
+@pytest.mark.asyncio
+async def test_native_card_submit_is_serialized_and_provider_called_once(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    monkeypatch.setenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", "true")
+
+    checkout = SimpleNamespace(
+        id=uuid4(),
+        business_id=uuid4(),
+        payment_method="credit_card",
+        provider_environment="sandbox",
+        provider_checkout_id=None,
+        provider_subscription_id=None,
+        provider_customer_id=None,
+        checkout_url=None,
+        plan_code="basic",
+        billing_cycle="monthly",
+        amount_cents=500,
+        status="active",
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        paid_at=None,
+        created_at=datetime.now(UTC),
+    )
+    db = _BillingStateDb(checkout)
+
+    class CardGateway:
+        def __init__(self):
+            self.subscription_creates = 0
+
+        async def find_customer(self, **kwargs):
+            return "cus_card"
+
+        async def create_customer(self, **kwargs):
+            raise AssertionError("Existing customer should be reused")
+
+        async def create_credit_card_subscription(self, payload):
+            self.subscription_creates += 1
+            return SimpleNamespace(subscription_id="sub_card_once")
+
+        async def payments_for_subscription(self, subscription_id):
+            return []
+
+        async def find_subscription(self, **kwargs):
+            return None
+
+    gateway = CardGateway()
+    service = BillingService(db, gateway)
+    request = CreditCardCheckoutRequest(
+        payer_name="Teste Alovia",
+        payer_cpf_cnpj="12345678909",
+        payer_postal_code="12235740",
+        payer_address_number="160",
+        payer_phone="11999999999",
+        card_holder_name="TESTE ALOVIA",
+        card_number="4444444444444444",
+        card_expiry_month="10",
+        card_expiry_year="2030",
+        card_ccv="123",
+    )
+
+    first = await service.pay_credit_card(
+        business_id=checkout.business_id,
+        payer_email="teste@example.com",
+        checkout_id=checkout.id,
+        payload=request,
+        remote_ip="203.0.113.10",
+    )
+    second = await service.pay_credit_card(
+        business_id=checkout.business_id,
+        payer_email="teste@example.com",
+        checkout_id=checkout.id,
+        payload=request,
+        remote_ip="203.0.113.10",
+    )
+
+    assert first.status == "active"
+    assert second.status == "active"
+    assert gateway.subscription_creates == 1
+    assert db.locks == 2
+
+
+@pytest.mark.asyncio
+async def test_active_subscription_blocks_native_card_provider_call(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", "true")
+
+    checkout = SimpleNamespace(
+        id=uuid4(),
+        business_id=uuid4(),
+        payment_method="credit_card",
+        provider_environment="sandbox",
+        provider_checkout_id=None,
+        provider_subscription_id=None,
+        provider_customer_id=None,
+        checkout_url=None,
+        plan_code="basic",
+        billing_cycle="monthly",
+        amount_cents=500,
+        status="active",
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        paid_at=None,
+        created_at=datetime.now(UTC),
+    )
+    db = _BillingStateDb(checkout)
+    db.subscription = SimpleNamespace(
+        id=uuid4(),
+        checkout_id=uuid4(),
+        business_id=checkout.business_id,
+        provider_environment="sandbox",
+        status="active",
+        created_at=datetime.now(UTC),
+    )
+
+    class Gateway:
+        def __getattr__(self, name):
+            raise AssertionError(f"Provider must not be called: {name}")
+
+    request = CreditCardCheckoutRequest(
+        payer_name="Teste Alovia",
+        payer_cpf_cnpj="12345678909",
+        payer_postal_code="12235740",
+        payer_address_number="160",
+        payer_phone="11999999999",
+        card_holder_name="TESTE ALOVIA",
+        card_number="4444444444444444",
+        card_expiry_month="10",
+        card_expiry_year="2030",
+        card_ccv="123",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await BillingService(db, Gateway()).pay_credit_card(
+            business_id=checkout.business_id,
+            payer_email="teste@example.com",
+            checkout_id=checkout.id,
+            payload=request,
+            remote_ip="203.0.113.10",
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Commercial subscription is already active"
+    assert db.locks == 1
+
