@@ -138,7 +138,7 @@ def upgrade() -> None:
         postgresql_where=sa.text(f"state IN ({ACTIVE_STATES})"),
     )
     op.execute(
-        'ALTER TABLE public."whatsapp_onboarding_attempts" ENABLE ROW LEVEL SECURITY'
+        'ALTER TABLE "whatsapp_onboarding_attempts" ENABLE ROW LEVEL SECURITY'
     )
 
     op.create_table(
@@ -201,13 +201,13 @@ def upgrade() -> None:
         ["business_id", "created_at"],
     )
     op.execute(
-        'ALTER TABLE public."whatsapp_onboarding_attempt_events" ENABLE ROW LEVEL SECURITY'
+        'ALTER TABLE "whatsapp_onboarding_attempt_events" ENABLE ROW LEVEL SECURITY'
     )
 
 
 def downgrade() -> None:
     op.execute(
-        'ALTER TABLE public."whatsapp_onboarding_attempt_events" DISABLE ROW LEVEL SECURITY'
+        'ALTER TABLE "whatsapp_onboarding_attempt_events" DISABLE ROW LEVEL SECURITY'
     )
     op.drop_index(
         "ix_whatsapp_onboarding_attempt_events_business_created",
@@ -220,7 +220,7 @@ def downgrade() -> None:
     op.drop_table("whatsapp_onboarding_attempt_events")
 
     op.execute(
-        'ALTER TABLE public."whatsapp_onboarding_attempts" DISABLE ROW LEVEL SECURITY'
+        'ALTER TABLE "whatsapp_onboarding_attempts" DISABLE ROW LEVEL SECURITY'
     )
     op.drop_index(
         "ix_whatsapp_onboarding_attempts_expires_active",
