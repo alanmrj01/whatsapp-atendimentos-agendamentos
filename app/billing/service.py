@@ -230,6 +230,20 @@ class BillingService:
                     offer=offer,
                     return_origin=payload.return_origin,
                 )
+        except AsaasGatewayTimeoutError:
+            if payload.payment_method == "pix_automatic":
+                # The provider may have created the authorization even when its
+                # response did not reach us. Keep this checkout blocking until
+                # a webhook reconciles contractId, rather than allowing a
+                # second financial attempt.
+                checkout.status = "creating"
+                await self.db.commit()
+                raise HTTPException(
+                    502, "Pix Automatic authorization is being reconciled"
+                ) from None
+            checkout.status = "failed"
+            await self.db.commit()
+            raise HTTPException(502, "Payment checkout is temporarily unavailable") from None
         except AsaasGatewayError:
             checkout.status = "failed"
             await self.db.commit()
@@ -347,6 +361,10 @@ class BillingService:
                 "Admin full access is active; a paid plan is not required",
             )
 
+        # Serialize the entire native-card financial attempt. In particular, do
+        # not commit after switching the checkout to "creating": that would
+        # release the transaction-scoped advisory lock before the provider call.
+        await self._lock_business_checkout(business_id)
         checkout = await self.db.get(BillingCheckout, checkout_id)
         if (
             checkout is None
@@ -354,8 +372,10 @@ class BillingService:
             or checkout.provider_environment != self.provider_environment
             or checkout.payment_method != "credit_card"
         ):
+            await self.db.rollback()
             raise HTTPException(404, "Checkout not found")
         if checkout.checkout_url is not None:
+            await self.db.rollback()
             raise HTTPException(409, "Checkout is not a native card session")
         if checkout.status == "paid":
             return CreditCardCheckoutResponse(
@@ -363,12 +383,22 @@ class BillingService:
                 status="paid",
                 expires_at=checkout.expires_at,
             )
+
+        active_subscription = await self._active_subscription_for_business(business_id)
+        if (
+            active_subscription is not None
+            and active_subscription.checkout_id != checkout.id
+        ):
+            await self.db.rollback()
+            raise HTTPException(409, "Commercial subscription is already active")
+
         if checkout.expires_at is not None and checkout.expires_at <= datetime.now(UTC):
             if checkout.status != "creating":
                 checkout.status = "expired"
                 await self.db.commit()
             raise HTTPException(409, "Checkout expired")
         if checkout.status in {"canceled", "expired", "failed"}:
+            await self.db.rollback()
             raise HTTPException(409, "Checkout is no longer available")
         if checkout.provider_subscription_id:
             return CreditCardCheckoutResponse(
@@ -408,13 +438,13 @@ class BillingService:
                     external_reference=customer_reference,
                 )
         except AsaasGatewayError:
+            await self.db.rollback()
             raise HTTPException(
                 502, "Payment service is temporarily unavailable"
             ) from None
 
         checkout.provider_customer_id = customer_id
         checkout.status = "creating"
-        await self.db.commit()
 
         offer = get_offer(checkout.plan_code, checkout.billing_cycle)
         provider_payload = {
@@ -707,8 +737,13 @@ class BillingService:
 
     async def apply_pix_authorization_event(self, event_type: str, payload: dict) -> None:
         provider_id = payload.get("id")
-        if not isinstance(provider_id, str) or not provider_id:
+        if (
+            not isinstance(provider_id, str)
+            or not provider_id
+            or len(provider_id) > 100
+        ):
             return
+
         checkout = await self.db.scalar(
             select(BillingCheckout).where(
                 BillingCheckout.provider_authorization_id == provider_id,
@@ -716,9 +751,49 @@ class BillingService:
                 BillingCheckout.provider_environment == self.provider_environment,
             )
         )
+
+        # A create-authorization timeout has an uncertain outcome. Asaas echoes
+        # our deterministic checkout UUID in authorization.contractId, allowing
+        # the webhook to bind the provider authorization back to the local
+        # checkout without opening a second payment attempt.
         if checkout is None:
-            return
+            contract_id = payload.get("contractId")
+            if (
+                not isinstance(contract_id, str)
+                or len(contract_id) != 32
+                or any(ch not in "0123456789abcdefABCDEF" for ch in contract_id)
+            ):
+                return
+            try:
+                checkout_id = UUID(hex=contract_id)
+            except ValueError:
+                return
+            checkout = await self.db.get(BillingCheckout, checkout_id)
+            if (
+                checkout is None
+                or checkout.payment_method != "pix_automatic"
+                or checkout.provider_environment != self.provider_environment
+            ):
+                return
+
         await self._lock_business_checkout(checkout.business_id)
+        checkout = await self.db.get(BillingCheckout, checkout.id)
+        if (
+            checkout is None
+            or checkout.payment_method != "pix_automatic"
+            or checkout.provider_environment != self.provider_environment
+        ):
+            return
+        if (
+            checkout.provider_authorization_id is not None
+            and checkout.provider_authorization_id != provider_id
+        ):
+            logger.warning(
+                "asaas_pix_authorization_id_conflict",
+                extra={"provider_environment": self.provider_environment},
+            )
+            return
+        checkout.provider_authorization_id = provider_id
 
         provider_subscription_id = payload.get("subscriptionId")
         if (
@@ -726,7 +801,49 @@ class BillingService:
             and provider_subscription_id
             and len(provider_subscription_id) <= 80
         ):
+            if (
+                checkout.provider_subscription_id is not None
+                and checkout.provider_subscription_id != provider_subscription_id
+            ):
+                logger.warning(
+                    "asaas_pix_subscription_id_conflict",
+                    extra={"provider_environment": self.provider_environment},
+                )
+                return
             checkout.provider_subscription_id = provider_subscription_id
+
+        customer_id = payload.get("customerId")
+        if isinstance(customer_id, str) and 0 < len(customer_id) <= 80:
+            if (
+                checkout.provider_customer_id is not None
+                and checkout.provider_customer_id != customer_id
+            ):
+                logger.warning(
+                    "asaas_pix_customer_id_conflict",
+                    extra={"provider_environment": self.provider_environment},
+                )
+                return
+            checkout.provider_customer_id = customer_id
+
+        immediate = payload.get("immediateQrCode")
+        if isinstance(immediate, dict):
+            expires_at = _parse_provider_datetime(immediate.get("expirationDate"))
+            if expires_at is not None:
+                checkout.pix_qr_expires_at = expires_at
+                checkout.expires_at = expires_at
+            conciliation = immediate.get("conciliationIdentifier")
+            if isinstance(conciliation, str) and 0 < len(conciliation) <= 100:
+                checkout.pix_conciliation_identifier = conciliation
+
+        qr_payload = payload.get("payload")
+        if not isinstance(qr_payload, str) and isinstance(immediate, dict):
+            qr_payload = immediate.get("payload")
+        if (
+            isinstance(qr_payload, str)
+            and qr_payload.strip()
+            and len(qr_payload) <= 8_000
+        ):
+            checkout.pix_qr_payload = qr_payload
 
         if event_type == "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED":
             if not self._valid_pix_authorization(checkout, payload):
@@ -1185,6 +1302,18 @@ def _parse_due_date(value: object) -> date | None:
         return date.fromisoformat(value[:10])
     except ValueError:
         return None
+
+
+def _parse_provider_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or len(value) > 40:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace(" ", "T", 1))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=BRAZIL_TZ)
+    return parsed.astimezone(UTC)
 
 
 def _cycle_end(anchor: datetime, cycle: str) -> datetime:
