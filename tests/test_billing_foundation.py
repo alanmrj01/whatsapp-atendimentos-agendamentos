@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import SecretStr, ValidationError
 
-from app.billing.asaas import AsaasGateway
+from app.billing.asaas import AsaasGateway, AsaasGatewayError
 from app.billing.catalog import (
     BillingCatalogConfigurationError,
     get_offer,
@@ -345,7 +345,16 @@ class _BillingStateDb:
         self.push_events = []
         self.commits = 0
         self.rollbacks = 0
+        self.locks = 0
         self.subscription_adds = 0
+
+    async def execute(self, statement, parameters):
+        assert "pg_advisory_xact_lock" in str(statement)
+        assert parameters["lock_key"] == (
+            f"alovia:billing:{self.checkout.provider_environment}:"
+            f"{self.checkout.business_id}"
+        )
+        self.locks += 1
 
     async def scalar(self, statement):
         sql = str(statement)
@@ -714,6 +723,7 @@ async def test_legacy_admin_paid_access_blocks_native_card_before_provider(monke
 class _CheckoutCreateDb:
     def __init__(self) -> None:
         self.checkouts: list[BillingCheckout] = []
+        self.subscription = None
         self.commits = 0
         self.rollbacks = 0
         self.locks = 0
@@ -736,15 +746,25 @@ class _CheckoutCreateDb:
                 (checkout for checkout in self.checkouts if checkout.idempotency_key == key),
                 None,
             )
+        if "FROM commercial_subscriptions" in sql:
+            return self.subscription
         if "FROM billing_checkouts" in sql:
             candidates = [
                 checkout
                 for checkout in self.checkouts
                 if checkout.provider_environment == "sandbox"
-                and checkout.payment_method == "pix_automatic"
                 and (
                     checkout.status in {"creating", "active"}
-                    or (checkout.paid_at is not None and checkout.status != "paid")
+                    or (
+                        checkout.payment_method == "pix_automatic"
+                        and checkout.paid_at is not None
+                        and checkout.status != "paid"
+                    )
+                    or (
+                        checkout.payment_method == "pix_automatic"
+                        and checkout.status == "expired"
+                        and checkout.provider_authorization_id is not None
+                    )
                 )
             ]
             return candidates[-1] if candidates else None
@@ -904,6 +924,161 @@ async def test_active_pix_blocks_card_until_canceled(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_active_card_blocks_pix_before_provider_creation(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request(),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "A card checkout is already active"
+    assert gateway.pix_creates == 0
+    assert gateway.card_creates == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payment_method", ["pix_automatic", "credit_card"])
+async def test_active_commercial_subscription_blocks_new_acquisition(
+    monkeypatch, payment_method
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    db.subscription = SimpleNamespace(status="active")
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+
+    with pytest.raises(HTTPException) as error:
+        await service.create_checkout(
+            business_id=uuid4(),
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request(payment_method),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Commercial subscription is already active"
+    assert gateway.pix_creates == 0
+    assert gateway.card_creates == 0
+
+
+@pytest.mark.asyncio
+async def test_locally_expired_pix_requires_provider_cancellation_before_retry(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+    first = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request(),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    db.checkouts[0].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.checkouts[0].pix_qr_expires_at = db.checkouts[0].expires_at
+
+    status = await service.checkout_status(
+        business_id=business_id,
+        checkout_id=first.checkout_id,
+    )
+    assert status.status == "active"
+
+    with pytest.raises(HTTPException) as blocked:
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request(),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+    assert blocked.value.status_code == 409
+    assert gateway.pix_creates == 1
+
+    canceled = await service.cancel_checkout(
+        business_id=business_id,
+        checkout_id=first.checkout_id,
+    )
+    assert canceled.status == "canceled"
+    replacement = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request(),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    assert replacement.checkout_id != first.checkout_id
+    assert gateway.pix_cancels == 1
+    assert gateway.pix_creates == 2
+
+
+@pytest.mark.asyncio
+async def test_uncertain_pix_cancellation_keeps_other_methods_blocked(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+
+    async def fail_cancel(authorization_id):
+        raise AsaasGatewayError("provider unavailable")
+
+    gateway.cancel_pix_authorization = fail_cancel
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+    pix = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request(),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    with pytest.raises(HTTPException) as cancellation:
+        await service.cancel_checkout(
+            business_id=business_id,
+            checkout_id=pix.checkout_id,
+        )
+    assert cancellation.value.status_code == 502
+
+    with pytest.raises(HTTPException) as card:
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request("credit_card"),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+    assert card.value.status_code == 409
+    assert gateway.card_creates == 0
+
+
+@pytest.mark.asyncio
 async def test_active_pix_rejects_a_different_commercial_cycle(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
@@ -1015,11 +1190,43 @@ async def test_pix_payment_received_records_financial_fact_without_access(monkey
     assert checkout.paid_at is not None
     assert checkout.status == "active"
     assert db.subscription is None
+    assert db.locks == 1
     status = await service.checkout_status(
         business_id=checkout.business_id,
         checkout_id=checkout.id,
     )
     assert status.initial_payment_received is True
+
+
+@pytest.mark.asyncio
+async def test_pix_payment_received_before_cancellation_blocks_cancellation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    checkout = _pix_checkout()
+    db = _BillingStateDb(checkout)
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+
+    await service.apply_payment_event(
+        "PAYMENT_RECEIVED",
+        {
+            "pixAutomaticAuthorizationId": checkout.provider_authorization_id,
+            "value": 5.0,
+        },
+    )
+
+    with pytest.raises(HTTPException) as cancellation:
+        await service.cancel_checkout(
+            business_id=checkout.business_id,
+            checkout_id=checkout.id,
+        )
+
+    assert cancellation.value.status_code == 409
+    assert checkout.paid_at is not None
+    assert gateway.pix_cancels == 0
+    assert db.locks == 2
 
 
 @pytest.mark.asyncio
@@ -1045,6 +1252,7 @@ async def test_pix_payment_received_then_refused_does_not_create_or_retry(monkey
     assert checkout.status == "failed"
     assert checkout.paid_at is not None
     assert db.subscription is None
+    assert db.locks == 2
     status = await service.checkout_status(
         business_id=checkout.business_id,
         checkout_id=checkout.id,
@@ -1306,11 +1514,12 @@ async def test_pix_expiry_ignores_pre_activation_subscription_id_but_preserves_p
     db = _BillingStateDb(checkout)
     service = BillingService(db, _GatewayMustNotBeCalled())
 
-    expired = await service.checkout_status(
+    visually_expired = await service.checkout_status(
         business_id=checkout.business_id,
         checkout_id=checkout.id,
     )
-    assert expired.status == "expired"
+    assert visually_expired.status == "active"
+    assert visually_expired.expires_at <= datetime.now(UTC)
 
     checkout.status = "active"
     checkout.paid_at = datetime.now(UTC)

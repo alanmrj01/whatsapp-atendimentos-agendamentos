@@ -62,7 +62,7 @@ class BillingService:
             },
         )
 
-    async def _blocking_pix_checkout(
+    async def _blocking_checkout_for_business(
         self, business_id: UUID
     ) -> BillingCheckout | None:
         return await self.db.scalar(
@@ -70,31 +70,25 @@ class BillingService:
             .where(
                 BillingCheckout.business_id == business_id,
                 BillingCheckout.provider_environment == self.provider_environment,
-                BillingCheckout.payment_method == "pix_automatic",
                 or_(
                     BillingCheckout.status.in_(("creating", "active")),
                     and_(
+                        BillingCheckout.payment_method == "pix_automatic",
                         BillingCheckout.paid_at.is_not(None),
                         BillingCheckout.status != "paid",
+                    ),
+                    and_(
+                        BillingCheckout.payment_method == "pix_automatic",
+                        # Legacy/local expiry is not proof that the provider
+                        # authorization is terminal. Require explicit cancel.
+                        BillingCheckout.status == "expired",
+                        BillingCheckout.provider_authorization_id.is_not(None),
                     ),
                 ),
             )
             .order_by(BillingCheckout.created_at.desc())
             .limit(1)
         )
-
-    @staticmethod
-    def _expire_unpaid_pix(checkout: BillingCheckout) -> bool:
-        if (
-            checkout.payment_method != "pix_automatic"
-            or checkout.status not in {"creating", "active"}
-            or checkout.paid_at is not None
-            or checkout.expires_at is None
-            or checkout.expires_at > datetime.now(UTC)
-        ):
-            return False
-        checkout.status = "expired"
-        return True
 
     @staticmethod
     def _reusable_pix_checkout(checkout: BillingCheckout) -> bool:
@@ -142,9 +136,6 @@ class BillingService:
             ):
                 await self.db.rollback()
                 raise HTTPException(409, "Idempotency key already used")
-            if self._expire_unpaid_pix(existing):
-                await self.db.commit()
-                raise HTTPException(409, "Checkout expired")
             if (
                 existing.payment_method == "pix_automatic"
                 and existing.paid_at is not None
@@ -157,45 +148,50 @@ class BillingService:
             await self.db.rollback()
             raise HTTPException(409, "Checkout is still being prepared")
 
-        blocking_pix = await self._blocking_pix_checkout(business_id)
-        if blocking_pix is not None:
-            if self._expire_unpaid_pix(blocking_pix):
-                blocking_pix = None
-            elif blocking_pix.paid_at is not None:
+        if await self._active_subscription_for_business(business_id) is not None:
+            await self.db.rollback()
+            raise HTTPException(409, "Commercial subscription is already active")
+
+        blocking_checkout = await self._blocking_checkout_for_business(business_id)
+        if blocking_checkout is not None:
+            if blocking_checkout.paid_at is not None:
                 if (
                     payload.payment_method == "pix_automatic"
-                    and blocking_pix.plan_code == offer.plan
-                    and blocking_pix.billing_cycle == offer.cycle
+                    and blocking_checkout.payment_method == "pix_automatic"
+                    and blocking_checkout.plan_code == offer.plan
+                    and blocking_checkout.billing_cycle == offer.cycle
                 ):
                     await self.db.commit()
-                    return self._checkout_response(blocking_pix)
+                    return self._checkout_response(blocking_checkout)
                 await self.db.rollback()
                 raise HTTPException(
                     409,
                     "Initial Pix payment is awaiting authorization reconciliation",
                 )
-            elif self._reusable_pix_checkout(blocking_pix):
-                if payload.payment_method == "pix_automatic":
+            if blocking_checkout.payment_method == "pix_automatic":
+                if (
+                    payload.payment_method == "pix_automatic"
+                    and self._reusable_pix_checkout(blocking_checkout)
+                ):
                     if (
-                        blocking_pix.plan_code != offer.plan
-                        or blocking_pix.billing_cycle != offer.cycle
+                        blocking_checkout.plan_code != offer.plan
+                        or blocking_checkout.billing_cycle != offer.cycle
                     ):
                         await self.db.rollback()
                         raise HTTPException(
                             409, "Another Pix Automatic checkout is already active"
                         )
                     await self.db.commit()
-                    return self._checkout_response(blocking_pix)
+                    return self._checkout_response(blocking_checkout)
                 await self.db.rollback()
                 raise HTTPException(
                     409,
-                    "Cancel the active Pix Automatic checkout before using card",
+                    "Cancel the active Pix Automatic checkout before starting another payment",
                 )
-            else:
-                await self.db.rollback()
-                raise HTTPException(
-                    409, "Pix Automatic checkout is still being prepared"
-                )
+            await self.db.rollback()
+            raise HTTPException(
+                409, "A card checkout is already active"
+            )
 
         checkout = BillingCheckout(
             id=uuid4(),
@@ -556,7 +552,9 @@ class BillingService:
             or checkout.provider_environment != self.provider_environment
         ):
             raise HTTPException(404, "Checkout not found")
-        if self._expire_unpaid_pix(checkout) or (
+        # Pix QR expiry is visual only. Provider reconciliation or explicit
+        # cancellation is required before another financial attempt is safe.
+        if (
             checkout.payment_method == "credit_card"
             and checkout.status == "active"
             and checkout.expires_at is not None
@@ -587,7 +585,7 @@ class BillingService:
             raise HTTPException(
                 409, "Initial Pix payment cannot be canceled automatically"
             )
-        if checkout.status in {"canceled", "expired", "failed"}:
+        if checkout.status in {"canceled", "failed"}:
             await self.db.commit()
             return self._checkout_status_response(checkout)
         if checkout.provider_authorization_id:
@@ -912,6 +910,35 @@ class BillingService:
             return None
         checkout = await self._pix_checkout_for_payment(payload)
         if checkout is None:
+            return None
+        await self._lock_business_checkout(checkout.business_id)
+        checkout = await self.db.scalar(
+            select(BillingCheckout)
+            .where(
+                BillingCheckout.id == checkout.id,
+                BillingCheckout.payment_method == "pix_automatic",
+                BillingCheckout.provider_environment == self.provider_environment,
+            )
+            .execution_options(populate_existing=True)
+        )
+        if (
+            checkout is None
+            or checkout.payment_method != "pix_automatic"
+            or checkout.provider_environment != self.provider_environment
+        ):
+            return None
+        provider_authorization_id = payload.get("pixAutomaticAuthorizationId")
+        if (
+            provider_authorization_id is not None
+            and provider_authorization_id != checkout.provider_authorization_id
+        ):
+            return None
+        provider_subscription_id = payload.get("subscription")
+        if (
+            provider_authorization_id is None
+            and provider_subscription_id is not None
+            and provider_subscription_id != checkout.provider_subscription_id
+        ):
             return None
         if _payment_value_cents(payload.get("value")) != checkout.amount_cents:
             logger.warning(
