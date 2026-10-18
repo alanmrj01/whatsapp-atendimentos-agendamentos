@@ -748,6 +748,7 @@ class _CheckoutCreateDb:
         self.commits = 0
         self.rollbacks = 0
         self.locks = 0
+        self.lock_keys: list[str] = []
 
     async def execute(self, statement, parameters):
         assert "pg_advisory_xact_lock" in str(statement)
