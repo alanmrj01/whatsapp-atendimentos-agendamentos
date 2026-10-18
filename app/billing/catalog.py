@@ -85,7 +85,7 @@ def plan_is_enabled(plan: str) -> bool:
 
 
 def payment_method_is_enabled(payment_method: str) -> bool:
-    if payment_method == "credit_card":
+    if payment_method in {"credit_card", "pix"}:
         return True
     if payment_method != "pix_automatic":
         return False
