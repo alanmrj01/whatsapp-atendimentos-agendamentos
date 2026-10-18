@@ -60,6 +60,33 @@ def upgrade() -> None:
         """
     )
 
+    op.execute(
+        """
+        ALTER TABLE billing_checkouts
+            DROP CONSTRAINT IF EXISTS billing_checkout_payment_method_allowed
+        """
+    )
+    op.execute(
+        """
+        ALTER TABLE billing_checkouts
+            ADD CONSTRAINT billing_checkout_payment_method_allowed
+            CHECK (payment_method IN ('credit_card', 'pix', 'pix_automatic'))
+        """
+    )
+    op.execute(
+        """
+        ALTER TABLE commercial_subscriptions
+            DROP CONSTRAINT IF EXISTS commercial_subscription_payment_method_allowed
+        """
+    )
+    op.execute(
+        """
+        ALTER TABLE commercial_subscriptions
+            ADD CONSTRAINT commercial_subscription_payment_method_allowed
+            CHECK (payment_method IN ('credit_card', 'pix', 'pix_automatic'))
+        """
+    )
+
 
 def downgrade() -> None:
     # Restoring global uniqueness could fail after two businesses legitimately
