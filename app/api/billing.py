@@ -130,6 +130,24 @@ async def checkout_status(
     )
 
 
+@router.post(
+    "/checkouts/{checkout_id}/cancel",
+    response_model=CheckoutStatusResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def cancel_checkout(
+    checkout_id: UUID,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    membership = _billing_business(principal)
+    return await _service(settings, db).cancel_checkout(
+        business_id=membership.business_id,
+        checkout_id=checkout_id,
+    )
+
+
 @router.get("/subscription", response_model=SubscriptionStatusResponse)
 async def subscription_status(principal: Identity, settings: Config, db: Db):
     membership = _billing_business(principal)

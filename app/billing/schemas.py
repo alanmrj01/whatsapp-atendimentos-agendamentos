@@ -64,6 +64,7 @@ class CheckoutCreateResponse(BaseModel):
     plan: PlanCode
     cycle: BillingCycle
     amount_cents: int
+    initial_payment_received: bool = False
 
 
 class CheckoutStatusResponse(BaseModel):
@@ -73,6 +74,7 @@ class CheckoutStatusResponse(BaseModel):
     plan: PlanCode
     cycle: BillingCycle
     expires_at: datetime | None = None
+    initial_payment_received: bool = False
 
 
 class CheckoutProfileResponse(BaseModel):

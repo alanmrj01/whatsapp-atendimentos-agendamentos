@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing.asaas import (
@@ -49,6 +49,58 @@ class BillingService:
         self.gateway = gateway
         self.provider_environment = billing_provider_environment()
 
+    async def _lock_business_checkout(self, business_id: UUID) -> None:
+        execute = getattr(self.db, "execute", None)
+        if execute is None:
+            return
+        await execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+            {
+                "lock_key": (
+                    f"alovia:billing:{self.provider_environment}:{business_id}"
+                )
+            },
+        )
+
+    async def _blocking_checkout_for_business(
+        self, business_id: UUID
+    ) -> BillingCheckout | None:
+        return await self.db.scalar(
+            select(BillingCheckout)
+            .where(
+                BillingCheckout.business_id == business_id,
+                BillingCheckout.provider_environment == self.provider_environment,
+                or_(
+                    BillingCheckout.status.in_(("creating", "active")),
+                    and_(
+                        BillingCheckout.payment_method == "pix_automatic",
+                        BillingCheckout.paid_at.is_not(None),
+                        BillingCheckout.status != "paid",
+                    ),
+                    and_(
+                        BillingCheckout.payment_method == "pix_automatic",
+                        # Legacy/local expiry is not proof that the provider
+                        # authorization is terminal. Require explicit cancel.
+                        BillingCheckout.status == "expired",
+                        BillingCheckout.provider_authorization_id.is_not(None),
+                    ),
+                ),
+            )
+            .order_by(BillingCheckout.created_at.desc())
+            .limit(1)
+        )
+
+    @staticmethod
+    def _reusable_pix_checkout(checkout: BillingCheckout) -> bool:
+        return bool(
+            checkout.status in {"creating", "active"}
+            and checkout.paid_at is None
+            and checkout.provider_authorization_id
+            and checkout.pix_qr_payload
+            and checkout.expires_at is not None
+            and checkout.expires_at > datetime.now(UTC)
+        )
+
     async def create_checkout(
         self,
         *,
@@ -68,6 +120,7 @@ class BillingService:
             offer = get_offer(payload.plan, payload.cycle)
         except BillingCatalogConfigurationError:
             raise HTTPException(503, "Billing configuration is unavailable") from None
+        await self._lock_business_checkout(business_id)
         existing = await self.db.scalar(
             select(BillingCheckout).where(
                 BillingCheckout.idempotency_key == idempotency_key,
@@ -81,10 +134,64 @@ class BillingService:
                 or existing.billing_cycle != offer.cycle
                 or existing.payment_method != payload.payment_method
             ):
+                await self.db.rollback()
                 raise HTTPException(409, "Idempotency key already used")
-            if existing.status in {"active", "paid"}:
+            if (
+                existing.payment_method == "pix_automatic"
+                and existing.paid_at is not None
+            ):
+                await self.db.commit()
                 return self._checkout_response(existing)
+            if existing.status in {"active", "paid"}:
+                await self.db.commit()
+                return self._checkout_response(existing)
+            await self.db.rollback()
             raise HTTPException(409, "Checkout is still being prepared")
+
+        if await self._active_subscription_for_business(business_id) is not None:
+            await self.db.rollback()
+            raise HTTPException(409, "Commercial subscription is already active")
+
+        blocking_checkout = await self._blocking_checkout_for_business(business_id)
+        if blocking_checkout is not None:
+            if blocking_checkout.paid_at is not None:
+                if (
+                    payload.payment_method == "pix_automatic"
+                    and blocking_checkout.payment_method == "pix_automatic"
+                    and blocking_checkout.plan_code == offer.plan
+                    and blocking_checkout.billing_cycle == offer.cycle
+                ):
+                    await self.db.commit()
+                    return self._checkout_response(blocking_checkout)
+                await self.db.rollback()
+                raise HTTPException(
+                    409,
+                    "Initial Pix payment is awaiting authorization reconciliation",
+                )
+            if blocking_checkout.payment_method == "pix_automatic":
+                if (
+                    payload.payment_method == "pix_automatic"
+                    and self._reusable_pix_checkout(blocking_checkout)
+                ):
+                    if (
+                        blocking_checkout.plan_code != offer.plan
+                        or blocking_checkout.billing_cycle != offer.cycle
+                    ):
+                        await self.db.rollback()
+                        raise HTTPException(
+                            409, "Another Pix Automatic checkout is already active"
+                        )
+                    await self.db.commit()
+                    return self._checkout_response(blocking_checkout)
+                await self.db.rollback()
+                raise HTTPException(
+                    409,
+                    "Cancel the active Pix Automatic checkout before starting another payment",
+                )
+            await self.db.rollback()
+            raise HTTPException(
+                409, "A card checkout is already active"
+            )
 
         checkout = BillingCheckout(
             id=uuid4(),
@@ -99,7 +206,6 @@ class BillingService:
             expires_at=datetime.now(UTC) + timedelta(minutes=10),
         )
         self.db.add(checkout)
-        await self.db.commit()
 
         if (
             payload.payment_method == "credit_card"
@@ -124,6 +230,20 @@ class BillingService:
                     offer=offer,
                     return_origin=payload.return_origin,
                 )
+        except AsaasGatewayTimeoutError:
+            if payload.payment_method == "pix_automatic":
+                # The provider may have created the authorization even when its
+                # response did not reach us. Keep this checkout blocking until
+                # a webhook reconciles contractId, rather than allowing a
+                # second financial attempt.
+                checkout.status = "creating"
+                await self.db.commit()
+                raise HTTPException(
+                    502, "Pix Automatic authorization is being reconciled"
+                ) from None
+            checkout.status = "failed"
+            await self.db.commit()
+            raise HTTPException(502, "Payment checkout is temporarily unavailable") from None
         except AsaasGatewayError:
             checkout.status = "failed"
             await self.db.commit()
@@ -241,6 +361,10 @@ class BillingService:
                 "Admin full access is active; a paid plan is not required",
             )
 
+        # Serialize the entire native-card financial attempt. In particular, do
+        # not commit after switching the checkout to "creating": that would
+        # release the transaction-scoped advisory lock before the provider call.
+        await self._lock_business_checkout(business_id)
         checkout = await self.db.get(BillingCheckout, checkout_id)
         if (
             checkout is None
@@ -248,8 +372,10 @@ class BillingService:
             or checkout.provider_environment != self.provider_environment
             or checkout.payment_method != "credit_card"
         ):
+            await self.db.rollback()
             raise HTTPException(404, "Checkout not found")
         if checkout.checkout_url is not None:
+            await self.db.rollback()
             raise HTTPException(409, "Checkout is not a native card session")
         if checkout.status == "paid":
             return CreditCardCheckoutResponse(
@@ -257,12 +383,22 @@ class BillingService:
                 status="paid",
                 expires_at=checkout.expires_at,
             )
+
+        active_subscription = await self._active_subscription_for_business(business_id)
+        if (
+            active_subscription is not None
+            and active_subscription.checkout_id != checkout.id
+        ):
+            await self.db.rollback()
+            raise HTTPException(409, "Commercial subscription is already active")
+
         if checkout.expires_at is not None and checkout.expires_at <= datetime.now(UTC):
             if checkout.status != "creating":
                 checkout.status = "expired"
                 await self.db.commit()
             raise HTTPException(409, "Checkout expired")
         if checkout.status in {"canceled", "expired", "failed"}:
+            await self.db.rollback()
             raise HTTPException(409, "Checkout is no longer available")
         if checkout.provider_subscription_id:
             return CreditCardCheckoutResponse(
@@ -302,13 +438,13 @@ class BillingService:
                     external_reference=customer_reference,
                 )
         except AsaasGatewayError:
+            await self.db.rollback()
             raise HTTPException(
                 502, "Payment service is temporarily unavailable"
             ) from None
 
         checkout.provider_customer_id = customer_id
         checkout.status = "creating"
-        await self.db.commit()
 
         offer = get_offer(checkout.plan_code, checkout.billing_cycle)
         provider_payload = {
@@ -446,14 +582,60 @@ class BillingService:
             or checkout.provider_environment != self.provider_environment
         ):
             raise HTTPException(404, "Checkout not found")
+        # Pix QR expiry is visual only. Provider reconciliation or explicit
+        # cancellation is required before another financial attempt is safe.
         if (
-            checkout.status == "active"
+            checkout.payment_method == "credit_card"
+            and checkout.status == "active"
             and checkout.expires_at is not None
             and checkout.expires_at <= datetime.now(UTC)
             and not checkout.provider_subscription_id
         ):
             checkout.status = "expired"
             await self.db.commit()
+        return self._checkout_status_response(checkout)
+
+    async def cancel_checkout(
+        self, *, business_id: UUID, checkout_id: UUID
+    ) -> CheckoutStatusResponse:
+        await self._lock_business_checkout(business_id)
+        checkout = await self.db.get(BillingCheckout, checkout_id)
+        if (
+            checkout is None
+            or checkout.business_id != business_id
+            or checkout.provider_environment != self.provider_environment
+        ):
+            await self.db.rollback()
+            raise HTTPException(404, "Checkout not found")
+        if checkout.payment_method != "pix_automatic":
+            await self.db.rollback()
+            raise HTTPException(409, "Only Pix Automatic checkout can be canceled")
+        if checkout.status == "paid" or checkout.paid_at is not None:
+            await self.db.rollback()
+            raise HTTPException(
+                409, "Initial Pix payment cannot be canceled automatically"
+            )
+        if checkout.status in {"canceled", "failed"}:
+            await self.db.commit()
+            return self._checkout_status_response(checkout)
+        if checkout.provider_authorization_id:
+            try:
+                await self.gateway.cancel_pix_authorization(
+                    checkout.provider_authorization_id
+                )
+            except AsaasGatewayError:
+                await self.db.rollback()
+                raise HTTPException(
+                    502, "Pix Automatic cancellation is temporarily unavailable"
+                ) from None
+        checkout.status = "canceled"
+        await self.db.commit()
+        return self._checkout_status_response(checkout)
+
+    @staticmethod
+    def _checkout_status_response(
+        checkout: BillingCheckout,
+    ) -> CheckoutStatusResponse:
         return CheckoutStatusResponse(
             checkout_id=checkout.id,
             status=checkout.status,  # type: ignore[arg-type]
@@ -461,6 +643,7 @@ class BillingService:
             plan=checkout.plan_code,  # type: ignore[arg-type]
             cycle=checkout.billing_cycle,  # type: ignore[arg-type]
             expires_at=checkout.expires_at,
+            initial_payment_received=checkout.paid_at is not None,
         )
 
     async def subscription_status(self, *, business_id: UUID) -> SubscriptionStatusResponse:
@@ -513,9 +696,22 @@ class BillingService:
         ):
             return None
 
+        await self._lock_business_checkout(checkout.business_id)
         subscription = await self._subscription_for_checkout(checkout.id)
         access_until = _cycle_end(datetime.now(UTC), checkout.billing_cycle)
         if subscription is None:
+            active_subscription = await self._active_subscription_for_business(
+                checkout.business_id
+            )
+            if active_subscription is not None:
+                logger.warning(
+                    "billing_active_subscription_conflict",
+                    extra={
+                        "payment_method": checkout.payment_method,
+                        "provider_environment": self.provider_environment,
+                    },
+                )
+                return None
             subscription = CommercialSubscription(
                 id=uuid4(),
                 business_id=checkout.business_id,
@@ -541,8 +737,13 @@ class BillingService:
 
     async def apply_pix_authorization_event(self, event_type: str, payload: dict) -> None:
         provider_id = payload.get("id")
-        if not isinstance(provider_id, str) or not provider_id:
+        if (
+            not isinstance(provider_id, str)
+            or not provider_id
+            or len(provider_id) > 100
+        ):
             return
+
         checkout = await self.db.scalar(
             select(BillingCheckout).where(
                 BillingCheckout.provider_authorization_id == provider_id,
@@ -550,8 +751,49 @@ class BillingService:
                 BillingCheckout.provider_environment == self.provider_environment,
             )
         )
+
+        # A create-authorization timeout has an uncertain outcome. Asaas echoes
+        # our deterministic checkout UUID in authorization.contractId, allowing
+        # the webhook to bind the provider authorization back to the local
+        # checkout without opening a second payment attempt.
         if checkout is None:
+            contract_id = payload.get("contractId")
+            if (
+                not isinstance(contract_id, str)
+                or len(contract_id) != 32
+                or any(ch not in "0123456789abcdefABCDEF" for ch in contract_id)
+            ):
+                return
+            try:
+                checkout_id = UUID(hex=contract_id)
+            except ValueError:
+                return
+            checkout = await self.db.get(BillingCheckout, checkout_id)
+            if (
+                checkout is None
+                or checkout.payment_method != "pix_automatic"
+                or checkout.provider_environment != self.provider_environment
+            ):
+                return
+
+        await self._lock_business_checkout(checkout.business_id)
+        checkout = await self.db.get(BillingCheckout, checkout.id)
+        if (
+            checkout is None
+            or checkout.payment_method != "pix_automatic"
+            or checkout.provider_environment != self.provider_environment
+        ):
             return
+        if (
+            checkout.provider_authorization_id is not None
+            and checkout.provider_authorization_id != provider_id
+        ):
+            logger.warning(
+                "asaas_pix_authorization_id_conflict",
+                extra={"provider_environment": self.provider_environment},
+            )
+            return
+        checkout.provider_authorization_id = provider_id
 
         provider_subscription_id = payload.get("subscriptionId")
         if (
@@ -559,14 +801,56 @@ class BillingService:
             and provider_subscription_id
             and len(provider_subscription_id) <= 80
         ):
+            if (
+                checkout.provider_subscription_id is not None
+                and checkout.provider_subscription_id != provider_subscription_id
+            ):
+                logger.warning(
+                    "asaas_pix_subscription_id_conflict",
+                    extra={"provider_environment": self.provider_environment},
+                )
+                return
             checkout.provider_subscription_id = provider_subscription_id
+
+        customer_id = payload.get("customerId")
+        if isinstance(customer_id, str) and 0 < len(customer_id) <= 80:
+            if (
+                checkout.provider_customer_id is not None
+                and checkout.provider_customer_id != customer_id
+            ):
+                logger.warning(
+                    "asaas_pix_customer_id_conflict",
+                    extra={"provider_environment": self.provider_environment},
+                )
+                return
+            checkout.provider_customer_id = customer_id
+
+        immediate = payload.get("immediateQrCode")
+        if isinstance(immediate, dict):
+            expires_at = _parse_provider_datetime(immediate.get("expirationDate"))
+            if expires_at is not None:
+                checkout.pix_qr_expires_at = expires_at
+                checkout.expires_at = expires_at
+            conciliation = immediate.get("conciliationIdentifier")
+            if isinstance(conciliation, str) and 0 < len(conciliation) <= 100:
+                checkout.pix_conciliation_identifier = conciliation
+
+        qr_payload = payload.get("payload")
+        if not isinstance(qr_payload, str) and isinstance(immediate, dict):
+            qr_payload = immediate.get("payload")
+        if (
+            isinstance(qr_payload, str)
+            and qr_payload.strip()
+            and len(qr_payload) <= 8_000
+        ):
+            checkout.pix_qr_payload = qr_payload
 
         if event_type == "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED":
             if not self._valid_pix_authorization(checkout, payload):
                 checkout.status = "failed"
                 logger.warning(
                     "asaas_pix_authorization_reconciliation_rejected",
-                    extra={"provider_authorization_id": provider_id},
+                    extra={"provider_environment": self.provider_environment},
                 )
                 await self.db.commit()
                 return
@@ -574,21 +858,35 @@ class BillingService:
             checkout.paid_at = checkout.paid_at or datetime.now(UTC)
             subscription = await self._subscription_for_checkout(checkout.id)
             if subscription is None:
-                subscription = CommercialSubscription(
-                    id=uuid4(),
-                    business_id=checkout.business_id,
-                    checkout_id=checkout.id,
-                    plan_code=checkout.plan_code,
-                    billing_cycle=checkout.billing_cycle,
-                    payment_method="pix_automatic",
-                    provider_environment=self.provider_environment,
-                    status="active",
-                    provider_authorization_id=provider_id,
-                    provider_subscription_id=checkout.provider_subscription_id,
-                    provider_customer_id=checkout.provider_customer_id,
-                    access_until=_cycle_end(datetime.now(UTC), checkout.billing_cycle),
+                active_subscription = await self._active_subscription_for_business(
+                    checkout.business_id
                 )
-                self.db.add(subscription)
+                if active_subscription is not None:
+                    logger.warning(
+                        "billing_active_subscription_conflict",
+                        extra={
+                            "payment_method": checkout.payment_method,
+                            "provider_environment": self.provider_environment,
+                        },
+                    )
+                else:
+                    subscription = CommercialSubscription(
+                        id=uuid4(),
+                        business_id=checkout.business_id,
+                        checkout_id=checkout.id,
+                        plan_code=checkout.plan_code,
+                        billing_cycle=checkout.billing_cycle,
+                        payment_method="pix_automatic",
+                        provider_environment=self.provider_environment,
+                        status="active",
+                        provider_authorization_id=provider_id,
+                        provider_subscription_id=checkout.provider_subscription_id,
+                        provider_customer_id=checkout.provider_customer_id,
+                        access_until=_cycle_end(
+                            datetime.now(UTC), checkout.billing_cycle
+                        ),
+                    )
+                    self.db.add(subscription)
             else:
                 subscription.status = "active"
                 subscription.provider_authorization_id = provider_id
@@ -599,7 +897,8 @@ class BillingService:
                     subscription.access_until,
                     _cycle_end(datetime.now(UTC), checkout.billing_cycle),
                 )
-            await self._record_operational_history(checkout.business_id)
+            if subscription is not None:
+                await self._record_operational_history(checkout.business_id)
         elif event_type == "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CREATED":
             checkout.status = "active"
         elif event_type in {
@@ -653,6 +952,7 @@ class BillingService:
         await self.db.commit()
 
     async def apply_payment_event(self, event_type: str, payload: dict) -> str | None:
+        await self._capture_pix_initial_payment(event_type, payload)
         checkout = await self._capture_credit_card_checkout_refs(payload)
         if checkout is not None:
             if (
@@ -719,6 +1019,110 @@ class BillingService:
             subscription.access_until = min(subscription.access_until, datetime.now(UTC))
         await self.db.commit()
         return action_event_key
+
+    async def _capture_pix_initial_payment(
+        self, event_type: str, payload: dict
+    ) -> BillingCheckout | None:
+        if event_type not in {"PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"}:
+            return None
+        checkout = await self._pix_checkout_for_payment(payload)
+        if checkout is None:
+            return None
+        await self._lock_business_checkout(checkout.business_id)
+        checkout = await self.db.scalar(
+            select(BillingCheckout)
+            .where(
+                BillingCheckout.id == checkout.id,
+                BillingCheckout.payment_method == "pix_automatic",
+                BillingCheckout.provider_environment == self.provider_environment,
+            )
+            .execution_options(populate_existing=True)
+        )
+        if (
+            checkout is None
+            or checkout.payment_method != "pix_automatic"
+            or checkout.provider_environment != self.provider_environment
+        ):
+            return None
+        provider_authorization_id = payload.get("pixAutomaticAuthorizationId")
+        if (
+            provider_authorization_id is not None
+            and provider_authorization_id != checkout.provider_authorization_id
+        ):
+            return None
+        provider_subscription_id = payload.get("subscription")
+        if (
+            provider_authorization_id is None
+            and provider_subscription_id is not None
+            and provider_subscription_id != checkout.provider_subscription_id
+        ):
+            return None
+        if _payment_value_cents(payload.get("value")) != checkout.amount_cents:
+            logger.warning(
+                "asaas_pix_initial_payment_amount_mismatch",
+                extra={"provider_environment": self.provider_environment},
+            )
+            return None
+        checkout.paid_at = checkout.paid_at or datetime.now(UTC)
+        return checkout
+
+    async def _pix_checkout_for_payment(
+        self, payload: dict
+    ) -> BillingCheckout | None:
+        provider_authorization_id = payload.get("pixAutomaticAuthorizationId")
+        if provider_authorization_id is not None:
+            if (
+                not isinstance(provider_authorization_id, str)
+                or not provider_authorization_id
+                or len(provider_authorization_id) > 100
+            ):
+                return None
+            return await self.db.scalar(
+                select(BillingCheckout).where(
+                    BillingCheckout.provider_authorization_id
+                    == provider_authorization_id,
+                    BillingCheckout.payment_method == "pix_automatic",
+                    BillingCheckout.provider_environment
+                    == self.provider_environment,
+                )
+            )
+
+        provider_subscription_id = payload.get("subscription")
+        if provider_subscription_id is not None:
+            if (
+                not isinstance(provider_subscription_id, str)
+                or not provider_subscription_id
+                or len(provider_subscription_id) > 80
+            ):
+                return None
+            return await self.db.scalar(
+                select(BillingCheckout).where(
+                    BillingCheckout.provider_subscription_id
+                    == provider_subscription_id,
+                    BillingCheckout.payment_method == "pix_automatic",
+                    BillingCheckout.provider_environment
+                    == self.provider_environment,
+                )
+            )
+
+        provider_reference = payload.get("externalReference") or payload.get(
+            "contractId"
+        )
+        if not isinstance(provider_reference, str):
+            return None
+        reference_value = provider_reference.removeprefix("alovia:")
+        try:
+            checkout_id = UUID(reference_value)
+        except ValueError:
+            return None
+        checkout = await self.db.get(BillingCheckout, checkout_id)
+        if (
+            checkout is None
+            or checkout.payment_method != "pix_automatic"
+            or checkout.provider_environment != self.provider_environment
+        ):
+            return None
+        return checkout
 
     async def _capture_credit_card_checkout_refs(
         self, payload: dict
@@ -798,6 +1202,9 @@ class BillingService:
             )
             if subscription is not None:
                 return subscription
+            # A Pix initial payment may arrive before authorization activation.
+            # Never correlate it to an older subscription by customer fallback.
+            return None
 
         customer_id = payload.get("customer")
         if not isinstance(customer_id, str) or not customer_id:
@@ -821,6 +1228,21 @@ class BillingService:
                 CommercialSubscription.checkout_id == checkout_id,
                 CommercialSubscription.provider_environment == self.provider_environment,
             )
+        )
+
+    async def _active_subscription_for_business(
+        self, business_id: UUID
+    ) -> CommercialSubscription | None:
+        return await self.db.scalar(
+            select(CommercialSubscription)
+            .where(
+                CommercialSubscription.business_id == business_id,
+                CommercialSubscription.provider_environment
+                == self.provider_environment,
+                CommercialSubscription.status == "active",
+            )
+            .order_by(CommercialSubscription.created_at.desc())
+            .limit(1)
         )
 
     async def _record_operational_history(self, business_id: UUID) -> None:
@@ -859,6 +1281,7 @@ class BillingService:
             plan=checkout.plan_code,  # type: ignore[arg-type]
             cycle=checkout.billing_cycle,  # type: ignore[arg-type]
             amount_cents=checkout.amount_cents,
+            initial_payment_received=checkout.paid_at is not None,
         )
 
 
@@ -879,6 +1302,18 @@ def _parse_due_date(value: object) -> date | None:
         return date.fromisoformat(value[:10])
     except ValueError:
         return None
+
+
+def _parse_provider_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or len(value) > 40:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace(" ", "T", 1))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=BRAZIL_TZ)
+    return parsed.astimezone(UTC)
 
 
 def _cycle_end(anchor: datetime, cycle: str) -> datetime:

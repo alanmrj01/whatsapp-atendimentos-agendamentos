@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import logging
+import re
 from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -152,6 +153,18 @@ class AsaasGateway:
             expires_at=expires_at,
         )
 
+    async def cancel_pix_authorization(self, authorization_id: str) -> None:
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", authorization_id)
+        ):
+            raise AsaasGatewayError("Asaas Pix Automatic authorization is invalid")
+        await self._json_request(
+            "DELETE",
+            f"/pix/automatic/authorizations/{authorization_id}",
+            allow_empty_response=True,
+            allow_not_found=True,
+        )
+
     async def payments_for_checkout(self, checkout_id: str) -> list[dict[str, Any]]:
         payload = await self._json_request(
             "GET",
@@ -224,6 +237,8 @@ class AsaasGateway:
         params: dict[str, Any] | None = None,
         timeout_seconds: float = 10.0,
         card_decline_on_400: bool = False,
+        allow_empty_response: bool = False,
+        allow_not_found: bool = False,
     ) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:
@@ -234,13 +249,14 @@ class AsaasGateway:
                     json=json,
                     params=params,
                 )
+            if allow_not_found and response.status_code == 404:
+                return {}
             response.raise_for_status()
-            data = response.json()
+            data = {} if allow_empty_response and not response.content else response.json()
         except httpx.HTTPStatusError as exc:
             logger.warning(
-                "Asaas request failed method=%s path=%s status=%s codes=%s",
+                "Asaas request failed method=%s status=%s codes=%s",
                 method,
-                path,
                 exc.response.status_code,
                 ",".join(_provider_error_codes(exc.response)) or "unknown",
             )
