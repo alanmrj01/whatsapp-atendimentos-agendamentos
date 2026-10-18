@@ -168,6 +168,19 @@ class BillingService:
                     409,
                     "Initial Pix payment is awaiting authorization reconciliation",
                 )
+            if blocking_checkout.payment_method == "credit_card":
+                if (
+                    payload.payment_method == "credit_card"
+                    and blocking_checkout.status == "active"
+                    and blocking_checkout.plan_code == offer.plan
+                    and blocking_checkout.billing_cycle == offer.cycle
+                    and blocking_checkout.expires_at is not None
+                    and blocking_checkout.expires_at > datetime.now(UTC)
+                ):
+                    await self.db.commit()
+                    return self._checkout_response(blocking_checkout)
+                await self.db.rollback()
+                raise HTTPException(409, "A card checkout is already active")
             if blocking_checkout.payment_method == "pix_automatic":
                 if (
                     payload.payment_method == "pix_automatic"
@@ -189,9 +202,7 @@ class BillingService:
                     "Cancel the active Pix Automatic checkout before starting another payment",
                 )
             await self.db.rollback()
-            raise HTTPException(
-                409, "A card checkout is already active"
-            )
+            raise HTTPException(409, "A card checkout is already active")
 
         checkout = BillingCheckout(
             id=uuid4(),
