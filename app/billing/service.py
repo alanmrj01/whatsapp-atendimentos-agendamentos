@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import calendar
 import logging
 from datetime import UTC, date, datetime, timedelta
@@ -185,27 +186,31 @@ class BillingService:
                     "Initial Pix payment is awaiting authorization reconciliation",
                 )
             elif blocking_checkout.payment_method == "credit_card":
-                same_card_offer = (
-                    payload.payment_method == "credit_card"
-                    and blocking_checkout.plan_code == offer.plan
-                    and blocking_checkout.billing_cycle == offer.cycle
+                expired_unbound_card = (
+                    blocking_checkout.provider_subscription_id is None
+                    and blocking_checkout.expires_at is not None
+                    and blocking_checkout.expires_at <= datetime.now(UTC)
                 )
-                if not same_card_offer or blocking_checkout.status != "active":
-                    await self.db.rollback()
-                    raise HTTPException(409, "A card checkout is already active")
-                if blocking_checkout.provider_subscription_id:
+                if expired_unbound_card:
+                    # A hosted card session with no provider subscription is only
+                    # a temporary payment attempt. Once its TTL has elapsed it
+                    # must not block this business from retrying with card or
+                    # switching to Pix.
+                    blocking_checkout.status = "expired"
+                else:
+                    same_card_offer = (
+                        payload.payment_method == "credit_card"
+                        and blocking_checkout.plan_code == offer.plan
+                        and blocking_checkout.billing_cycle == offer.cycle
+                    )
+                    if not same_card_offer or blocking_checkout.status != "active":
+                        await self.db.rollback()
+                        raise HTTPException(409, "A card checkout is already active")
+                    if blocking_checkout.provider_subscription_id:
+                        await self.db.commit()
+                        return self._checkout_response(blocking_checkout)
                     await self.db.commit()
                     return self._checkout_response(blocking_checkout)
-                if (
-                    blocking_checkout.expires_at is None
-                    or blocking_checkout.expires_at > datetime.now(UTC)
-                ):
-                    await self.db.commit()
-                    return self._checkout_response(blocking_checkout)
-                # A card session that never reached a provider subscription and
-                # has passed its local/provider TTL must not block this business
-                # forever. Expire it inside the same transaction and continue.
-                blocking_checkout.status = "expired"
             elif blocking_checkout.payment_method == "pix":
                 same_pix_offer = (
                     payload.payment_method == "pix"
@@ -409,8 +414,16 @@ class BillingService:
                 raise
             checkout.provider_subscription_id = recovered_id
 
-        if not await self._recover_common_pix_checkout(checkout):
-            raise AsaasGatewayError("Asaas Pix payment is not ready")
+        # Asaas may accept the subscription before its first charge is
+        # immediately queryable. Give the provider a short consistency window
+        # before surfacing a reconciliation response to the client.
+        recovery_delays = (0.0, 0.75, 1.5, 2.5)
+        for delay in recovery_delays:
+            if delay:
+                await asyncio.sleep(delay)
+            if await self._recover_common_pix_checkout(checkout):
+                return
+        raise AsaasGatewayError("Asaas Pix payment is not ready")
 
     async def _recover_common_pix_checkout(
         self, checkout: BillingCheckout
