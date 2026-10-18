@@ -6,24 +6,24 @@ from app.diagnostics.models import (
 from app.diagnostics.service import migration_result
 
 
-def test_readiness_requires_onboarding_attempt_schema_revision() -> None:
+def test_readiness_requires_current_billing_schema_revision() -> None:
     current = migration_result([EXPECTED_SCHEMA_REVISION], 1)
-    previous = migration_result(["20261010_0031"], 1)
+    previous = migration_result(["20261013_0032"], 1)
 
-    assert EXPECTED_SCHEMA_REVISION == "20261013_0032"
+    assert EXPECTED_SCHEMA_REVISION == "20261018_0033"
 
     assert current.status is Status.OK
     assert current.code is Code.MIGRATION_OK
-    assert current.details.current_revision == "20261013_0032"
+    assert current.details.current_revision == "20261018_0033"
 
     assert previous.status is Status.ERROR
     assert previous.code is Code.MIGRATION_BEHIND
-    assert previous.details.current_revision == "20261010_0031"
+    assert previous.details.current_revision == "20261013_0032"
 
 
 def test_readiness_keeps_older_or_future_revisions_fail_closed() -> None:
     behind = migration_result(["20261003_0028"], 1)
-    ahead = migration_result(["20261014_0033"], 1)
+    ahead = migration_result(["20261019_0034"], 1)
 
     assert behind.status is Status.ERROR
     assert behind.code is Code.MIGRATION_BEHIND

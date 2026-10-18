@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 
 PlanCode = Literal["basic", "plus"]
 BillingCycle = Literal["monthly", "quarterly", "annual"]
-PaymentMethod = Literal["credit_card", "pix_automatic"]
+PaymentMethod = Literal["credit_card", "pix", "pix_automatic"]
 CheckoutMode = Literal["hosted", "native", "pix"]
 
 
@@ -45,10 +45,10 @@ class CheckoutCreateRequest(StrictBillingRequest):
 
     @model_validator(mode="after")
     def require_pix_payer(self):
-        if self.payment_method == "pix_automatic" and (
+        if self.payment_method in {"pix", "pix_automatic"} and (
             not self.payer_name or not self.payer_cpf_cnpj
         ):
-            raise ValueError("Pix Automatic requires payer name and CPF/CNPJ")
+            raise ValueError("Pix requires payer name and CPF/CNPJ")
         return self
 
 
@@ -83,6 +83,9 @@ class CheckoutProfileResponse(BaseModel):
     payer_name: str | None = None
     postal_code: str | None = None
     address_number: str | None = None
+    pix_available: bool = True
+    pix_automatic_available: bool = False
+    native_card_checkout_available: bool = False
 
 
 class CreditCardCheckoutRequest(StrictBillingRequest):

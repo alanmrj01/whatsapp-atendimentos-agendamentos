@@ -14,7 +14,11 @@ from app.billing.catalog import (
     payment_method_is_enabled,
     plan_is_enabled,
 )
-from app.billing.schemas import CheckoutCreateRequest, CreditCardCheckoutRequest
+from app.billing.schemas import (
+    CheckoutCreateRequest,
+    CheckoutProfileResponse,
+    CreditCardCheckoutRequest,
+)
 from app.billing.service import BillingService, _cycle_end, _payment_value_cents
 from app.billing.webhooks import BillingWebhookService, SUPPORTED_EVENTS
 from app.core.config import AsaasConfigurationError, Environment, Settings
@@ -50,6 +54,7 @@ def test_pix_automatic_is_fail_closed_in_production(monkeypatch) -> None:
     monkeypatch.delenv("BILLING_PIX_AUTOMATIC_ENABLED", raising=False)
 
     assert payment_method_is_enabled("credit_card") is True
+    assert payment_method_is_enabled("pix") is True
     assert payment_method_is_enabled("pix_automatic") is False
 
     monkeypatch.setenv("BILLING_PIX_AUTOMATIC_ENABLED", "true")
@@ -58,6 +63,24 @@ def test_pix_automatic_is_fail_closed_in_production(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.delenv("BILLING_PIX_AUTOMATIC_ENABLED", raising=False)
     assert payment_method_is_enabled("pix_automatic") is True
+
+
+def test_checkout_profile_exposes_runtime_payment_capabilities(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    monkeypatch.setenv("BILLING_PIX_AUTOMATIC_ENABLED", "false")
+    monkeypatch.setenv("BILLING_NATIVE_CARD_CHECKOUT_ENABLED", "true")
+
+    profile = CheckoutProfileResponse(
+        email="teste@example.com",
+        business_name="Empresa Teste",
+        pix_available=payment_method_is_enabled("pix"),
+        pix_automatic_available=payment_method_is_enabled("pix_automatic"),
+        native_card_checkout_available=native_card_checkout_is_enabled(),
+    )
+
+    assert profile.pix_available is True
+    assert profile.pix_automatic_available is False
+    assert profile.native_card_checkout_available is True
 
 
 def test_native_card_checkout_is_launch_gated(monkeypatch) -> None:
@@ -346,6 +369,7 @@ class _BillingStateDb:
         self.commits = 0
         self.rollbacks = 0
         self.locks = 0
+        self.lock_keys: list[str] = []
         self.subscription_adds = 0
 
     async def execute(self, statement, parameters):
@@ -727,11 +751,13 @@ class _CheckoutCreateDb:
         self.commits = 0
         self.rollbacks = 0
         self.locks = 0
+        self.lock_keys: list[str] = []
 
     async def execute(self, statement, parameters):
         assert "pg_advisory_xact_lock" in str(statement)
         assert parameters["lock_key"].startswith("alovia:billing:sandbox:")
         self.locks += 1
+        self.lock_keys.append(parameters["lock_key"])
 
     async def scalar(self, statement):
         sql = str(statement)
@@ -742,17 +768,39 @@ class _CheckoutCreateDb:
                 for name, value in params.items()
                 if name.startswith("idempotency_key_")
             )
+            business_id = next(
+                (
+                    value
+                    for name, value in params.items()
+                    if name.startswith("business_id_")
+                ),
+                None,
+            )
             return next(
-                (checkout for checkout in self.checkouts if checkout.idempotency_key == key),
+                (
+                    checkout
+                    for checkout in self.checkouts
+                    if checkout.idempotency_key == key
+                    and (business_id is None or checkout.business_id == business_id)
+                ),
                 None,
             )
         if "FROM commercial_subscriptions" in sql:
             return self.subscription
         if "FROM billing_checkouts" in sql:
+            business_id = next(
+                (
+                    value
+                    for name, value in params.items()
+                    if name.startswith("business_id_")
+                ),
+                None,
+            )
             candidates = [
                 checkout
                 for checkout in self.checkouts
                 if checkout.provider_environment == "sandbox"
+                and (business_id is None or checkout.business_id == business_id)
                 and (
                     checkout.status in {"creating", "active"}
                     or (
@@ -764,6 +812,11 @@ class _CheckoutCreateDb:
                         checkout.payment_method == "pix_automatic"
                         and checkout.status == "expired"
                         and checkout.provider_authorization_id is not None
+                    )
+                    or (
+                        checkout.payment_method == "pix"
+                        and checkout.status == "expired"
+                        and checkout.provider_subscription_id is not None
                     )
                 )
             ]
@@ -792,8 +845,10 @@ class _CheckoutCreateDb:
 class _CheckoutGateway:
     def __init__(self) -> None:
         self.pix_creates = 0
+        self.common_pix_creates = 0
         self.card_creates = 0
         self.pix_cancels = 0
+        self.common_pix_cancels = 0
 
     async def find_customer(self, **kwargs):
         return "cus_test"
@@ -815,6 +870,37 @@ class _CheckoutGateway:
         assert authorization_id.startswith("auth_test_")
         self.pix_cancels += 1
 
+    async def create_pix_subscription(self, payload):
+        self.common_pix_creates += 1
+        return SimpleNamespace(
+            subscription_id=f"sub_pix_{self.common_pix_creates}"
+        )
+
+    async def find_subscription(self, **kwargs):
+        return None
+
+    async def payments_for_subscription(self, subscription_id):
+        if subscription_id.startswith("sub_pix_"):
+            suffix = subscription_id.removeprefix("sub_pix_")
+            return [{
+                "id": f"pay_pix_{suffix}",
+                "value": "5.00",
+                "status": "PENDING",
+                "customer": "cus_test",
+                "subscription": subscription_id,
+            }]
+        return []
+
+    async def pix_qr_code(self, payment_id):
+        return SimpleNamespace(
+            payload=f"pix-common-payload-{payment_id}",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+
+    async def cancel_subscription(self, subscription_id):
+        assert subscription_id.startswith("sub_pix_")
+        self.common_pix_cancels += 1
+
     async def create_checkout(self, payload):
         self.card_creates += 1
         return SimpleNamespace(
@@ -833,7 +919,7 @@ def _checkout_request(payment_method: str = "pix_automatic") -> CheckoutCreateRe
         "payment_method": payment_method,
         "return_origin": "https://alovia.netlify.app",
     }
-    if payment_method == "pix_automatic":
+    if payment_method in {"pix", "pix_automatic"}:
         values.update(
             payer_name="Empresa Teste",
             payer_cpf_cnpj="12345678000195",
@@ -871,6 +957,189 @@ async def test_pix_refresh_with_new_idempotency_key_reuses_authorization(monkeyp
     assert refreshed.pix_expires_at == first.pix_expires_at
     assert gateway.pix_creates == 1
     assert db.locks == 2
+
+
+@pytest.mark.asyncio
+async def test_common_pix_checkout_is_native_qr_and_reused(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    first = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    refreshed = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert first.payment_method == "pix"
+    assert first.checkout_mode == "pix"
+    assert first.pix_authorization_id is None
+    assert first.pix_payload.startswith("pix-common-payload-pay_pix_")
+    assert first.pix_expires_at is not None
+    assert refreshed.checkout_id == first.checkout_id
+    assert refreshed.pix_payload == first.pix_payload
+    assert gateway.common_pix_creates == 1
+
+
+@pytest.mark.asyncio
+async def test_common_pix_can_be_canceled_before_payment(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    created = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    canceled = await service.cancel_checkout(
+        business_id=business_id,
+        checkout_id=created.checkout_id,
+    )
+
+    assert canceled.status == "canceled"
+    assert gateway.common_pix_cancels == 1
+
+
+@pytest.mark.asyncio
+async def test_card_refresh_with_new_idempotency_key_reuses_active_checkout(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    first = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    refreshed = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert refreshed.checkout_id == first.checkout_id
+    assert refreshed.checkout_url == first.checkout_url
+    assert gateway.card_creates == 1
+    assert db.locks == 2
+
+
+@pytest.mark.asyncio
+async def test_expired_active_card_checkout_does_not_block_new_attempt(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    first = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    db.checkouts[0].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    replacement = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert db.checkouts[0].status == "expired"
+    assert replacement.checkout_id != first.checkout_id
+    assert gateway.card_creates == 2
+
+
+@pytest.mark.asyncio
+async def test_same_idempotency_key_is_isolated_per_business(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    shared_key = uuid4()
+    business_a = uuid4()
+    business_b = uuid4()
+
+    checkout_a = await service.create_checkout(
+        business_id=business_a,
+        payer_email="a@example.com",
+        idempotency_key=shared_key,
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    checkout_b = await service.create_checkout(
+        business_id=business_b,
+        payer_email="b@example.com",
+        idempotency_key=shared_key,
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert checkout_a.checkout_id != checkout_b.checkout_id
+    assert gateway.card_creates == 2
+
+
+@pytest.mark.asyncio
+async def test_checkout_lock_and_blocking_state_are_isolated_per_business(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_a = uuid4()
+    business_b = uuid4()
+
+    checkout_a = await service.create_checkout(
+        business_id=business_a,
+        payer_email="a@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    checkout_b = await service.create_checkout(
+        business_id=business_b,
+        payer_email="b@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert checkout_a.checkout_id != checkout_b.checkout_id
+    assert gateway.card_creates == 2
+    assert len(db.lock_keys) == 2
+    assert db.lock_keys[0] != db.lock_keys[1]
+    assert str(business_a) in db.lock_keys[0]
+    assert str(business_b) in db.lock_keys[1]
 
 
 @pytest.mark.asyncio

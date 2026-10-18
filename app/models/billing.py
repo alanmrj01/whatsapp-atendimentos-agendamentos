@@ -26,7 +26,7 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="billing_checkout_cycle_allowed",
         ),
         CheckConstraint(
-            "payment_method IN ('credit_card', 'pix_automatic')",
+            "payment_method IN ('credit_card', 'pix', 'pix_automatic')",
             name="billing_checkout_payment_method_allowed",
         ),
         CheckConstraint(
@@ -39,6 +39,13 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         CheckConstraint("amount_cents > 0", name="billing_checkout_amount_positive"),
         Index("ix_billing_checkouts_business_id", "business_id"),
+        Index(
+            "uq_billing_checkouts_business_env_idempotency",
+            "business_id",
+            "provider_environment",
+            "idempotency_key",
+            unique=True,
+        ),
         Index("ix_billing_checkouts_provider_checkout_id", "provider_checkout_id", unique=True),
         Index("ix_billing_checkouts_provider_authorization_id", "provider_authorization_id", unique=True),
     )
@@ -46,7 +53,7 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     business_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=False
     )
-    idempotency_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, nullable=False)
+    idempotency_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     plan_code: Mapped[str] = mapped_column(String(16), nullable=False)
     billing_cycle: Mapped[str] = mapped_column(String(16), nullable=False)
     payment_method: Mapped[str] = mapped_column(String(24), nullable=False)
@@ -78,7 +85,7 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="commercial_subscription_cycle_allowed",
         ),
         CheckConstraint(
-            "payment_method IN ('credit_card', 'pix_automatic')",
+            "payment_method IN ('credit_card', 'pix', 'pix_automatic')",
             name="commercial_subscription_payment_method_allowed",
         ),
         CheckConstraint(
