@@ -1080,6 +1080,118 @@ async def test_expired_active_card_checkout_does_not_block_new_attempt(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_expired_card_checkout_does_not_block_switch_to_common_pix(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    card = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    db.checkouts[0].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    pix = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert db.checkouts[0].status == "expired"
+    assert pix.checkout_id != card.checkout_id
+    assert pix.payment_method == "pix"
+    assert pix.pix_payload.startswith("pix-common-payload-pay_pix_")
+    assert gateway.common_pix_creates == 1
+
+
+@pytest.mark.asyncio
+async def test_common_pix_retries_until_first_subscription_payment_is_queryable(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+
+    sleep_calls = []
+
+    async def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr("app.billing.service.asyncio.sleep", fake_sleep)
+
+    class EventuallyConsistentGateway:
+        def __init__(self):
+            self.payment_lookups = 0
+
+        async def find_customer(self, **kwargs):
+            return "cus_test"
+
+        async def create_customer(self, **kwargs):
+            raise AssertionError("Existing test customer should be reused")
+
+        async def create_pix_subscription(self, payload):
+            return SimpleNamespace(subscription_id="sub_pix_eventual")
+
+        async def find_subscription(self, **kwargs):
+            return None
+
+        async def payments_for_subscription(self, subscription_id):
+            self.payment_lookups += 1
+            if self.payment_lookups < 3:
+                raise AsaasGatewayError("Asaas request failed")
+            return [{
+                "id": "pay_pix_eventual",
+                "value": "5.00",
+                "status": "PENDING",
+                "customer": "cus_test",
+                "subscription": subscription_id,
+            }]
+
+        async def pix_qr_code(self, payment_id):
+            return SimpleNamespace(
+                payload="pix-eventual-payload",
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+
+    checkout = SimpleNamespace(
+        id=uuid4(),
+        business_id=uuid4(),
+        provider_customer_id=None,
+        provider_subscription_id=None,
+        amount_cents=500,
+        pix_qr_payload=None,
+        pix_qr_expires_at=None,
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        status="creating",
+        paid_at=None,
+        payment_method="pix",
+        plan_code="basic",
+        billing_cycle="monthly",
+    )
+    gateway = EventuallyConsistentGateway()
+    service = BillingService(object(), gateway)
+
+    await service._prepare_common_pix(
+        checkout=checkout,
+        offer=get_offer("basic", "monthly"),
+        payer_name="Empresa Teste",
+        payer_cpf_cnpj="12345678000195",
+        payer_email="teste@example.com",
+    )
+
+    assert gateway.payment_lookups == 3
+    assert sleep_calls == [0.75, 1.5]
+    assert checkout.provider_subscription_id == "sub_pix_eventual"
+    assert checkout.pix_qr_payload == "pix-eventual-payload"
+    assert checkout.status == "active"
+
+
+@pytest.mark.asyncio
 async def test_same_idempotency_key_is_isolated_per_business(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
