@@ -123,14 +123,14 @@ class BillingService:
         await self._lock_business_checkout(business_id)
         existing = await self.db.scalar(
             select(BillingCheckout).where(
+                BillingCheckout.business_id == business_id,
                 BillingCheckout.idempotency_key == idempotency_key,
                 BillingCheckout.provider_environment == self.provider_environment,
             )
         )
         if existing is not None:
             if (
-                existing.business_id != business_id
-                or existing.plan_code != offer.plan
+                existing.plan_code != offer.plan
                 or existing.billing_cycle != offer.cycle
                 or existing.payment_method != payload.payment_method
             ):
