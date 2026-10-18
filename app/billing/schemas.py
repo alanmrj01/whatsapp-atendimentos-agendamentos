@@ -83,6 +83,8 @@ class CheckoutProfileResponse(BaseModel):
     payer_name: str | None = None
     postal_code: str | None = None
     address_number: str | None = None
+    pix_automatic_available: bool = False
+    native_card_checkout_available: bool = False
 
 
 class CreditCardCheckoutRequest(StrictBillingRequest):
