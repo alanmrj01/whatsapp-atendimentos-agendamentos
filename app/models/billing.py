@@ -26,7 +26,7 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="billing_checkout_cycle_allowed",
         ),
         CheckConstraint(
-            "payment_method IN ('credit_card', 'pix_automatic')",
+            "payment_method IN ('credit_card', 'pix', 'pix_automatic')",
             name="billing_checkout_payment_method_allowed",
         ),
         CheckConstraint(
@@ -85,7 +85,7 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="commercial_subscription_cycle_allowed",
         ),
         CheckConstraint(
-            "payment_method IN ('credit_card', 'pix_automatic')",
+            "payment_method IN ('credit_card', 'pix', 'pix_automatic')",
             name="commercial_subscription_payment_method_allowed",
         ),
         CheckConstraint(
