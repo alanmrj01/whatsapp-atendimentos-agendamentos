@@ -61,13 +61,13 @@ def upgrade() -> None:
         ["email_claimed_at", "email_sent_at", "created_at"],
     )
     op.execute(
-        'ALTER TABLE public."reengagement_deliveries" ENABLE ROW LEVEL SECURITY'
+        'ALTER TABLE "reengagement_deliveries" ENABLE ROW LEVEL SECURITY'
     )
 
 
 def downgrade() -> None:
     op.execute(
-        'ALTER TABLE public."reengagement_deliveries" DISABLE ROW LEVEL SECURITY'
+        'ALTER TABLE "reengagement_deliveries" DISABLE ROW LEVEL SECURITY'
     )
     op.drop_index(
         "ix_reengagement_deliveries_email_pending",
