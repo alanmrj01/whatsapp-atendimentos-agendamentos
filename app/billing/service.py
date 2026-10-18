@@ -168,27 +168,29 @@ class BillingService:
                     409,
                     "Initial Pix payment is awaiting authorization reconciliation",
                 )
-            if blocking_checkout.payment_method == "credit_card":
+            elif blocking_checkout.payment_method == "credit_card":
                 same_card_offer = (
                     payload.payment_method == "credit_card"
                     and blocking_checkout.plan_code == offer.plan
                     and blocking_checkout.billing_cycle == offer.cycle
                 )
-                if same_card_offer and blocking_checkout.status == "active":
-                    if blocking_checkout.provider_subscription_id:
-                        await self.db.commit()
-                        return self._checkout_response(blocking_checkout)
-                    if (
-                        blocking_checkout.expires_at is None
-                        or blocking_checkout.expires_at > datetime.now(UTC)
-                    ):
-                        await self.db.commit()
-                        return self._checkout_response(blocking_checkout)
-                    blocking_checkout.status = "expired"
-                else:
+                if not same_card_offer or blocking_checkout.status != "active":
                     await self.db.rollback()
                     raise HTTPException(409, "A card checkout is already active")
-            if blocking_checkout.payment_method == "pix_automatic":
+                if blocking_checkout.provider_subscription_id:
+                    await self.db.commit()
+                    return self._checkout_response(blocking_checkout)
+                if (
+                    blocking_checkout.expires_at is None
+                    or blocking_checkout.expires_at > datetime.now(UTC)
+                ):
+                    await self.db.commit()
+                    return self._checkout_response(blocking_checkout)
+                # A card session that never reached a provider subscription and
+                # has passed its local/provider TTL must not block this business
+                # forever. Expire it inside the same transaction and continue.
+                blocking_checkout.status = "expired"
+            elif blocking_checkout.payment_method == "pix_automatic":
                 if (
                     payload.payment_method == "pix_automatic"
                     and self._reusable_pix_checkout(blocking_checkout)
@@ -208,8 +210,9 @@ class BillingService:
                     409,
                     "Cancel the active Pix Automatic checkout before starting another payment",
                 )
-            await self.db.rollback()
-            raise HTTPException(409, "A card checkout is already active")
+            else:
+                await self.db.rollback()
+                raise HTTPException(409, "Another checkout is already active")
 
         checkout = BillingCheckout(
             id=uuid4(),
