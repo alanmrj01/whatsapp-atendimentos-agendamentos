@@ -48,6 +48,17 @@ class AsaasCreditCardSubscriptionResult:
     subscription_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class AsaasPixSubscriptionResult:
+    subscription_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class AsaasPixQrCodeResult:
+    payload: str
+    expires_at: datetime | None
+
+
 class AsaasGateway:
     def __init__(self, configuration: AsaasConfiguration) -> None:
         self.configuration = configuration
@@ -175,6 +186,61 @@ class AsaasGateway:
         if not isinstance(data, list):
             raise AsaasGatewayError("Asaas payments response is invalid")
         return [row for row in data if isinstance(row, dict)]
+
+    async def create_pix_subscription(
+        self, payload: dict[str, Any]
+    ) -> AsaasPixSubscriptionResult:
+        data = await self._json_request(
+            "POST",
+            "/subscriptions",
+            json=payload,
+            timeout_seconds=30.0,
+        )
+        subscription_id = data.get("id") if isinstance(data, dict) else None
+        if (
+            not isinstance(subscription_id, str)
+            or not subscription_id.startswith("sub_")
+            or len(subscription_id) > 80
+        ):
+            raise AsaasGatewayError("Asaas Pix subscription response is invalid")
+        return AsaasPixSubscriptionResult(subscription_id=subscription_id)
+
+    async def pix_qr_code(self, payment_id: str) -> AsaasPixQrCodeResult:
+        if (
+            not isinstance(payment_id, str)
+            or not payment_id.startswith("pay_")
+            or len(payment_id) > 100
+        ):
+            raise AsaasGatewayError("Asaas payment identifier is invalid")
+        data = await self._json_request(
+            "GET",
+            f"/payments/{payment_id}/pixQrCode",
+        )
+        payload = data.get("payload") if isinstance(data, dict) else None
+        if (
+            not isinstance(payload, str)
+            or not payload.strip()
+            or len(payload) > 8_000
+        ):
+            raise AsaasGatewayError("Asaas Pix QR response is invalid")
+        return AsaasPixQrCodeResult(
+            payload=payload,
+            expires_at=_parse_asaas_datetime(data.get("expirationDate")),
+        )
+
+    async def cancel_subscription(self, subscription_id: str) -> None:
+        if (
+            not isinstance(subscription_id, str)
+            or not subscription_id.startswith("sub_")
+            or len(subscription_id) > 80
+        ):
+            raise AsaasGatewayError("Asaas subscription identifier is invalid")
+        await self._json_request(
+            "DELETE",
+            f"/subscriptions/{subscription_id}",
+            allow_empty_response=True,
+            allow_not_found=True,
+        )
 
     async def create_credit_card_subscription(
         self, payload: dict[str, Any]
