@@ -765,8 +765,21 @@ class _CheckoutCreateDb:
                 for name, value in params.items()
                 if name.startswith("idempotency_key_")
             )
+            business_id = next(
+                (
+                    value
+                    for name, value in params.items()
+                    if name.startswith("business_id_")
+                ),
+                None,
+            )
             return next(
-                (checkout for checkout in self.checkouts if checkout.idempotency_key == key),
+                (
+                    checkout
+                    for checkout in self.checkouts
+                    if checkout.idempotency_key == key
+                    and (business_id is None or checkout.business_id == business_id)
+                ),
                 None,
             )
         if "FROM commercial_subscriptions" in sql:
@@ -963,6 +976,36 @@ async def test_expired_active_card_checkout_does_not_block_new_attempt(monkeypat
 
     assert db.checkouts[0].status == "expired"
     assert replacement.checkout_id != first.checkout_id
+    assert gateway.card_creates == 2
+
+
+@pytest.mark.asyncio
+async def test_same_idempotency_key_is_isolated_per_business(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    shared_key = uuid4()
+    business_a = uuid4()
+    business_b = uuid4()
+
+    checkout_a = await service.create_checkout(
+        business_id=business_a,
+        payer_email="a@example.com",
+        idempotency_key=shared_key,
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    checkout_b = await service.create_checkout(
+        business_id=business_b,
+        payer_email="b@example.com",
+        idempotency_key=shared_key,
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert checkout_a.checkout_id != checkout_b.checkout_id
     assert gateway.card_creates == 2
 
 
