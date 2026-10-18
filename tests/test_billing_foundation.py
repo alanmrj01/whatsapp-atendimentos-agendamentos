@@ -874,6 +874,36 @@ async def test_pix_refresh_with_new_idempotency_key_reuses_authorization(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_card_refresh_with_new_idempotency_key_reuses_active_checkout(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    first = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    refreshed = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("credit_card"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert refreshed.checkout_id == first.checkout_id
+    assert refreshed.checkout_url == first.checkout_url
+    assert gateway.card_creates == 1
+    assert db.locks == 2
+
+
+@pytest.mark.asyncio
 async def test_active_pix_blocks_card_until_canceled(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
