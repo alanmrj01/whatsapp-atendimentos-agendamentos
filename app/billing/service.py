@@ -169,18 +169,25 @@ class BillingService:
                     "Initial Pix payment is awaiting authorization reconciliation",
                 )
             if blocking_checkout.payment_method == "credit_card":
-                if (
+                same_card_offer = (
                     payload.payment_method == "credit_card"
-                    and blocking_checkout.status == "active"
                     and blocking_checkout.plan_code == offer.plan
                     and blocking_checkout.billing_cycle == offer.cycle
-                    and blocking_checkout.expires_at is not None
-                    and blocking_checkout.expires_at > datetime.now(UTC)
-                ):
-                    await self.db.commit()
-                    return self._checkout_response(blocking_checkout)
-                await self.db.rollback()
-                raise HTTPException(409, "A card checkout is already active")
+                )
+                if same_card_offer and blocking_checkout.status == "active":
+                    if blocking_checkout.provider_subscription_id:
+                        await self.db.commit()
+                        return self._checkout_response(blocking_checkout)
+                    if (
+                        blocking_checkout.expires_at is None
+                        or blocking_checkout.expires_at > datetime.now(UTC)
+                    ):
+                        await self.db.commit()
+                        return self._checkout_response(blocking_checkout)
+                    blocking_checkout.status = "expired"
+                else:
+                    await self.db.rollback()
+                    raise HTTPException(409, "A card checkout is already active")
             if blocking_checkout.payment_method == "pix_automatic":
                 if (
                     payload.payment_method == "pix_automatic"
@@ -353,6 +360,8 @@ class BillingService:
             payer_name=business.responsible_name,
             postal_code=business.service_origin_postal_code,
             address_number=business.service_origin_number,
+            pix_automatic_available=payment_method_is_enabled("pix_automatic"),
+            native_card_checkout_available=native_card_checkout_is_enabled(),
         )
 
     async def pay_credit_card(
