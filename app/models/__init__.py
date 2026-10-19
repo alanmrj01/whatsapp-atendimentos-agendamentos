@@ -22,6 +22,7 @@ from app.models.domain import (
 from app.models.push import WebPushDelivery, WebPushEvent, WebPushSubscription
 from app.models.reengagement import ReengagementDelivery
 from app.models.whatsapp_onboarding import WhatsAppOnboardingAttempt, WhatsAppOnboardingAttemptEvent
+from app.models.marketing import MarketingFunnelEvent
 
 __all__ = [
     "AuthSession",
@@ -46,6 +47,7 @@ __all__ = [
     "Employee",
     "EmployeeService",
     "Message",
+    "MarketingFunnelEvent",
     "ProcessedWebhook",
     "ScheduleBlock",
     "Service",
