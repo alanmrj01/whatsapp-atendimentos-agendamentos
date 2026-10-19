@@ -23,10 +23,10 @@ class MarketingFunnelEvent(Base):
     visitor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     business_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=True
+        UUID(as_uuid=True), nullable=True
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+        UUID(as_uuid=True), nullable=True
     )
     event_name: Mapped[str] = mapped_column(String(64), nullable=False)
     surface: Mapped[str] = mapped_column(String(32), nullable=False)
