@@ -42,14 +42,6 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["business_id"], ["businesses.id"],
-            name="fk_marketing_funnel_events_business_id_businesses",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"],
-            name="fk_marketing_funnel_events_user_id_users",
-        ),
         sa.PrimaryKeyConstraint("id", name="pk_marketing_funnel_events"),
     )
     op.create_index(
