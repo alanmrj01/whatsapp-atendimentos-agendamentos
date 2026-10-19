@@ -30,6 +30,7 @@ EXPECTED_TABLES = {
     "employee_services",
     "employees",
     "messages",
+    "marketing_funnel_events",
     "processed_webhooks",
     "schedule_blocks",
     "services",

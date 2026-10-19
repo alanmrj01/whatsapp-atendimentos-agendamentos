@@ -139,7 +139,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261018_0033"]
+    assert script.get_heads() == ["20261019_0034"]
 
 
 def test_reengagement_migration_is_additive_and_reversible() -> None:
