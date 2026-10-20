@@ -678,7 +678,7 @@ async def test_pix_activation_persists_provider_subscription_id(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_hosted_checkout_uses_ten_minute_expiration() -> None:
+async def test_hosted_checkout_uses_fifteen_minute_expiration() -> None:
     captured = {}
 
     class Gateway:
@@ -696,7 +696,7 @@ async def test_hosted_checkout_uses_ten_minute_expiration() -> None:
         return_origin="https://alovia.netlify.app",
     )
 
-    assert captured["minutesToExpire"] == 10
+    assert captured["minutesToExpire"] == 15
     assert captured["items"][0]["description"] == "Assinatura Basic - mensal"
 
 
