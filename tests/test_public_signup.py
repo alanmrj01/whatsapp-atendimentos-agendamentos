@@ -41,12 +41,19 @@ def test_signup_request_normalizes_fields_and_hides_password() -> None:
     assert "correct-horse-battery" not in repr(payload)
 
 
-def test_signup_request_rejects_short_password_and_extra_fields() -> None:
+def test_signup_request_accepts_simple_eight_character_password_and_rejects_short_or_extra_fields() -> None:
+    simple = SignupRequest(
+        business_name="Piloto",
+        email="owner@example.test",
+        password="abcdefgh",
+    )
+    assert simple.password.get_secret_value() == "abcdefgh"
+
     with pytest.raises(ValidationError):
         SignupRequest(
             business_name="Piloto",
             email="owner@example.test",
-            password="curta",
+            password="1234567",
         )
     with pytest.raises(ValidationError):
         SignupRequest(
