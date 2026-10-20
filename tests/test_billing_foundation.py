@@ -870,35 +870,36 @@ class _CheckoutGateway:
         assert authorization_id.startswith("auth_test_")
         self.pix_cancels += 1
 
-    async def create_pix_subscription(self, payload):
+    async def active_pix_address_key(self):
+        return "pix-key-test"
+
+    async def create_static_pix_qr_code(self, **kwargs):
         self.common_pix_creates += 1
+        assert kwargs["expiration_seconds"] == 900
+        assert kwargs["external_reference"].startswith("alovia:")
         return SimpleNamespace(
-            subscription_id=f"sub_pix_{self.common_pix_creates}"
+            qr_code_id=f"qr_pix_{self.common_pix_creates}",
+            payload=f"pix-common-payload-{self.common_pix_creates}",
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
         )
+
+    async def delete_static_pix_qr_code(self, qr_code_id):
+        assert qr_code_id.startswith("qr_pix_")
+        self.common_pix_cancels += 1
+
+    async def create_pix_subscription(self, payload):
+        raise AssertionError("Common Pix must not create an Asaas subscription")
 
     async def find_subscription(self, **kwargs):
         return None
 
     async def payments_for_subscription(self, subscription_id):
-        if subscription_id.startswith("sub_pix_"):
-            suffix = subscription_id.removeprefix("sub_pix_")
-            return [{
-                "id": f"pay_pix_{suffix}",
-                "value": "5.00",
-                "status": "PENDING",
-                "customer": "cus_test",
-                "subscription": subscription_id,
-            }]
         return []
 
     async def pix_qr_code(self, payment_id):
-        return SimpleNamespace(
-            payload=f"pix-common-payload-{payment_id}",
-            expires_at=datetime.now(UTC) + timedelta(hours=1),
-        )
+        raise AssertionError("Common Pix must not use dynamic payment QR codes")
 
     async def cancel_subscription(self, subscription_id):
-        assert subscription_id.startswith("sub_pix_")
         self.common_pix_cancels += 1
 
     async def create_checkout(self, payload):
@@ -960,36 +961,49 @@ async def test_pix_refresh_with_new_idempotency_key_reuses_authorization(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_common_pix_checkout_is_native_qr_and_reused(monkeypatch) -> None:
+async def test_common_pix_checkout_is_one_time_15_minutes_and_not_reused(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
     db = _CheckoutCreateDb()
     gateway = _CheckoutGateway()
     service = BillingService(db, gateway)
     business_id = uuid4()
+    idempotency_key = uuid4()
 
     first = await service.create_checkout(
         business_id=business_id,
         payer_email="teste@example.com",
-        idempotency_key=uuid4(),
+        idempotency_key=idempotency_key,
         payload=_checkout_request("pix"),
         allowed_origins=("https://alovia.netlify.app",),
     )
-    refreshed = await service.create_checkout(
+    same_request = await service.create_checkout(
         business_id=business_id,
         payer_email="teste@example.com",
-        idempotency_key=uuid4(),
+        idempotency_key=idempotency_key,
         payload=_checkout_request("pix"),
         allowed_origins=("https://alovia.netlify.app",),
     )
 
     assert first.payment_method == "pix"
     assert first.checkout_mode == "pix"
-    assert first.pix_authorization_id is None
-    assert first.pix_payload.startswith("pix-common-payload-pay_pix_")
+    assert first.pix_payload == "pix-common-payload-1"
     assert first.pix_expires_at is not None
-    assert refreshed.checkout_id == first.checkout_id
-    assert refreshed.pix_payload == first.pix_payload
+    remaining = (first.pix_expires_at - datetime.now(UTC)).total_seconds()
+    assert 890 <= remaining <= 900
+    assert same_request.checkout_id == first.checkout_id
+    assert same_request.pix_payload == first.pix_payload
+    assert gateway.common_pix_creates == 1
+
+    with pytest.raises(HTTPException) as error:
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request("pix"),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+    assert error.value.status_code == 409
     assert gateway.common_pix_creates == 1
 
 
@@ -1108,54 +1122,26 @@ async def test_expired_card_checkout_does_not_block_switch_to_common_pix(monkeyp
     assert db.checkouts[0].status == "expired"
     assert pix.checkout_id != card.checkout_id
     assert pix.payment_method == "pix"
-    assert pix.pix_payload.startswith("pix-common-payload-pay_pix_")
+    assert pix.pix_payload == "pix-common-payload-1"
     assert gateway.common_pix_creates == 1
 
 
 @pytest.mark.asyncio
-async def test_common_pix_retries_until_first_subscription_payment_is_queryable(monkeypatch) -> None:
+async def test_common_pix_preparation_uses_static_single_payment_qr(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    captured = {}
 
-    sleep_calls = []
+    class Gateway:
+        async def active_pix_address_key(self):
+            return "active-pix-key"
 
-    async def fake_sleep(delay):
-        sleep_calls.append(delay)
-
-    monkeypatch.setattr("app.billing.service.asyncio.sleep", fake_sleep)
-
-    class EventuallyConsistentGateway:
-        def __init__(self):
-            self.payment_lookups = 0
-
-        async def find_customer(self, **kwargs):
-            return "cus_test"
-
-        async def create_customer(self, **kwargs):
-            raise AssertionError("Existing test customer should be reused")
-
-        async def create_pix_subscription(self, payload):
-            return SimpleNamespace(subscription_id="sub_pix_eventual")
-
-        async def find_subscription(self, **kwargs):
-            return None
-
-        async def payments_for_subscription(self, subscription_id):
-            self.payment_lookups += 1
-            if self.payment_lookups < 3:
-                raise AsaasGatewayError("Asaas request failed")
-            return [{
-                "id": "pay_pix_eventual",
-                "value": "5.00",
-                "status": "PENDING",
-                "customer": "cus_test",
-                "subscription": subscription_id,
-            }]
-
-        async def pix_qr_code(self, payment_id):
+        async def create_static_pix_qr_code(self, **kwargs):
+            captured.update(kwargs)
             return SimpleNamespace(
-                payload="pix-eventual-payload",
-                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                qr_code_id="qr_static_test",
+                payload="pix-static-payload",
+                expires_at=datetime.now(UTC) + timedelta(minutes=15),
             )
 
     checkout = SimpleNamespace(
@@ -1163,18 +1149,18 @@ async def test_common_pix_retries_until_first_subscription_payment_is_queryable(
         business_id=uuid4(),
         provider_customer_id=None,
         provider_subscription_id=None,
+        provider_pix_qr_code_id=None,
         amount_cents=500,
         pix_qr_payload=None,
         pix_qr_expires_at=None,
-        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
         status="creating",
         paid_at=None,
         payment_method="pix",
         plan_code="basic",
         billing_cycle="monthly",
     )
-    gateway = EventuallyConsistentGateway()
-    service = BillingService(object(), gateway)
+    service = BillingService(object(), Gateway())
 
     await service._prepare_common_pix(
         checkout=checkout,
@@ -1184,11 +1170,13 @@ async def test_common_pix_retries_until_first_subscription_payment_is_queryable(
         payer_email="teste@example.com",
     )
 
-    assert gateway.payment_lookups == 3
-    assert sleep_calls == [0.75, 1.5]
-    assert checkout.provider_subscription_id == "sub_pix_eventual"
-    assert checkout.pix_qr_payload == "pix-eventual-payload"
-    assert checkout.status == "active"
+    assert captured["address_key"] == "active-pix-key"
+    assert captured["expiration_seconds"] == 900
+    assert captured["value"] == 5.0
+    assert captured["external_reference"] == f"alovia:{checkout.id}"
+    assert checkout.provider_pix_qr_code_id == "qr_static_test"
+    assert checkout.provider_subscription_id is None
+    assert checkout.pix_qr_payload == "pix-static-payload"
 
 
 @pytest.mark.asyncio
