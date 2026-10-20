@@ -443,7 +443,7 @@ class BillingService:
                 "customerId": customer_id,
                 "immediateQrCode": {
                     "originalValue": offer.amount_cents / 100,
-                    "expirationSeconds": 3600,
+                    "expirationSeconds": PAYMENT_CHECKOUT_TTL_SECONDS,
                 },
                 "paymentCreationMode": "SUBSCRIPTION",
                 "retryPolicy": "ALLOW_THREE_IN_SEVEN_DAYS",
@@ -885,7 +885,7 @@ class BillingService:
         if (
             checkout.payment_method != "pix"
             or checkout.status != "paid"
-            or not checkout.provider_subscription_id
+            or not (checkout.provider_pix_qr_code_id or checkout.provider_subscription_id)
         ):
             return None
 
@@ -915,6 +915,7 @@ class BillingService:
                 provider_environment=self.provider_environment,
                 status="active",
                 provider_subscription_id=checkout.provider_subscription_id,
+                provider_pix_qr_code_id=checkout.provider_pix_qr_code_id,
                 provider_customer_id=checkout.provider_customer_id,
                 access_until=access_until,
             )
@@ -922,6 +923,7 @@ class BillingService:
         else:
             subscription.status = "active"
             subscription.provider_subscription_id = checkout.provider_subscription_id
+            subscription.provider_pix_qr_code_id = checkout.provider_pix_qr_code_id
             subscription.provider_customer_id = checkout.provider_customer_id
             subscription.access_until = max(subscription.access_until, access_until)
 
@@ -1313,17 +1315,6 @@ class BillingService:
             or checkout.provider_environment != self.provider_environment
         ):
             return None
-        pix_qr_code_id = payload.get("pixQrCodeId")
-        if isinstance(pix_qr_code_id, str) and pix_qr_code_id:
-            subscription = await self.db.scalar(
-                select(CommercialSubscription).where(
-                    CommercialSubscription.provider_pix_qr_code_id == pix_qr_code_id,
-                    CommercialSubscription.provider_environment == self.provider_environment,
-                )
-            )
-            if subscription is not None:
-                return subscription
-
         provider_authorization_id = payload.get("pixAutomaticAuthorizationId")
         if (
             provider_authorization_id is not None
@@ -1466,6 +1457,17 @@ class BillingService:
             subscription = await self.db.scalar(
                 select(CommercialSubscription).where(
                     CommercialSubscription.provider_subscription_id == provider_subscription_id,
+                    CommercialSubscription.provider_environment == self.provider_environment,
+                )
+            )
+            if subscription is not None:
+                return subscription
+
+        pix_qr_code_id = payload.get("pixQrCodeId")
+        if isinstance(pix_qr_code_id, str) and pix_qr_code_id:
+            subscription = await self.db.scalar(
+                select(CommercialSubscription).where(
+                    CommercialSubscription.provider_pix_qr_code_id == pix_qr_code_id,
                     CommercialSubscription.provider_environment == self.provider_environment,
                 )
             )
