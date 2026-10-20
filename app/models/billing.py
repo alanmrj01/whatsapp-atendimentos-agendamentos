@@ -99,7 +99,7 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="commercial_subscription_status_allowed",
         ),
         CheckConstraint(
-            "provider_subscription_id IS NOT NULL OR provider_authorization_id IS NOT NULL",
+            "provider_subscription_id IS NOT NULL OR provider_authorization_id IS NOT NULL OR provider_pix_qr_code_id IS NOT NULL",
             name="commercial_subscription_provider_reference_required",
         ),
         Index("ix_commercial_subscriptions_business_id", "business_id"),
