@@ -833,7 +833,7 @@ class BillingService:
         if (
             checkout.payment_method != "credit_card"
             or checkout.status != "paid"
-            or not (checkout.provider_pix_qr_code_id or checkout.provider_subscription_id)
+            or not checkout.provider_subscription_id
         ):
             return None
 
@@ -863,7 +863,6 @@ class BillingService:
                 provider_environment=self.provider_environment,
                 status="active",
                 provider_subscription_id=checkout.provider_subscription_id,
-                provider_pix_qr_code_id=checkout.provider_pix_qr_code_id,
                 provider_customer_id=checkout.provider_customer_id,
                 access_until=access_until,
             )
@@ -871,7 +870,6 @@ class BillingService:
         else:
             subscription.status = "active"
             subscription.provider_subscription_id = checkout.provider_subscription_id
-            subscription.provider_pix_qr_code_id = checkout.provider_pix_qr_code_id
             subscription.provider_customer_id = checkout.provider_customer_id
             subscription.access_until = max(subscription.access_until, access_until)
 
