@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import calendar
 import logging
 from datetime import UTC, date, datetime, timedelta
