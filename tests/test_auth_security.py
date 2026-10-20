@@ -35,6 +35,14 @@ from app.main import create_app
 from tests.test_migration import PROJECT_ROOT, render_migration_sql
 
 
+def test_password_policy_accepts_any_eight_characters_and_rejects_seven():
+    for password in ("abcdefgh", "12345678", "........"):
+        stored = hash_password(password)
+        assert verify_password(password, stored)
+    with pytest.raises(ValueError, match="8 to 1024"):
+        hash_password("1234567")
+
+
 def test_argon2id_random_salt_and_no_plaintext():
     password = secrets.token_urlsafe(24)
     first, second = hash_password(password), hash_password(password)
