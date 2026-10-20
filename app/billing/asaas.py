@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import logging
 import re
 from typing import Any
@@ -57,6 +57,13 @@ class AsaasPixSubscriptionResult:
 class AsaasPixQrCodeResult:
     payload: str
     expires_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class AsaasStaticPixQrCodeResult:
+    qr_code_id: str
+    payload: str
+    expires_at: datetime
 
 
 class AsaasGateway:
@@ -129,6 +136,79 @@ class AsaasGateway:
         if not isinstance(customer_id, str) or not customer_id.startswith("cus_") or len(customer_id) > 80:
             raise AsaasGatewayError("Asaas customer response is invalid")
         return customer_id
+
+    async def active_pix_address_key(self) -> str:
+        payload = await self._json_request(
+            "GET",
+            "/pix/addressKeys",
+            params={"status": "ACTIVE", "limit": 100},
+        )
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise AsaasGatewayError("Asaas Pix key response is invalid")
+        for row in rows:
+            if not isinstance(row, dict) or row.get("status") != "ACTIVE":
+                continue
+            key = row.get("key")
+            if isinstance(key, str) and key.strip() and len(key) <= 200:
+                return key.strip()
+        raise AsaasGatewayError("Asaas account has no active Pix key")
+
+    async def create_static_pix_qr_code(
+        self,
+        *,
+        address_key: str,
+        description: str,
+        value: float,
+        external_reference: str,
+        expiration_seconds: int = 900,
+    ) -> AsaasStaticPixQrCodeResult:
+        data = await self._json_request(
+            "POST",
+            "/pix/qrCodes/static",
+            json={
+                "addressKey": address_key,
+                "description": description,
+                "value": value,
+                "format": "PAYLOAD",
+                "expirationSeconds": expiration_seconds,
+                "allowsMultiplePayments": False,
+                "externalReference": external_reference,
+            },
+            timeout_seconds=20.0,
+        )
+        qr_code_id = data.get("id") if isinstance(data, dict) else None
+        payload = data.get("payload") if isinstance(data, dict) else None
+        if (
+            not isinstance(qr_code_id, str)
+            or not qr_code_id.strip()
+            or len(qr_code_id) > 100
+        ):
+            raise AsaasGatewayError("Asaas static Pix QR response is invalid")
+        if (
+            not isinstance(payload, str)
+            or not payload.strip()
+            or len(payload) > 8_000
+        ):
+            raise AsaasGatewayError("Asaas static Pix QR response is invalid")
+        expires_at = _parse_asaas_datetime(data.get("expirationDate"))
+        if expires_at is None:
+            expires_at = datetime.now(UTC) + timedelta(seconds=expiration_seconds)
+        return AsaasStaticPixQrCodeResult(
+            qr_code_id=qr_code_id,
+            payload=payload,
+            expires_at=expires_at,
+        )
+
+    async def delete_static_pix_qr_code(self, qr_code_id: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", qr_code_id):
+            raise AsaasGatewayError("Asaas static Pix QR identifier is invalid")
+        await self._json_request(
+            "DELETE",
+            f"/pix/qrCodes/static/{qr_code_id}",
+            allow_empty_response=True,
+            allow_not_found=True,
+        )
 
     async def create_pix_authorization(
         self, payload: dict[str, Any]
