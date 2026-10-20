@@ -324,10 +324,58 @@ async def test_pix_automatic_sets_immediate_qr_expiration() -> None:
 
     assert captured["immediateQrCode"] == {
         "originalValue": 197.0,
-        "expirationSeconds": 3600,
+        "expirationSeconds": 900,
     }
     assert checkout.provider_subscription_id == "sub_pix_test"
 
+
+
+@pytest.mark.asyncio
+async def test_static_pix_gateway_enforces_15_minutes_and_single_payment() -> None:
+    gateway = AsaasGateway(
+        settings(
+            ASAAS_API_KEY=SecretStr("$aact_hmlg_example")
+        ).require_asaas_configuration()
+    )
+    calls = []
+
+    async def fake_json_request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {
+            "id": "qr_static_gateway_test",
+            "payload": "000201-static-pix",
+            "expirationDate": "2026-10-20 13:15:00",
+        }
+
+    gateway._json_request = fake_json_request  # type: ignore[method-assign]
+    result = await gateway.create_static_pix_qr_code(
+        address_key="pix-active-key",
+        description="ALOVIA Basic",
+        value=5.0,
+        external_reference="alovia:00000000-0000-0000-0000-000000000001",
+        expiration_seconds=900,
+    )
+
+    assert result.qr_code_id == "qr_static_gateway_test"
+    assert result.payload == "000201-static-pix"
+    assert calls == [
+        (
+            "POST",
+            "/pix/qrCodes/static",
+            {
+                "json": {
+                    "addressKey": "pix-active-key",
+                    "description": "ALOVIA Basic",
+                    "value": 5.0,
+                    "format": "PAYLOAD",
+                    "expirationSeconds": 900,
+                    "allowsMultiplePayments": False,
+                    "externalReference": "alovia:00000000-0000-0000-0000-000000000001",
+                },
+                "timeout_seconds": 20.0,
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
