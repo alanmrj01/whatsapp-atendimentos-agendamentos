@@ -15,6 +15,8 @@ def test_json_formatter_ignores_sensitive_extra_fields() -> None:
         exc_info=None,
     )
     record.request_id = "safe-request-id"
+    record.reset_id = "safe-reset-id"
+    record.provider_message_id = "safe-provider-message-id"
     record.token = "must-not-be-logged"
     record.phone = "must-not-be-logged"
     record.body = "must-not-be-logged"
@@ -23,6 +25,8 @@ def test_json_formatter_ignores_sensitive_extra_fields() -> None:
 
     assert payload["message"] == "request_completed"
     assert payload["request_id"] == "safe-request-id"
+    assert payload["reset_id"] == "safe-reset-id"
+    assert payload["provider_message_id"] == "safe-provider-message-id"
     assert "token" not in payload
     assert "phone" not in payload
     assert "body" not in payload
