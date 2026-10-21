@@ -1681,9 +1681,10 @@ class BillingService:
             or len(provider_payment_id) > 100
         ):
             return
-        if checkout.provider_payment_id is None:
+        current_payment_id = getattr(checkout, "provider_payment_id", None)
+        if current_payment_id is None:
             checkout.provider_payment_id = provider_payment_id
-        elif checkout.provider_payment_id != provider_payment_id:
+        elif current_payment_id != provider_payment_id:
             logger.warning(
                 "billing_initial_payment_id_conflict",
                 extra={"provider_environment": checkout.provider_environment},
