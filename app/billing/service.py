@@ -1415,6 +1415,23 @@ class BillingService:
                     )
                 )
         elif event_type in {
+            "PAYMENT_REFUND_IN_PROGRESS",
+            "PAYMENT_PARTIALLY_REFUNDED",
+            "PAYMENT_REFUND_DENIED",
+        }:
+            checkout = await self.db.get(BillingCheckout, subscription.checkout_id)
+            provider_payment_id = payload.get("id")
+            if (
+                checkout is not None
+                and isinstance(provider_payment_id, str)
+                and checkout.provider_payment_id == provider_payment_id
+            ):
+                subscription.refund_status = (
+                    "requested"
+                    if event_type == "PAYMENT_REFUND_IN_PROGRESS"
+                    else "reconcile_required"
+                )
+        elif event_type in {
             "PAYMENT_REFUNDED",
             "PAYMENT_CHARGEBACK_REQUESTED",
             "PAYMENT_AWAITING_CHARGEBACK_REVERSAL",
