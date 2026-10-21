@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
@@ -92,7 +93,12 @@ async def test_platform_admin_lists_real_free_or_paid_access_without_inventing_p
     )
     db = SimpleNamespace(
         scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [free_business, paid_business])),
-        execute=AsyncMock(side_effect=[[], [], CursorLikeRows([(free_business.id, "free")])]),
+        execute=AsyncMock(side_effect=[
+            [],
+            [],
+            CursorLikeRows([(free_business.id, "free", False)]),
+            [],
+        ]),
     )
 
     result = await PlatformAdminService(db).list_businesses()
@@ -101,8 +107,47 @@ async def test_platform_admin_lists_real_free_or_paid_access_without_inventing_p
         ("Conta gratuita", "free"),
         ("Conta legada paga", "paid"),
     ]
-    assert not hasattr(result.businesses[0], "plan_name")
-    assert not hasattr(result.businesses[0], "administrative_override")
+    assert result.businesses[0].commercial_access_active is False
+    assert result.businesses[0].commercial_plan_code is None
+    assert result.businesses[0].admin_full_access is False
+
+
+@pytest.mark.asyncio
+async def test_platform_admin_reports_active_commercial_subscription_without_mutating_admin_access() -> None:
+    business = Business(
+        id=uuid4(),
+        name="Cliente Basic",
+        timezone="America/Sao_Paulo",
+        active=True,
+    )
+    access_until = datetime.now(UTC) + timedelta(days=30)
+    db = SimpleNamespace(
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [business])),
+        execute=AsyncMock(side_effect=[
+            [(business.id, "owner@example.test")],
+            [],
+            CursorLikeRows([(business.id, "free", False)]),
+            [(
+                business.id,
+                "basic",
+                "monthly",
+                "active",
+                access_until,
+                datetime.now(UTC),
+            )],
+        ]),
+    )
+
+    result = await PlatformAdminService(db).list_businesses()
+    item = result.businesses[0]
+
+    assert item.access_mode == "free"
+    assert item.admin_full_access is False
+    assert item.commercial_access_active is True
+    assert item.commercial_plan_code == "basic"
+    assert item.commercial_billing_cycle == "monthly"
+    assert item.commercial_subscription_status == "active"
+    assert item.commercial_access_until == access_until
 
 
 def test_platform_business_create_forbids_extra_fields() -> None:

@@ -17,7 +17,7 @@ class BrevoPasswordResetMailer:
     def __init__(self, configuration: PasswordResetEmailConfiguration) -> None:
         self.configuration = configuration
 
-    async def send(self, *, reset_id: UUID, email: str, token: str) -> None:
+    async def send(self, *, reset_id: UUID, email: str, token: str) -> str | None:
         reset_url = (
             f"{self.configuration.public_base_url}/redefinir-senha#"
             + urlencode({"token": token})
@@ -154,3 +154,17 @@ class BrevoPasswordResetMailer:
             raise PasswordResetEmailError(
                 "Password reset email delivery failed"
             )
+        try:
+            response_payload = response.json()
+        except (TypeError, ValueError):
+            return None
+        message_id = (
+            response_payload.get("messageId")
+            if isinstance(response_payload, dict)
+            else None
+        )
+        return (
+            message_id
+            if isinstance(message_id, str) and 0 < len(message_id) <= 255
+            else None
+        )

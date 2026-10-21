@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -53,7 +54,17 @@ class PlatformBusinessResponse(BaseModel):
     name: str
     timezone: str
     active: bool
+    # Administrative/legacy access flag. Commercial subscription state is
+    # reported separately so the admin UI never confuses billing with an override.
     access_mode: AccessMode = "paid"
+    admin_full_access: bool = False
+    commercial_access_active: bool = False
+    commercial_plan_code: Literal["basic", "plus"] | None = None
+    commercial_billing_cycle: Literal["monthly", "quarterly", "annual"] | None = None
+    commercial_subscription_status: Literal[
+        "active", "past_due", "canceled", "suspended"
+    ] | None = None
+    commercial_access_until: datetime | None = None
     owners: list[str]
     whatsapp_status: Literal["disconnected", "pending", "connected", "error"]
 
