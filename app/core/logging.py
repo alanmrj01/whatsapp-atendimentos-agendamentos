@@ -24,6 +24,10 @@ _SAFE_EXTRA_FIELDS = (
     "attempt_id",
     "reset_id",
     "provider_message_id",
+    "checkout_id",
+    "subscription_id",
+    "provider_payment_id",
+    "refund_status",
     "failure_code",
     "onboarding_state",
 )
