@@ -678,6 +678,9 @@ class BillingService:
                 continue
             if payment.get("status") not in {"CONFIRMED", "RECEIVED"}:
                 continue
+            self._capture_initial_payment_id(
+                checkout, "PAYMENT_CONFIRMED", payment
+            )
             checkout.status = "paid"
             checkout.paid_at = checkout.paid_at or datetime.now(UTC)
             provider_customer_id = payment.get("customer")
@@ -913,8 +916,25 @@ class BillingService:
                 checkout
             )
         if checkout.provider_payment_id is None:
-            await self.db.rollback()
-            raise HTTPException(409, "Payment reference requires support review")
+            now = datetime.now(UTC)
+            subscription.cancellation_requested_at = (
+                subscription.cancellation_requested_at or now
+            )
+            subscription.refund_status = "reconcile_required"
+            subscription.refund_requested_at = (
+                subscription.refund_requested_at or now
+            )
+            await self.db.commit()
+            logger.warning(
+                "billing_guarantee_refund_reconcile_required",
+                extra={
+                    "business_id": str(subscription.business_id),
+                    "subscription_id": str(subscription.id),
+                    "checkout_id": str(checkout.id),
+                    "refund_status": subscription.refund_status,
+                },
+            )
+            return await self._subscription_status_response(subscription)
 
         now = datetime.now(UTC)
         subscription.cancellation_requested_at = (
@@ -1527,7 +1547,8 @@ class BillingService:
                 extra={"provider_environment": self.provider_environment},
             )
             return None
-        self._capture_initial_payment_id(checkout, event_type, payload)
+        if checkout.paid_at is None:
+            self._capture_initial_payment_id(checkout, event_type, payload)
         checkout.paid_at = checkout.paid_at or datetime.now(UTC)
         return checkout
 
@@ -1643,7 +1664,8 @@ class BillingService:
             and 0 < len(provider_customer_id) <= 80
         ):
             checkout.provider_customer_id = provider_customer_id
-        self._capture_initial_payment_id(checkout, event_type, payload)
+        if checkout_session is not None or checkout.paid_at is None:
+            self._capture_initial_payment_id(checkout, event_type, payload)
         return checkout
 
     @staticmethod
@@ -1668,6 +1690,19 @@ class BillingService:
             )
 
     async def _subscription_for_payment(self, payload: dict) -> CommercialSubscription | None:
+        provider_payment_id = payload.get("id")
+        if isinstance(provider_payment_id, str) and provider_payment_id:
+            checkout = await self.db.scalar(
+                select(BillingCheckout).where(
+                    BillingCheckout.provider_payment_id == provider_payment_id,
+                    BillingCheckout.provider_environment == self.provider_environment,
+                )
+            )
+            if checkout is not None:
+                subscription = await self._subscription_for_checkout(checkout.id)
+                if subscription is not None:
+                    return subscription
+
         provider_subscription_id = payload.get("subscription")
         if isinstance(provider_subscription_id, str) and provider_subscription_id:
             subscription = await self.db.scalar(
