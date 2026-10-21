@@ -848,6 +848,42 @@ class BillingService:
             refund_status=subscription.refund_status,  # type: ignore[arg-type]
         )
 
+    async def _cancel_provider_recurrence(
+        self, subscription: CommercialSubscription
+    ) -> None:
+        if subscription.payment_method == "credit_card":
+            if not subscription.provider_subscription_id:
+                raise AsaasGatewayError(
+                    "Provider subscription reference is unavailable"
+                )
+            await self.gateway.cancel_subscription(
+                subscription.provider_subscription_id
+            )
+            return
+
+        if subscription.payment_method == "pix_automatic":
+            if subscription.provider_authorization_id:
+                await self.gateway.cancel_pix_authorization(
+                    subscription.provider_authorization_id
+                )
+                return
+            if subscription.provider_subscription_id:
+                await self.gateway.cancel_subscription(
+                    subscription.provider_subscription_id
+                )
+                return
+            raise AsaasGatewayError(
+                "Provider Pix Automatic reference is unavailable"
+            )
+
+        if (
+            subscription.payment_method == "pix"
+            and subscription.provider_subscription_id
+        ):
+            await self.gateway.cancel_subscription(
+                subscription.provider_subscription_id
+            )
+
     async def request_subscription_cancellation(
         self, *, business_id: UUID
     ) -> SubscriptionStatusResponse:
@@ -859,26 +895,59 @@ class BillingService:
         if subscription.status in {"canceled", "suspended"}:
             await self.db.commit()
             return await self._subscription_status_response(subscription)
+        if subscription.cancellation_requested_at is not None:
+            await self.db.commit()
+            return await self._subscription_status_response(subscription)
 
         now = datetime.now(UTC)
-        subscription.cancellation_requested_at = (
-            subscription.cancellation_requested_at or now
-        )
-        # Common Pix is a one-time payment with no provider recurrence to cancel.
-        # Marking it canceled only prevents a future local renewal while preserving
-        # the already-paid access_until through the entitlement rule.
+        subscription.cancellation_requested_at = now
+
+        # Common Pix has no provider recurrence. Cancel locally and preserve the
+        # already-paid access window.
         if (
             subscription.payment_method == "pix"
             and subscription.provider_subscription_id is None
         ):
             subscription.status = "canceled"
-            subscription.canceled_at = subscription.canceled_at or now
+            subscription.canceled_at = now
+            await self.db.commit()
+            logger.info(
+                "billing_subscription_cancellation_completed",
+                extra={
+                    "business_id": str(subscription.business_id),
+                    "subscription_id": str(subscription.id),
+                    "payment_method": subscription.payment_method,
+                },
+            )
+            return await self._subscription_status_response(subscription)
+
+        # Persist the intent before any provider call. A concurrent/repeated user
+        # request will observe the pending state and will not issue a second
+        # provider mutation.
+        await self.db.commit()
+
+        try:
+            await self._cancel_provider_recurrence(subscription)
+        except AsaasGatewayError:
+            logger.warning(
+                "billing_subscription_cancellation_reconcile_required",
+                extra={
+                    "business_id": str(subscription.business_id),
+                    "subscription_id": str(subscription.id),
+                    "payment_method": subscription.payment_method,
+                },
+            )
+            return await self._subscription_status_response(subscription)
+
+        subscription.status = "canceled"
+        subscription.canceled_at = subscription.canceled_at or datetime.now(UTC)
         await self.db.commit()
         logger.info(
-            "billing_subscription_cancellation_requested",
+            "billing_subscription_cancellation_completed",
             extra={
                 "business_id": str(subscription.business_id),
                 "subscription_id": str(subscription.id),
+                "payment_method": subscription.payment_method,
             },
         )
         return await self._subscription_status_response(subscription)
@@ -942,15 +1011,56 @@ class BillingService:
         )
         subscription.refund_status = "requested"
         subscription.refund_requested_at = subscription.refund_requested_at or now
-        if (
-            subscription.payment_method == "pix"
-            and subscription.provider_subscription_id is None
-        ):
-            subscription.status = "canceled"
-            subscription.canceled_at = subscription.canceled_at or now
+
+        # Persist the one-way refund intent before provider mutations. From this
+        # point onward no user retry is allowed to call refund again.
         await self.db.commit()
+
+        try:
+            await self._cancel_provider_recurrence(subscription)
+        except AsaasGatewayError:
+            subscription.refund_status = "reconcile_required"
+            await self.db.commit()
+            logger.warning(
+                "billing_guarantee_refund_reconcile_required",
+                extra={
+                    "business_id": str(subscription.business_id),
+                    "subscription_id": str(subscription.id),
+                    "checkout_id": str(checkout.id),
+                    "provider_payment_id": checkout.provider_payment_id,
+                    "refund_status": subscription.refund_status,
+                    "stage": "cancel_recurrence",
+                },
+            )
+            return await self._subscription_status_response(subscription)
+
+        subscription.status = "canceled"
+        subscription.canceled_at = subscription.canceled_at or datetime.now(UTC)
+        await self.db.commit()
+
+        try:
+            await self.gateway.refund_payment(checkout.provider_payment_id)
+        except AsaasGatewayError:
+            # A timeout may mean the provider accepted the refund even though the
+            # response was lost. Never retry automatically; wait for webhook or
+            # explicit reconciliation against this exact payment id.
+            subscription.refund_status = "reconcile_required"
+            await self.db.commit()
+            logger.warning(
+                "billing_guarantee_refund_reconcile_required",
+                extra={
+                    "business_id": str(subscription.business_id),
+                    "subscription_id": str(subscription.id),
+                    "checkout_id": str(checkout.id),
+                    "provider_payment_id": checkout.provider_payment_id,
+                    "refund_status": subscription.refund_status,
+                    "stage": "refund_payment",
+                },
+            )
+            return await self._subscription_status_response(subscription)
+
         logger.info(
-            "billing_guarantee_refund_requested",
+            "billing_guarantee_refund_submitted",
             extra={
                 "business_id": str(subscription.business_id),
                 "subscription_id": str(subscription.id),
