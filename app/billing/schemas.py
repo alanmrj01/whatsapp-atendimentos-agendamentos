@@ -200,6 +200,7 @@ class SubscriptionStatusResponse(BaseModel):
     cycle: BillingCycle | None = None
     access_until: datetime | None = None
     canceled_at: datetime | None = None
+    cancellation_requested_at: datetime | None = None
     guarantee_until: datetime | None = None
     guarantee_eligible: bool = False
     refund_status: RefundStatus = "none"
