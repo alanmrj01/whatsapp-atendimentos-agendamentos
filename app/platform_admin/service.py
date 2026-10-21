@@ -101,7 +101,7 @@ class PlatformAdminService:
                 CommercialSubscription.created_at.desc(),
             )
         )
-        subscriptions: dict[UUID, tuple[str, str, str, object]] = {}
+        subscriptions: dict[UUID, tuple[str, str, str, datetime]] = {}
         for business_id, plan_code, billing_cycle, status, access_until, _ in subscription_rows:
             subscriptions.setdefault(
                 business_id,
