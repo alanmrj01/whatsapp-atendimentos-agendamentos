@@ -249,3 +249,84 @@ async def test_common_pix_cancellation_preserves_already_paid_access(monkeypatch
     assert subscription.canceled_at is not None
     assert response.access_until == previous_access_until
     assert response.refund_status == "none"
+
+
+class _RefundEventDb:
+    def __init__(self, checkout, subscription):
+        self.checkout = checkout
+        self.subscription = subscription
+        self.scalar_results = [checkout, subscription]
+        self.commits = 0
+
+    async def scalar(self, statement):
+        return self.scalar_results.pop(0)
+
+    async def get(self, model, identifier):
+        if model is BillingCheckout and identifier == self.checkout.id:
+            return self.checkout
+        return None
+
+    async def commit(self):
+        self.commits += 1
+
+    def add(self, obj):
+        raise AssertionError("Refund lifecycle should not create an action event")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "expected_refund_status"),
+    [
+        ("PAYMENT_REFUND_IN_PROGRESS", "requested"),
+        ("PAYMENT_PARTIALLY_REFUNDED", "reconcile_required"),
+        ("PAYMENT_REFUND_DENIED", "reconcile_required"),
+    ],
+)
+async def test_nonfinal_refund_events_never_claim_full_refund(
+    monkeypatch, event_type, expected_refund_status
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    original_access_until = subscription.access_until
+    db = _RefundEventDb(checkout, subscription)
+    service = BillingService(db, object())
+
+    await service.apply_payment_event(
+        event_type,
+        {"id": "pay_initial", "value": 197.0},
+    )
+
+    assert subscription.refund_status == expected_refund_status
+    assert subscription.refunded_at is None
+    assert subscription.status == "active"
+    assert subscription.access_until == original_access_until
+
+
+@pytest.mark.asyncio
+async def test_full_refund_webhook_is_required_before_access_is_suspended(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    db = _RefundEventDb(checkout, subscription)
+    service = BillingService(db, object())
+
+    await service.apply_payment_event(
+        "PAYMENT_REFUNDED",
+        {"id": "pay_initial", "value": 197.0},
+    )
+
+    assert subscription.refund_status == "refunded"
+    assert subscription.refunded_at is not None
+    assert subscription.status == "suspended"
+    assert subscription.access_until <= datetime.now(UTC)
