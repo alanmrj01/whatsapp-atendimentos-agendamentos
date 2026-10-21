@@ -374,6 +374,21 @@ class AsaasGateway:
             raise AsaasGatewayError("Asaas subscription payments response is invalid")
         return [row for row in rows if isinstance(row, dict)]
 
+    async def payments_for_static_pix(
+        self, qr_code_id: str
+    ) -> list[dict[str, Any]]:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", qr_code_id):
+            raise AsaasGatewayError("Asaas static Pix QR identifier is invalid")
+        payload = await self._json_request(
+            "GET",
+            "/payments",
+            params={"pixQrCodeId": qr_code_id, "limit": 10},
+        )
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise AsaasGatewayError("Asaas payments response is invalid")
+        return [row for row in rows if isinstance(row, dict)]
+
     async def _json_request(
         self,
         method: str,
