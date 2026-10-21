@@ -12,6 +12,7 @@ PlanCode = Literal["basic", "plus"]
 BillingCycle = Literal["monthly", "quarterly", "annual"]
 PaymentMethod = Literal["credit_card", "pix", "pix_automatic"]
 CheckoutMode = Literal["hosted", "native", "pix"]
+RefundStatus = Literal["none", "requested", "reconcile_required", "refunded"]
 
 
 class StrictBillingRequest(BaseModel):
@@ -198,3 +199,7 @@ class SubscriptionStatusResponse(BaseModel):
     plan: PlanCode | None = None
     cycle: BillingCycle | None = None
     access_until: datetime | None = None
+    canceled_at: datetime | None = None
+    guarantee_until: datetime | None = None
+    guarantee_eligible: bool = False
+    refund_status: RefundStatus = "none"
