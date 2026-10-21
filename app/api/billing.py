@@ -154,3 +154,35 @@ async def subscription_status(principal: Identity, settings: Config, db: Db):
     return await _service(settings, db).subscription_status(
         business_id=membership.business_id
     )
+
+
+@router.post(
+    "/subscription/cancel-request",
+    response_model=SubscriptionStatusResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def request_subscription_cancellation(
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    membership = _billing_business(principal)
+    return await _service(settings, db).request_subscription_cancellation(
+        business_id=membership.business_id
+    )
+
+
+@router.post(
+    "/subscription/refund-request",
+    response_model=SubscriptionStatusResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def request_guarantee_refund(
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    membership = _billing_business(principal)
+    return await _service(settings, db).request_guarantee_refund(
+        business_id=membership.business_id
+    )
