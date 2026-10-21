@@ -1790,7 +1790,7 @@ class BillingService:
                 CommercialSubscription.business_id == business_id,
                 CommercialSubscription.provider_environment
                 == self.provider_environment,
-                CommercialSubscription.status == "active",
+                CommercialSubscription.status.in_(("active", "canceled")),
                 CommercialSubscription.access_until > datetime.now(UTC),
             )
             .order_by(CommercialSubscription.created_at.desc())
