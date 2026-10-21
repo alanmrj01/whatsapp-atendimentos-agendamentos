@@ -18,6 +18,7 @@ from app.models import (
     BusinessAccess,
     BusinessUserMembership,
     BusinessWhatsAppConnection,
+    BillingCheckout,
     CommercialSubscription,
     User,
 )
@@ -93,7 +94,13 @@ class PlatformAdminService:
                 CommercialSubscription.refund_status,
                 CommercialSubscription.refund_requested_at,
                 CommercialSubscription.refunded_at,
+                BillingCheckout.provider_payment_id,
+                CommercialSubscription.provider_subscription_id,
                 CommercialSubscription.created_at,
+            )
+            .join(
+                BillingCheckout,
+                BillingCheckout.id == CommercialSubscription.checkout_id,
             )
             .where(
                 CommercialSubscription.business_id.in_(ids),
@@ -116,6 +123,8 @@ class PlatformAdminService:
                 str,
                 datetime | None,
                 datetime | None,
+                str | None,
+                str | None,
             ],
         ] = {}
         for (
@@ -128,6 +137,8 @@ class PlatformAdminService:
             refund_status,
             refund_requested_at,
             refunded_at,
+            provider_payment_id,
+            provider_subscription_id,
             _,
         ) in subscription_rows:
             subscriptions.setdefault(
@@ -141,6 +152,8 @@ class PlatformAdminService:
                     refund_status,
                     refund_requested_at,
                     refunded_at,
+                    provider_payment_id,
+                    provider_subscription_id,
                 ),
             )
 
@@ -200,6 +213,16 @@ class PlatformAdminService:
                 ),
                 commercial_refunded_at=(
                     subscriptions[business.id][7]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_provider_payment_id=(
+                    subscriptions[business.id][8]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_provider_subscription_id=(
+                    subscriptions[business.id][9]
                     if business.id in subscriptions
                     else None
                 ),
