@@ -137,6 +137,8 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
                 "requested",
                 datetime.now(UTC),
                 None,
+                "pay_test",
+                "sub_test",
                 datetime.now(UTC),
             )],
         ]),
@@ -156,6 +158,8 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
     assert item.commercial_refund_status == "requested"
     assert item.commercial_refund_requested_at is not None
     assert item.commercial_refunded_at is None
+    assert item.commercial_provider_payment_id == "pay_test"
+    assert item.commercial_provider_subscription_id == "sub_test"
 
 
 def test_platform_business_create_forbids_extra_fields() -> None:
