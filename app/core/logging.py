@@ -22,6 +22,8 @@ _SAFE_EXTRA_FIELDS = (
     "review_decision",
     "business_id",
     "attempt_id",
+    "reset_id",
+    "provider_message_id",
     "failure_code",
     "onboarding_state",
 )
