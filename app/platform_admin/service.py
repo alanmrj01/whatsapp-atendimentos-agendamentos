@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from anyio import to_thread
@@ -17,8 +18,10 @@ from app.models import (
     BusinessAccess,
     BusinessUserMembership,
     BusinessWhatsAppConnection,
+    CommercialSubscription,
     User,
 )
+from app.models.billing import billing_provider_environment
 from app.operations.defaults import default_services_for_business
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
@@ -68,14 +71,44 @@ class PlatformAdminService:
             statuses.setdefault(business_id, status)
 
         access_rows = await self.db.execute(
-            select(BusinessAccess.business_id, BusinessAccess.access_mode).where(
-                BusinessAccess.business_id.in_(ids)
-            )
+            select(
+                BusinessAccess.business_id,
+                BusinessAccess.access_mode,
+                BusinessAccess.admin_full_access,
+            ).where(BusinessAccess.business_id.in_(ids))
         )
-        access_modes = {
-            business_id: access_mode for business_id, access_mode in access_rows
+        access_state = {
+            business_id: (access_mode, admin_full_access)
+            for business_id, access_mode, admin_full_access in access_rows
         }
 
+        subscription_rows = await self.db.execute(
+            select(
+                CommercialSubscription.business_id,
+                CommercialSubscription.plan_code,
+                CommercialSubscription.billing_cycle,
+                CommercialSubscription.status,
+                CommercialSubscription.access_until,
+                CommercialSubscription.created_at,
+            )
+            .where(
+                CommercialSubscription.business_id.in_(ids),
+                CommercialSubscription.provider_environment
+                == billing_provider_environment(),
+            )
+            .order_by(
+                CommercialSubscription.business_id,
+                CommercialSubscription.created_at.desc(),
+            )
+        )
+        subscriptions: dict[UUID, tuple[str, str, str, object]] = {}
+        for business_id, plan_code, billing_cycle, status, access_until, _ in subscription_rows:
+            subscriptions.setdefault(
+                business_id,
+                (plan_code, billing_cycle, status, access_until),
+            )
+
+        now = datetime.now(UTC)
         return PlatformBusinessListResponse(businesses=[
             PlatformBusinessResponse(
                 id=business.id,
@@ -83,8 +116,37 @@ class PlatformAdminService:
                 timezone=business.timezone,
                 active=business.active,
                 # Businesses created before explicit access rows retain the
-                # existing paid compatibility used by AuthService.
-                access_mode=access_modes.get(business.id, "paid"),
+                # existing paid compatibility used by AuthService. This flag is
+                # deliberately not overwritten by commercial billing.
+                access_mode=access_state.get(business.id, ("paid", False))[0],
+                admin_full_access=access_state.get(
+                    business.id, ("paid", False)
+                )[1],
+                commercial_access_active=(
+                    business.id in subscriptions
+                    and subscriptions[business.id][2] in {"active", "canceled"}
+                    and subscriptions[business.id][3] > now
+                ),
+                commercial_plan_code=(
+                    subscriptions[business.id][0]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_billing_cycle=(
+                    subscriptions[business.id][1]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_subscription_status=(
+                    subscriptions[business.id][2]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_access_until=(
+                    subscriptions[business.id][3]
+                    if business.id in subscriptions
+                    else None
+                ),
                 owners=owners.get(business.id, []),
                 whatsapp_status=statuses.get(business.id, "disconnected"),
             )
@@ -178,6 +240,7 @@ class PlatformAdminService:
             timezone=business.timezone,
             active=True,
             access_mode="paid",
+            admin_full_access=True,
             owners=[owner.email],
             whatsapp_status="disconnected",
         )
