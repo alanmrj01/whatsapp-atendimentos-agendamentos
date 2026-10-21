@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -125,3 +126,99 @@ def test_non_final_payment_event_does_not_set_initial_payment_id() -> None:
     )
 
     assert checkout.provider_payment_id is None
+
+
+class _RequestDb:
+    def __init__(self, checkout, scalar_results):
+        self.checkout = checkout
+        self.scalar_results = list(scalar_results)
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def scalar(self, statement):
+        return self.scalar_results.pop(0)
+
+    async def get(self, model, identifier):
+        if model is BillingCheckout and identifier == self.checkout.id:
+            return self.checkout
+        return None
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+class _EmptyPixGateway:
+    async def payments_for_static_pix(self, qr_code_id):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_guarantee_refund_request_is_persisted_without_declaring_refund(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    db = _RequestDb(checkout, [subscription, checkout.id, checkout.id])
+    service = BillingService(db, object())
+    service._lock_business_checkout = AsyncMock()
+
+    response = await service.request_guarantee_refund(business_id=business_id)
+
+    assert response.refund_status == "requested"
+    assert subscription.refund_requested_at is not None
+    assert subscription.refunded_at is None
+    assert subscription.status == "canceled"
+    assert subscription.access_until > datetime.now(UTC)
+    assert db.rollbacks == 0
+
+
+@pytest.mark.asyncio
+async def test_unresolved_legacy_payment_preserves_in_window_refund_request(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_payment_id = None
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    db = _RequestDb(checkout, [subscription, checkout.id, checkout.id])
+    service = BillingService(db, _EmptyPixGateway())
+    service._lock_business_checkout = AsyncMock()
+
+    response = await service.request_guarantee_refund(business_id=business_id)
+
+    assert response.refund_status == "reconcile_required"
+    assert subscription.refund_requested_at is not None
+    assert subscription.refunded_at is None
+    assert subscription.status == "active"
+    assert db.rollbacks == 0
+
+
+@pytest.mark.asyncio
+async def test_common_pix_cancellation_preserves_already_paid_access(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=10),
+    )
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    previous_access_until = subscription.access_until
+    db = _RequestDb(checkout, [subscription, checkout.id])
+    service = BillingService(db, object())
+    service._lock_business_checkout = AsyncMock()
+
+    response = await service.request_subscription_cancellation(business_id=business_id)
+
+    assert response.status == "canceled"
+    assert subscription.canceled_at is not None
+    assert response.access_until == previous_access_until
+    assert response.refund_status == "none"
