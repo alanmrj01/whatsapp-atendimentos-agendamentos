@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import app.billing.service as billing_service_module
+from app.billing.asaas import AsaasGatewayTimeoutError
 from app.billing.service import BillingService
 from app.models import BillingCheckout, CommercialSubscription
 
@@ -182,6 +183,29 @@ class _EmptyPixGateway:
         return []
 
 
+class _RefundGateway:
+    def __init__(self, *, fail_refund: bool = False):
+        self.fail_refund = fail_refund
+        self.refund_calls: list[str] = []
+        self.cancel_calls: list[str] = []
+        self.authorization_cancel_calls: list[str] = []
+        self.order: list[str] = []
+
+    async def refund_payment(self, payment_id):
+        self.refund_calls.append(payment_id)
+        self.order.append("refund")
+        if self.fail_refund:
+            raise AsaasGatewayTimeoutError("timeout")
+
+    async def cancel_subscription(self, subscription_id):
+        self.cancel_calls.append(subscription_id)
+        self.order.append("cancel_subscription")
+
+    async def cancel_pix_authorization(self, authorization_id):
+        self.authorization_cancel_calls.append(authorization_id)
+        self.order.append("cancel_pix_authorization")
+
+
 @pytest.mark.asyncio
 async def test_guarantee_refund_request_is_persisted_without_declaring_refund(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
@@ -193,17 +217,100 @@ async def test_guarantee_refund_request_is_persisted_without_declaring_refund(mo
     checkout.provider_payment_id = "pay_initial"
     subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
     db = _RequestDb(checkout, [subscription, checkout.id, checkout.id])
-    service = BillingService(db, object())
+    gateway = _RefundGateway()
+    service = BillingService(db, gateway)
     service._lock_business_checkout = AsyncMock()
 
     response = await service.request_guarantee_refund(business_id=business_id)
 
     assert response.refund_status == "requested"
+    assert gateway.refund_calls == ["pay_initial"]
     assert subscription.refund_requested_at is not None
     assert subscription.refunded_at is None
     assert subscription.status == "canceled"
     assert subscription.access_until > datetime.now(UTC)
     assert db.rollbacks == 0
+
+
+@pytest.mark.asyncio
+async def test_refund_timeout_requires_reconciliation_and_never_claims_completion(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    db = _RequestDb(checkout, [subscription, checkout.id, checkout.id])
+    gateway = _RefundGateway(fail_refund=True)
+    service = BillingService(db, gateway)
+    service._lock_business_checkout = AsyncMock()
+
+    response = await service.request_guarantee_refund(business_id=business_id)
+
+    assert gateway.refund_calls == ["pay_initial"]
+    assert response.refund_status == "reconcile_required"
+    assert subscription.refunded_at is None
+    assert subscription.status == "canceled"
+    assert subscription.access_until > datetime.now(UTC)
+
+
+@pytest.mark.asyncio
+async def test_card_cancellation_stops_provider_recurrence_and_preserves_access(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=10),
+    )
+    checkout.payment_method = "credit_card"
+    checkout.provider_subscription_id = "sub_card"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    subscription.payment_method = "credit_card"
+    subscription.provider_pix_qr_code_id = None
+    subscription.provider_subscription_id = "sub_card"
+    previous_access_until = subscription.access_until
+    db = _RequestDb(checkout, [subscription, checkout.id])
+    gateway = _RefundGateway()
+    service = BillingService(db, gateway)
+    service._lock_business_checkout = AsyncMock()
+
+    response = await service.request_subscription_cancellation(business_id=business_id)
+
+    assert gateway.cancel_calls == ["sub_card"]
+    assert response.status == "canceled"
+    assert response.access_until == previous_access_until
+    assert subscription.canceled_at is not None
+
+
+@pytest.mark.asyncio
+async def test_card_guarantee_cancels_recurrence_before_submitting_refund(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.payment_method = "credit_card"
+    checkout.provider_subscription_id = "sub_card"
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    subscription.payment_method = "credit_card"
+    subscription.provider_pix_qr_code_id = None
+    subscription.provider_subscription_id = "sub_card"
+    db = _RequestDb(checkout, [subscription, checkout.id, checkout.id])
+    gateway = _RefundGateway()
+    service = BillingService(db, gateway)
+    service._lock_business_checkout = AsyncMock()
+
+    response = await service.request_guarantee_refund(business_id=business_id)
+
+    assert gateway.order == ["cancel_subscription", "refund"]
+    assert gateway.refund_calls == ["pay_initial"]
+    assert response.refund_status == "requested"
+    assert response.status == "canceled"
+    assert subscription.refunded_at is None
 
 
 @pytest.mark.asyncio
