@@ -71,6 +71,8 @@ class PlatformBusinessResponse(BaseModel):
     ] | None = None
     commercial_refund_requested_at: datetime | None = None
     commercial_refunded_at: datetime | None = None
+    commercial_provider_payment_id: str | None = None
+    commercial_provider_subscription_id: str | None = None
     owners: list[str]
     whatsapp_status: Literal["disconnected", "pending", "connected", "error"]
 
