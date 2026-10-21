@@ -134,6 +134,10 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
                 "active",
                 access_until,
                 datetime.now(UTC),
+                "requested",
+                datetime.now(UTC),
+                None,
+                datetime.now(UTC),
             )],
         ]),
     )
@@ -148,6 +152,10 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
     assert item.commercial_billing_cycle == "monthly"
     assert item.commercial_subscription_status == "active"
     assert item.commercial_access_until == access_until
+    assert item.commercial_cancellation_requested_at is not None
+    assert item.commercial_refund_status == "requested"
+    assert item.commercial_refund_requested_at is not None
+    assert item.commercial_refunded_at is None
 
 
 def test_platform_business_create_forbids_extra_fields() -> None:
