@@ -138,6 +138,7 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     provider_customer_id: Mapped[str | None] = mapped_column(String(80))
     access_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancellation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     refund_status: Mapped[str] = mapped_column(
         String(24), default="none", server_default=text("'none'"), nullable=False
     )
