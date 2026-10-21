@@ -28,6 +28,10 @@ def upgrade() -> None:
 
     op.add_column(
         "commercial_subscriptions",
+        sa.Column("cancellation_requested_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "commercial_subscriptions",
         sa.Column(
             "refund_status",
             sa.String(length=24),
@@ -58,6 +62,7 @@ def downgrade() -> None:
     )
     op.drop_column("commercial_subscriptions", "refunded_at")
     op.drop_column("commercial_subscriptions", "refund_requested_at")
+    op.drop_column("commercial_subscriptions", "cancellation_requested_at")
     op.drop_column("commercial_subscriptions", "refund_status")
     op.drop_index(
         "uq_billing_checkouts_env_provider_payment_id",
