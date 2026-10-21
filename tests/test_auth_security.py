@@ -211,6 +211,10 @@ async def test_password_reset_email_keeps_token_in_fragment_and_is_idempotent(
     class Response:
         status_code = 201
 
+        @staticmethod
+        def json():
+            return {"messageId": "<brevo-test-message>"}
+
     class Client:
         def __init__(self) -> None:
             self.calls = []
@@ -242,12 +246,13 @@ async def test_password_reset_email_keeps_token_in_fragment_and_is_idempotent(
         )
     )
 
-    await mailer.send(
+    provider_message_id = await mailer.send(
         reset_id=reset_id,
         email="member@example.test",
         token=token,
     )
 
+    assert provider_message_id == "<brevo-test-message>"
     assert len(client.calls) == 1
     url, headers, payload = client.calls[0]
     assert url == "https://api.brevo.com/v3/smtp/email"
