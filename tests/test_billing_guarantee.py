@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import app.billing.service as billing_service_module
 from app.billing.service import BillingService
 from app.models import BillingCheckout, CommercialSubscription
 
@@ -70,6 +71,32 @@ async def test_first_paid_checkout_gets_exact_seven_day_guarantee(monkeypatch) -
     assert response.guarantee_until == paid_at + timedelta(days=7)
     assert response.guarantee_eligible is True
     assert response.refund_status == "none"
+
+
+@pytest.mark.asyncio
+async def test_guarantee_boundary_is_inclusive_and_expires_one_microsecond_later(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    paid_at = datetime(2026, 10, 21, 15, 30, tzinfo=UTC)
+    checkout = _checkout(business_id=business_id, paid_at=paid_at)
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    service = BillingService(_StatusDb(checkout, checkout.id), object())
+
+    class FrozenDateTime(datetime):
+        current = paid_at + timedelta(days=7)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current
+
+    monkeypatch.setattr(billing_service_module, "datetime", FrozenDateTime)
+
+    at_boundary = await service._subscription_status_response(subscription)
+    assert at_boundary.guarantee_eligible is True
+
+    FrozenDateTime.current += timedelta(microseconds=1)
+    after_boundary = await service._subscription_status_response(subscription)
+    assert after_boundary.guarantee_eligible is False
 
 
 @pytest.mark.asyncio
