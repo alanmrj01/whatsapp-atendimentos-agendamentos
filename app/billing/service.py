@@ -678,6 +678,9 @@ class BillingService:
                 continue
             if payment.get("status") not in {"CONFIRMED", "RECEIVED"}:
                 continue
+            self._capture_initial_payment_id(
+                checkout, "PAYMENT_CONFIRMED", payment
+            )
             checkout.status = "paid"
             checkout.paid_at = checkout.paid_at or datetime.now(UTC)
             provider_customer_id = payment.get("customer")
@@ -799,13 +802,215 @@ class BillingService:
         )
         if subscription is None:
             return SubscriptionStatusResponse(status="none")
+        return await self._subscription_status_response(subscription)
+
+    async def _subscription_status_response(
+        self, subscription: CommercialSubscription
+    ) -> SubscriptionStatusResponse:
+        checkout = await self.db.get(BillingCheckout, subscription.checkout_id)
+        guarantee_until = None
+        guarantee_eligible = False
+        if (
+            checkout is not None
+            and checkout.provider_environment == self.provider_environment
+            and checkout.paid_at is not None
+        ):
+            guarantee_until = checkout.paid_at + timedelta(days=7)
+            first_paid_checkout_id = await self.db.scalar(
+                select(BillingCheckout.id)
+                .where(
+                    BillingCheckout.business_id == subscription.business_id,
+                    BillingCheckout.provider_environment == self.provider_environment,
+                    BillingCheckout.paid_at.is_not(None),
+                )
+                .order_by(
+                    BillingCheckout.paid_at.asc(),
+                    BillingCheckout.created_at.asc(),
+                    BillingCheckout.id.asc(),
+                )
+                .limit(1)
+            )
+            guarantee_eligible = bool(
+                first_paid_checkout_id == checkout.id
+                and datetime.now(UTC) <= guarantee_until
+                and subscription.refund_status != "refunded"
+            )
         return SubscriptionStatusResponse(
             status=subscription.status,  # type: ignore[arg-type]
             payment_method=subscription.payment_method,  # type: ignore[arg-type]
             plan=subscription.plan_code,  # type: ignore[arg-type]
             cycle=subscription.billing_cycle,  # type: ignore[arg-type]
             access_until=subscription.access_until,
+            canceled_at=subscription.canceled_at,
+            cancellation_requested_at=subscription.cancellation_requested_at,
+            guarantee_until=guarantee_until,
+            guarantee_eligible=guarantee_eligible,
+            refund_status=subscription.refund_status,  # type: ignore[arg-type]
         )
+
+    async def request_subscription_cancellation(
+        self, *, business_id: UUID
+    ) -> SubscriptionStatusResponse:
+        await self._lock_business_checkout(business_id)
+        subscription = await self._latest_subscription_for_business(business_id)
+        if subscription is None:
+            await self.db.rollback()
+            raise HTTPException(404, "Commercial subscription not found")
+        if subscription.status in {"canceled", "suspended"}:
+            await self.db.commit()
+            return await self._subscription_status_response(subscription)
+
+        now = datetime.now(UTC)
+        subscription.cancellation_requested_at = (
+            subscription.cancellation_requested_at or now
+        )
+        # Common Pix is a one-time payment with no provider recurrence to cancel.
+        # Marking it canceled only prevents a future local renewal while preserving
+        # the already-paid access_until through the entitlement rule.
+        if (
+            subscription.payment_method == "pix"
+            and subscription.provider_subscription_id is None
+        ):
+            subscription.status = "canceled"
+            subscription.canceled_at = subscription.canceled_at or now
+        await self.db.commit()
+        logger.info(
+            "billing_subscription_cancellation_requested",
+            extra={
+                "business_id": str(subscription.business_id),
+                "subscription_id": str(subscription.id),
+            },
+        )
+        return await self._subscription_status_response(subscription)
+
+    async def request_guarantee_refund(
+        self, *, business_id: UUID
+    ) -> SubscriptionStatusResponse:
+        await self._lock_business_checkout(business_id)
+        subscription = await self._latest_subscription_for_business(business_id)
+        if subscription is None:
+            await self.db.rollback()
+            raise HTTPException(404, "Commercial subscription not found")
+        if subscription.refund_status in {
+            "requested",
+            "reconcile_required",
+            "refunded",
+        }:
+            await self.db.commit()
+            return await self._subscription_status_response(subscription)
+
+        status = await self._subscription_status_response(subscription)
+        if not status.guarantee_eligible:
+            await self.db.rollback()
+            raise HTTPException(409, "Seven-day guarantee is no longer available")
+        if subscription.status == "suspended":
+            await self.db.rollback()
+            raise HTTPException(409, "Subscription is already suspended")
+
+        checkout = await self.db.get(BillingCheckout, subscription.checkout_id)
+        if checkout is None:
+            await self.db.rollback()
+            raise HTTPException(409, "Payment reference requires support review")
+        if checkout.provider_payment_id is None:
+            checkout.provider_payment_id = await self._resolve_initial_payment_reference(
+                checkout
+            )
+        if checkout.provider_payment_id is None:
+            now = datetime.now(UTC)
+            subscription.cancellation_requested_at = (
+                subscription.cancellation_requested_at or now
+            )
+            subscription.refund_status = "reconcile_required"
+            subscription.refund_requested_at = (
+                subscription.refund_requested_at or now
+            )
+            await self.db.commit()
+            logger.warning(
+                "billing_guarantee_refund_reconcile_required",
+                extra={
+                    "business_id": str(subscription.business_id),
+                    "subscription_id": str(subscription.id),
+                    "checkout_id": str(checkout.id),
+                    "refund_status": subscription.refund_status,
+                },
+            )
+            return await self._subscription_status_response(subscription)
+
+        now = datetime.now(UTC)
+        subscription.cancellation_requested_at = (
+            subscription.cancellation_requested_at or now
+        )
+        subscription.refund_status = "requested"
+        subscription.refund_requested_at = subscription.refund_requested_at or now
+        if (
+            subscription.payment_method == "pix"
+            and subscription.provider_subscription_id is None
+        ):
+            subscription.status = "canceled"
+            subscription.canceled_at = subscription.canceled_at or now
+        await self.db.commit()
+        logger.info(
+            "billing_guarantee_refund_requested",
+            extra={
+                "business_id": str(subscription.business_id),
+                "subscription_id": str(subscription.id),
+                "checkout_id": str(checkout.id),
+                "provider_payment_id": checkout.provider_payment_id,
+                "refund_status": subscription.refund_status,
+            },
+        )
+        return await self._subscription_status_response(subscription)
+
+    async def _latest_subscription_for_business(
+        self, business_id: UUID
+    ) -> CommercialSubscription | None:
+        return await self.db.scalar(
+            select(CommercialSubscription)
+            .where(
+                CommercialSubscription.business_id == business_id,
+                CommercialSubscription.provider_environment == self.provider_environment,
+            )
+            .order_by(CommercialSubscription.created_at.desc())
+            .limit(1)
+        )
+
+    async def _resolve_initial_payment_reference(
+        self, checkout: BillingCheckout
+    ) -> str | None:
+        try:
+            if checkout.payment_method == "pix" and checkout.provider_pix_qr_code_id:
+                payments = await self.gateway.payments_for_static_pix(
+                    checkout.provider_pix_qr_code_id
+                )
+            elif checkout.provider_checkout_id:
+                payments = await self.gateway.payments_for_checkout(
+                    checkout.provider_checkout_id
+                )
+            elif checkout.provider_subscription_id:
+                payments = await self.gateway.payments_for_subscription(
+                    checkout.provider_subscription_id
+                )
+            else:
+                return None
+        except AsaasGatewayError:
+            return None
+
+        matches: list[str] = []
+        for payment in payments:
+            provider_payment_id = payment.get("id")
+            if (
+                not isinstance(provider_payment_id, str)
+                or not provider_payment_id
+                or len(provider_payment_id) > 100
+            ):
+                continue
+            if payment.get("status") not in {"CONFIRMED", "RECEIVED", "REFUNDED"}:
+                continue
+            if _payment_value_cents(payment.get("value")) != checkout.amount_cents:
+                continue
+            matches.append(provider_payment_id)
+        unique_matches = list(dict.fromkeys(matches))
+        return unique_matches[0] if len(unique_matches) == 1 else None
 
     async def activate_paid_checkout(self, provider_checkout_id: str) -> None:
         checkout = await self.db.scalar(
@@ -1152,7 +1357,7 @@ class BillingService:
                 common_pix_checkout
             )
         await self._capture_pix_initial_payment(event_type, payload)
-        checkout = await self._capture_credit_card_checkout_refs(payload)
+        checkout = await self._capture_credit_card_checkout_refs(event_type, payload)
         if checkout is not None:
             if (
                 checkout.provider_checkout_id is None
@@ -1210,12 +1415,39 @@ class BillingService:
                     )
                 )
         elif event_type in {
+            "PAYMENT_REFUND_IN_PROGRESS",
+            "PAYMENT_PARTIALLY_REFUNDED",
+            "PAYMENT_REFUND_DENIED",
+        }:
+            checkout = await self.db.get(BillingCheckout, subscription.checkout_id)
+            provider_payment_id = payload.get("id")
+            if (
+                checkout is not None
+                and isinstance(provider_payment_id, str)
+                and checkout.provider_payment_id == provider_payment_id
+            ):
+                subscription.refund_status = (
+                    "requested"
+                    if event_type == "PAYMENT_REFUND_IN_PROGRESS"
+                    else "reconcile_required"
+                )
+        elif event_type in {
             "PAYMENT_REFUNDED",
             "PAYMENT_CHARGEBACK_REQUESTED",
             "PAYMENT_AWAITING_CHARGEBACK_REVERSAL",
         }:
             subscription.status = "suspended"
             subscription.access_until = min(subscription.access_until, datetime.now(UTC))
+            if event_type == "PAYMENT_REFUNDED":
+                checkout = await self.db.get(BillingCheckout, subscription.checkout_id)
+                provider_payment_id = payload.get("id")
+                if (
+                    checkout is not None
+                    and isinstance(provider_payment_id, str)
+                    and checkout.provider_payment_id == provider_payment_id
+                ):
+                    subscription.refund_status = "refunded"
+                    subscription.refunded_at = subscription.refunded_at or datetime.now(UTC)
         await self.db.commit()
         return action_event_key
 
@@ -1284,6 +1516,7 @@ class BillingService:
         customer_id = payload.get("customer")
         if isinstance(customer_id, str) and 0 < len(customer_id) <= 80:
             checkout.provider_customer_id = customer_id
+        self._capture_initial_payment_id(checkout, event_type, payload)
         checkout.status = "paid"
         checkout.paid_at = checkout.paid_at or datetime.now(UTC)
         return checkout
@@ -1331,6 +1564,8 @@ class BillingService:
                 extra={"provider_environment": self.provider_environment},
             )
             return None
+        if checkout.paid_at is None:
+            self._capture_initial_payment_id(checkout, event_type, payload)
         checkout.paid_at = checkout.paid_at or datetime.now(UTC)
         return checkout
 
@@ -1393,7 +1628,7 @@ class BillingService:
         return checkout
 
     async def _capture_credit_card_checkout_refs(
-        self, payload: dict
+        self, event_type: str, payload: dict
     ) -> BillingCheckout | None:
         checkout_session = payload.get("checkoutSession")
         provider_subscription_id = payload.get("subscription")
@@ -1446,9 +1681,46 @@ class BillingService:
             and 0 < len(provider_customer_id) <= 80
         ):
             checkout.provider_customer_id = provider_customer_id
+        if checkout_session is not None or checkout.paid_at is None:
+            self._capture_initial_payment_id(checkout, event_type, payload)
         return checkout
 
+    @staticmethod
+    def _capture_initial_payment_id(
+        checkout: BillingCheckout, event_type: str, payload: dict
+    ) -> None:
+        if event_type not in {"PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"}:
+            return
+        provider_payment_id = payload.get("id")
+        if (
+            not isinstance(provider_payment_id, str)
+            or not provider_payment_id
+            or len(provider_payment_id) > 100
+        ):
+            return
+        current_payment_id = getattr(checkout, "provider_payment_id", None)
+        if current_payment_id is None:
+            checkout.provider_payment_id = provider_payment_id
+        elif current_payment_id != provider_payment_id:
+            logger.warning(
+                "billing_initial_payment_id_conflict",
+                extra={"provider_environment": checkout.provider_environment},
+            )
+
     async def _subscription_for_payment(self, payload: dict) -> CommercialSubscription | None:
+        provider_payment_id = payload.get("id")
+        if isinstance(provider_payment_id, str) and provider_payment_id:
+            checkout = await self.db.scalar(
+                select(BillingCheckout).where(
+                    BillingCheckout.provider_payment_id == provider_payment_id,
+                    BillingCheckout.provider_environment == self.provider_environment,
+                )
+            )
+            if checkout is not None:
+                subscription = await self._subscription_for_checkout(checkout.id)
+                if subscription is not None:
+                    return subscription
+
         provider_subscription_id = payload.get("subscription")
         if isinstance(provider_subscription_id, str) and provider_subscription_id:
             subscription = await self.db.scalar(
@@ -1518,7 +1790,7 @@ class BillingService:
                 CommercialSubscription.business_id == business_id,
                 CommercialSubscription.provider_environment
                 == self.provider_environment,
-                CommercialSubscription.status == "active",
+                CommercialSubscription.status.in_(("active", "canceled")),
                 CommercialSubscription.access_until > datetime.now(UTC),
             )
             .order_by(CommercialSubscription.created_at.desc())

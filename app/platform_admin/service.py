@@ -18,6 +18,7 @@ from app.models import (
     BusinessAccess,
     BusinessUserMembership,
     BusinessWhatsAppConnection,
+    BillingCheckout,
     CommercialSubscription,
     User,
 )
@@ -89,7 +90,17 @@ class PlatformAdminService:
                 CommercialSubscription.billing_cycle,
                 CommercialSubscription.status,
                 CommercialSubscription.access_until,
+                CommercialSubscription.cancellation_requested_at,
+                CommercialSubscription.refund_status,
+                CommercialSubscription.refund_requested_at,
+                CommercialSubscription.refunded_at,
+                BillingCheckout.provider_payment_id,
+                CommercialSubscription.provider_subscription_id,
                 CommercialSubscription.created_at,
+            )
+            .join(
+                BillingCheckout,
+                BillingCheckout.id == CommercialSubscription.checkout_id,
             )
             .where(
                 CommercialSubscription.business_id.in_(ids),
@@ -101,11 +112,49 @@ class PlatformAdminService:
                 CommercialSubscription.created_at.desc(),
             )
         )
-        subscriptions: dict[UUID, tuple[str, str, str, datetime]] = {}
-        for business_id, plan_code, billing_cycle, status, access_until, _ in subscription_rows:
+        subscriptions: dict[
+            UUID,
+            tuple[
+                str,
+                str,
+                str,
+                datetime,
+                datetime | None,
+                str,
+                datetime | None,
+                datetime | None,
+                str | None,
+                str | None,
+            ],
+        ] = {}
+        for (
+            business_id,
+            plan_code,
+            billing_cycle,
+            status,
+            access_until,
+            cancellation_requested_at,
+            refund_status,
+            refund_requested_at,
+            refunded_at,
+            provider_payment_id,
+            provider_subscription_id,
+            _,
+        ) in subscription_rows:
             subscriptions.setdefault(
                 business_id,
-                (plan_code, billing_cycle, status, access_until),
+                (
+                    plan_code,
+                    billing_cycle,
+                    status,
+                    access_until,
+                    cancellation_requested_at,
+                    refund_status,
+                    refund_requested_at,
+                    refunded_at,
+                    provider_payment_id,
+                    provider_subscription_id,
+                ),
             )
 
         now = datetime.now(UTC)
@@ -144,6 +193,36 @@ class PlatformAdminService:
                 ),
                 commercial_access_until=(
                     subscriptions[business.id][3]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_cancellation_requested_at=(
+                    subscriptions[business.id][4]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_refund_status=(
+                    subscriptions[business.id][5]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_refund_requested_at=(
+                    subscriptions[business.id][6]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_refunded_at=(
+                    subscriptions[business.id][7]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_provider_payment_id=(
+                    subscriptions[business.id][8]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_provider_subscription_id=(
+                    subscriptions[business.id][9]
                     if business.id in subscriptions
                     else None
                 ),
