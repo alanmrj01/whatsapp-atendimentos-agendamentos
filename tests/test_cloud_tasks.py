@@ -316,9 +316,20 @@ class FakeTaskRepository:
     ) -> None:
         self.status_updates.append((provider_message_id, message_status))
 
-    async def complete_event(self, event_key: str, event_status: str) -> None:
+    async def complete_event(
+        self,
+        event_key: str,
+        event_status: str,
+        business_id: uuid.UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None:
         self.completed.append((event_key, event_status))
-        self.event = replace(self.event, status=event_status)
+        self.event = replace(
+            self.event,
+            status=event_status,
+            business_id=business_id or self.event.business_id,
+            outcome_reason=outcome_reason or self.event.outcome_reason,
+        )
 
 
 def stored_event(
