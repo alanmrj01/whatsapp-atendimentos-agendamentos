@@ -859,6 +859,8 @@ class BillingService:
     async def _return_business_to_free_after_refund(
         self, business_id: UUID
     ) -> None:
+        if self.provider_environment != "production":
+            return
         access = await self.db.get(BusinessAccess, business_id)
         if access is None:
             self.db.add(
