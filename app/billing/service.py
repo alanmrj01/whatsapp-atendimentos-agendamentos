@@ -583,9 +583,9 @@ class BillingService:
             ) from None
 
         checkout.provider_customer_id = customer_id
-        checkout.payer_name = checkout.payer_name or payload.payer_name
-        checkout.payer_email = checkout.payer_email or payer_email
-        checkout.payer_phone = checkout.payer_phone or payload.payer_phone
+        checkout.payer_name = getattr(checkout, "payer_name", None) or payload.payer_name
+        checkout.payer_email = getattr(checkout, "payer_email", None) or payer_email
+        checkout.payer_phone = getattr(checkout, "payer_phone", None) or payload.payer_phone
         checkout.status = "creating"
 
         offer = get_offer(checkout.plan_code, checkout.billing_cycle)
