@@ -184,11 +184,13 @@ class _EmptyPixGateway:
 
 
 class _RefundGateway:
-    def __init__(self, *, fail_refund: bool = False):
+    def __init__(self, *, fail_refund: bool = False, payment_payload=None):
         self.fail_refund = fail_refund
+        self.payment_payload = payment_payload
         self.refund_calls: list[str] = []
         self.cancel_calls: list[str] = []
         self.authorization_cancel_calls: list[str] = []
+        self.payment_detail_calls: list[str] = []
         self.order: list[str] = []
 
     async def refund_payment(self, payment_id):
@@ -197,6 +199,12 @@ class _RefundGateway:
         if self.fail_refund:
             raise AsaasGatewayTimeoutError("timeout")
 
+    async def payment_details(self, payment_id):
+        self.payment_detail_calls.append(payment_id)
+        if self.payment_payload is None:
+            raise AsaasGatewayTimeoutError("lookup timeout")
+        return self.payment_payload
+
     async def cancel_subscription(self, subscription_id):
         self.cancel_calls.append(subscription_id)
         self.order.append("cancel_subscription")
@@ -204,6 +212,84 @@ class _RefundGateway:
     async def cancel_pix_authorization(self, authorization_id):
         self.authorization_cancel_calls.append(authorization_id)
         self.order.append("cancel_pix_authorization")
+
+
+@pytest.mark.asyncio
+async def test_provider_pending_refund_is_reported_without_declaring_completion(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    subscription.status = "canceled"
+    subscription.refund_status = "requested"
+    db = _RequestDb(checkout, [checkout.id])
+    gateway = _RefundGateway(
+        payment_payload={"refunds": [{"status": "PENDING", "value": 197.0}]}
+    )
+    service = BillingService(db, gateway)
+
+    response = await service._subscription_status_response(subscription)
+
+    assert response.refund_status == "requested"
+    assert response.refund_provider_status == "pending"
+    assert subscription.refunded_at is None
+    assert gateway.payment_detail_calls == ["pay_initial"]
+
+
+@pytest.mark.asyncio
+async def test_provider_done_refund_reconciles_local_access(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    subscription.status = "canceled"
+    subscription.refund_status = "requested"
+    db = _RequestDb(checkout, [checkout.id])
+    gateway = _RefundGateway(
+        payment_payload={"refunds": [{"status": "DONE", "value": 197.0}]}
+    )
+    service = BillingService(db, gateway)
+
+    response = await service._subscription_status_response(subscription)
+
+    assert response.refund_status == "refunded"
+    assert response.refund_provider_status == "done"
+    assert subscription.status == "suspended"
+    assert subscription.refunded_at is not None
+    assert subscription.access_until <= datetime.now(UTC)
+
+
+@pytest.mark.asyncio
+async def test_partial_provider_refund_requires_reconciliation(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    subscription.status = "canceled"
+    subscription.refund_status = "requested"
+    db = _RequestDb(checkout, [checkout.id])
+    gateway = _RefundGateway(
+        payment_payload={"refunds": [{"status": "DONE", "value": 50.0}]}
+    )
+    service = BillingService(db, gateway)
+
+    response = await service._subscription_status_response(subscription)
+
+    assert response.refund_status == "reconcile_required"
+    assert response.refund_provider_status == "partial"
+    assert subscription.refunded_at is None
 
 
 @pytest.mark.asyncio
