@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing.asaas import AsaasGateway
 from app.billing.service import BillingService
-from app.models import BillingWebhookEvent
+from app.models import BillingCheckout, BillingWebhookEvent, CommercialSubscription
 
 CHECKOUT_EVENTS = {
     "CHECKOUT_CREATED",
@@ -94,11 +97,27 @@ class BillingWebhookService:
         provider_payment_id, provider_authorization_id = self._pix_instruction_refs(
             event_type, resource
         )
+        if event_type in PAYMENT_EVENTS and resource_id is not None:
+            provider_payment_id = resource_id
+        amount_cents = (
+            self._payment_amount_cents(resource.get("value"))
+            if event_type in PAYMENT_EVENTS
+            else None
+        )
+        business_id = await self._business_id_for_resource(
+            event_type,
+            resource,
+            provider_payment_id=provider_payment_id,
+            provider_authorization_id=provider_authorization_id,
+        )
 
         if existing is None:
             existing = BillingWebhookEvent(
                 event_id=storage_event_id,
                 event_type=event_type,
+                provider_environment=self.provider_environment,
+                business_id=business_id,
+                amount_cents=amount_cents,
                 resource_type=resource_type,
                 resource_id=resource_id,
                 provider_payment_id=provider_payment_id,
@@ -107,6 +126,9 @@ class BillingWebhookService:
             self.db.add(existing)
             await self.db.commit()
         else:
+            existing.provider_environment = self.provider_environment
+            existing.business_id = existing.business_id or business_id
+            existing.amount_cents = existing.amount_cents or amount_cents
             existing.provider_payment_id = provider_payment_id
             existing.provider_authorization_id = provider_authorization_id
 
@@ -124,6 +146,13 @@ class BillingWebhookService:
         # Instruction events correlate authorization -> payment. Access changes only
         # after the authorization/payment lifecycle confirms the financial event.
 
+        if existing.business_id is None:
+            existing.business_id = await self._business_id_for_resource(
+                event_type,
+                resource,
+                provider_payment_id=provider_payment_id,
+                provider_authorization_id=provider_authorization_id,
+            )
         existing.processed_at = datetime.now(UTC)
         await self.db.commit()
         return [action_event_key] if action_event_key is not None else []
@@ -132,8 +161,6 @@ class BillingWebhookService:
         provider_id = checkout.get("id")
         if not isinstance(provider_id, str):
             return
-        from sqlalchemy import select
-        from app.models import BillingCheckout
 
         local = await self.db.scalar(
             select(BillingCheckout).where(
@@ -153,6 +180,142 @@ class BillingWebhookService:
         elif event_type == "CHECKOUT_EXPIRED":
             local.status = "expired"
         await self.db.commit()
+
+    async def _business_id_for_resource(
+        self,
+        event_type: str,
+        resource: dict,
+        *,
+        provider_payment_id: str | None,
+        provider_authorization_id: str | None,
+    ) -> UUID | None:
+        if event_type in CHECKOUT_EVENTS:
+            provider_checkout_id = resource.get("id")
+            if isinstance(provider_checkout_id, str):
+                return await self.db.scalar(
+                    select(BillingCheckout.business_id).where(
+                        BillingCheckout.provider_checkout_id == provider_checkout_id,
+                        BillingCheckout.provider_environment
+                        == self.provider_environment,
+                    )
+                )
+
+        if event_type in SUBSCRIPTION_EVENTS:
+            provider_subscription_id = resource.get("id")
+            if isinstance(provider_subscription_id, str):
+                return await self.db.scalar(
+                    select(CommercialSubscription.business_id).where(
+                        CommercialSubscription.provider_subscription_id
+                        == provider_subscription_id,
+                        CommercialSubscription.provider_environment
+                        == self.provider_environment,
+                    )
+                )
+
+        if event_type in PAYMENT_EVENTS:
+            provider_subscription_id = resource.get("subscription")
+            if isinstance(provider_subscription_id, str):
+                business_id = await self.db.scalar(
+                    select(CommercialSubscription.business_id).where(
+                        CommercialSubscription.provider_subscription_id
+                        == provider_subscription_id,
+                        CommercialSubscription.provider_environment
+                        == self.provider_environment,
+                    )
+                )
+                if business_id is not None:
+                    return business_id
+
+            authorization_id = resource.get("pixAutomaticAuthorizationId")
+            if isinstance(authorization_id, str):
+                business_id = await self.db.scalar(
+                    select(CommercialSubscription.business_id).where(
+                        CommercialSubscription.provider_authorization_id
+                        == authorization_id,
+                        CommercialSubscription.provider_environment
+                        == self.provider_environment,
+                    )
+                )
+                if business_id is not None:
+                    return business_id
+
+            checkout_session = resource.get("checkoutSession")
+            if isinstance(checkout_session, str):
+                business_id = await self.db.scalar(
+                    select(BillingCheckout.business_id).where(
+                        BillingCheckout.provider_checkout_id == checkout_session,
+                        BillingCheckout.provider_environment
+                        == self.provider_environment,
+                    )
+                )
+                if business_id is not None:
+                    return business_id
+
+            if provider_payment_id:
+                business_id = await self.db.scalar(
+                    select(BillingCheckout.business_id).where(
+                        BillingCheckout.provider_payment_id == provider_payment_id,
+                        BillingCheckout.provider_environment
+                        == self.provider_environment,
+                    )
+                )
+                if business_id is not None:
+                    return business_id
+
+        if event_type in PIX_AUTHORIZATION_EVENTS:
+            authorization_id = resource.get("id")
+            if isinstance(authorization_id, str):
+                business_id = await self.db.scalar(
+                    select(CommercialSubscription.business_id).where(
+                        CommercialSubscription.provider_authorization_id
+                        == authorization_id,
+                        CommercialSubscription.provider_environment
+                        == self.provider_environment,
+                    )
+                )
+                if business_id is not None:
+                    return business_id
+                return await self.db.scalar(
+                    select(BillingCheckout.business_id).where(
+                        BillingCheckout.provider_authorization_id == authorization_id,
+                        BillingCheckout.provider_environment
+                        == self.provider_environment,
+                    )
+                )
+
+        if event_type in PIX_PAYMENT_INSTRUCTION_EVENTS and provider_authorization_id:
+            business_id = await self.db.scalar(
+                select(CommercialSubscription.business_id).where(
+                    CommercialSubscription.provider_authorization_id
+                    == provider_authorization_id,
+                    CommercialSubscription.provider_environment
+                    == self.provider_environment,
+                )
+            )
+            if business_id is not None:
+                return business_id
+            return await self.db.scalar(
+                select(BillingCheckout.business_id).where(
+                    BillingCheckout.provider_authorization_id
+                    == provider_authorization_id,
+                    BillingCheckout.provider_environment
+                    == self.provider_environment,
+                )
+            )
+
+        return None
+
+    @staticmethod
+    def _payment_amount_cents(value: object) -> int | None:
+        try:
+            decimal_value = Decimal(str(value)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+        except (InvalidOperation, ValueError, TypeError):
+            return None
+        if decimal_value <= 0:
+            return None
+        return int(decimal_value * 100)
 
     @staticmethod
     def _event_storage_id(
