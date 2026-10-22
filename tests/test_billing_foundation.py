@@ -972,6 +972,7 @@ def _checkout_request(payment_method: str = "pix_automatic") -> CheckoutCreateRe
         values.update(
             payer_name="Empresa Teste",
             payer_cpf_cnpj="12345678000195",
+            payer_phone="11999999999",
         )
     return CheckoutCreateRequest(**values)
 
@@ -1033,6 +1034,9 @@ async def test_common_pix_checkout_is_one_time_15_minutes_and_not_reused(monkeyp
         allowed_origins=("https://alovia.netlify.app",),
     )
 
+    assert db.checkouts[0].payer_name == "Empresa Teste"
+    assert db.checkouts[0].payer_email == "teste@example.com"
+    assert db.checkouts[0].payer_phone == "11999999999"
     assert first.payment_method == "pix"
     assert first.checkout_mode == "pix"
     assert first.pix_payload == "pix-common-payload-1"

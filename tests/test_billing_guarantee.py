@@ -9,7 +9,7 @@ import pytest
 import app.billing.service as billing_service_module
 from app.billing.asaas import AsaasGatewayTimeoutError
 from app.billing.service import BillingService
-from app.models import BillingCheckout, CommercialSubscription
+from app.models import BillingCheckout, BusinessAccess, CommercialSubscription
 
 
 class _StatusDb:
@@ -343,6 +343,7 @@ async def test_guarantee_refund_request_is_persisted_without_declaring_refund(mo
     assert response.refund_status == "requested"
     assert gateway.refund_calls == ["pay_initial"]
     assert subscription.refund_requested_at is not None
+    assert response.refund_deadline_at == subscription.refund_requested_at + timedelta(hours=24)
     assert subscription.refunded_at is None
     assert subscription.status == "canceled"
     assert subscription.access_until > datetime.now(UTC)
@@ -530,6 +531,45 @@ async def test_nonfinal_refund_events_never_claim_full_refund(
     assert subscription.refunded_at is None
     assert subscription.status == "active"
     assert subscription.access_until == original_access_until
+
+
+@pytest.mark.asyncio
+async def test_full_refund_returns_production_business_to_free_access(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_environment = "production"
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    subscription.provider_environment = "production"
+    access = BusinessAccess(
+        business_id=business_id,
+        access_mode="paid",
+        admin_full_access=False,
+        has_had_operational_access=True,
+    )
+
+    class ProductionRefundDb(_RefundEventDb):
+        async def get(self, model, identifier):
+            if model is BusinessAccess and identifier == business_id:
+                return access
+            return await super().get(model, identifier)
+
+    db = ProductionRefundDb(checkout, subscription)
+    service = BillingService(db, object())
+
+    await service.apply_payment_event(
+        "PAYMENT_REFUNDED",
+        {"id": "pay_initial", "value": 197.0},
+    )
+
+    assert subscription.refund_status == "refunded"
+    assert subscription.status == "suspended"
+    assert access.access_mode == "free"
+    assert access.has_had_operational_access is True
 
 
 @pytest.mark.asyncio

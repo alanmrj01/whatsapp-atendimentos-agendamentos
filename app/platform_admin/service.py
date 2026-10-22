@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from anyio import to_thread
@@ -96,6 +96,9 @@ class PlatformAdminService:
                 CommercialSubscription.refunded_at,
                 BillingCheckout.provider_payment_id,
                 CommercialSubscription.provider_subscription_id,
+                BillingCheckout.payer_name,
+                BillingCheckout.payer_email,
+                BillingCheckout.payer_phone,
                 CommercialSubscription.created_at,
             )
             .join(
@@ -125,6 +128,9 @@ class PlatformAdminService:
                 datetime | None,
                 str | None,
                 str | None,
+                str | None,
+                str | None,
+                str | None,
             ],
         ] = {}
         for (
@@ -139,6 +145,9 @@ class PlatformAdminService:
             refunded_at,
             provider_payment_id,
             provider_subscription_id,
+            payer_name,
+            payer_email,
+            payer_phone,
             _,
         ) in subscription_rows:
             subscriptions.setdefault(
@@ -154,6 +163,9 @@ class PlatformAdminService:
                     refunded_at,
                     provider_payment_id,
                     provider_subscription_id,
+                    payer_name,
+                    payer_email,
+                    payer_phone,
                 ),
             )
 
@@ -224,6 +236,30 @@ class PlatformAdminService:
                 commercial_provider_subscription_id=(
                     subscriptions[business.id][9]
                     if business.id in subscriptions
+                    else None
+                ),
+                commercial_contact_name=(
+                    subscriptions[business.id][10]
+                    if business.id in subscriptions
+                    and subscriptions[business.id][10]
+                    else business.responsible_name or business.name
+                ),
+                commercial_contact_email=(
+                    subscriptions[business.id][11]
+                    if business.id in subscriptions
+                    and subscriptions[business.id][11]
+                    else (owners.get(business.id, [None])[0] if owners.get(business.id) else None)
+                ),
+                commercial_contact_phone=(
+                    subscriptions[business.id][12]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_refund_deadline_at=(
+                    subscriptions[business.id][6] + timedelta(hours=24)
+                    if business.id in subscriptions
+                    and subscriptions[business.id][6] is not None
+                    and subscriptions[business.id][5] in {"requested", "reconcile_required"}
                     else None
                 ),
                 owners=owners.get(business.id, []),

@@ -139,6 +139,9 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
                 None,
                 "pay_test",
                 "sub_test",
+                "Alan Cliente",
+                "alan@example.test",
+                "11999999999",
                 datetime.now(UTC),
             )],
         ]),
@@ -160,6 +163,11 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
     assert item.commercial_refunded_at is None
     assert item.commercial_provider_payment_id == "pay_test"
     assert item.commercial_provider_subscription_id == "sub_test"
+    assert item.commercial_contact_name == "Alan Cliente"
+    assert item.commercial_contact_email == "alan@example.test"
+    assert item.commercial_contact_phone == "11999999999"
+    assert item.commercial_refund_deadline_at is not None
+    assert item.commercial_refund_deadline_at > item.commercial_refund_requested_at
 
 
 def test_platform_business_create_forbids_extra_fields() -> None:

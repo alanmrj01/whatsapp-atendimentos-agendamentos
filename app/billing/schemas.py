@@ -27,6 +27,7 @@ class CheckoutCreateRequest(StrictBillingRequest):
     return_origin: str = Field(min_length=8, max_length=300)
     payer_name: str | None = Field(default=None, min_length=2, max_length=120)
     payer_cpf_cnpj: str | None = Field(default=None, max_length=18)
+    payer_phone: str | None = Field(default=None, max_length=20)
 
     @field_validator("payer_name", mode="before")
     @classmethod
@@ -43,6 +44,16 @@ class CheckoutCreateRequest(StrictBillingRequest):
         digits = re.sub(r"\D", "", str(value))
         if digits and len(digits) not in {11, 14}:
             raise ValueError("CPF/CNPJ must have 11 or 14 digits")
+        return digits or None
+
+    @field_validator("payer_phone", mode="before")
+    @classmethod
+    def normalize_checkout_phone(cls, value):
+        if value is None:
+            return None
+        digits = re.sub(r"\D", "", str(value))
+        if digits and len(digits) not in {10, 11}:
+            raise ValueError("Phone must have 10 or 11 digits")
         return digits or None
 
     @model_validator(mode="after")
@@ -206,3 +217,4 @@ class SubscriptionStatusResponse(BaseModel):
     guarantee_eligible: bool = False
     refund_status: RefundStatus = "none"
     refund_provider_status: ProviderRefundStatus | None = None
+    refund_deadline_at: datetime | None = None

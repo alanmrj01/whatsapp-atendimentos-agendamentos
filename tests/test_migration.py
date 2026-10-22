@@ -108,6 +108,13 @@ REENGAGEMENT_MIGRATION_PATH = (
     / "20261010_0031_reengagement_campaigns.py"
 )
 
+BILLING_CONTACT_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261022_0038_billing_contact_snapshots.py"
+)
+
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
     spec = importlib.util.spec_from_file_location(
@@ -139,7 +146,24 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261021_0037"]
+    assert script.get_heads() == ["20261022_0038"]
+
+
+def test_billing_contact_snapshot_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", BILLING_CONTACT_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", BILLING_CONTACT_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    for column_name in ("payer_name", "payer_email", "payer_phone"):
+        assert f"add column {column_name}" in upgrade
+        assert f"drop column {column_name}" in downgrade
 
 
 def test_reengagement_migration_is_additive_and_reversible() -> None:
