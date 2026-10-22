@@ -323,18 +323,26 @@ class AsaasGateway:
         )
 
     async def refund_payment(self, payment_id: str) -> None:
-        if (
-            not isinstance(payment_id, str)
-            or not payment_id.startswith("pay_")
-            or len(payment_id) > 100
-        ):
-            raise AsaasGatewayError("Asaas payment identifier is invalid")
+        self._validate_payment_id(payment_id)
         await self._json_request(
             "POST",
             f"/payments/{payment_id}/refund",
             json={},
             timeout_seconds=30.0,
         )
+
+    async def payment_details(self, payment_id: str) -> dict[str, Any]:
+        self._validate_payment_id(payment_id)
+        return await self._json_request("GET", f"/payments/{payment_id}")
+
+    @staticmethod
+    def _validate_payment_id(payment_id: str) -> None:
+        if (
+            not isinstance(payment_id, str)
+            or not payment_id.startswith("pay_")
+            or len(payment_id) > 100
+        ):
+            raise AsaasGatewayError("Asaas payment identifier is invalid")
 
     async def create_credit_card_subscription(
         self, payload: dict[str, Any]
