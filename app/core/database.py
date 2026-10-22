@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -39,6 +40,18 @@ def build_engine_options(database_url: str) -> dict[str, Any]:
                 "prepared_statement_cache_size": 0,
             },
         )
+    return options
+
+
+def build_migration_engine_options(database_url: str) -> dict[str, Any]:
+    options = build_engine_options(database_url)
+    options["poolclass"] = NullPool
+    if is_transaction_pooler_url(database_url):
+        connect_args = dict(options.get("connect_args", {}))
+        connect_args["prepared_statement_name_func"] = (
+            lambda: f"__asyncpg_{uuid4()}__"
+        )
+        options["connect_args"] = connect_args
     return options
 
 
