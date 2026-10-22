@@ -1051,6 +1051,7 @@ class ProcessedWebhook(UUIDPrimaryKeyMixin, Base):
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     outcome_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     attempts: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )
