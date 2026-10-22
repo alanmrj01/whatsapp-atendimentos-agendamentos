@@ -22,9 +22,9 @@ class StoredTaskEvent:
     event_key: str
     event_type: str
     provider_message_id: str | None
-    business_id: uuid.UUID | None
     status: str
-    outcome_reason: str | None
+    business_id: uuid.UUID | None = None
+    outcome_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,8 +57,8 @@ class CloudTaskEventRepository:
             event_key=event.event_key,
             event_type=event.event_type,
             provider_message_id=event.provider_message_id,
-            business_id=event.business_id,
             status=event.status,
+            business_id=event.business_id,
             outcome_reason=event.outcome_reason,
         )
 
