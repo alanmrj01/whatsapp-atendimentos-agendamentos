@@ -1387,7 +1387,13 @@ class FakeWebhookRepository:
     async def update_message_status(self, *_: Any) -> None:
         return None
 
-    async def complete_event(self, event_key: str, event_status: str) -> None:
+    async def complete_event(
+        self,
+        event_key: str,
+        event_status: str,
+        business_id: uuid.UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None:
         self.completed.append((event_key, event_status))
 
     def export_state(self) -> dict[str, Any]:
