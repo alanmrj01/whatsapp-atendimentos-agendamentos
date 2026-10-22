@@ -33,6 +33,7 @@ from app.billing.schemas import (
     CheckoutStatusResponse,
     CreditCardCheckoutRequest,
     CreditCardCheckoutResponse,
+    ProviderRefundStatus,
     SubscriptionStatusResponse,
 )
 from app.models import BillingCheckout, Business, BusinessAccess, CommercialSubscription, WebPushEvent
@@ -804,10 +805,82 @@ class BillingService:
             return SubscriptionStatusResponse(status="none")
         return await self._subscription_status_response(subscription)
 
+    @staticmethod
+    def _provider_refund_status(
+        payment: dict, amount_cents: int
+    ) -> ProviderRefundStatus | None:
+        refunds = payment.get("refunds")
+        if not isinstance(refunds, list) or not refunds:
+            return None
+
+        totals = {"DONE": 0, "PENDING": 0, "CANCELLED": 0}
+        observed = False
+        for refund in refunds:
+            if not isinstance(refund, dict):
+                continue
+            status = refund.get("status")
+            value_cents = _payment_value_cents(refund.get("value"))
+            if status not in totals or value_cents is None or value_cents <= 0:
+                continue
+            totals[status] += value_cents
+            observed = True
+
+        if not observed:
+            return "unknown"
+        if totals["DONE"] >= amount_cents:
+            return "done"
+        if totals["DONE"] + totals["PENDING"] >= amount_cents and totals["PENDING"] > 0:
+            return "pending"
+        if totals["DONE"] > 0 or totals["PENDING"] > 0:
+            return "partial"
+        if totals["CANCELLED"] > 0:
+            return "cancelled"
+        return "unknown"
+
+    async def _reconcile_provider_refund(
+        self,
+        subscription: CommercialSubscription,
+        checkout: BillingCheckout | None,
+    ) -> ProviderRefundStatus | None:
+        if subscription.refund_status == "refunded":
+            return "done"
+        if subscription.refund_status not in {"requested", "reconcile_required"}:
+            return None
+        if checkout is None or not checkout.provider_payment_id:
+            return "unknown"
+
+        try:
+            payment = await self.gateway.payment_details(checkout.provider_payment_id)
+        except AsaasGatewayError:
+            return "unknown"
+
+        provider_status = self._provider_refund_status(payment, checkout.amount_cents)
+        now = datetime.now(UTC)
+
+        if provider_status == "done":
+            subscription.refund_status = "refunded"
+            subscription.refunded_at = subscription.refunded_at or now
+            subscription.status = "suspended"
+            subscription.access_until = min(subscription.access_until, now)
+            await self.db.commit()
+        elif provider_status == "pending":
+            if subscription.refund_status != "requested":
+                subscription.refund_status = "requested"
+                await self.db.commit()
+        elif provider_status in {"cancelled", "partial"}:
+            if subscription.refund_status != "reconcile_required":
+                subscription.refund_status = "reconcile_required"
+                await self.db.commit()
+
+        return provider_status
+
     async def _subscription_status_response(
         self, subscription: CommercialSubscription
     ) -> SubscriptionStatusResponse:
         checkout = await self.db.get(BillingCheckout, subscription.checkout_id)
+        refund_provider_status = await self._reconcile_provider_refund(
+            subscription, checkout
+        )
         guarantee_until = None
         guarantee_eligible = False
         if (
@@ -846,6 +919,7 @@ class BillingService:
             guarantee_until=guarantee_until,
             guarantee_eligible=guarantee_eligible,
             refund_status=subscription.refund_status,  # type: ignore[arg-type]
+            refund_provider_status=refund_provider_status,
         )
 
     async def _cancel_provider_recurrence(
