@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
+from uuid import UUID
 from typing import Any, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,7 +47,13 @@ class TaskWorkerRepository(Protocol):
         self, provider_message_id: str, message_status: str
     ) -> None: ...
 
-    async def complete_event(self, event_key: str, event_status: str) -> None: ...
+    async def complete_event(
+        self,
+        event_key: str,
+        event_status: str,
+        business_id: UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None: ...
 
 
 class TransactionSession(Protocol):
@@ -91,14 +98,24 @@ async def process_cloud_task_event(
             if callable(turn_loader):
                 aggregated = await turn_loader(event.provider_message_id)
                 if aggregated is None:
-                    await event_repository.complete_event(event_key, "processed")
+                    await event_repository.complete_event(
+                        event_key,
+                        "processed",
+                        event.business_id,
+                        "debounced_fragment_merged",
+                    )
                     return False
                 inbound = _prefer_latest_substantive_fragment(
                     latest_inbound,
                     aggregated,
                 )
             if inbound.whatsapp_id is None and isinstance(session, AsyncSession):
-                await event_repository.complete_event(event_key, "ignored")
+                await event_repository.complete_event(
+                    event_key,
+                    "ignored",
+                    inbound.business_id,
+                    "inbound_identity_unavailable",
+                )
                 return False
             if inbound.whatsapp_id is not None:
                 exclusion_mode = await policy.active_exclusion(
@@ -111,14 +128,24 @@ async def process_cloud_task_event(
                     exclusion_mode,
                 )
                 if decision is not AutomationDecision.ALLOWED:
-                    await event_repository.complete_event(event_key, "ignored")
+                    await event_repository.complete_event(
+                        event_key,
+                        "ignored",
+                        inbound.business_id,
+                        decision.value,
+                    )
                     return False
             active_engine = conversation_engine or build_conversation_engine(
                 cast(AsyncSession, session),
                 booking_port,
             )
             await active_engine.process(inbound)
-            await event_repository.complete_event(event_key, "processed")
+            await event_repository.complete_event(
+                event_key,
+                "processed",
+                inbound.business_id,
+                "automation_processed",
+            )
             return True
 
         status_prefix = "message.status."
@@ -132,10 +159,20 @@ async def process_cloud_task_event(
                     event.provider_message_id,
                     message_status,
                 )
-                await event_repository.complete_event(event_key, "processed")
+                await event_repository.complete_event(
+                    event_key,
+                    "processed",
+                    event.business_id,
+                    "message_status_processed",
+                )
                 return True
 
-        await event_repository.complete_event(event_key, "ignored")
+        await event_repository.complete_event(
+            event_key,
+            "ignored",
+            event.business_id,
+            "unsupported_event_type",
+        )
         return False
 
 
