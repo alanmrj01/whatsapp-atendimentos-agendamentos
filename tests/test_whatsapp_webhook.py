@@ -1094,6 +1094,10 @@ async def test_task_persistence_is_idempotent_and_retryable_after_commit() -> No
     assert retry == [event.event_key]
     assert repository.persisted_messages == [event]
     assert repository.event_statuses[event.event_key] == "queued"
+    assert repository.diagnostics[event.event_key] == (
+        repository.business_id,
+        "automation_queued",
+    )
 
 
 @mark.asyncio
@@ -1217,6 +1221,7 @@ async def test_unknown_business_is_safely_ignored(
     assert repository.persisted_messages == []
     assert repository.customer_lookups == []
     assert repository.completed == [(event.event_key, "ignored")]
+    assert repository.diagnostics[event.event_key] == (None, "business_not_found")
     for sensitive_value in (
         event.meta_phone_number_id,
         event.provider_message_id,
@@ -1427,6 +1432,10 @@ async def test_manual_echo_never_enters_engine_or_creates_fixed_exclusion() -> N
     ]
     assert automation.exclusions == {}
     assert repository.completed == [(event.event_key, "processed")]
+    assert repository.diagnostics[event.event_key] == (
+        repository.business_id,
+        "manual_business_message",
+    )
 
 
 @mark.asyncio
@@ -1467,6 +1476,10 @@ async def test_customer_is_suppressed_then_resumes_automatically_after_expiry() 
     )
     engine.process.assert_not_awaited()
     assert repository.completed[-1] == (during.event_key, "ignored")
+    assert repository.diagnostics[during.event_key] == (
+        repository.business_id,
+        "temporarily_suppressed",
+    )
 
     automation.controls[repository.conversation_id] = (
         ConversationAutomationControl(
@@ -1494,6 +1507,10 @@ async def test_customer_is_suppressed_then_resumes_automatically_after_expiry() 
 
     engine.process.assert_awaited_once()
     assert repository.completed[-1] == (after.event_key, "processed")
+    assert repository.diagnostics[after.event_key] == (
+        repository.business_id,
+        "automation_processed",
+    )
     assert automation.suppressions_cleared == [
         (repository.business_id, repository.conversation_id)
     ]
@@ -1532,6 +1549,10 @@ async def test_active_fixed_exclusion_prevents_engine_and_outbound(
 
     engine.process.assert_not_awaited()
     assert repository.completed == [(event.event_key, "ignored")]
+    assert repository.diagnostics[event.event_key] == (
+        repository.business_id,
+        "human_only" if mode is ExclusionMode.HUMAN_ONLY else "automation_excluded",
+    )
     assert len(repository.persisted_messages) == (
         1 if mode is ExclusionMode.HUMAN_ONLY else 0
     )
