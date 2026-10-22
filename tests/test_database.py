@@ -73,6 +73,36 @@ def test_transaction_pooler_uses_null_pool_and_disables_statement_caches() -> No
     }
 
 
+def test_migration_transaction_pooler_uses_unique_prepared_statement_names() -> None:
+    options = database.build_migration_engine_options(
+        "postgresql+asyncpg://user@example.invalid:6543/postgres"
+    )
+
+    assert options["pool_pre_ping"] is True
+    assert options["poolclass"] is NullPool
+    assert options["connect_args"]["statement_cache_size"] == 0
+    assert options["connect_args"]["prepared_statement_cache_size"] == 0
+
+    name_func = options["connect_args"]["prepared_statement_name_func"]
+    first = name_func()
+    second = name_func()
+
+    assert first.startswith("__asyncpg_")
+    assert second.startswith("__asyncpg_")
+    assert first != second
+
+
+def test_migration_direct_connection_still_uses_null_pool() -> None:
+    options = database.build_migration_engine_options(
+        "postgresql+asyncpg://user@example.invalid:5432/postgres"
+    )
+
+    assert options == {
+        "pool_pre_ping": True,
+        "poolclass": NullPool,
+    }
+
+
 @pytest.mark.asyncio
 async def test_get_db_closes_session(monkeypatch: MonkeyPatch) -> None:
     session_context = FakeSessionContext()
