@@ -52,11 +52,24 @@ class WhatsAppWebhookRepository:
         )
         return result.scalar_one_or_none()
 
-    async def queue_event(self, event_key: str) -> None:
+    async def queue_event(
+        self,
+        event_key: str,
+        business_id: uuid.UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None:
+        values: dict[str, object] = {
+            "status": "queued",
+            "processed_at": None,
+        }
+        if business_id is not None:
+            values["business_id"] = business_id
+        if outcome_reason is not None:
+            values["outcome_reason"] = outcome_reason
         await self.session.execute(
             update(ProcessedWebhook)
             .where(ProcessedWebhook.event_key == event_key)
-            .values(status="queued", processed_at=None)
+            .values(**values)
         )
 
     async def find_business_id(
@@ -244,9 +257,23 @@ class WhatsAppWebhookRepository:
             .values(status=message_status)
         )
 
-    async def complete_event(self, event_key: str, event_status: str) -> None:
+    async def complete_event(
+        self,
+        event_key: str,
+        event_status: str,
+        business_id: uuid.UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None:
+        values: dict[str, object] = {
+            "status": event_status,
+            "processed_at": func.now(),
+        }
+        if business_id is not None:
+            values["business_id"] = business_id
+        if outcome_reason is not None:
+            values["outcome_reason"] = outcome_reason
         await self.session.execute(
             update(ProcessedWebhook)
             .where(ProcessedWebhook.event_key == event_key)
-            .values(status=event_status, processed_at=func.now())
+            .values(**values)
         )
