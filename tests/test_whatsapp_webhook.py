@@ -190,6 +190,7 @@ class FakeWebhookRepository:
         self.persisted_messages: list[InboundMessageEvent] = []
         self.status_updates: list[tuple[str, str]] = []
         self.completed: list[tuple[str, str]] = []
+        self.diagnostics: dict[str, tuple[uuid.UUID | None, str | None]] = {}
         self.event_statuses: dict[str, str] = {}
         self.customer_lookups: list[str] = []
         self.customer_profile_names: list[str | None] = []
@@ -211,8 +212,14 @@ class FakeWebhookRepository:
     async def get_event_status(self, event_key: str) -> str | None:
         return self.event_statuses.get(event_key)
 
-    async def queue_event(self, event_key: str) -> None:
+    async def queue_event(
+        self,
+        event_key: str,
+        business_id: uuid.UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None:
         self.event_statuses[event_key] = "queued"
+        self.diagnostics[event_key] = (business_id, outcome_reason)
 
     async def find_business_id(
         self, meta_phone_number_id: str
@@ -262,8 +269,15 @@ class FakeWebhookRepository:
     ) -> None:
         self.status_updates.append((provider_message_id, message_status))
 
-    async def complete_event(self, event_key: str, event_status: str) -> None:
+    async def complete_event(
+        self,
+        event_key: str,
+        event_status: str,
+        business_id: uuid.UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None:
         self.completed.append((event_key, event_status))
+        self.diagnostics[event_key] = (business_id, outcome_reason)
         self.event_statuses[event_key] = event_status
 
 
