@@ -14,7 +14,7 @@ def test_readiness_requires_current_billing_schema_revision() -> None:
 
     assert current.status is Status.OK
     assert current.code is Code.MIGRATION_OK
-    assert current.details.current_revision == "20261021_0037"
+    assert current.details.current_revision == "20261022_0038"
 
     assert previous.status is Status.ERROR
     assert previous.code is Code.MIGRATION_BEHIND
