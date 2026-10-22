@@ -83,6 +83,9 @@ class BillingCheckout(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     provider_customer_id: Mapped[str | None] = mapped_column(String(80))
     provider_subscription_id: Mapped[str | None] = mapped_column(String(80))
     provider_payment_id: Mapped[str | None] = mapped_column(String(100))
+    payer_name: Mapped[str | None] = mapped_column(String(120))
+    payer_email: Mapped[str | None] = mapped_column(String(254))
+    payer_phone: Mapped[str | None] = mapped_column(String(20))
 
 
 class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
