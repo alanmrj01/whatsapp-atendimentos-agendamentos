@@ -147,6 +147,12 @@ class BillingService:
             )
         )
         if existing is not None:
+            if existing.payer_name is None and payload.payer_name:
+                existing.payer_name = payload.payer_name
+            if existing.payer_email is None:
+                existing.payer_email = payer_email
+            if existing.payer_phone is None and payload.payer_phone:
+                existing.payer_phone = payload.payer_phone
             if (
                 existing.plan_code != offer.plan
                 or existing.billing_cycle != offer.cycle
@@ -294,6 +300,9 @@ class BillingService:
             payment_method=payload.payment_method,
             provider_environment=self.provider_environment,
             amount_cents=offer.amount_cents,
+            payer_name=payload.payer_name,
+            payer_email=payer_email,
+            payer_phone=payload.payer_phone,
             status="creating",
             expires_at=datetime.now(UTC) + timedelta(seconds=PAYMENT_CHECKOUT_TTL_SECONDS),
         )
@@ -574,6 +583,9 @@ class BillingService:
             ) from None
 
         checkout.provider_customer_id = customer_id
+        checkout.payer_name = checkout.payer_name or payload.payer_name
+        checkout.payer_email = checkout.payer_email or payer_email
+        checkout.payer_phone = checkout.payer_phone or payload.payer_phone
         checkout.status = "creating"
 
         offer = get_offer(checkout.plan_code, checkout.billing_cycle)
@@ -844,6 +856,24 @@ class BillingService:
             return "cancelled"
         return "unknown"
 
+    async def _return_business_to_free_after_refund(
+        self, business_id: UUID
+    ) -> None:
+        access = await self.db.get(BusinessAccess, business_id)
+        if access is None:
+            self.db.add(
+                BusinessAccess(
+                    business_id=business_id,
+                    access_mode="free",
+                    admin_full_access=False,
+                    has_had_operational_access=True,
+                )
+            )
+            return
+        access.has_had_operational_access = True
+        if not access.admin_full_access:
+            access.access_mode = "free"
+
     async def _reconcile_provider_refund(
         self,
         subscription: CommercialSubscription,
@@ -869,6 +899,9 @@ class BillingService:
             subscription.refunded_at = subscription.refunded_at or now
             subscription.status = "suspended"
             subscription.access_until = min(subscription.access_until, now)
+            await self._return_business_to_free_after_refund(
+                subscription.business_id
+            )
             await self.db.commit()
         elif provider_status in {"awaiting_authorization", "pending"}:
             if subscription.refund_status != "requested":
@@ -927,6 +960,12 @@ class BillingService:
             guarantee_eligible=guarantee_eligible,
             refund_status=subscription.refund_status,  # type: ignore[arg-type]
             refund_provider_status=refund_provider_status,
+            refund_deadline_at=(
+                subscription.refund_requested_at + timedelta(hours=24)
+                if subscription.refund_requested_at is not None
+                and subscription.refund_status != "refunded"
+                else None
+            ),
         )
 
     async def _cancel_provider_recurrence(
@@ -1639,6 +1678,9 @@ class BillingService:
                 ):
                     subscription.refund_status = "refunded"
                     subscription.refunded_at = subscription.refunded_at or datetime.now(UTC)
+                    await self._return_business_to_free_after_refund(
+                        subscription.business_id
+                    )
         await self.db.commit()
         return action_event_key
 
