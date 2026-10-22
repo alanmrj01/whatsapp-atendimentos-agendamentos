@@ -1324,6 +1324,7 @@ def test_processed_webhook_claim_uses_postgresql_unique_barrier() -> None:
         in sql
     )
     assert "RETURNING processed_webhooks.id" in sql
+    assert "provider_failure_code" in sql
 
 
 @mark.asyncio
