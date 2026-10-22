@@ -813,7 +813,12 @@ class BillingService:
         if not isinstance(refunds, list) or not refunds:
             return None
 
-        totals = {"DONE": 0, "PENDING": 0, "CANCELLED": 0}
+        totals = {
+            "DONE": 0,
+            "PENDING": 0,
+            "CANCELLED": 0,
+            "AWAITING_CRITICAL_ACTION_AUTHORIZATION": 0,
+        }
         observed = False
         for refund in refunds:
             if not isinstance(refund, dict):
@@ -829,6 +834,8 @@ class BillingService:
             return "unknown"
         if totals["DONE"] >= amount_cents:
             return "done"
+        if totals["AWAITING_CRITICAL_ACTION_AUTHORIZATION"] >= amount_cents:
+            return "awaiting_authorization"
         if totals["DONE"] + totals["PENDING"] >= amount_cents and totals["PENDING"] > 0:
             return "pending"
         if totals["DONE"] > 0 or totals["PENDING"] > 0:
@@ -863,7 +870,7 @@ class BillingService:
             subscription.status = "suspended"
             subscription.access_until = min(subscription.access_until, now)
             await self.db.commit()
-        elif provider_status == "pending":
+        elif provider_status in {"awaiting_authorization", "pending"}:
             if subscription.refund_status != "requested":
                 subscription.refund_status = "requested"
                 await self.db.commit()

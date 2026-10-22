@@ -13,7 +13,7 @@ BillingCycle = Literal["monthly", "quarterly", "annual"]
 PaymentMethod = Literal["credit_card", "pix", "pix_automatic"]
 CheckoutMode = Literal["hosted", "native", "pix"]
 RefundStatus = Literal["none", "requested", "reconcile_required", "refunded"]
-ProviderRefundStatus = Literal["pending", "done", "cancelled", "partial", "unknown"]
+ProviderRefundStatus = Literal["awaiting_authorization", "pending", "done", "cancelled", "partial", "unknown"]
 
 
 class StrictBillingRequest(BaseModel):

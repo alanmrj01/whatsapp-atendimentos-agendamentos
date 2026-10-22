@@ -215,6 +215,37 @@ class _RefundGateway:
 
 
 @pytest.mark.asyncio
+async def test_provider_awaiting_critical_authorization_is_reported(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    checkout.provider_payment_id = "pay_initial"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    subscription.status = "canceled"
+    subscription.refund_status = "reconcile_required"
+    db = _RequestDb(checkout, [checkout.id])
+    gateway = _RefundGateway(
+        payment_payload={
+            "refunds": [{
+                "status": "AWAITING_CRITICAL_ACTION_AUTHORIZATION",
+                "value": 197.0,
+            }]
+        }
+    )
+    service = BillingService(db, gateway)
+
+    response = await service._subscription_status_response(subscription)
+
+    assert response.refund_status == "requested"
+    assert response.refund_provider_status == "awaiting_authorization"
+    assert subscription.refunded_at is None
+    assert gateway.payment_detail_calls == ["pay_initial"]
+
+
+@pytest.mark.asyncio
 async def test_provider_pending_refund_is_reported_without_declaring_completion(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     business_id = uuid4()
