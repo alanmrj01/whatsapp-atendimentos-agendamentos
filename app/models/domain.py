@@ -1038,7 +1038,42 @@ class ProcessedWebhook(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (
         Index("ix_processed_webhooks_provider_message_id", "provider_message_id"),
         Index("ix_processed_webhooks_status", "status"),
+        CheckConstraint(
+            "outcome_reason IS NULL OR outcome_reason ~ '^[a-z0-9_.-]{1,64}
+
+    business_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=True
+    )
+    event_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    provider_message_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+",
+            name="processed_webhook_outcome_reason_sanitized",
+        ),
         Index("ix_processed_webhooks_received_at", "received_at"),
+        Index(
+            "ix_processed_webhooks_business_received",
+            "business_id",
+            "received_at",
+        ),
+        Index(
+            "ix_processed_webhooks_outcome_received",
+            "outcome_reason",
+            "received_at",
+        ),
     )
 
     event_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
