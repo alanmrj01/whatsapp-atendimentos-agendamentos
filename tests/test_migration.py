@@ -173,11 +173,12 @@ def test_processed_webhook_diagnostics_migration_is_additive_and_reversible() ->
         .split()
     )
 
-    for column_name in ("business_id", "outcome_reason"):
+    for column_name in ("business_id", "outcome_reason", "provider_failure_code"):
         assert f"add column {column_name}" in upgrade
         assert f"drop column {column_name}" in downgrade
     assert "fk_processed_webhooks_business_id_businesses" in upgrade
     assert "processed_webhook_outcome_reason_sanitized" in upgrade
+    assert "processed_webhook_provider_failure_code_sanitized" in upgrade
     assert "ix_processed_webhooks_business_received" in upgrade
     assert "ix_processed_webhooks_outcome_received" in upgrade
 
