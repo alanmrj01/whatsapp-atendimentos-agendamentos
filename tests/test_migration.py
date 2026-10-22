@@ -114,6 +114,12 @@ BILLING_CONTACT_MIGRATION_PATH = (
     / "versions"
     / "20261022_0038_billing_contact_snapshots.py"
 )
+SAAS_TRACKING_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261022_0039_saas_tracking_foundation.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -146,7 +152,33 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261022_0038"]
+    assert script.get_heads() == ["20261022_0039"]
+
+
+def test_saas_tracking_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", SAAS_TRACKING_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", SAAS_TRACKING_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    for column_name in ("client_event_id", "occurred_at"):
+        assert f"add column {column_name}" in upgrade
+        assert f"drop column {column_name}" in downgrade
+    for column_name in ("provider_environment", "business_id", "amount_cents"):
+        assert f"add column {column_name}" in upgrade
+        assert f"drop column {column_name}" in downgrade
+    assert "uq_marketing_funnel_events_client_event_id" in upgrade
+    assert "ix_marketing_funnel_events_properties_gin" in upgrade
+    assert "ix_billing_webhook_events_business_received" in upgrade
+    assert "ix_billing_webhook_events_event_type_received" in upgrade
+    assert "provider_environment in ('sandbox', 'production')" in upgrade
+    assert "amount_cents is null or amount_cents > 0" in upgrade
 
 
 def test_billing_contact_snapshot_migration_is_additive_and_reversible() -> None:
