@@ -23,6 +23,8 @@ class StoredTaskEvent:
     event_type: str
     provider_message_id: str | None
     status: str
+    business_id: uuid.UUID | None = None
+    outcome_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,8 @@ class CloudTaskEventRepository:
             event_type=event.event_type,
             provider_message_id=event.provider_message_id,
             status=event.status,
+            business_id=event.business_id,
+            outcome_reason=event.outcome_reason,
         )
 
     async def mark_attempt_started(self, event_key: str) -> None:
@@ -250,9 +254,23 @@ class CloudTaskEventRepository:
 
         message.status = message_status
 
-    async def complete_event(self, event_key: str, event_status: str) -> None:
+    async def complete_event(
+        self,
+        event_key: str,
+        event_status: str,
+        business_id: uuid.UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None:
+        values: dict[str, object] = {
+            "status": event_status,
+            "processed_at": func.now(),
+        }
+        if business_id is not None:
+            values["business_id"] = business_id
+        if outcome_reason is not None:
+            values["outcome_reason"] = outcome_reason
         await self.session.execute(
             update(ProcessedWebhook)
             .where(ProcessedWebhook.event_key == event_key)
-            .values(status=event_status, processed_at=func.now())
+            .values(**values)
         )

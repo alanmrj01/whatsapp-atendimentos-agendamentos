@@ -74,13 +74,24 @@ class WebhookRepository(Protocol):
         message_status: str,
     ) -> None: ...
 
-    async def complete_event(self, event_key: str, event_status: str) -> None: ...
+    async def complete_event(
+        self,
+        event_key: str,
+        event_status: str,
+        business_id: uuid.UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None: ...
 
 
 class QueuedWebhookRepository(WebhookRepository, Protocol):
     async def get_event_status(self, event_key: str) -> str | None: ...
 
-    async def queue_event(self, event_key: str) -> None: ...
+    async def queue_event(
+        self,
+        event_key: str,
+        business_id: uuid.UUID | None = None,
+        outcome_reason: str | None = None,
+    ) -> None: ...
 
 
 class TransactionSession(Protocol):
@@ -199,7 +210,12 @@ async def process_webhook_events(
                     event.meta_phone_number_id
                 )
                 if business_id is None:
-                    await event_repository.complete_event(event.event_key, "ignored")
+                    await event_repository.complete_event(
+                        event.event_key,
+                        "ignored",
+                        None,
+                        "business_not_found",
+                    )
                     logger.info("webhook_business_not_found")
                     continue
 
@@ -209,7 +225,10 @@ async def process_webhook_events(
                     )
                     if exclusion_mode is ExclusionMode.IGNORE:
                         await event_repository.complete_event(
-                            event.event_key, "ignored"
+                            event.event_key,
+                            "ignored",
+                            business_id,
+                            "automation_excluded",
                         )
                         continue
                     customer_id = await _inbound_customer_id(
@@ -226,7 +245,10 @@ async def process_webhook_events(
                     )
                     if not _assistant_processable_inbound(event):
                         await event_repository.complete_event(
-                            event.event_key, "ignored"
+                            event.event_key,
+                            "ignored",
+                            business_id,
+                            "unsupported_inbound",
                         )
                         continue
                     decision = await policy.evaluate_customer_inbound(
@@ -252,7 +274,10 @@ async def process_webhook_events(
                         )
                     if decision is not AutomationDecision.ALLOWED:
                         await event_repository.complete_event(
-                            event.event_key, "ignored"
+                            event.event_key,
+                            "ignored",
+                            business_id,
+                            decision.value,
                         )
                         continue
                 elif isinstance(event, BusinessMessageEchoEvent):
@@ -261,7 +286,10 @@ async def process_webhook_events(
                     )
                     if exclusion_mode is ExclusionMode.IGNORE:
                         await event_repository.complete_event(
-                            event.event_key, "ignored"
+                            event.event_key,
+                            "ignored",
+                            business_id,
+                            "automation_excluded",
                         )
                         continue
                     customer_id = (
@@ -294,7 +322,19 @@ async def process_webhook_events(
                         event.message_status,
                     )
 
-                await event_repository.complete_event(event.event_key, "processed")
+                final_reason = (
+                    "automation_processed"
+                    if isinstance(event, InboundMessageEvent)
+                    else "manual_business_message"
+                    if isinstance(event, BusinessMessageEchoEvent)
+                    else "message_status_processed"
+                )
+                await event_repository.complete_event(
+                    event.event_key,
+                    "processed",
+                    business_id,
+                    final_reason,
+                )
         except IntegrityError as exc:
             if not is_duplicate_event_error(exc):
                 raise
@@ -349,6 +389,8 @@ async def persist_webhook_events_for_tasks(
                         await event_repository.complete_event(
                             event.event_key,
                             "ignored",
+                            None,
+                            "business_not_found",
                         )
                         logger.info("webhook_business_not_found")
                     else:
@@ -360,6 +402,8 @@ async def persist_webhook_events_for_tasks(
                                 await event_repository.complete_event(
                                     event.event_key,
                                     "ignored",
+                                    business_id,
+                                    "automation_excluded",
                                 )
                                 continue
                             customer_id = await _inbound_customer_id(
@@ -383,6 +427,8 @@ async def persist_webhook_events_for_tasks(
                                 await event_repository.complete_event(
                                     event.event_key,
                                     "ignored",
+                                    business_id,
+                                    "unsupported_inbound",
                                 )
                                 # The task still dispatches the tenant-scoped
                                 # unread-message Web Push event.
@@ -397,11 +443,15 @@ async def persist_webhook_events_for_tasks(
                                     await event_repository.complete_event(
                                         event.event_key,
                                         "ignored",
+                                        business_id,
+                                        decision.value,
                                     )
                                     should_enqueue = True
                                 else:
                                     await event_repository.queue_event(
-                                        event.event_key
+                                        event.event_key,
+                                        business_id,
+                                        "automation_queued",
                                     )
                                     should_enqueue = True
                         elif isinstance(event, BusinessMessageEchoEvent):
@@ -412,6 +462,8 @@ async def persist_webhook_events_for_tasks(
                                 await event_repository.complete_event(
                                     event.event_key,
                                     "ignored",
+                                    business_id,
+                                    "automation_excluded",
                                 )
                                 continue
                             customer_id = (
@@ -441,9 +493,15 @@ async def persist_webhook_events_for_tasks(
                             await event_repository.complete_event(
                                 event.event_key,
                                 "processed",
+                                business_id,
+                                "manual_business_message",
                             )
                         else:
-                            await event_repository.queue_event(event.event_key)
+                            await event_repository.queue_event(
+                                event.event_key,
+                                business_id,
+                                "message_status_queued",
+                            )
                             should_enqueue = True
         except IntegrityError as exc:
             if not is_duplicate_event_error(exc):

@@ -1038,15 +1038,42 @@ class ProcessedWebhook(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (
         Index("ix_processed_webhooks_provider_message_id", "provider_message_id"),
         Index("ix_processed_webhooks_status", "status"),
+        CheckConstraint(
+            "outcome_reason IS NULL OR "
+            "outcome_reason ~ '^[a-z0-9_.-]{1,64}$'",
+            name="processed_webhook_outcome_reason_sanitized",
+        ),
+        CheckConstraint(
+            "provider_failure_code IS NULL OR "
+            "provider_failure_code ~ '^[A-Za-z0-9._-]{1,64}$'",
+            name="processed_webhook_provider_failure_code_sanitized",
+        ),
         Index("ix_processed_webhooks_received_at", "received_at"),
+        Index(
+            "ix_processed_webhooks_business_received",
+            "business_id",
+            "received_at",
+        ),
+        Index(
+            "ix_processed_webhooks_outcome_received",
+            "outcome_reason",
+            "received_at",
+        ),
     )
 
+    business_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=True
+    )
     event_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     provider_message_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_failure_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     attempts: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )

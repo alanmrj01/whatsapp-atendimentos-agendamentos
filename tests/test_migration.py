@@ -120,6 +120,12 @@ SAAS_TRACKING_MIGRATION_PATH = (
     / "versions"
     / "20261022_0039_saas_tracking_foundation.py"
 )
+WEBHOOK_DIAGNOSTICS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261022_0040_processed_webhook_diagnostics.py"
+)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -152,7 +158,29 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261022_0039"]
+    assert script.get_heads() == ["20261022_0040"]
+
+
+def test_processed_webhook_diagnostics_migration_is_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", WEBHOOK_DIAGNOSTICS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", WEBHOOK_DIAGNOSTICS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    for column_name in ("business_id", "outcome_reason", "provider_failure_code"):
+        assert f"add column {column_name}" in upgrade
+        assert f"drop column {column_name}" in downgrade
+    assert "fk_processed_webhooks_business_id_businesses" in upgrade
+    assert "processed_webhook_outcome_reason_sanitized" in upgrade
+    assert "processed_webhook_provider_failure_code_sanitized" in upgrade
+    assert "ix_processed_webhooks_business_received" in upgrade
+    assert "ix_processed_webhooks_outcome_received" in upgrade
 
 
 def test_saas_tracking_migration_is_additive_and_reversible() -> None:
