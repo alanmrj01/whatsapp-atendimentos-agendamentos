@@ -29,6 +29,7 @@ def build_claim_event_statement(event: NormalizedWebhookEvent) -> Insert:
             provider_message_id=event.provider_message_id,
             event_type=event.event_type,
             status="processing",
+            provider_failure_code=getattr(event, "failure_code", None),
             attempts=1,
         )
         .on_conflict_do_nothing(constraint="uq_processed_webhooks_event_key")
