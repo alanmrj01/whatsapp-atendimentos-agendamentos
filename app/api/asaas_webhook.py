@@ -62,7 +62,12 @@ async def asaas_webhook(
 
     provider_event_id = payload.get("id")
     provider_event_type = payload.get("event")
-    if isinstance(provider_event_id, str) and isinstance(provider_event_type, str):
+    if (
+        settings.posthog_enabled
+        and settings.posthog_project_api_key is not None
+        and isinstance(provider_event_id, str)
+        and isinstance(provider_event_type, str)
+    ):
         storage_event_id = billing_service._event_storage_id(
             billing_service.provider_environment,
             provider_event_id,
