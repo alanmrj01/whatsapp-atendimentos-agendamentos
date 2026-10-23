@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from datetime import UTC, datetime, timedelta
+import json
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -27,9 +30,49 @@ Config = Annotated[Settings, Depends(get_settings)]
 
 VISITOR_COOKIE = "alovia_analytics_vid"
 SESSION_COOKIE = "alovia_analytics_sid"
+ATTRIBUTION_COOKIE = "alovia_analytics_attr"
 ANALYTICS_COOKIE_PATH = "/api/v1/marketing"
 VISITOR_MAX_AGE_SECONDS = 365 * 24 * 60 * 60
 SESSION_MAX_AGE_SECONDS = 30 * 60
+ATTRIBUTION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+ATTRIBUTION_VALUE_MAX_LENGTH = 120
+ATTRIBUTION_PROPERTY_KEYS = (
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_content",
+    "utm_term",
+    "utm_id",
+    "utm_source_platform",
+    "utm_creative_format",
+    "campaign_id",
+    "adset_id",
+    "ad_id",
+    "placement",
+    "fbclid",
+    "gclid",
+    "referrer_host",
+    "landing_path",
+    "attribution_version",
+)
+ATTRIBUTION_TOUCH_KEYS = frozenset(
+    {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_content",
+        "utm_term",
+        "utm_id",
+        "utm_source_platform",
+        "utm_creative_format",
+        "campaign_id",
+        "adset_id",
+        "ad_id",
+        "placement",
+        "fbclid",
+        "gclid",
+    }
+)
 
 
 class MarketingEventRequest(BaseModel):
@@ -61,6 +104,61 @@ def _safe_properties(value: dict[str, Any] | None) -> dict[str, Any] | None:
             else:
                 safe[key] = item
     return safe or None
+
+
+def _safe_attribution(properties: dict[str, Any] | None) -> dict[str, Any]:
+    if not properties:
+        return {}
+    safe: dict[str, Any] = {}
+    for key in ATTRIBUTION_PROPERTY_KEYS:
+        value = properties.get(key)
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                safe[key] = normalized[:ATTRIBUTION_VALUE_MAX_LENGTH]
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            safe[key] = value
+    return safe
+
+
+def _decode_attribution_cookie(value: str | None) -> dict[str, Any]:
+    if not value or len(value) > 4096:
+        return {}
+    try:
+        padding = "=" * ((4 - len(value) % 4) % 4)
+        decoded = base64.urlsafe_b64decode((value + padding).encode()).decode()
+        payload = json.loads(decoded)
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return {}
+    return _safe_attribution(payload if isinstance(payload, dict) else None)
+
+
+def _encode_attribution_cookie(properties: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        _safe_attribution(properties),
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return base64.urlsafe_b64encode(encoded).decode().rstrip("=")
+
+
+def _resolve_attribution(
+    properties: dict[str, Any] | None,
+    cookie_value: str | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    incoming = _safe_attribution(properties)
+    has_new_touch = any(key in incoming for key in ATTRIBUTION_TOUCH_KEYS)
+    attribution = incoming if has_new_touch else _decode_attribution_cookie(cookie_value)
+    if not attribution:
+        return properties, None
+
+    merged = dict(properties or {})
+    # Attribution values describe the acquisition touch, not the current route.
+    # Reapply them after the user leaves the landing page so conversion events
+    # keep the campaign that brought the visitor into this analytics journey.
+    merged.update(attribution)
+    next_cookie = _encode_attribution_cookie(attribution) if has_new_touch else None
+    return merged, next_cookie
 
 
 def _safe_occurred_at(value: datetime | None) -> datetime:
@@ -134,6 +232,10 @@ async def record_marketing_event(
     client_event_id = payload.event_id or uuid4()
     occurred_at = _safe_occurred_at(payload.occurred_at)
     safe_properties = _safe_properties(payload.properties)
+    safe_properties, attribution_cookie_value = _resolve_attribution(
+        safe_properties,
+        request.cookies.get(ATTRIBUTION_COOKIE),
+    )
 
     # Identity used for analytics must be derived from the verified server-side
     # principal, never trusted from the public request body. This keeps the
@@ -203,6 +305,16 @@ async def record_marketing_event(
     )
 
     secure = settings.environment is Environment.production
+    if attribution_cookie_value is not None:
+        response.set_cookie(
+            name=ATTRIBUTION_COOKIE,
+            value=attribution_cookie_value,
+            max_age=ATTRIBUTION_MAX_AGE_SECONDS,
+            httponly=True,
+            secure=secure,
+            samesite="lax",
+            path=ANALYTICS_COOKIE_PATH,
+        )
     _set_identity_cookie(
         response,
         name=VISITOR_COOKIE,
