@@ -178,13 +178,14 @@ async def receive_whatsapp_webhook(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Webhook processing unavailable",
                 ) from None
-        analytics_events = await whatsapp_outcome_events(
-            session, [event.event_key for event in events]
-        )
-        for analytics_event in analytics_events:
-            background_tasks.add_task(
-                capture_posthog_event, settings, analytics_event
+        if settings.posthog_enabled and settings.posthog_project_api_key is not None:
+            analytics_events = await whatsapp_outcome_events(
+                session, [event.event_key for event in events]
             )
+            for analytics_event in analytics_events:
+                background_tasks.add_task(
+                    capture_posthog_event, settings, analytics_event
+                )
         return WebhookAcknowledgement(status="accepted")
 
     try:
@@ -204,11 +205,12 @@ async def receive_whatsapp_webhook(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Webhook processing unavailable",
         ) from None
-    analytics_events = await whatsapp_outcome_events(
-        session, [event.event_key for event in events]
-    )
-    for analytics_event in analytics_events:
-        background_tasks.add_task(
-            capture_posthog_event, settings, analytics_event
+    if settings.posthog_enabled and settings.posthog_project_api_key is not None:
+        analytics_events = await whatsapp_outcome_events(
+            session, [event.event_key for event in events]
         )
+        for analytics_event in analytics_events:
+            background_tasks.add_task(
+                capture_posthog_event, settings, analytics_event
+            )
     return WebhookAcknowledgement(status="accepted")
