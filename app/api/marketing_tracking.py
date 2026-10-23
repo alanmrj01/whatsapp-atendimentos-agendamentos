@@ -4,11 +4,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.posthog import PostHogEvent, capture_posthog_event, visitor_distinct_id
 from app.auth.dependencies import require_origin
 from app.core.config import Environment, Settings, get_settings
 from app.core.database import get_db
@@ -106,6 +107,7 @@ async def record_marketing_event(
     payload: MarketingEventRequest,
     request: Request,
     response: Response,
+    background_tasks: BackgroundTasks,
     settings: Config,
     db: Db,
 ):
@@ -123,12 +125,14 @@ async def record_marketing_event(
         or uuid4()
     )
     client_event_id = payload.event_id or uuid4()
+    occurred_at = _safe_occurred_at(payload.occurred_at)
+    safe_properties = _safe_properties(payload.properties)
     statement = (
         insert(MarketingFunnelEvent)
         .values(
             id=uuid4(),
             client_event_id=client_event_id,
-            occurred_at=_safe_occurred_at(payload.occurred_at),
+            occurred_at=occurred_at,
             visitor_id=visitor_id,
             session_id=session_id,
             business_id=payload.business_id,
@@ -137,7 +141,7 @@ async def record_marketing_event(
             surface=payload.surface,
             path=payload.path,
             referrer=payload.referrer,
-            properties=_safe_properties(payload.properties),
+            properties=safe_properties,
         )
         .on_conflict_do_nothing(
             index_elements=[MarketingFunnelEvent.client_event_id]
@@ -145,6 +149,27 @@ async def record_marketing_event(
     )
     await db.execute(statement)
     await db.commit()
+
+    background_tasks.add_task(
+        capture_posthog_event,
+        settings,
+        PostHogEvent(
+            name=payload.event_name,
+            distinct_id=visitor_distinct_id(visitor_id),
+            insert_id=str(client_event_id),
+            occurred_at=occurred_at,
+            process_person_profile=False,
+            properties={
+                **(safe_properties or {}),
+                "analytics_source": "alovia_backend",
+                "surface": payload.surface,
+                "path": payload.path,
+                "session_id": str(session_id),
+                "business_id": str(payload.business_id) if payload.business_id else None,
+                "user_id": str(payload.user_id) if payload.user_id else None,
+            },
+        ),
+    )
 
     secure = settings.environment is Environment.production
     _set_identity_cookie(

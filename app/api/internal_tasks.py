@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.posthog import capture_posthog_event, whatsapp_outcome_events
 from app.conversations.dependencies import get_booking_availability_port
 from app.conversations.ports import BookingAvailabilityPort
 from app.core.config import Settings, get_settings
@@ -53,6 +54,7 @@ router = APIRouter(prefix="/internal/tasks", tags=["internal-tasks"])
 )
 async def process_whatsapp_event_task(
     payload: WhatsAppEventTaskPayload,
+    background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_db)],
     booking_port: Annotated[
         BookingAvailabilityPort,
@@ -92,6 +94,14 @@ async def process_whatsapp_event_task(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Task processing failed",
         ) from None
+    if settings.posthog_enabled and settings.posthog_project_api_key is not None:
+        analytics_events = await whatsapp_outcome_events(
+            session, [payload.event_key]
+        )
+        for analytics_event in analytics_events:
+            background_tasks.add_task(
+                capture_posthog_event, settings, analytics_event
+            )
     return TaskAcknowledgement(status="accepted")
 
 
