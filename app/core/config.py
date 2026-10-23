@@ -178,6 +178,15 @@ class Settings(BaseSettings):
     asaas_webhook_token: SecretStr | None = Field(
         default=None, validation_alias="ASAAS_WEBHOOK_TOKEN"
     )
+    posthog_enabled: bool = Field(
+        default=False, validation_alias="POSTHOG_ENABLED"
+    )
+    posthog_project_api_key: SecretStr | None = Field(
+        default=None, validation_alias="POSTHOG_PROJECT_API_KEY"
+    )
+    posthog_host: str = Field(
+        default="https://us.i.posthog.com", validation_alias="POSTHOG_HOST"
+    )
     gcp_project_id: str | None = Field(
         default=None, validation_alias="GCP_PROJECT_ID"
     )
