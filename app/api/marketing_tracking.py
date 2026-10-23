@@ -307,7 +307,7 @@ async def record_marketing_event(
     secure = settings.environment is Environment.production
     if attribution_cookie_value is not None:
         response.set_cookie(
-            name=ATTRIBUTION_COOKIE,
+            key=ATTRIBUTION_COOKIE,
             value=attribution_cookie_value,
             max_age=ATTRIBUTION_MAX_AGE_SECONDS,
             httponly=True,
