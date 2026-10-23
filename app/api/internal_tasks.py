@@ -94,13 +94,14 @@ async def process_whatsapp_event_task(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Task processing failed",
         ) from None
-    analytics_events = await whatsapp_outcome_events(
-        session, [payload.event_key]
-    )
-    for analytics_event in analytics_events:
-        background_tasks.add_task(
-            capture_posthog_event, settings, analytics_event
+    if settings.posthog_enabled and settings.posthog_project_api_key is not None:
+        analytics_events = await whatsapp_outcome_events(
+            session, [payload.event_key]
         )
+        for analytics_event in analytics_events:
+            background_tasks.add_task(
+                capture_posthog_event, settings, analytics_event
+            )
     return TaskAcknowledgement(status="accepted")
 
 
