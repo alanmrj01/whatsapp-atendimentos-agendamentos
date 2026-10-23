@@ -38,6 +38,18 @@ def business_distinct_id(business_id: UUID) -> str:
     return f"business:{business_id}"
 
 
+def identity_alias_event(visitor_id: UUID, user_id: UUID) -> PostHogEvent:
+    visitor = visitor_distinct_id(visitor_id)
+    user = user_distinct_id(user_id)
+    return PostHogEvent(
+        name="$create_alias",
+        distinct_id=visitor,
+        insert_id=f"identity:{visitor}:{user}",
+        process_person_profile=True,
+        properties={"alias": user},
+    )
+
+
 SENSITIVE_PROPERTY_FRAGMENTS = (
     "email",
     "phone",
