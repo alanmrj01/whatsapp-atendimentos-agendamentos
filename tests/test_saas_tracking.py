@@ -14,7 +14,13 @@ from app.analytics.posthog import (
     user_distinct_id,
     visitor_distinct_id,
 )
-from app.api.marketing_tracking import _safe_occurred_at, _safe_properties
+from app.api.marketing_tracking import (
+    _decode_attribution_cookie,
+    _encode_attribution_cookie,
+    _resolve_attribution,
+    _safe_occurred_at,
+    _safe_properties,
+)
 from app.billing.webhooks import BillingWebhookService
 from app.core.config import Settings
 from app.models import BillingWebhookEvent
@@ -39,6 +45,82 @@ def test_marketing_properties_keep_attribution_and_event_dimensions() -> None:
     assert safe["key_0"] == 0
     assert safe["key_47"] == 47
     assert "key_48" not in safe
+
+
+
+def test_campaign_attribution_survives_navigation_without_javascript_storage() -> None:
+    cookie_value = _encode_attribution_cookie(
+        {
+            "utm_source": "meta",
+            "utm_medium": "paid_social",
+            "utm_campaign": "refrigeracao_outubro",
+            "campaign_id": "campaign-123",
+            "adset_id": "adset-456",
+            "ad_id": "ad-789",
+            "landing_path": "/",
+            "attribution_version": 3,
+            "email": "must-not-be-stored@example.com",
+        }
+    )
+
+    decoded = _decode_attribution_cookie(cookie_value)
+    assert decoded["utm_source"] == "meta"
+    assert decoded["utm_campaign"] == "refrigeracao_outubro"
+    assert decoded["landing_path"] == "/"
+    assert "email" not in decoded
+
+    enriched, next_cookie = _resolve_attribution(
+        {
+            "landing_path": "/criar-conta",
+            "attribution_version": 3,
+        },
+        cookie_value,
+    )
+
+    assert next_cookie is None
+    assert enriched is not None
+    assert enriched["utm_source"] == "meta"
+    assert enriched["utm_campaign"] == "refrigeracao_outubro"
+    assert enriched["campaign_id"] == "campaign-123"
+    assert enriched["landing_path"] == "/"
+
+
+def test_new_campaign_touch_replaces_previous_attribution_cookie() -> None:
+    old_cookie = _encode_attribution_cookie(
+        {
+            "utm_source": "meta",
+            "utm_campaign": "old-campaign",
+            "landing_path": "/",
+            "attribution_version": 3,
+        }
+    )
+
+    enriched, next_cookie = _resolve_attribution(
+        {
+            "utm_source": "google",
+            "utm_medium": "cpc",
+            "utm_campaign": "new-campaign",
+            "landing_path": "/",
+            "attribution_version": 3,
+        },
+        old_cookie,
+    )
+
+    assert enriched is not None
+    assert enriched["utm_source"] == "google"
+    assert enriched["utm_campaign"] == "new-campaign"
+    assert next_cookie is not None
+    assert _decode_attribution_cookie(next_cookie)["utm_campaign"] == "new-campaign"
+
+
+def test_invalid_attribution_cookie_is_ignored_fail_open() -> None:
+    enriched, next_cookie = _resolve_attribution(
+        {"landing_path": "/criar-conta", "attribution_version": 3},
+        "not-valid-base64-json",
+    )
+
+    assert enriched == {"landing_path": "/criar-conta", "attribution_version": 3}
+    assert next_cookie is None
 
 
 def test_client_occurrence_time_is_bounded_for_safe_analytics() -> None:
