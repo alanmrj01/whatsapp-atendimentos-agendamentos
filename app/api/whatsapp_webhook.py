@@ -4,11 +4,12 @@ import logging
 import secrets
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.posthog import capture_posthog_event, whatsapp_outcome_events
 from app.conversations.dependencies import get_booking_availability_port
 from app.conversations.ports import BookingAvailabilityPort
 from app.core.config import (
@@ -89,6 +90,7 @@ async def verify_whatsapp_webhook(
 @router.post("", response_model=WebhookAcknowledgement)
 async def receive_whatsapp_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     settings: Annotated[Settings, Depends(get_settings)],
     session: Annotated[AsyncSession, Depends(get_db)],
     booking_port: Annotated[
@@ -176,6 +178,13 @@ async def receive_whatsapp_webhook(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Webhook processing unavailable",
                 ) from None
+        analytics_events = await whatsapp_outcome_events(
+            session, [event.event_key for event in events]
+        )
+        for analytics_event in analytics_events:
+            background_tasks.add_task(
+                capture_posthog_event, settings, analytics_event
+            )
         return WebhookAcknowledgement(status="accepted")
 
     try:
@@ -195,4 +204,11 @@ async def receive_whatsapp_webhook(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Webhook processing unavailable",
         ) from None
+    analytics_events = await whatsapp_outcome_events(
+        session, [event.event_key for event in events]
+    )
+    for analytics_event in analytics_events:
+        background_tasks.add_task(
+            capture_posthog_event, settings, analytics_event
+        )
     return WebhookAcknowledgement(status="accepted")
