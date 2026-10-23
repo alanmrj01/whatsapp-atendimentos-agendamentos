@@ -6,7 +6,12 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.analytics.posthog import capture_posthog_event, whatsapp_outcome_events
+from app.analytics.posthog import (
+    automatic_booking_events,
+    capture_posthog_event,
+    take_automatic_booking_posthog_ids,
+    whatsapp_outcome_events,
+)
 from app.conversations.dependencies import get_booking_availability_port
 from app.conversations.ports import BookingAvailabilityPort
 from app.core.config import Settings, get_settings
@@ -94,9 +99,11 @@ async def process_whatsapp_event_task(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Task processing failed",
         ) from None
+    booking_ids = take_automatic_booking_posthog_ids(session)
     if settings.posthog_enabled and settings.posthog_project_api_key is not None:
-        analytics_events = await whatsapp_outcome_events(
-            session, [payload.event_key]
+        analytics_events = await automatic_booking_events(session, booking_ids)
+        analytics_events.extend(
+            await whatsapp_outcome_events(session, [payload.event_key])
         )
         for analytics_event in analytics_events:
             background_tasks.add_task(
