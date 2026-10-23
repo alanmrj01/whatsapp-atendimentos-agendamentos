@@ -13,6 +13,7 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.posthog import queue_automatic_booking_posthog
 from app.booking.domain import (
     AccessCondition,
     BookingPlan,
@@ -376,6 +377,7 @@ class PostgresBookingAvailabilityPort:
                 requirements.idempotency_key,
             )
             if existing is not None:
+                queue_automatic_booking_posthog(self.session, existing.id)
                 return _confirmation(existing)
 
         parsed_date = _parse_date(selected_date)
@@ -471,8 +473,10 @@ class PostgresBookingAvailabilityPort:
                         requirements.idempotency_key,
                     )
                     if existing is not None:
+                        queue_automatic_booking_posthog(self.session, existing.id)
                         return _confirmation(existing)
                 raise
+            queue_automatic_booking_posthog(self.session, appointment.id)
             return _confirmation(appointment)
         raise SlotUnavailable("Selected slot is unavailable")
 
