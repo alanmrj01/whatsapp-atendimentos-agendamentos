@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from app.analytics.posthog import PostHogEvent, build_capture_payload, visitor_distinct_id
+from app.analytics.posthog import (
+    PostHogEvent,
+    build_capture_payload,
+    identity_alias_event,
+    user_distinct_id,
+    visitor_distinct_id,
+)
 from app.api.marketing_tracking import _safe_occurred_at, _safe_properties
 from app.billing.webhooks import BillingWebhookService
 from app.core.config import Settings
@@ -101,3 +107,30 @@ def test_posthog_payload_is_idempotent_and_drops_sensitive_properties() -> None:
     assert payload["properties"]["outcome_reason"] == "automation_processed"
     assert "customer_message" not in payload["properties"]
     assert "phone_number" not in payload["properties"]
+
+
+def test_posthog_identity_alias_is_deterministic_and_contains_no_pii() -> None:
+    visitor_id = UUID("00000000-0000-0000-0000-000000000011")
+    user_id = UUID("00000000-0000-0000-0000-000000000012")
+    event = identity_alias_event(visitor_id, user_id)
+
+    assert event.name == "$create_alias"
+    assert event.distinct_id == visitor_distinct_id(visitor_id)
+    assert event.properties == {"alias": user_distinct_id(user_id)}
+    assert event.process_person_profile is True
+    assert event.insert_id == (
+        f"identity:{visitor_distinct_id(visitor_id)}:{user_distinct_id(user_id)}"
+    )
+
+    settings = Settings(
+        ENVIRONMENT="test",
+        POSTHOG_ENABLED=True,
+        POSTHOG_PROJECT_API_KEY="phc_test",
+        POSTHOG_HOST="https://us.i.posthog.com",
+    )
+    payload = build_capture_payload(settings, event)
+    assert payload is not None
+    assert payload["event"] == "$create_alias"
+    assert payload["distinct_id"] == visitor_distinct_id(visitor_id)
+    assert payload["properties"]["alias"] == user_distinct_id(user_id)
+    assert payload["properties"]["$process_person_profile"] is True
