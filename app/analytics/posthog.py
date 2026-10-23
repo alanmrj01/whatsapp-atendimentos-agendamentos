@@ -38,10 +38,33 @@ def business_distinct_id(business_id: UUID) -> str:
     return f"business:{business_id}"
 
 
+SENSITIVE_PROPERTY_FRAGMENTS = (
+    "email",
+    "phone",
+    "telefone",
+    "cpf",
+    "cnpj",
+    "card",
+    "ccv",
+    "cvv",
+    "token",
+    "secret",
+    "password",
+    "message",
+    "body",
+    "pix_payload",
+    "qr_code",
+    "whatsapp_id",
+)
+
+
 def _safe_posthog_properties(properties: dict[str, Any]) -> dict[str, Any]:
     safe: dict[str, Any] = {}
     for key, value in list(properties.items())[:64]:
         if not isinstance(key, str) or not key or len(key) > 80:
+            continue
+        lowered = key.lower()
+        if any(fragment in lowered for fragment in SENSITIVE_PROPERTY_FRAGMENTS):
             continue
         if isinstance(value, (str, int, float, bool)) or value is None:
             safe[key] = value[:256] if isinstance(value, str) else value
