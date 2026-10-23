@@ -52,12 +52,18 @@ def identity_alias_event(visitor_id: UUID, user_id: UUID) -> PostHogEvent:
 
 
 def queue_automatic_booking_posthog(session: AsyncSession, appointment_id: UUID) -> None:
-    pending = session.info.setdefault(AUTOMATIC_BOOKING_SESSION_INFO_KEY, set())
+    info = getattr(session, "info", None)
+    if not isinstance(info, dict):
+        return
+    pending = info.setdefault(AUTOMATIC_BOOKING_SESSION_INFO_KEY, set())
     pending.add(appointment_id)
 
 
 def take_automatic_booking_posthog_ids(session: AsyncSession) -> list[UUID]:
-    raw = session.info.pop(AUTOMATIC_BOOKING_SESSION_INFO_KEY, set())
+    info = getattr(session, "info", None)
+    if not isinstance(info, dict):
+        return []
+    raw = info.pop(AUTOMATIC_BOOKING_SESSION_INFO_KEY, set())
     return sorted(
         (value for value in raw if isinstance(value, UUID)),
         key=str,
