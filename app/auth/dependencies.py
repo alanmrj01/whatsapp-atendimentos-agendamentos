@@ -35,6 +35,33 @@ async def require_principal(
     return await AuthService(db).authenticate(user_id, session_id)
 
 
+async def optional_principal(
+    settings: Annotated[Settings, Depends(require_auth_config)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> Principal | None:
+    """Return a verified principal when a valid bearer is present.
+
+    Public analytics requests must remain fail-open: a missing, expired, or
+    malformed bearer simply means the event is anonymous and must never be
+    trusted for identity stitching.
+    """
+    if (
+        not authorization
+        or not authorization.startswith("Bearer ")
+        or len(authorization) > 4096
+    ):
+        return None
+    try:
+        user_id, session_id = decode_access(
+            authorization[7:],
+            settings.auth_jwt_secret.get_secret_value(),
+        )
+        return await AuthService(db).authenticate(user_id, session_id)
+    except (ValueError, HTTPException):
+        return None
+
+
 def require_super_admin(
     principal: Annotated[Principal, Depends(require_principal)],
 ) -> Principal:

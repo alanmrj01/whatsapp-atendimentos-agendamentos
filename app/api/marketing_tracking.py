@@ -9,8 +9,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.analytics.posthog import PostHogEvent, capture_posthog_event, visitor_distinct_id
-from app.auth.dependencies import require_origin
+from app.analytics.posthog import (
+    PostHogEvent,
+    capture_posthog_event,
+    identity_alias_event,
+    visitor_distinct_id,
+)
+from app.auth.dependencies import optional_principal, require_origin
+from app.auth.service import Principal
 from app.core.config import Environment, Settings, get_settings
 from app.core.database import get_db
 from app.models.marketing import MarketingFunnelEvent
@@ -110,6 +116,7 @@ async def record_marketing_event(
     background_tasks: BackgroundTasks,
     settings: Config,
     db: Db,
+    principal: Annotated[Principal | None, Depends(optional_principal)],
 ):
     # First-party product analytics only. We intentionally do not persist IP,
     # user-agent, auth tokens, message content or form values here. Durable
@@ -127,6 +134,21 @@ async def record_marketing_event(
     client_event_id = payload.event_id or uuid4()
     occurred_at = _safe_occurred_at(payload.occurred_at)
     safe_properties = _safe_properties(payload.properties)
+
+    # Identity used for analytics must be derived from the verified server-side
+    # principal, never trusted from the public request body. This keeps the
+    # pre-signup endpoint anonymous while preventing forged PostHog merges.
+    effective_user_id = principal.user.id if principal is not None else None
+    effective_business_id: UUID | None = None
+    if principal is not None:
+        authorized_business_ids = {
+            membership.business_id for membership in principal.memberships
+        }
+        if payload.business_id in authorized_business_ids:
+            effective_business_id = payload.business_id
+        elif principal.session.active_business_id in authorized_business_ids:
+            effective_business_id = principal.session.active_business_id
+
     statement = (
         insert(MarketingFunnelEvent)
         .values(
@@ -135,8 +157,8 @@ async def record_marketing_event(
             occurred_at=occurred_at,
             visitor_id=visitor_id,
             session_id=session_id,
-            business_id=payload.business_id,
-            user_id=payload.user_id,
+            business_id=effective_business_id,
+            user_id=effective_user_id,
             event_name=payload.event_name,
             surface=payload.surface,
             path=payload.path,
@@ -149,6 +171,13 @@ async def record_marketing_event(
     )
     await db.execute(statement)
     await db.commit()
+
+    if effective_user_id is not None:
+        background_tasks.add_task(
+            capture_posthog_event,
+            settings,
+            identity_alias_event(visitor_id, effective_user_id),
+        )
 
     background_tasks.add_task(
         capture_posthog_event,
@@ -165,8 +194,10 @@ async def record_marketing_event(
                 "surface": payload.surface,
                 "path": payload.path,
                 "session_id": str(session_id),
-                "business_id": str(payload.business_id) if payload.business_id else None,
-                "user_id": str(payload.user_id) if payload.user_id else None,
+                "business_id": (
+                    str(effective_business_id) if effective_business_id else None
+                ),
+                "user_id": str(effective_user_id) if effective_user_id else None,
             },
         ),
     )

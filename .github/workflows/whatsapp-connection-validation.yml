@@ -3,7 +3,10 @@ name: WhatsApp connection validation
 on:
   pull_request:
     paths:
+      - 'app/analytics/**'
+      - 'app/api/marketing_tracking.py'
       - 'app/api/public_pwa.py'
+      - 'app/auth/dependencies.py'
       - 'app/api/internal_tasks.py'
       - 'app/api/asaas_webhook.py'
       - 'app/billing/**'
@@ -23,6 +26,7 @@ on:
       - 'tests/test_whatsapp_onboarding.py'
       - 'tests/test_web_push.py'
       - 'tests/test_billing_foundation.py'
+      - 'tests/test_saas_tracking.py'
       - 'tests/test_migration.py'
       - 'tests/test_schema_rollout_compat.py'
       - '.github/workflows/whatsapp-connection-validation.yml'
