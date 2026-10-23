@@ -14,6 +14,8 @@ from app.analytics.posthog import (
     user_distinct_id,
     visitor_distinct_id,
 )
+from fastapi import Response
+
 from app.api.marketing_tracking import (
     _decode_attribution_cookie,
     _encode_attribution_cookie,
@@ -111,6 +113,27 @@ def test_new_campaign_touch_replaces_previous_attribution_cookie() -> None:
     assert enriched["utm_campaign"] == "new-campaign"
     assert next_cookie is not None
     assert _decode_attribution_cookie(next_cookie)["utm_campaign"] == "new-campaign"
+
+
+def test_starlette_response_accepts_attribution_cookie_configuration() -> None:
+    response = Response()
+
+    response.set_cookie(
+        key="alovia_analytics_attr",
+        value="encoded-attribution",
+        max_age=30 * 24 * 60 * 60,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/api/v1/marketing",
+    )
+
+    header = response.headers.get("set-cookie")
+    assert header is not None
+    assert "alovia_analytics_attr=encoded-attribution" in header
+    assert "HttpOnly" in header
+    assert "Secure" in header
+    assert "Path=/api/v1/marketing" in header
 
 
 def test_invalid_attribution_cookie_is_ignored_fail_open() -> None:
