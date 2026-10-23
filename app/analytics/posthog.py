@@ -11,9 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.models import BusinessUserMembership, ProcessedWebhook
+from app.models import Appointment, BusinessUserMembership, ProcessedWebhook
 
 logger = logging.getLogger(__name__)
+AUTOMATIC_BOOKING_SESSION_INFO_KEY = "posthog_automatic_booking_ids"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,78 @@ def identity_alias_event(visitor_id: UUID, user_id: UUID) -> PostHogEvent:
         process_person_profile=True,
         properties={"alias": user},
     )
+
+
+def queue_automatic_booking_posthog(session: AsyncSession, appointment_id: UUID) -> None:
+    info = getattr(session, "info", None)
+    if not isinstance(info, dict):
+        return
+    pending = info.setdefault(AUTOMATIC_BOOKING_SESSION_INFO_KEY, set())
+    pending.add(appointment_id)
+
+
+def take_automatic_booking_posthog_ids(session: AsyncSession) -> list[UUID]:
+    info = getattr(session, "info", None)
+    if not isinstance(info, dict):
+        return []
+    raw = info.pop(AUTOMATIC_BOOKING_SESSION_INFO_KEY, set())
+    return sorted(
+        (value for value in raw if isinstance(value, UUID)),
+        key=str,
+    )
+
+
+def automatic_booking_event(
+    *,
+    appointment_id: UUID,
+    business_id: UUID,
+    service_id: UUID,
+    owner_user_id: UUID | None,
+) -> PostHogEvent:
+    distinct_id = (
+        user_distinct_id(owner_user_id)
+        if owner_user_id is not None
+        else business_distinct_id(business_id)
+    )
+    return PostHogEvent(
+        name="automatic_booking_confirmed",
+        distinct_id=distinct_id,
+        insert_id=f"automatic_booking:{appointment_id}",
+        process_person_profile=owner_user_id is not None,
+        properties={
+            "appointment_id": str(appointment_id),
+            "business_id": str(business_id),
+            "service_id": str(service_id),
+            "booking_source": "whatsapp_automation",
+        },
+    )
+
+
+async def automatic_booking_events(
+    db: AsyncSession,
+    appointment_ids: list[UUID],
+) -> list[PostHogEvent]:
+    if not appointment_ids:
+        return []
+    rows = (
+        await db.execute(
+            select(
+                Appointment.id,
+                Appointment.business_id,
+                Appointment.service_id,
+            ).where(Appointment.id.in_(list(dict.fromkeys(appointment_ids))))
+        )
+    ).all()
+    owners = await _owner_user_ids(db, {row.business_id for row in rows})
+    return [
+        automatic_booking_event(
+            appointment_id=row.id,
+            business_id=row.business_id,
+            service_id=row.service_id,
+            owner_user_id=owners.get(row.business_id),
+        )
+        for row in rows
+    ]
 
 
 SENSITIVE_PROPERTY_FRAGMENTS = (

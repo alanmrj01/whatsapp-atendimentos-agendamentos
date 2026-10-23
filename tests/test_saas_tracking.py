@@ -4,9 +4,13 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from app.analytics.posthog import (
+    AUTOMATIC_BOOKING_SESSION_INFO_KEY,
     PostHogEvent,
+    automatic_booking_event,
     build_capture_payload,
     identity_alias_event,
+    queue_automatic_booking_posthog,
+    take_automatic_booking_posthog_ids,
     user_distinct_id,
     visitor_distinct_id,
 )
@@ -134,3 +138,49 @@ def test_posthog_identity_alias_is_deterministic_and_contains_no_pii() -> None:
     assert payload["distinct_id"] == visitor_distinct_id(visitor_id)
     assert payload["properties"]["alias"] == user_distinct_id(user_id)
     assert payload["properties"]["$process_person_profile"] is True
+
+
+class _SessionInfoStub:
+    def __init__(self) -> None:
+        self.info: dict[str, object] = {}
+
+
+def test_automatic_booking_outbox_is_deduplicated_and_drained_once() -> None:
+    session = _SessionInfoStub()
+    appointment_id = UUID("00000000-0000-0000-0000-000000000021")
+
+    queue_automatic_booking_posthog(session, appointment_id)  # type: ignore[arg-type]
+    queue_automatic_booking_posthog(session, appointment_id)  # type: ignore[arg-type]
+
+    assert session.info[AUTOMATIC_BOOKING_SESSION_INFO_KEY] == {appointment_id}
+    assert take_automatic_booking_posthog_ids(session) == [appointment_id]  # type: ignore[arg-type]
+    assert take_automatic_booking_posthog_ids(session) == []  # type: ignore[arg-type]
+
+
+def test_automatic_booking_event_is_authoritative_idempotent_and_pii_free() -> None:
+    appointment_id = UUID("00000000-0000-0000-0000-000000000031")
+    business_id = UUID("00000000-0000-0000-0000-000000000032")
+    service_id = UUID("00000000-0000-0000-0000-000000000033")
+    owner_user_id = UUID("00000000-0000-0000-0000-000000000034")
+
+    event = automatic_booking_event(
+        appointment_id=appointment_id,
+        business_id=business_id,
+        service_id=service_id,
+        owner_user_id=owner_user_id,
+    )
+
+    assert event.name == "automatic_booking_confirmed"
+    assert event.distinct_id == user_distinct_id(owner_user_id)
+    assert event.insert_id == f"automatic_booking:{appointment_id}"
+    assert event.process_person_profile is True
+    assert event.properties == {
+        "appointment_id": str(appointment_id),
+        "business_id": str(business_id),
+        "service_id": str(service_id),
+        "booking_source": "whatsapp_automation",
+    }
+    assert all(
+        fragment not in " ".join(event.properties).casefold()
+        for fragment in ("email", "phone", "telefone", "message", "whatsapp_id")
+    )
