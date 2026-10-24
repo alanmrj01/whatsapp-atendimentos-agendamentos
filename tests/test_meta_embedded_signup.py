@@ -203,11 +203,14 @@ class FakeAttemptService:
         authorization_code_received=None,
         waba_id_received=None,
         phone_number_id_received=None,
+        failure_code=None,
     ):
         assert business_id == BUSINESS_ID
         assert attempt_id == ATTEMPT_ID
         assert self.current is not None
         self.current.last_stage = stage
+        if failure_code is not None:
+            self.current.failure_code = failure_code
         if authorization_code_received is True:
             self.current.authorization_code_received = True
             self.current.state = "code_received"
@@ -220,12 +223,18 @@ class FakeAttemptService:
             self.current.empty_callback_at = object()
         return self.current
 
-    async def mark_authorization_incomplete(self, business_id, attempt_id):
+    async def mark_authorization_incomplete(
+        self,
+        business_id,
+        attempt_id,
+        *,
+        failure_code=None,
+    ):
         assert business_id == BUSINESS_ID
         assert attempt_id == ATTEMPT_ID
         assert self.current is not None
         self.current.state = "authorization_incomplete"
-        self.current.failure_code = META_AUTHORIZATION_INCOMPLETE
+        self.current.failure_code = failure_code or META_AUTHORIZATION_INCOMPLETE
         return self.current
 
     async def record_assets(
