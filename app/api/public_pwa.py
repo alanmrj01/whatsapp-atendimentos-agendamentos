@@ -64,7 +64,7 @@ from app.whatsapp.administration import (
     WhatsAppConnectionAdministrationService,
 )
 from app.whatsapp.client import WhatsAppConfigurationError
-from app.whatsapp.connections import WhatsAppConnectionMode
+from app.whatsapp.connections import WhatsAppConnectionMode, sanitize_error_code
 from app.whatsapp.credentials import (
     BusinessWhatsAppCredentialProvider,
     GoogleSecretManagerCredentialStore,
@@ -192,6 +192,9 @@ def _public_connection(
             view, "masked_display_phone_number", None
         ),
         error_reason=_ERROR_REASON_BY_CODE.get(last_error_code),
+        provider_failure_code=(
+            attempt.failure_code if attempt is not None else None
+        ),
         onboarding_attempt_id=attempt.id if attempt is not None else None,
         onboarding_attempt_state=attempt.state if attempt is not None else None,
         onboarding_last_stage=attempt.last_stage if attempt is not None else None,
@@ -454,7 +457,7 @@ async def prepare_whatsapp_coexistence_switch(
     settings: Config,
     db: Db,
 ):
-    membership = _require_paid_whatsapp_administrator(principal)
+    membership = _require_whatsapp_administrator(principal)
     if not (
         payload.confirm_temporary_interruption
         and payload.confirm_phone_available
@@ -528,7 +531,7 @@ async def set_whatsapp_mode_preference(
     principal: Identity,
     db: Db,
 ):
-    membership = _require_paid_whatsapp_administrator(principal)
+    membership = _require_whatsapp_administrator(principal)
     administration = WhatsAppConnectionAdministrationService(db)
     if payload.preferred_mode is None:
         view = await administration.clear_mode_switch_request(
@@ -553,7 +556,7 @@ async def disconnect_whatsapp(
     principal: Identity,
     db: Db,
 ):
-    membership = _require_paid_whatsapp_administrator(principal)
+    membership = _require_whatsapp_administrator(principal)
     administration = WhatsAppConnectionAdministrationService(db)
     current = await administration.get_connection(
         membership.business_id,
@@ -587,8 +590,6 @@ async def onboarding_plan(payload: PublicPlanRequest, principal: Identity, db: D
     business = principal.active_membership()
     if business.role not in {MembershipRole.OWNER, MembershipRole.ADMIN}:
         raise HTTPException(403, "Read-only access")
-    if business.access_mode != "paid":
-        raise HTTPException(402, "Paid plan required")
     service = WhatsAppOnboardingService(WhatsAppConnectionAdministrationService(db))
     return onboarding_plan_response(
         service.plan(
@@ -598,12 +599,11 @@ async def onboarding_plan(payload: PublicPlanRequest, principal: Identity, db: D
     )
 
 
-def _require_paid_whatsapp_administrator(principal: Principal):
+def _require_whatsapp_administrator(principal: Principal):
+    """Allow connection setup before payment while keeping role authorization."""
     business = principal.active_membership()
     if business.role not in {MembershipRole.OWNER, MembershipRole.ADMIN}:
         raise HTTPException(403, "Read-only access")
-    if business.access_mode != "paid":
-        raise HTTPException(402, "Paid plan required")
     return business
 
 
@@ -709,6 +709,8 @@ async def _persist_embedded_signup_failure(
     business_id: UUID,
     attempt_id: UUID | None,
     error_code: str,
+    *,
+    provider_failure_code: str | None = None,
 ) -> None:
     """Persist a recoverable failure without corrupting a newer attempt."""
     attempts = WhatsAppOnboardingAttemptService(db)
@@ -722,7 +724,7 @@ async def _persist_embedded_signup_failure(
             await attempts.mark_failed(
                 business_id,
                 attempt_id,
-                error_code,
+                provider_failure_code or error_code,
             )
         await administration.mark_onboarding_error(
             business_id,
@@ -755,7 +757,7 @@ async def start_meta_embedded_signup(
     settings: Config,
     db: Db,
 ):
-    business = _require_paid_whatsapp_administrator(principal)
+    business = _require_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
     administration = WhatsAppConnectionAdministrationService(db)
     current = await administration.get_connection(business.business_id)
@@ -792,7 +794,7 @@ async def begin_meta_embedded_signup_attempt(
     db: Db,
     idempotency_key: UUID | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    business = _require_paid_whatsapp_administrator(principal)
+    business = _require_whatsapp_administrator(principal)
     _embedded_signup_configuration(settings)
     administration = WhatsAppConnectionAdministrationService(db)
     attempts = WhatsAppOnboardingAttemptService(db)
@@ -900,7 +902,7 @@ async def start_meta_embedded_signup_redirect(
     settings: Config,
     db: Db,
 ):
-    business = _require_paid_whatsapp_administrator(principal)
+    business = _require_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
     attempts = WhatsAppOnboardingAttemptService(db)
     administration = WhatsAppConnectionAdministrationService(db)
@@ -987,7 +989,7 @@ async def mark_meta_embedded_signup_incomplete(
     principal: Identity,
     db: Db,
 ):
-    business = _require_paid_whatsapp_administrator(principal)
+    business = _require_whatsapp_administrator(principal)
     administration = WhatsAppConnectionAdministrationService(db)
     attempts = WhatsAppOnboardingAttemptService(db)
     attempt: WhatsAppOnboardingAttemptView | None = None
@@ -1051,7 +1053,7 @@ async def record_meta_embedded_signup_assets(
     settings: Config,
     db: Db,
 ) -> Response:
-    business = _require_paid_whatsapp_administrator(principal)
+    business = _require_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
     administration = WhatsAppConnectionAdministrationService(db)
     attempts = WhatsAppOnboardingAttemptService(db)
@@ -1116,7 +1118,7 @@ async def meta_embedded_signup_telemetry(
     principal: Identity,
     db: Db,
 ) -> Response:
-    business = _require_paid_whatsapp_administrator(principal)
+    business = _require_whatsapp_administrator(principal)
     fields = {
         name: (
             str(value)
@@ -1165,6 +1167,7 @@ async def meta_embedded_signup_telemetry(
             authorization_code_received=payload.authorization_code_received,
             waba_id_received=payload.waba_id_received,
             phone_number_id_received=payload.phone_number_id_received,
+            failure_code=payload.failure_code,
         )
         if attempt.state == "authorization_incomplete":
             await administration.mark_authorization_incomplete(
@@ -1202,6 +1205,8 @@ async def complete_meta_embedded_signup_redirect_callback(
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
+    error_code: str | None = None,
+    error_reason: str | None = None,
 ):
     configuration = _embedded_signup_configuration(settings)
     if state is None or len(state) > 4096:
@@ -1244,6 +1249,9 @@ async def complete_meta_embedded_signup_redirect_callback(
             await attempts.mark_authorization_incomplete(
                 business_id,
                 attempt_id,
+                failure_code=sanitize_error_code(
+                    error_code or error or error_reason
+                ),
             )
             await administration.mark_onboarding_error(
                 business_id,
@@ -1331,6 +1339,7 @@ async def complete_meta_embedded_signup_redirect_callback(
             business_id,
             attempt_id,
             META_PROVIDER_REJECTED,
+            provider_failure_code=_meta_provider_failure_code(exc),
         )
         _log_embedded_signup_rejection(exc)
     except (
@@ -1343,6 +1352,7 @@ async def complete_meta_embedded_signup_redirect_callback(
             business_id,
             attempt_id,
             META_PROVIDER_UNAVAILABLE,
+            provider_failure_code=_meta_provider_failure_code(exc),
         )
         _log_embedded_signup_rejection(exc)
     except (
@@ -1390,7 +1400,7 @@ async def complete_meta_embedded_signup(
     settings: Config,
     db: Db,
 ):
-    business = _require_paid_whatsapp_administrator(principal)
+    business = _require_whatsapp_administrator(principal)
     configuration = _embedded_signup_configuration(settings)
     attempt_id = payload.attempt_id
     administration = WhatsAppConnectionAdministrationService(db)
@@ -1479,6 +1489,7 @@ async def complete_meta_embedded_signup(
             business.business_id,
             attempt_id,
             META_PROVIDER_REJECTED,
+            provider_failure_code=_meta_provider_failure_code(exc),
         )
         _log_embedded_signup_rejection(exc)
         raise HTTPException(
@@ -1494,6 +1505,7 @@ async def complete_meta_embedded_signup(
             business.business_id,
             attempt_id,
             META_PROVIDER_UNAVAILABLE,
+            provider_failure_code=_meta_provider_failure_code(exc),
         )
         _log_embedded_signup_rejection(exc)
         raise HTTPException(
@@ -1550,7 +1562,7 @@ async def start_meta_api_only_signup(
     settings: Config,
     db: Db,
 ):
-    business = _require_paid_whatsapp_administrator(principal)
+    business = _require_whatsapp_administrator(principal)
     _require_api_only_fallback(settings)
     configuration = _embedded_signup_configuration(settings)
     if configuration.embedded_signup_version != "v4":
@@ -1606,7 +1618,7 @@ async def complete_meta_api_only_signup(
     settings: Config,
     db: Db,
 ):
-    business = _require_paid_whatsapp_administrator(principal)
+    business = _require_whatsapp_administrator(principal)
     _require_api_only_fallback(settings)
     configuration = _embedded_signup_configuration(settings)
     administration = WhatsAppConnectionAdministrationService(db)
@@ -1700,10 +1712,23 @@ async def complete_meta_api_only_signup(
     return _public_connection(view)
 
 
+def _meta_provider_failure_code(exc: Exception) -> str | None:
+    code = getattr(exc, "provider_code", None)
+    subcode = getattr(exc, "provider_subcode", None)
+    if code and subcode:
+        return sanitize_error_code(f"meta.{code}.{subcode}")
+    if code:
+        return sanitize_error_code(f"meta.{code}")
+    return None
+
+
 def _log_embedded_signup_rejection(exc: Exception) -> None:
     logger.info(
         "meta_embedded_signup_rejected",
-        extra={"error_type": type(exc).__name__},
+        extra={
+            "error_type": type(exc).__name__,
+            "provider_failure_code": _meta_provider_failure_code(exc),
+        },
     )
 
 

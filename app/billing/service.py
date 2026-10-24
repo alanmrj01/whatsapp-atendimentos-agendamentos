@@ -38,6 +38,8 @@ from app.billing.schemas import (
 )
 from app.models import BillingCheckout, Business, BusinessAccess, CommercialSubscription, WebPushEvent
 from app.models.billing import billing_provider_environment
+from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
+from app.whatsapp.connections import WhatsAppConnectionStatus
 
 
 BRAZIL_TZ = ZoneInfo("America/Sao_Paulo")
@@ -63,6 +65,32 @@ class BillingService:
                 )
             },
         )
+
+    async def _require_whatsapp_before_first_activation(
+        self,
+        business_id: UUID,
+    ) -> None:
+        access = await self.db.get(BusinessAccess, business_id)
+        # Legacy tenants and businesses that have already operated keep their
+        # established reactivation path. The connection-first rule applies only
+        # to never-activated commercial prospects.
+        if (
+            access is None
+            or access.admin_full_access
+            or access.has_had_operational_access
+        ):
+            return
+        connection = await WhatsAppConnectionRepository(self.db).get_connection(
+            business_id
+        )
+        if (
+            connection is None
+            or connection.status != WhatsAppConnectionStatus.CONNECTED.value
+        ):
+            raise HTTPException(
+                409,
+                "WhatsApp connection required before checkout",
+            )
 
     async def _blocking_checkout_for_business(
         self, business_id: UUID
@@ -185,6 +213,8 @@ class BillingService:
         if await self._active_subscription_for_business(business_id) is not None:
             await self.db.rollback()
             raise HTTPException(409, "Commercial subscription is already active")
+
+        await self._require_whatsapp_before_first_activation(business_id)
 
         blocking_checkout = await self._blocking_checkout_for_business(business_id)
         if (

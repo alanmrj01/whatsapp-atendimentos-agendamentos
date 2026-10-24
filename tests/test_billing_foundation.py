@@ -2238,3 +2238,49 @@ async def test_active_subscription_blocks_native_card_provider_call(monkeypatch)
     assert error.value.detail == "Commercial subscription is already active"
     assert db.locks == 1
 
+
+
+
+@pytest.mark.asyncio
+async def test_first_activation_requires_connected_whatsapp_before_checkout() -> None:
+    business_id = uuid4()
+
+    class Db:
+        async def get(self, model, identifier):
+            assert model is BusinessAccess
+            assert identifier == business_id
+            return SimpleNamespace(
+                admin_full_access=False,
+                has_had_operational_access=False,
+            )
+
+        async def scalar(self, statement):
+            return None
+
+    service = BillingService(Db(), object())
+
+    with pytest.raises(HTTPException) as caught:
+        await service._require_whatsapp_before_first_activation(business_id)
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "WhatsApp connection required before checkout"
+
+
+@pytest.mark.asyncio
+async def test_existing_operational_business_keeps_reactivation_path() -> None:
+    business_id = uuid4()
+
+    class Db:
+        async def get(self, model, identifier):
+            assert model is BusinessAccess
+            assert identifier == business_id
+            return SimpleNamespace(
+                admin_full_access=False,
+                has_had_operational_access=True,
+            )
+
+        async def scalar(self, statement):
+            raise AssertionError("Existing operational business must not require WhatsApp lookup")
+
+    service = BillingService(Db(), object())
+    await service._require_whatsapp_before_first_activation(business_id)

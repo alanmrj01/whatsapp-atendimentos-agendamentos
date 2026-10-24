@@ -6,6 +6,9 @@ import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient
 
+from types import SimpleNamespace
+
+from app.api.public_pwa import _require_whatsapp_administrator
 from app.api.internal_whatsapp_onboarding import (
     _operation_rejected,
     require_whatsapp_onboarding_oidc,
@@ -143,3 +146,21 @@ def test_rejected_operation_never_logs_or_returns_sensitive_values(
     assert error.status_code == 409
     assert error.detail == "WhatsApp onboarding operation rejected"
     assert all(value not in output for value in sensitive_values)
+
+
+
+def test_whatsapp_onboarding_allows_unpaid_owner_before_checkout() -> None:
+    membership = SimpleNamespace(role="owner", access_mode="free")
+    principal = SimpleNamespace(active_membership=lambda: membership)
+
+    assert _require_whatsapp_administrator(principal) is membership
+
+
+def test_whatsapp_onboarding_still_rejects_non_admin_roles() -> None:
+    membership = SimpleNamespace(role="viewer", access_mode="free")
+    principal = SimpleNamespace(active_membership=lambda: membership)
+
+    with pytest.raises(HTTPException) as caught:
+        _require_whatsapp_administrator(principal)
+
+    assert caught.value.status_code == 403

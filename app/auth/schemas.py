@@ -124,6 +124,12 @@ class PublicConnectionResponse(BaseModel):
         "provider_unavailable",
         "onboarding_failed",
     ] | None = None
+    # Sanitized provider/attempt code for diagnostics and funnel analysis.
+    # Never contains tokens, messages, phone numbers or OAuth payloads.
+    provider_failure_code: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9._-]{1,64}$",
+    )
     onboarding_attempt_id: UUID | None = None
     onboarding_attempt_state: Literal[
         "created",
@@ -230,6 +236,10 @@ class MetaEmbeddedSignupTelemetryRequest(StrictRequest):
     waba_id_received: bool | None = Field(default=None, strict=True)
     phone_number_id_received: bool | None = Field(default=None, strict=True)
     intermediate_step_received: bool | None = Field(default=None, strict=True)
+    failure_code: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9._-]{1,64}$",
+    )
 
 
 class MetaEmbeddedSignupAttemptRequest(StrictRequest):
