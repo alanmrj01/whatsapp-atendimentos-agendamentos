@@ -246,6 +246,7 @@ class WhatsAppOnboardingAttemptService:
         authorization_code_received: bool | None = None,
         waba_id_received: bool | None = None,
         phone_number_id_received: bool | None = None,
+        failure_code: str | None = None,
     ) -> WhatsAppOnboardingAttemptView:
         attempt = await self._require_model(
             business_id,
@@ -255,6 +256,7 @@ class WhatsAppOnboardingAttemptService:
         if attempt.state in TERMINAL_STATES:
             return _view(attempt)
 
+        normalized_failure_code = sanitize_error_code(failure_code)
         now = datetime.now(timezone.utc)
         if attempt.expires_at <= now:
             _finish(
@@ -340,7 +342,9 @@ class WhatsAppOnboardingAttemptService:
             _finish(
                 attempt,
                 state="failed",
-                failure_code="META_ONBOARDING_FAILED",
+                failure_code=(
+                    normalized_failure_code or "META_ONBOARDING_FAILED"
+                ),
                 now=now,
             )
         elif stage == "timeout":
@@ -357,6 +361,7 @@ class WhatsAppOnboardingAttemptService:
             authorization_code_received=authorization_code_received,
             waba_id_received=waba_id_received,
             phone_number_id_received=phone_number_id_received,
+            failure_code=normalized_failure_code,
         )
         await self._session.flush()
         return _view(attempt)
@@ -428,6 +433,8 @@ class WhatsAppOnboardingAttemptService:
         self,
         business_id: uuid.UUID,
         attempt_id: uuid.UUID,
+        *,
+        failure_code: str | None = None,
     ) -> WhatsAppOnboardingAttemptView:
         attempt = await self._require_model(
             business_id,
@@ -442,7 +449,10 @@ class WhatsAppOnboardingAttemptService:
         _finish(
             attempt,
             state="authorization_incomplete",
-            failure_code=META_AUTHORIZATION_INCOMPLETE,
+            failure_code=(
+                sanitize_error_code(failure_code)
+                or META_AUTHORIZATION_INCOMPLETE
+            ),
             now=now,
         )
         attempt.last_stage = "authorization_incomplete"
@@ -579,6 +589,7 @@ class WhatsAppOnboardingAttemptService:
         authorization_code_received: bool | None = None,
         waba_id_received: bool | None = None,
         phone_number_id_received: bool | None = None,
+        failure_code: str | None = None,
     ) -> None:
         self._session.add(
             WhatsAppOnboardingAttemptEvent(
@@ -590,7 +601,7 @@ class WhatsAppOnboardingAttemptService:
                 authorization_code_received=authorization_code_received,
                 waba_id_received=waba_id_received,
                 phone_number_id_received=phone_number_id_received,
-                failure_code=attempt.failure_code,
+                failure_code=failure_code or attempt.failure_code,
             )
         )
 

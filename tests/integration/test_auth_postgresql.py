@@ -360,24 +360,23 @@ async def test_plan_preserves_confirmation_and_no_mutation(auth_env):
     assert (await env.client.get("/api/v1/whatsapp/connection")).json()["status"] == "connected"
 
 
-async def test_embedded_signup_free_is_blocked_and_paid_can_start(auth_env):
+async def test_embedded_signup_allows_new_free_but_blocks_former_until_reactivated(auth_env):
     env = auth_env
     await login(env)
     async with env.factory() as db, db.begin():
-        db.add(BusinessAccess(business_id=env.a, access_mode="free"))
-    blocked = await env.client.post(
-        "/api/v1/whatsapp/onboarding/embedded-signup/start", json={}
-    )
-    assert blocked.status_code == 402
-
-    async with env.factory() as db, db.begin():
-        access = await db.get(BusinessAccess, env.a)
-        access.access_mode = "paid"
+        db.add(
+            BusinessAccess(
+                business_id=env.a,
+                access_mode="free",
+                has_had_operational_access=False,
+            )
+        )
         await db.execute(
             delete(BusinessWhatsAppConnection).where(
                 BusinessWhatsAppConnection.business_id == env.a
             )
         )
+
     started = await env.client.post(
         "/api/v1/whatsapp/onboarding/embedded-signup/start", json={}
     )
@@ -391,6 +390,15 @@ async def test_embedded_signup_free_is_blocked_and_paid_can_start(auth_env):
     }
     assert "secret" not in started.text.lower()
     assert "token" not in started.text.lower()
+
+    async with env.factory() as db, db.begin():
+        access = await db.get(BusinessAccess, env.a)
+        access.has_had_operational_access = True
+
+    blocked = await env.client.post(
+        "/api/v1/whatsapp/onboarding/embedded-signup/start", json={}
+    )
+    assert blocked.status_code == 402
 
 
 class _EmbeddedSignupGateway:

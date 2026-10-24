@@ -12,7 +12,7 @@ from pydantic import SecretStr
 
 from app.core.config import MetaEmbeddedSignupConfiguration
 from app.whatsapp.administration import WhatsAppConnectionStatusView
-from app.whatsapp.connections import WhatsAppConnectionMode
+from app.whatsapp.connections import WhatsAppConnectionMode, sanitize_error_code
 from app.whatsapp.credentials import WhatsAppCredentialStore
 from app.whatsapp.onboarding import (
     WhatsAppOnboardingIntent,
@@ -49,6 +49,17 @@ def meta_onboarding_log_context(
 
 class MetaEmbeddedSignupError(RuntimeError):
     """Falha sanitizada e recuperável na comunicação com a Meta."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider_code: str | None = None,
+        provider_subcode: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.provider_code = sanitize_error_code(provider_code)
+        self.provider_subcode = sanitize_error_code(provider_subcode)
 
 
 class MetaEmbeddedSignupRejected(MetaEmbeddedSignupError):
@@ -376,13 +387,33 @@ class MetaEmbeddedSignupGateway:
             raise MetaEmbeddedSignupUnavailable(
                 "Meta request failed"
             ) from None
+        provider_code: str | None = None
+        provider_subcode: str | None = None
+        if response.status_code < 200 or response.status_code >= 300:
+            try:
+                error_payload = response.json()
+            except ValueError:
+                error_payload = None
+            if isinstance(error_payload, dict):
+                error = error_payload.get("error")
+                if isinstance(error, dict):
+                    raw_code = error.get("code")
+                    raw_subcode = error.get("error_subcode")
+                    if isinstance(raw_code, (str, int)):
+                        provider_code = str(raw_code)
+                    if isinstance(raw_subcode, (str, int)):
+                        provider_subcode = str(raw_subcode)
         if response.status_code >= 500 or response.status_code == 429:
             raise MetaEmbeddedSignupUnavailable(
-                "Meta is temporarily unavailable"
+                "Meta is temporarily unavailable",
+                provider_code=provider_code,
+                provider_subcode=provider_subcode,
             )
         if response.status_code < 200 or response.status_code >= 300:
             raise MetaEmbeddedSignupRejected(
-                "Meta authorization was rejected"
+                "Meta authorization was rejected",
+                provider_code=provider_code,
+                provider_subcode=provider_subcode,
             )
         try:
             payload = response.json()

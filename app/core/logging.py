@@ -29,6 +29,7 @@ _SAFE_EXTRA_FIELDS = (
     "provider_payment_id",
     "refund_status",
     "failure_code",
+    "provider_failure_code",
     "onboarding_state",
 )
 

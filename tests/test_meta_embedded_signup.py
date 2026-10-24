@@ -83,12 +83,15 @@ class FakePrincipal:
         self,
         access_mode: str = "paid",
         role: MembershipRole = MembershipRole.OWNER,
+        *,
+        has_had_operational_access: bool = False,
     ) -> None:
         self.membership = MembershipResponse(
             business_id=BUSINESS_ID,
             business_name="Company A",
             role=role,
             access_mode=access_mode,
+            has_had_operational_access=has_had_operational_access,
         )
 
     def active_membership(self):
@@ -102,7 +105,7 @@ class EmptyAdministration:
 
 
 @pytest.mark.asyncio
-async def test_paid_business_can_start_and_free_is_blocked(
+async def test_paid_and_never_activated_business_can_start_but_former_is_blocked(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -122,9 +125,17 @@ async def test_paid_business_can_start_and_free_is_blocked(
     }
     assert "secret" not in started.model_dump()
 
+    free_started = await public_pwa.start_meta_embedded_signup(
+        EmptyRequest(), FakePrincipal("free"), settings(), object()
+    )
+    assert free_started.mode == "coexistence"
+
     with pytest.raises(HTTPException) as blocked:
         await public_pwa.start_meta_embedded_signup(
-            EmptyRequest(), FakePrincipal("free"), settings(), object()
+            EmptyRequest(),
+            FakePrincipal("free", has_had_operational_access=True),
+            settings(),
+            object(),
         )
     assert blocked.value.status_code == 402
 
@@ -192,11 +203,14 @@ class FakeAttemptService:
         authorization_code_received=None,
         waba_id_received=None,
         phone_number_id_received=None,
+        failure_code=None,
     ):
         assert business_id == BUSINESS_ID
         assert attempt_id == ATTEMPT_ID
         assert self.current is not None
         self.current.last_stage = stage
+        if failure_code is not None:
+            self.current.failure_code = failure_code
         if authorization_code_received is True:
             self.current.authorization_code_received = True
             self.current.state = "code_received"
@@ -209,12 +223,18 @@ class FakeAttemptService:
             self.current.empty_callback_at = object()
         return self.current
 
-    async def mark_authorization_incomplete(self, business_id, attempt_id):
+    async def mark_authorization_incomplete(
+        self,
+        business_id,
+        attempt_id,
+        *,
+        failure_code=None,
+    ):
         assert business_id == BUSINESS_ID
         assert attempt_id == ATTEMPT_ID
         assert self.current is not None
         self.current.state = "authorization_incomplete"
-        self.current.failure_code = META_AUTHORIZATION_INCOMPLETE
+        self.current.failure_code = failure_code or META_AUTHORIZATION_INCOMPLETE
         return self.current
 
     async def record_assets(
@@ -677,11 +697,18 @@ async def test_client_telemetry_is_sanitized_and_access_controlled(caplog) -> No
     assert RAW_CODE not in caplog.text
     assert RAW_TOKEN not in caplog.text
 
-    with pytest.raises(HTTPException) as free:
+    free_response = await public_pwa.meta_embedded_signup_telemetry(
+        payload, FakePrincipal("free"), FakeDb()
+    )
+    assert free_response.status_code == 204
+
+    with pytest.raises(HTTPException) as former:
         await public_pwa.meta_embedded_signup_telemetry(
-            payload, FakePrincipal("free"), FakeDb()
+            payload,
+            FakePrincipal("free", has_had_operational_access=True),
+            FakeDb(),
         )
-    assert free.value.status_code == 402
+    assert former.value.status_code == 402
 
     with pytest.raises(HTTPException) as read_only:
         await public_pwa.meta_embedded_signup_telemetry(
@@ -758,6 +785,7 @@ def test_json_formatter_preserves_only_safe_meta_onboarding_fields() -> None:
     record.phone_number_id_received = False
     record.intermediate_step_received = True
     record.review_decision = "APPROVED"
+    record.provider_failure_code = "meta.190.460"
     record.authorization_code = RAW_CODE
     record.access_token = RAW_TOKEN
 
@@ -769,6 +797,7 @@ def test_json_formatter_preserves_only_safe_meta_onboarding_fields() -> None:
     assert payload["phone_number_id_received"] is False
     assert payload["intermediate_step_received"] is True
     assert payload["review_decision"] == "APPROVED"
+    assert payload["provider_failure_code"] == "meta.190.460"
     assert RAW_CODE not in json.dumps(payload)
     assert RAW_TOKEN not in json.dumps(payload)
 
