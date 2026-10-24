@@ -587,9 +587,7 @@ async def disconnect_whatsapp(
     dependencies=[Depends(require_origin)],
 )
 async def onboarding_plan(payload: PublicPlanRequest, principal: Identity, db: Db):
-    business = principal.active_membership()
-    if business.role not in {MembershipRole.OWNER, MembershipRole.ADMIN}:
-        raise HTTPException(403, "Read-only access")
+    business = _require_whatsapp_administrator(principal)
     service = WhatsAppOnboardingService(WhatsAppConnectionAdministrationService(db))
     return onboarding_plan_response(
         service.plan(
@@ -600,10 +598,15 @@ async def onboarding_plan(payload: PublicPlanRequest, principal: Identity, db: D
 
 
 def _require_whatsapp_administrator(principal: Principal):
-    """Allow connection setup before payment while keeping role authorization."""
+    """Allow paid tenants or never-activated prospects to configure WhatsApp."""
     business = principal.active_membership()
     if business.role not in {MembershipRole.OWNER, MembershipRole.ADMIN}:
         raise HTTPException(403, "Read-only access")
+    if (
+        business.access_mode != "paid"
+        and business.has_had_operational_access
+    ):
+        raise HTTPException(402, "Active subscription required")
     return business
 
 
