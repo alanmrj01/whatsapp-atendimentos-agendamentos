@@ -193,7 +193,9 @@ def _public_connection(
         ),
         error_reason=_ERROR_REASON_BY_CODE.get(last_error_code),
         provider_failure_code=(
-            attempt.failure_code if attempt is not None else None
+            getattr(attempt, "failure_code", None)
+            if attempt is not None
+            else None
         ),
         onboarding_attempt_id=attempt.id if attempt is not None else None,
         onboarding_attempt_state=attempt.state if attempt is not None else None,
