@@ -15,22 +15,36 @@ com dados reais, dados de demonstração jamais devem reaparecer.
 ## Basic — lançamento
 
 - R$ 197,00 por mês.
-- Até 2 técnicos.
-- Até 800 mensagens por mês.
-- Único plano disponível para contratação no lançamento.
+- 1 usuário.
+- Até 500 mensagens enviadas pela Alovia por mês.
+- Mensagens recebidas do cliente e reações não consomem a franquia.
+- Ao atingir a franquia, novos envios ficam pausados até a renovação mensal da
+  franquia ou até um upgrade elegível para o Plus.
 
-Os limites acima são inicialmente informativos na oferta. A aplicação dos limites
-de técnicos e mensagens dentro do produto será feita em etapa específica.
+A franquia é aplicada no servidor antes do envio ao provedor. Contas com
+`admin_full_access=true` e acessos legados preservados não recebem este limite.
 
-## Plus — em breve
+## Plus
 
 - R$ 397,00 por mês.
-- Mais de 2 técnicos.
-- Até 2.000 mensagens por mês.
-- Oferta automática de nova limpeza após 6 meses.
-- PMOC após 12 meses: funcionalidade planejada, ainda não implementada.
+- Até 5 usuários.
+- Até 900 mensagens enviadas pela Alovia por mês.
+- Mensagens recebidas do cliente e reações não consomem a franquia.
+- Ao atingir a franquia, novos envios ficam pausados até a renovação mensal da
+  franquia.
 
-O checkout Plus permanece bloqueado enquanto `BILLING_PLUS_ENABLED=false`.
+O checkout Plus permanece protegido por `BILLING_PLUS_ENABLED` e só deve ser
+habilitado em Produção depois da validação desta entrega.
+
+### Upgrade Basic → Plus
+
+- Assinaturas mensais recorrentes por cartão ou Pix Automático podem migrar
+  para Plus sem criar uma segunda assinatura.
+- A franquia sobe para 900 assim que o provedor confirma a atualização; o valor
+  de R$ 397,00 passa a valer nas cobranças pendentes/futuras do ciclo recorrente.
+- Pix comum e ciclos trimestral/anual não são alterados no meio do período:
+  nesses casos o cliente aguarda a renovação da franquia ou troca de plano na
+  renovação.
 
 ## Liberação administrativa
 
