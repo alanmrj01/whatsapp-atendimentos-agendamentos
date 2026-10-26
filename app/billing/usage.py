@@ -124,8 +124,9 @@ async def message_usage_snapshot(
                 Message.direction == "outbound",
                 Message.status.in_(_COUNTED_STATUSES),
                 Message.message_type != "reaction",
-                Message.created_at >= period_start,
-                Message.created_at < resets_at,
+                Message.sent_at.is_not(None),
+                Message.sent_at >= period_start,
+                Message.sent_at < resets_at,
             )
         )
         or 0
