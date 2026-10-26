@@ -300,6 +300,7 @@ def stored_message(
     status: str = "pending",
     recipient: str = "5511999990001",
     automation_blocked: bool = False,
+    quota_blocked: bool = False,
 ) -> StoredOutboundMessage:
     payloads = {
         "interactive_button": {
@@ -334,6 +335,10 @@ def stored_message(
         status=status,
         provider_message_id=None,
         automation_blocked=automation_blocked,
+        quota_blocked=quota_blocked,
+        quota_plan="basic" if quota_blocked else None,
+        quota_used=500 if quota_blocked else None,
+        quota_limit=500 if quota_blocked else None,
     )
 
 
@@ -539,6 +544,29 @@ def test_handoff_notice_bypasses_only_standard_automation_block() -> None:
         active_ignore=False,
         standard_automation_blocked=True,
     ) is True
+
+
+@pytest.mark.asyncio
+async def test_message_quota_stops_send_before_provider_call(
+    caplog: LogCaptureFixture,
+) -> None:
+    repository = FakeOutboundRepository(
+        stored_message(quota_blocked=True)
+    )
+    factory = AsyncMock()
+
+    with caplog.at_level(logging.INFO):
+        result = await process_outbound_message(
+            FakeSession(),
+            MESSAGE_ID,
+            factory,
+            repository,
+        )
+
+    assert result == "failed"
+    factory.assert_not_called()
+    assert repository.failed == [MESSAGE_ID]
+    assert "outbound_message_quota_blocked" in caplog.text
 
 
 @pytest.mark.asyncio
