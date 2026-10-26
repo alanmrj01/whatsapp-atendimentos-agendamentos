@@ -153,7 +153,7 @@ async def cancel_checkout(
 
 @router.get("/usage", response_model=MessageUsageResponse)
 async def message_usage(principal: Identity, db: Db):
-    membership = _billing_business(principal)
+    membership = principal.active_membership()
     snapshot = await message_usage_snapshot(db, membership.business_id)
     return MessageUsageResponse(
         plan=snapshot.plan,
