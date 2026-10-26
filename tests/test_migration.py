@@ -158,7 +158,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261022_0040"]
+    assert script.get_heads() == ["20261026_0041"]
 
 
 def test_processed_webhook_diagnostics_migration_is_additive_and_reversible() -> None:
