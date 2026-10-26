@@ -89,7 +89,7 @@ def plan_is_enabled(plan: str) -> bool:
         return True
     if plan != "plus":
         return False
-    return os.getenv("BILLING_PLUS_ENABLED", "false").strip().lower() in {
+    return os.getenv("BILLING_PLUS_ENABLED", "true").strip().lower() in {
         "1",
         "true",
         "yes",
