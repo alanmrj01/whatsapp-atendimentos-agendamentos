@@ -143,6 +143,8 @@ def test_server_side_catalog_uses_approved_prices_and_cycles() -> None:
     assert get_offer("basic", "monthly").asaas_pix_frequency == "MONTHLY"
     assert get_offer("basic", "quarterly").asaas_pix_frequency == "QUARTERLY"
     assert get_offer("plus", "annual").asaas_pix_frequency == "ANNUALLY"
+    assert get_offer("basic", "monthly").monthly_message_limit == 500
+    assert get_offer("plus", "monthly").monthly_message_limit == 900
 
 
 def test_pix_checkout_requires_only_minimum_payer_identity() -> None:
