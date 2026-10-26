@@ -25,11 +25,24 @@ class Offer:
     asaas_pix_frequency: str
     users: int
     automatic_attendances: int
+    monthly_message_limit: int
 
 
 _PLAN = {
-    "basic": {"name": "Basic", "monthly_cents": 19_700, "users": 1, "attendances": 500},
-    "plus": {"name": "Plus", "monthly_cents": 39_700, "users": 5, "attendances": 1_500},
+    "basic": {
+        "name": "Basic",
+        "monthly_cents": 19_700,
+        "users": 1,
+        "attendances": 500,
+        "messages": 500,
+    },
+    "plus": {
+        "name": "Plus",
+        "monthly_cents": 39_700,
+        "users": 5,
+        "attendances": 1_500,
+        "messages": 900,
+    },
 }
 
 _CYCLE = {
@@ -132,7 +145,14 @@ def get_offer(plan: str, cycle: str) -> Offer:
         asaas_pix_frequency=cycle_data["pix_frequency"],
         users=plan_data["users"],
         automatic_attendances=plan_data["attendances"],
+        monthly_message_limit=plan_data["messages"],
     )
+
+
+def monthly_message_limit(plan: str) -> int:
+    if plan not in _PLAN:
+        raise ValueError("Unknown commercial plan")
+    return int(_PLAN[plan]["messages"])
 
 
 def cycle_months(cycle: BillingCycle) -> int:
