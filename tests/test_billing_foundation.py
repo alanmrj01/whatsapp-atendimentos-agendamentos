@@ -2286,3 +2286,127 @@ async def test_existing_operational_business_keeps_reactivation_path() -> None:
 
     service = BillingService(Db(), object())
     await service._require_whatsapp_before_first_activation(business_id)
+
+
+class _UpgradeDb:
+    def __init__(self) -> None:
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def get(self, model, identifier):
+        if model is BillingCheckout:
+            return None
+        return None
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+class _UpgradeGateway:
+    def __init__(self) -> None:
+        self.updates = []
+
+    async def update_subscription_value(self, subscription_id, *, value):
+        self.updates.append((subscription_id, value))
+
+
+class _UpgradeBillingService(BillingService):
+    def __init__(self, db, gateway, subscription):
+        super().__init__(db, gateway)
+        self._test_subscription = subscription
+
+    async def _lock_business_checkout(self, business_id):
+        return None
+
+    async def _latest_subscription_for_business(self, business_id):
+        if self._test_subscription.business_id == business_id:
+            return self._test_subscription
+        return None
+
+
+def _active_basic_subscription(*, cycle="monthly", payment_method="credit_card"):
+    return CommercialSubscription(
+        id=uuid4(),
+        business_id=uuid4(),
+        checkout_id=uuid4(),
+        plan_code="basic",
+        billing_cycle=cycle,
+        payment_method=payment_method,
+        provider_environment="production",
+        status="active",
+        provider_subscription_id="sub_upgrade_test",
+        provider_authorization_id=None,
+        provider_pix_qr_code_id=None,
+        provider_customer_id="cus_upgrade_test",
+        access_until=datetime.now(UTC) + timedelta(days=30),
+        canceled_at=None,
+        cancellation_requested_at=None,
+        refund_status="none",
+        refund_requested_at=None,
+        refunded_at=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_monthly_recurring_basic_can_upgrade_to_plus(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    monkeypatch.setenv("BILLING_PLUS_ENABLED", "true")
+    subscription = _active_basic_subscription()
+    db = _UpgradeDb()
+    gateway = _UpgradeGateway()
+    service = _UpgradeBillingService(db, gateway, subscription)
+
+    result = await service.upgrade_subscription_to_plus(
+        business_id=subscription.business_id
+    )
+
+    assert result.plan == "plus"
+    assert subscription.plan_code == "plus"
+    assert gateway.updates == [("sub_upgrade_test", 397.0)]
+    assert db.commits == 1
+    assert db.rollbacks == 0
+
+
+@pytest.mark.asyncio
+async def test_non_monthly_upgrade_waits_for_renewal(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    monkeypatch.setenv("BILLING_PLUS_ENABLED", "true")
+    subscription = _active_basic_subscription(cycle="quarterly")
+    db = _UpgradeDb()
+    gateway = _UpgradeGateway()
+    service = _UpgradeBillingService(db, gateway, subscription)
+
+    with pytest.raises(HTTPException) as error:
+        await service.upgrade_subscription_to_plus(
+            business_id=subscription.business_id
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Upgrade is available at renewal for this billing cycle"
+    assert subscription.plan_code == "basic"
+    assert gateway.updates == []
+    assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_common_pix_upgrade_waits_for_renewal(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    monkeypatch.setenv("BILLING_PLUS_ENABLED", "true")
+    subscription = _active_basic_subscription(payment_method="pix")
+    subscription.provider_subscription_id = None
+    db = _UpgradeDb()
+    gateway = _UpgradeGateway()
+    service = _UpgradeBillingService(db, gateway, subscription)
+
+    with pytest.raises(HTTPException) as error:
+        await service.upgrade_subscription_to_plus(
+            business_id=subscription.business_id
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Upgrade is available at renewal for this payment method"
+    assert gateway.updates == []
+    assert db.rollbacks == 1
