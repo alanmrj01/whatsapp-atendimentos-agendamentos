@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -30,6 +31,7 @@ from app.whatsapp.webhook import (
 )
 
 TERMINAL_OUTBOUND_STATUSES = {"sent", "delivered", "read", "failed"}
+logger = logging.getLogger(__name__)
 OutboundTaskResult = Literal["sent", "failed", "skipped", "retry"]
 
 
@@ -275,6 +277,18 @@ async def process_outbound_message(
             return "skipped"
         if message.automation_blocked:
             await outbound_repository.mark_failed(message.message_id)
+            return "failed"
+        if message.quota_blocked:
+            await outbound_repository.mark_failed(message.message_id)
+            logger.info(
+                "outbound_message_quota_blocked",
+                extra={
+                    "business_id": str(message.business_id),
+                    "plan": message.quota_plan,
+                    "message_usage": message.quota_used,
+                    "message_limit": message.quota_limit,
+                },
+            )
             return "failed"
         if not is_individual_whatsapp_id(message.recipient):
             await outbound_repository.mark_failed(message.message_id)
