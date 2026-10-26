@@ -205,6 +205,10 @@ class CreditCardCheckoutResponse(BaseModel):
     expires_at: datetime | None = None
 
 
+class PlanUpgradeRequest(StrictBillingRequest):
+    target_plan: Literal["plus"] = "plus"
+
+
 class MessageUsageResponse(BaseModel):
     plan: PlanCode | None = None
     period_start: datetime
