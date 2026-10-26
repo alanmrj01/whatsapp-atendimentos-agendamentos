@@ -18,9 +18,11 @@ from app.billing.schemas import (
     CheckoutStatusResponse,
     CreditCardCheckoutRequest,
     CreditCardCheckoutResponse,
+    MessageUsageResponse,
     SubscriptionStatusResponse,
 )
 from app.billing.service import BillingService
+from app.billing.usage import message_usage_snapshot
 from app.core.config import AsaasConfigurationError, Settings
 from app.core.database import get_db
 
@@ -145,6 +147,23 @@ async def cancel_checkout(
     return await _service(settings, db).cancel_checkout(
         business_id=membership.business_id,
         checkout_id=checkout_id,
+    )
+
+
+@router.get("/usage", response_model=MessageUsageResponse)
+async def message_usage(principal: Identity, db: Db):
+    membership = _billing_business(principal)
+    snapshot = await message_usage_snapshot(db, membership.business_id)
+    return MessageUsageResponse(
+        plan=snapshot.plan,
+        period_start=snapshot.period_start,
+        resets_at=snapshot.resets_at,
+        used=snapshot.used,
+        limit=snapshot.limit,
+        remaining=snapshot.remaining,
+        exhausted=snapshot.exhausted,
+        quota_applies=snapshot.quota_applies,
+        upgrade_plan=snapshot.upgrade_plan,
     )
 
 
