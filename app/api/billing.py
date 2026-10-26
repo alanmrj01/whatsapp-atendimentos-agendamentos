@@ -19,6 +19,7 @@ from app.billing.schemas import (
     CreditCardCheckoutRequest,
     CreditCardCheckoutResponse,
     MessageUsageResponse,
+    PlanUpgradeRequest,
     SubscriptionStatusResponse,
 )
 from app.billing.service import BillingService
@@ -171,6 +172,25 @@ async def message_usage(principal: Identity, db: Db):
 async def subscription_status(principal: Identity, settings: Config, db: Db):
     membership = _billing_business(principal)
     return await _service(settings, db).subscription_status(
+        business_id=membership.business_id
+    )
+
+
+@router.post(
+    "/subscription/upgrade",
+    response_model=SubscriptionStatusResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def upgrade_subscription(
+    payload: PlanUpgradeRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    membership = _billing_business(principal)
+    if payload.target_plan != "plus":
+        raise HTTPException(400, "Unsupported target plan")
+    return await _service(settings, db).upgrade_subscription_to_plus(
         business_id=membership.business_id
     )
 
