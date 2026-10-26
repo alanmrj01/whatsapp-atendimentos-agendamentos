@@ -205,6 +205,22 @@ class CreditCardCheckoutResponse(BaseModel):
     expires_at: datetime | None = None
 
 
+class PlanUpgradeRequest(StrictBillingRequest):
+    target_plan: Literal["plus"] = "plus"
+
+
+class MessageUsageResponse(BaseModel):
+    plan: PlanCode | None = None
+    period_start: datetime
+    resets_at: datetime
+    used: int = Field(ge=0)
+    limit: int | None = Field(default=None, ge=0)
+    remaining: int | None = Field(default=None, ge=0)
+    exhausted: bool = False
+    quota_applies: bool = False
+    upgrade_plan: PlanCode | None = None
+
+
 class SubscriptionStatusResponse(BaseModel):
     status: Literal["none", "active", "past_due", "canceled", "suspended"]
     payment_method: PaymentMethod | None = None

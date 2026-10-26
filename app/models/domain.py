@@ -1030,6 +1030,9 @@ class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.billing.entitlements import active_operational_access_exists
+from app.billing.usage import message_usage_snapshot
 from app.models import (
     Business,
     BusinessAutomationExclusion,
@@ -36,6 +37,10 @@ class StoredOutboundMessage:
     status: str
     provider_message_id: str | None
     automation_blocked: bool = False
+    quota_blocked: bool = False
+    quota_plan: str | None = None
+    quota_used: int | None = None
+    quota_limit: int | None = None
 
 
 def _automation_blocked_for_message(
@@ -140,6 +145,24 @@ class OutboundTaskRepository:
             standard_automation_blocked=bool(standard_blocked_value),
             entitlement_blocked=bool(entitlement_blocked_value),
         )
+
+        usage = None
+        quota_blocked = False
+        if (
+            message.status == "pending"
+            and not automation_blocked
+            and message.message_type != "reaction"
+        ):
+            # Serialize outbound sends per business before checking usage. The
+            # transaction keeps this lock until the provider send is committed,
+            # so concurrent workers cannot cross the monthly limit.
+            usage = await message_usage_snapshot(
+                self.session,
+                message.business_id,
+                lock_business=True,
+            )
+            quota_blocked = usage.exhausted
+
         return StoredOutboundMessage(
             message_id=message.id,
             business_id=message.business_id,
@@ -150,6 +173,10 @@ class OutboundTaskRepository:
             status=message.status,
             provider_message_id=message.provider_message_id,
             automation_blocked=automation_blocked,
+            quota_blocked=quota_blocked,
+            quota_plan=usage.plan if usage is not None else None,
+            quota_used=usage.used if usage is not None else None,
+            quota_limit=usage.limit if usage is not None else None,
         )
 
     async def list_pending_for_provider_message_ids(
@@ -357,6 +384,7 @@ class OutboundTaskRepository:
             .values(
                 provider_message_id=provider_message_id,
                 status="sent",
+                sent_at=func.coalesce(Message.sent_at, func.now()),
             )
         )
         if not isinstance(payload, dict):

@@ -18,9 +18,12 @@ from app.billing.schemas import (
     CheckoutStatusResponse,
     CreditCardCheckoutRequest,
     CreditCardCheckoutResponse,
+    MessageUsageResponse,
+    PlanUpgradeRequest,
     SubscriptionStatusResponse,
 )
 from app.billing.service import BillingService
+from app.billing.usage import message_usage_snapshot
 from app.core.config import AsaasConfigurationError, Settings
 from app.core.database import get_db
 
@@ -148,10 +151,46 @@ async def cancel_checkout(
     )
 
 
+@router.get("/usage", response_model=MessageUsageResponse)
+async def message_usage(principal: Identity, db: Db):
+    membership = principal.active_membership()
+    snapshot = await message_usage_snapshot(db, membership.business_id)
+    return MessageUsageResponse(
+        plan=snapshot.plan,
+        period_start=snapshot.period_start,
+        resets_at=snapshot.resets_at,
+        used=snapshot.used,
+        limit=snapshot.limit,
+        remaining=snapshot.remaining,
+        exhausted=snapshot.exhausted,
+        quota_applies=snapshot.quota_applies,
+        upgrade_plan=snapshot.upgrade_plan,
+    )
+
+
 @router.get("/subscription", response_model=SubscriptionStatusResponse)
 async def subscription_status(principal: Identity, settings: Config, db: Db):
     membership = _billing_business(principal)
     return await _service(settings, db).subscription_status(
+        business_id=membership.business_id
+    )
+
+
+@router.post(
+    "/subscription/upgrade",
+    response_model=SubscriptionStatusResponse,
+    dependencies=[Depends(require_origin)],
+)
+async def upgrade_subscription(
+    payload: PlanUpgradeRequest,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    membership = _billing_business(principal)
+    if payload.target_plan != "plus":
+        raise HTTPException(400, "Unsupported target plan")
+    return await _service(settings, db).upgrade_subscription_to_plus(
         business_id=membership.business_id
     )
 

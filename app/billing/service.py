@@ -747,6 +747,72 @@ class BillingService:
         # commercial checkout becomes available again immediately.
         return bool(access.admin_full_access or access.access_mode == "paid")
 
+    async def upgrade_subscription_to_plus(
+        self,
+        *,
+        business_id: UUID,
+    ) -> SubscriptionStatusResponse:
+        await self._lock_business_checkout(business_id)
+        subscription = await self._latest_subscription_for_business(business_id)
+        if subscription is None:
+            await self.db.rollback()
+            raise HTTPException(404, "Commercial subscription not found")
+        if subscription.status != "active":
+            await self.db.rollback()
+            raise HTTPException(409, "Only an active subscription can be upgraded")
+        if subscription.plan_code == "plus":
+            await self.db.commit()
+            return await self._subscription_status_response(subscription)
+        if subscription.plan_code != "basic":
+            await self.db.rollback()
+            raise HTTPException(409, "Current plan cannot be upgraded")
+        if subscription.billing_cycle != "monthly":
+            await self.db.rollback()
+            raise HTTPException(409, "Upgrade is available at renewal for this billing cycle")
+        if (
+            subscription.refund_status != "none"
+            or subscription.cancellation_requested_at is not None
+        ):
+            await self.db.rollback()
+            raise HTTPException(409, "Subscription change is unavailable while a financial request is pending")
+        if subscription.payment_method not in {"credit_card", "pix_automatic"}:
+            await self.db.rollback()
+            raise HTTPException(409, "Upgrade is available at renewal for this payment method")
+        if not subscription.provider_subscription_id:
+            await self.db.rollback()
+            raise HTTPException(409, "Provider subscription reference is unavailable")
+        if not plan_is_enabled("plus"):
+            await self.db.rollback()
+            raise HTTPException(409, "Plan is not available yet")
+
+        offer = get_offer("plus", "monthly")
+        try:
+            await self.gateway.update_subscription_value(
+                subscription.provider_subscription_id,
+                value=offer.amount_cents / 100,
+            )
+        except AsaasGatewayError:
+            await self.db.rollback()
+            raise HTTPException(
+                502,
+                "Plan upgrade is temporarily unavailable",
+            ) from None
+
+        subscription.plan_code = "plus"
+        await self.db.commit()
+        logger.info(
+            "billing_plan_upgraded",
+            extra={
+                "business_id": str(subscription.business_id),
+                "subscription_id": str(subscription.id),
+                "from_plan": "basic",
+                "to_plan": "plus",
+                "billing_cycle": subscription.billing_cycle,
+                "payment_method": subscription.payment_method,
+            },
+        )
+        return await self._subscription_status_response(subscription)
+
     async def checkout_status(
         self, *, business_id: UUID, checkout_id: UUID
     ) -> CheckoutStatusResponse:
