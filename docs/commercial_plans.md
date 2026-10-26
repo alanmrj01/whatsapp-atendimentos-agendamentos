@@ -33,8 +33,8 @@ A franquia é aplicada no servidor antes do envio ao provedor. Contas com
 - Ao atingir a franquia, novos envios ficam pausados até a renovação mensal da
   franquia.
 
-O checkout Plus permanece protegido por `BILLING_PLUS_ENABLED` e só deve ser
-habilitado em Produção depois da validação desta entrega.
+O Plus é parte ativa da oferta comercial. `BILLING_PLUS_ENABLED=false` fica
+disponível apenas como kill switch de emergência.
 
 ### Upgrade Basic → Plus
 
