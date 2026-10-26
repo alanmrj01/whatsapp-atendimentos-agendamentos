@@ -384,6 +384,7 @@ class OutboundTaskRepository:
             .values(
                 provider_message_id=provider_message_id,
                 status="sent",
+                sent_at=func.coalesce(Message.sent_at, func.now()),
             )
         )
         if not isinstance(payload, dict):
