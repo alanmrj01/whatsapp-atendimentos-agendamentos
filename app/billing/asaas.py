@@ -308,6 +308,31 @@ class AsaasGateway:
             expires_at=_parse_asaas_datetime(data.get("expirationDate")),
         )
 
+    async def update_subscription_value(
+        self,
+        subscription_id: str,
+        *,
+        value: float,
+    ) -> None:
+        if (
+            not isinstance(subscription_id, str)
+            or not subscription_id.startswith("sub_")
+            or len(subscription_id) > 80
+        ):
+            raise AsaasGatewayError("Asaas subscription identifier is invalid")
+        if value <= 0:
+            raise AsaasGatewayError("Asaas subscription value is invalid")
+        await self._json_request(
+            "PUT",
+            f"/subscriptions/{subscription_id}",
+            json={
+                "value": value,
+                # Keep the provider's already-generated future charge aligned
+                # with the new plan price. The due date is not changed here.
+                "updatePendingPayments": True,
+            },
+        )
+
     async def cancel_subscription(self, subscription_id: str) -> None:
         if (
             not isinstance(subscription_id, str)
