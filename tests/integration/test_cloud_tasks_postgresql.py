@@ -77,6 +77,7 @@ async def test_concurrent_workers_fetch_db_event_and_create_one_outbox(
                     id=customer_id,
                     business_id=business_id,
                     whatsapp_id="5511999990099",
+                    whatsapp_profile_name="Cliente Teste",
                 )
             )
             await session.flush()
