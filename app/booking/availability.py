@@ -103,6 +103,39 @@ BRAZIL_NATIONAL_FIXED_HOLIDAYS = {
 }
 
 
+def _has_validated_structured_origin(business: Business) -> bool:
+    structured = all(
+        isinstance(value, str) and value.strip()
+        for value in (
+            business.service_origin_street,
+            business.service_origin_number,
+            business.service_origin_city,
+            business.service_origin_state,
+        )
+    )
+    return bool(business.service_origin_validated_at is not None or structured)
+
+
+def _effective_travel_method(
+    business: Business,
+    *,
+    route_provider_available: bool,
+) -> TravelCalculationMethod:
+    method = TravelCalculationMethod(business.travel_calculation_method)
+    if (
+        method is TravelCalculationMethod.CONFIGURED_ESTIMATE
+        and route_provider_available
+        and _has_validated_structured_origin(business)
+        and not business.travel_fallback_allowed
+        and not business.travel_region_rules
+    ):
+        # Legacy businesses were created with configured_estimate even though
+        # the product now owns a real route provider. A validated company
+        # address with no explicit fallback/rules should use that provider.
+        return TravelCalculationMethod.ROUTE
+    return method
+
+
 @dataclass(frozen=True, slots=True)
 class _CapacityData:
     employee_ids: tuple[uuid.UUID, ...]
@@ -825,8 +858,9 @@ class PostgresBookingAvailabilityPort:
                     fallback_allowed=business.travel_fallback_allowed,
                     region_rules=business.travel_region_rules,
                 )
-                calculation_method = TravelCalculationMethod(
-                    business.travel_calculation_method
+                calculation_method = _effective_travel_method(
+                    business,
+                    route_provider_available=self.travel_time_port is not None,
                 )
             except ValueError:
                 origin = TravelOrigin(
@@ -1383,7 +1417,10 @@ class PostgresBookingAvailabilityPort:
             region_rules=business.travel_region_rules,
         )
         try:
-            method = TravelCalculationMethod(business.travel_calculation_method)
+            method = _effective_travel_method(
+                business,
+                route_provider_available=self.travel_time_port is not None,
+            )
         except ValueError:
             return unavailable_travel_estimate(origin)
         if method is TravelCalculationMethod.ROUTE and self.travel_time_port:
