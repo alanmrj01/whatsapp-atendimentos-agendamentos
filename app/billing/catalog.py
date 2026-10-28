@@ -34,7 +34,7 @@ _PLAN = {
         "monthly_cents": 19_700,
         "users": 1,
         "attendances": 500,
-        "messages": 500,
+        "messages": 600,
     },
     "plus": {
         "name": "Plus",
