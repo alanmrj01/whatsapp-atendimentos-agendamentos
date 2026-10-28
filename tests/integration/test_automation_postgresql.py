@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,9 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.operations.schemas import ConversationAutomationUpdate
+from app.operations.service import OperationalService
+from app.repositories.automation import AutomationRepository
 from app.models import (
     Business,
     BusinessAutomationExclusion,
@@ -517,6 +521,258 @@ async def test_cloud_task_worker_rechecks_exclusion_before_engine(
         )
     assert event_status == "ignored"
     assert outbound_count == 0
+
+
+async def test_paused_conversation_blocks_queued_worker_before_engine(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions, phone_number_id="physical-paused-queued-phone"
+    )
+    whatsapp_id = "5511999996161"
+    event = inbound(
+        "physical-paused-queued",
+        whatsapp_id,
+        "physical-paused-queued-phone",
+    )
+    async with sessions() as session:
+        event_keys = await persist_webhook_events_for_tasks(session, [event])
+    assert event_keys == [event.event_key]
+
+    async with sessions() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id
+            )
+        )
+        assert conversation is not None
+        detail = await OperationalService(session).update_conversation_automation(
+            business_id,
+            conversation.id,
+            ConversationAutomationUpdate(enabled=False),
+        )
+        assert detail.assistant_enabled is False
+
+    async with sessions() as session:
+        assert await process_cloud_task_event(session, event.event_key) is False
+
+    async with sessions() as session:
+        event_row = await session.scalar(
+            select(ProcessedWebhook).where(
+                ProcessedWebhook.event_key == event.event_key
+            )
+        )
+        outbound_count = await session.scalar(
+            select(func.count(Message.id)).where(
+                Message.business_id == business_id,
+                Message.direction == "outbound",
+            )
+        )
+    assert event_row is not None
+    assert event_row.status == "ignored"
+    assert event_row.outcome_reason == "automation_disabled"
+    assert outbound_count == 0
+
+
+async def test_paused_conversation_blocks_pending_outbound_before_meta_call(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions, phone_number_id="physical-paused-outbound-phone"
+    )
+    whatsapp_id = "5511999997171"
+    event = inbound(
+        "physical-paused-outbound",
+        whatsapp_id,
+        "physical-paused-outbound-phone",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [event])
+
+    async with sessions() as session:
+        row = (
+            await session.execute(
+                select(Message.id, Conversation.id)
+                .join(
+                    Conversation,
+                    Conversation.id == Message.conversation_id,
+                )
+                .where(
+                    Message.business_id == business_id,
+                    Message.direction == "outbound",
+                    Message.status == "pending",
+                )
+            )
+        ).one()
+        outbound_id, conversation_id = row
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+            )
+        )
+        assert conversation is not None
+        conversation.automation_enabled = False
+        conversation.handoff_status = "waiting"
+        await session.commit()
+
+    def external_call_must_not_start():  # type: ignore[no-untyped-def]
+        raise AssertionError("Meta call must not start after assistant pause")
+
+    async with sessions() as session:
+        result = await process_outbound_message(
+            session,
+            outbound_id,
+            external_call_must_not_start,
+        )
+    async with sessions() as session:
+        status = await session.scalar(
+            select(Message.status).where(Message.id == outbound_id)
+        )
+    assert result == "failed"
+    assert status == "failed"
+
+
+async def test_pause_cancels_automatic_pending_but_preserves_manual_outbound(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions, phone_number_id="physical-paused-manual-phone"
+    )
+    event = inbound(
+        "physical-paused-manual",
+        "5511999998181",
+        "physical-paused-manual-phone",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [event])
+
+    async with sessions() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id
+            )
+        )
+        assert conversation is not None
+        manual = Message(
+            business_id=business_id,
+            conversation_id=conversation.id,
+            direction="outbound",
+            message_type="text",
+            body="mensagem manual",
+            status="pending",
+            idempotency_key=f"manual:outbound:{uuid.uuid4()}",
+        )
+        session.add(manual)
+        await session.commit()
+        manual_id = manual.id
+        conversation_id = conversation.id
+
+    async with sessions() as session:
+        async with session.begin():
+            await AutomationRepository(session).cancel_pending_outbounds(
+                business_id,
+                conversation_id,
+            )
+
+    async with sessions() as session:
+        statuses = dict(
+            (
+                await session.execute(
+                    select(Message.id, Message.status).where(
+                        Message.business_id == business_id,
+                        Message.direction == "outbound",
+                    )
+                )
+            ).all()
+        )
+    assert statuses[manual_id] == "pending"
+    assert "failed" in {
+        status for message_id, status in statuses.items()
+        if message_id != manual_id
+    }
+
+
+async def test_pause_confirmation_waits_for_already_started_automatic_send(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions, phone_number_id="physical-pause-race-phone"
+    )
+    event = inbound(
+        "physical-pause-race",
+        "5511999999191",
+        "physical-pause-race-phone",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [event])
+
+    async with sessions() as session:
+        row = (
+            await session.execute(
+                select(Message.id, Conversation.id)
+                .join(
+                    Conversation,
+                    Conversation.id == Message.conversation_id,
+                )
+                .where(
+                    Message.business_id == business_id,
+                    Message.direction == "outbound",
+                    Message.status == "pending",
+                )
+            )
+        ).one()
+        outbound_id, conversation_id = row
+
+    send_started = asyncio.Event()
+    release_send = asyncio.Event()
+
+    class BlockingSender:
+        async def send_text(self, to: str, text: str) -> str:
+            send_started.set()
+            await release_send.wait()
+            return "wamid.pause-race"
+
+        async def aclose(self) -> None:
+            return None
+
+    async def run_outbound() -> str:
+        async with sessions() as session:
+            return await process_outbound_message(
+                session,
+                outbound_id,
+                lambda: BlockingSender(),
+            )
+
+    async def pause_conversation() -> None:
+        async with sessions() as session:
+            await OperationalService(session).update_conversation_automation(
+                business_id,
+                conversation_id,
+                ConversationAutomationUpdate(enabled=False),
+            )
+
+    outbound_task = asyncio.create_task(run_outbound())
+    await asyncio.wait_for(send_started.wait(), timeout=2)
+    pause_task = asyncio.create_task(pause_conversation())
+
+    await asyncio.sleep(0.05)
+    assert pause_task.done() is False
+
+    release_send.set()
+    assert await outbound_task == "sent"
+    await asyncio.wait_for(pause_task, timeout=2)
+
+    async with sessions() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.id == conversation_id,
+            )
+        )
+    assert conversation is not None
+    assert conversation.automation_enabled is False
+    assert conversation.handoff_status == "waiting"
 
 
 async def test_outbound_sender_rechecks_active_exclusion_before_meta_call(

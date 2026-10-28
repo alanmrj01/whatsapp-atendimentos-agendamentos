@@ -180,6 +180,26 @@ async def test_fixed_exclusion_policy_blocks_only_when_active(
 
 
 @pytest.mark.asyncio
+async def test_paused_conversation_is_a_hard_policy_stop() -> None:
+    repository = FakeAutomationRepository()
+    repository.controls[CONVERSATION] = ConversationAutomationControl(
+        None,
+        "waiting",
+        automation_enabled=False,
+    )
+    policy = AutomationPolicyService(repository, now=lambda: NOW)
+
+    decision = await policy.evaluate_customer_inbound(
+        BUSINESS_A,
+        CONVERSATION,
+        None,
+    )
+
+    assert decision is AutomationDecision.DISABLED
+    assert repository.suppressions_cleared == []
+
+
+@pytest.mark.asyncio
 async def test_expired_human_control_resumes_on_next_customer_message_without_job() -> None:
     repository = FakeAutomationRepository()
     current = [NOW]
