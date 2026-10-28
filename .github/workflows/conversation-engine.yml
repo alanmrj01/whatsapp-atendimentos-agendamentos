@@ -93,6 +93,7 @@ jobs:
           pytest
           tests/integration/test_booking_postgresql_additional.py::test_preventive_outreach_can_be_fast_forwarded_without_waiting_six_months
           tests/integration/test_automation_postgresql.py::test_queued_inbound_is_stopped_if_conversation_is_paused_before_worker
+          tests/integration/test_automation_postgresql.py::test_outbound_sender_rechecks_conversation_pause_before_meta_call
           -q -p no:cacheprovider
 
       - name: Check dependencies
