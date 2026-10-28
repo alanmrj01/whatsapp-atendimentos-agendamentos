@@ -40,6 +40,30 @@ def test_button_payload_defensively_limits_future_long_titles() -> None:
     assert title.endswith("…")
 
 
+def test_tubing_price_copy_respects_configured_catalog_unit() -> None:
+    fixed = tubing_variation_message(
+        Decimal("3"),
+        Decimal("50.00"),
+        "valor fixo",
+    )
+    kit = tubing_guidance_message(
+        Decimal("3"),
+        Decimal("30.00"),
+        "kit",
+    )
+    unit = tubing_guidance_message(
+        Decimal("3"),
+        Decimal("15.00"),
+        "unidade",
+    )
+
+    assert "valor fixo de R$ 50,00" in (fixed.body or "")
+    assert "cada kit adicional custa R$ 30,00" in (kit.body or "").casefold()
+    assert "cada unidade adicional custa r$ 15,00" in (unit.body or "").casefold()
+    for body in (fixed.body or "", kit.body or "", unit.body or ""):
+        assert "valor cadastrado" not in body.casefold()
+
+
 def test_tubing_price_copy_is_customer_language_not_internal_configuration() -> None:
     variation = tubing_variation_message(
         Decimal("3"),

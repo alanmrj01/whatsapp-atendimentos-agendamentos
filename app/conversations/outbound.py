@@ -503,6 +503,7 @@ def installation_height_message() -> OutboundMessage:
 def tubing_variation_message(
     included_meters: Decimal | None,
     extra_meter_price: Decimal | None,
+    unit_label: str | None = "metro",
 ) -> OutboundMessage:
     included = included_meters if included_meters is not None else Decimal("3")
     included_label = (
@@ -517,8 +518,11 @@ def tubing_variation_message(
     if extra_meter_price is not None and extra_meter_price > 0:
         body = (
             f"A instalação inclui até {included_label} metros de tubulação. "
-            f"Acima disso, cada metro adicional custa "
-            f"{_format_brl(extra_meter_price)} e entra no orçamento."
+            + _additional_material_price_sentence(
+                extra_meter_price,
+                unit_label,
+                material_label="tubulação adicional",
+            )
         )
     return OutboundMessage(message_type="text", body=body)
 
@@ -714,6 +718,7 @@ def tubing_length_message() -> OutboundMessage:
 def tubing_guidance_message(
     included_meters: Decimal | None,
     extra_meter_price: Decimal | None,
+    unit_label: str | None = "metro",
 ) -> OutboundMessage:
     included = included_meters if included_meters is not None else Decimal("3")
     if included == included.to_integral():
@@ -725,10 +730,11 @@ def tubing_guidance_message(
         f"A instalação inclui até {included_label} metros de tubulação. "
     )
     if extra_meter_price is not None and extra_meter_price > 0:
-        body += (
-            f"Acima disso, cada metro adicional custa "
-            f"{_format_brl(extra_meter_price)} e entra no orçamento. "
-        )
+        body += _additional_material_price_sentence(
+            extra_meter_price,
+            unit_label,
+            material_label="tubulação adicional",
+        ) + " "
     else:
         body += "Se precisar de material adicional, o valor pode variar. "
     body += (
@@ -1005,6 +1011,28 @@ def _button_payload(options: Sequence[BookingOption]) -> dict[str, Any]:
             for option in options
         ]
     }
+
+
+def _additional_material_price_sentence(
+    price: Decimal,
+    unit_label: str | None,
+    *,
+    material_label: str = "material adicional",
+) -> str:
+    unit = " ".join((unit_label or "").strip().casefold().split())
+    formatted = _format_brl(price)
+    if unit in {"", "metro", "por metro", "m"}:
+        return f"Acima disso, cada metro adicional custa {formatted} e entra no orçamento."
+    if unit in {"valor fixo", "fixo", "fixed"}:
+        return (
+            f"Se houver {material_label}, é aplicado um valor fixo de "
+            f"{formatted}, que entra no orçamento."
+        )
+    if unit in {"kit", "por kit"}:
+        return f"Cada kit adicional custa {formatted} e entra no orçamento."
+    if unit in {"unidade", "por unidade", "unit"}:
+        return f"Cada unidade adicional custa {formatted} e entra no orçamento."
+    return f"O adicional custa {formatted} por {unit_label} e entra no orçamento."
 
 
 def _format_brl(value: Decimal) -> str:
