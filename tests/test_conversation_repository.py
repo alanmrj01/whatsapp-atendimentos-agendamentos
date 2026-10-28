@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
 
 from app.conversations.constants import ConversationState
-from app.conversations.outbound import OutboundMessage, handoff_message, main_menu_message
+from app.conversations.outbound import (
+    OutboundMessage,
+    handoff_message,
+    main_menu_message,
+    tubing_guidance_message,
+    tubing_variation_message,
+)
 from app.conversations.types import (
     ConversationSnapshot,
     ConversationTransition,
@@ -76,6 +83,17 @@ def test_conversation_captured_name_overrides_profile_name() -> None:
         "+5512981359722",
         "5512981359722",
     ) == "Juliana"
+
+
+def test_tubing_price_copy_is_natural_and_explains_budget_impact() -> None:
+    variation = tubing_variation_message(Decimal("3"), Decimal("20.00"))
+    guidance = tubing_guidance_message(Decimal("3"), Decimal("20.00"))
+
+    for body in (variation.body or "", guidance.body or ""):
+        assert "valor cadastrado" not in body.casefold()
+        assert "r$ 20,00" in body.casefold()
+        assert "metro adicional" in body.casefold()
+        assert "orçamento" in body.casefold()
 
 
 def test_conversation_lock_uses_postgresql_for_update() -> None:
