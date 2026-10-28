@@ -13,6 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
 from app.conversations.constants import ConversationState
+from app.conversations.interpreter import (
+    normalize_customer_name,
+    normalize_profile_customer_name,
+)
 from app.conversations.types import (
     ConversationSnapshot,
     ConversationTransition,
@@ -61,15 +65,24 @@ def _effective_customer_name(
     phone: str | None,
     whatsapp_id: str,
 ) -> str | None:
-    if name_source == "manual" and isinstance(name, str) and name.strip():
-        return name
-    if isinstance(profile_name, str) and profile_name.strip():
-        return profile_name
-    if isinstance(name, str) and name.strip():
-        return name
-    if isinstance(phone, str) and phone.strip():
-        return phone
-    return whatsapp_id or None
+    # Names explicitly learned in the conversation or edited by the business
+    # are authoritative. The raw WhatsApp label is only a candidate.
+    if name_source in {"manual", "conversation"}:
+        learned = normalize_customer_name(name)
+        if learned is not None:
+            return learned
+
+    profile = normalize_profile_customer_name(profile_name)
+    if profile is not None:
+        return profile
+
+    legacy = normalize_customer_name(name)
+    if legacy is not None:
+        return legacy
+
+    # Phone/WhatsApp ID are useful display fallbacks, but they are not names.
+    # Returning None here deliberately makes the assistant ask naturally.
+    return None
 
 
 def _sequence_group(idempotency_key: str) -> str:

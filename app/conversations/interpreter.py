@@ -725,6 +725,55 @@ def _clean_name(value: str) -> str | None:
     return cleaned
 
 
+def normalize_customer_name(value: str | None) -> str | None:
+    return _clean_name(value or "")
+
+
+def normalize_profile_customer_name(value: str | None) -> str | None:
+    """Return a profile label only when it is safe to treat as a person's name.
+
+    WhatsApp profiles may contain only emoji/symbols, initials, phone-like labels
+    or business labels. In those cases the conversation must ask naturally for
+    the customer's name instead of greeting with the raw profile text.
+    """
+
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return None
+
+    # Allow harmless decoration around a real name (for example "❄ João ❄"),
+    # but never strip noise from the middle because that could turn a business
+    # label into an apparently valid personal name.
+    trimmed = re.sub(r"^[^A-Za-zÀ-ÿ]+|[^A-Za-zÀ-ÿ'’\- ]+$", "", raw).strip()
+    candidate = _clean_name(trimmed)
+    if candidate is None:
+        return None
+
+    normalized = normalize_portuguese(candidate)
+    letters = "".join(character for character in normalized if character.isalpha())
+    if len(letters) < 2:
+        return None
+    # Two-letter all-uppercase profile labels are much more likely initials than
+    # a name. Preserve natural short names such as "Lu".
+    raw_letters = "".join(character for character in raw if character.isalpha())
+    if len(letters) == 2 and raw_letters.isupper():
+        return None
+
+    business_like_tokens = {
+        "assistencia",
+        "clima",
+        "climatizacao",
+        "empresa",
+        "refrigeracao",
+        "refrigerista",
+        "servico",
+        "servicos",
+    }
+    if any(token in business_like_tokens for token in normalized.split()):
+        return None
+    return candidate
+
+
 def _contains_generic_equipment_price_request(value: str) -> bool:
     """Treat a generic equipment price/quote request as purchase intent.
 

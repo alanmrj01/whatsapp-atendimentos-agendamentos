@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import re
+import unicodedata
 import uuid
 from collections import defaultdict
 from collections.abc import Callable, Sequence
@@ -101,6 +103,55 @@ BRAZIL_NATIONAL_FIXED_HOLIDAYS = {
     (11, 20), # Consciência Negra
     (12, 25), # Natal
 }
+
+
+def _has_validated_structured_origin(business: Business) -> bool:
+    structured = all(
+        isinstance(value, str) and value.strip()
+        for value in (
+            business.service_origin_street,
+            business.service_origin_number,
+            business.service_origin_city,
+            business.service_origin_state,
+        )
+    )
+    if business.service_origin_validated_at is not None or structured:
+        return True
+
+    # Pre-structured-address tenants may still have a precise legacy address.
+    # Require both a street-like marker and a number; the historical broad
+    # default ("Zona Leste de São José dos Campos - SP") deliberately fails.
+    legacy = " ".join((business.service_origin_address or "").split())
+    decomposed = unicodedata.normalize("NFKD", legacy.casefold())
+    normalized = "".join(
+        char for char in decomposed if not unicodedata.combining(char)
+    )
+    has_number = re.search(r"\b\d+[a-z]?\b", normalized) is not None
+    has_street = re.search(
+        r"\b(?:rua|r\.?|avenida|av\.?|rodovia|rod\.?|estrada|travessa|alameda)\b",
+        normalized,
+    ) is not None
+    return bool(has_number and has_street)
+
+
+def _effective_travel_method(
+    business: Business,
+    *,
+    route_provider_available: bool,
+) -> TravelCalculationMethod:
+    method = TravelCalculationMethod(business.travel_calculation_method)
+    if (
+        method is TravelCalculationMethod.CONFIGURED_ESTIMATE
+        and route_provider_available
+        and _has_validated_structured_origin(business)
+        and not business.travel_fallback_allowed
+        and not business.travel_region_rules
+    ):
+        # Legacy businesses were created with configured_estimate even though
+        # the product now owns a real route provider. A validated company
+        # address with no explicit fallback/rules should use that provider.
+        return TravelCalculationMethod.ROUTE
+    return method
 
 
 @dataclass(frozen=True, slots=True)
@@ -825,8 +876,9 @@ class PostgresBookingAvailabilityPort:
                     fallback_allowed=business.travel_fallback_allowed,
                     region_rules=business.travel_region_rules,
                 )
-                calculation_method = TravelCalculationMethod(
-                    business.travel_calculation_method
+                calculation_method = _effective_travel_method(
+                    business,
+                    route_provider_available=self.travel_time_port is not None,
                 )
             except ValueError:
                 origin = TravelOrigin(
@@ -1383,7 +1435,10 @@ class PostgresBookingAvailabilityPort:
             region_rules=business.travel_region_rules,
         )
         try:
-            method = TravelCalculationMethod(business.travel_calculation_method)
+            method = _effective_travel_method(
+                business,
+                route_provider_available=self.travel_time_port is not None,
+            )
         except ValueError:
             return unavailable_travel_estimate(origin)
         if method is TravelCalculationMethod.ROUTE and self.travel_time_port:

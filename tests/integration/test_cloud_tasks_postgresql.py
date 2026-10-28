@@ -141,7 +141,10 @@ async def test_concurrent_workers_fetch_db_event_and_create_one_outbox(
     assert processed.processed_at is not None
     assert processed.attempts == 2
     assert outbound_count == 1
-    assert conversation_state == "MENU"
+    # This fixture intentionally has no usable customer/profile name. The
+    # concurrency contract is one processed event + one outbox; the correct
+    # conversational state is now the natural name collection step.
+    assert conversation_state == "CUSTOMER_NAME"
 
 
 async def test_failed_delivery_status_reopens_outbound_for_retry(

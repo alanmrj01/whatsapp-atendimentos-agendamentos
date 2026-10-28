@@ -11,6 +11,7 @@ from app.conversations.types import (
     ConversationTransition,
 )
 from app.repositories.conversations import (
+    _effective_customer_name,
     build_follow_up_insert_statement,
     build_lock_conversation_statement,
     build_outbound_insert_statement,
@@ -41,6 +42,74 @@ def transition() -> ConversationTransition:
         handoff_status="none",
         outbound=main_menu_message(),
     )
+
+
+def test_symbolic_whatsapp_profile_is_not_treated_as_customer_name() -> None:
+    assert _effective_customer_name(
+        None,
+        None,
+        "~!",
+        "+5512981359722",
+        "5512981359722",
+    ) is None
+    assert _effective_customer_name(
+        None,
+        None,
+        "❄️",
+        "+5512981359722",
+        "5512981359722",
+    ) is None
+    assert _effective_customer_name(
+        None,
+        None,
+        "JL",
+        "+5512981359722",
+        "5512981359722",
+    ) is None
+
+
+def test_short_nickname_is_valid_but_two_letter_initials_are_not() -> None:
+    assert _effective_customer_name(
+        None,
+        None,
+        "Lu",
+        "+5512981359722",
+        "5512981359722",
+    ) == "Lu"
+    assert _effective_customer_name(
+        None,
+        None,
+        "JL",
+        "+5512981359722",
+        "5512981359722",
+    ) is None
+
+
+def test_real_whatsapp_profile_name_is_used_without_extra_question() -> None:
+    assert _effective_customer_name(
+        None,
+        None,
+        "Juliana",
+        "+5512981359722",
+        "5512981359722",
+    ) == "Juliana"
+
+
+def test_name_learned_in_conversation_overrides_whatsapp_profile_label() -> None:
+    assert _effective_customer_name(
+        "Juliana",
+        "conversation",
+        "~!",
+        "+5512981359722",
+        "5512981359722",
+    ) == "Juliana"
+    assert _effective_customer_name(
+        "Juliana",
+        "conversation",
+        "Empresa Clima",
+        "+5512981359722",
+        "5512981359722",
+    ) == "Juliana"
 
 
 def test_conversation_lock_uses_postgresql_for_update() -> None:

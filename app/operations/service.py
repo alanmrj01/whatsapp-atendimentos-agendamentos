@@ -18,6 +18,10 @@ from app.automation.service import (
     AutomationAdministrationService,
     AutomationPolicyService,
 )
+from app.conversations.interpreter import (
+    normalize_customer_name,
+    normalize_profile_customer_name,
+)
 from app.models import (
     Appointment,
     Business,
@@ -819,6 +823,8 @@ class OperationalService:
             business.service_origin_latitude = None
             business.service_origin_longitude = None
             business.service_origin_is_precise = False
+            business.travel_calculation_method = "route"
+            business.travel_route_provider = "google_routes"
         await self.session.commit()
         return _business_view(business)
 
@@ -2194,12 +2200,18 @@ def _display_name(
     *,
     name_source: str | None = None,
 ) -> str:
-    if name_source == "manual" and isinstance(name, str) and name.strip():
-        return name
-    if isinstance(profile_name, str) and profile_name.strip():
-        return profile_name
-    if isinstance(name, str) and name.strip():
-        return name
+    if name_source in {"manual", "conversation"}:
+        learned = normalize_customer_name(name)
+        if learned is not None:
+            return learned
+
+    profile = normalize_profile_customer_name(profile_name)
+    if profile is not None:
+        return profile
+
+    legacy = normalize_customer_name(name)
+    if legacy is not None:
+        return legacy
     return phone or whatsapp_id
 
 

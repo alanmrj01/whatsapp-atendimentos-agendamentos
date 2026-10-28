@@ -653,7 +653,7 @@ async def test_unnamed_customer_is_asked_once_and_pending_service_is_resumed() -
 
     assert repository.state == ConversationState.CUSTOMER_NAME
     first_body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "qual é o seu nome" in first_body
+    assert "como posso te chamar" in first_body
     assert "não entendi" not in first_body
 
     await engine.process(inbound(2, body="Alan"))
@@ -1502,8 +1502,7 @@ async def test_stale_booking_button_is_never_saved_as_customer_name() -> None:
     assert repository.state == ConversationState.CUSTOMER_NAME
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
     assert "etapa anterior" not in body
-    assert "qual é o seu nome" in body
-    assert "nome" in body
+    assert "como posso te chamar" in body
     assert "prazer, voltar" not in body
 
 
@@ -1919,7 +1918,7 @@ async def test_greeting_plus_request_is_not_lost_while_asking_name() -> None:
     assert repository.state == ConversationState.CUSTOMER_NAME
     assert "Oi, boa tarde!" in first
     assert "Tudo bem, e com você?" in first
-    assert "qual é o seu nome" in first.casefold()
+    assert "como posso te chamar" in first.casefold()
     assert "Como posso te ajudar?" not in first
 
     await engine.process(inbound(303, body="Alan"))
