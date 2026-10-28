@@ -50,6 +50,8 @@ def test_quantity_changes_price_and_duration_generically() -> None:
     assert estimate.estimated_duration_minutes == 225
     assert estimate.estimated_price == Decimal("460.00")
     assert "additional_units" in estimate.applied_rules
+    assert "additional_units_count:2" in estimate.applied_rules
+    assert "additional_units_price:160.00" in estimate.applied_rules
 
 
 def test_difficult_access_changes_price_and_duration() -> None:
@@ -61,6 +63,7 @@ def test_difficult_access_changes_price_and_duration() -> None:
     assert estimate.estimated_duration_minutes == 165
     assert estimate.estimated_price == Decimal("350.00")
     assert "difficult_access" in estimate.applied_rules
+    assert "difficult_access_price:50.00" in estimate.applied_rules
 
 
 def test_unknown_access_uses_configured_conservative_rule() -> None:

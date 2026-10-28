@@ -36,7 +36,14 @@ class ServiceEstimator:
         price = configuration.base_price
         if price is not None and additional_units:
             additional_price = configuration.additional_unit_price or Decimal("0")
-            price += additional_price * additional_units
+            additional_units_price = additional_price * additional_units
+            price += additional_units_price
+            rules.extend(
+                (
+                    f"additional_units_count:{additional_units}",
+                    f"additional_units_price:{additional_units_price}",
+                )
+            )
 
         if configuration.considers_difficult_access:
             access = requirements.access_condition
@@ -51,7 +58,14 @@ class ServiceEstimator:
             if access is AccessCondition.DIFFICULT:
                 duration += configuration.difficult_access_duration_minutes
                 if price is not None:
-                    price += configuration.difficult_access_price or Decimal("0")
+                    difficult_access_price = (
+                        configuration.difficult_access_price or Decimal("0")
+                    )
+                    price += difficult_access_price
+                    if difficult_access_price > 0:
+                        rules.append(
+                            f"difficult_access_price:{difficult_access_price}"
+                        )
                 rules.append("difficult_access")
 
         duration += configuration.duration_margin_minutes
