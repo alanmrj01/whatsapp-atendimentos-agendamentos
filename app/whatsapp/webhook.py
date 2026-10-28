@@ -422,6 +422,32 @@ def _body(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def normalize_human_profile_name(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split()).strip()
+    if not normalized or len(normalized) > 255:
+        return None
+    # Profile names are only trusted automatically when they look like a
+    # person's written name. Symbols, emoji, phone numbers and single-letter
+    # placeholders must not skip the natural name question.
+    if any(character.isdigit() for character in normalized):
+        return None
+    if not all(
+        character.isalpha()
+        or character.isspace()
+        or character in {"'", "’", "-"}
+        for character in normalized
+    ):
+        return None
+    tokens = [token.strip("-'’") for token in normalized.split()]
+    if not tokens or not any(len(token) >= 2 for token in tokens):
+        return None
+    if sum(character.isalpha() for character in normalized) < 2:
+        return None
+    return normalized
+
+
 def _profile_names(value: dict[str, Any]) -> dict[str, str]:
     contacts = value.get("contacts")
     if not isinstance(contacts, list):
@@ -434,11 +460,8 @@ def _profile_names(value: dict[str, Any]) -> dict[str, str]:
         profile = contact.get("profile")
         if not whatsapp_id or not isinstance(profile, dict):
             continue
-        raw_name = profile.get("name")
-        if not isinstance(raw_name, str):
-            continue
-        normalized = " ".join(raw_name.split())
-        if normalized and len(normalized) <= 255:
+        normalized = normalize_human_profile_name(profile.get("name"))
+        if normalized is not None:
             names[whatsapp_id] = normalized
     return names
 
