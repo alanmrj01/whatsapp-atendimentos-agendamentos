@@ -1767,8 +1767,92 @@ async def test_customer_can_supply_different_city_after_city_confirmation() -> N
 
     assert repository.state == ConversationState.BOOKING_DATE
     address = repository.context["service_address"]
-    assert address["city"] == "Jacareí - SP"
+    assert address["city"] == "Jacareí"
+    assert address["state"] == "SP"
 
+
+
+@mark.asyncio
+async def test_full_service_address_is_canonicalized_for_route_and_persistence() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Joao",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            210,
+            body="Rua dos Alfaiates 109, Novo Horizonte, São josé dos Campos",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    address = repository.context["service_address"]
+    assert address == {
+        "address_line": "Rua dos Alfaiates 109, Novo Horizonte",
+        "city": "São José dos Campos",
+        "state": "SP",
+    }
+
+
+@mark.asyncio
+async def test_dotted_street_and_city_abbreviations_become_canonical_address() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Joao",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(211, body="R. dos Alfaiates 109, Novo Horizonte, SJC")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    address = repository.context["service_address"]
+    assert address["address_line"] == "Rua dos Alfaiates 109, Novo Horizonte"
+    assert address["city"] == "São José dos Campos"
+    assert address["state"] == "SP"
+
+
+@mark.asyncio
+async def test_state_abbreviation_without_city_does_not_fake_route_locality() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Joao",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(212, body="R. dos Alfaiates 109, Novo Horizonte, SP")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["awaiting_address_city"] is True
+    assert "cidade" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
 
 
 @mark.asyncio
@@ -2009,7 +2093,7 @@ async def test_invalid_quantity_is_rephrased_once_then_handoff() -> None:
 
 
 @mark.asyncio
-async def test_installation_quote_collects_equipment_before_height_and_never_asks_tubing_length() -> None:
+async def test_installation_quote_collects_tubing_length_after_height_before_pricing() -> None:
     repository = FakeConversationRepository(customer_name="Alan")
     booking_port = FakeBookingPort()
     booking_port.services = [
@@ -2020,6 +2104,7 @@ async def test_installation_quote_collects_equipment_before_height_and_never_ask
         requires_address=True,
         asks_tubing_length=True,
     )
+    booking_port.extra_tubing_price = Decimal("20.00")
     engine = ConversationEngine(repository, booking_port)
 
     await engine.process(
@@ -2053,10 +2138,16 @@ async def test_installation_quote_collects_equipment_before_height_and_never_ask
             *(item.body or "" for item in transition.follow_ups),
         ]
     ).casefold()
-    assert repository.state == ConversationState.BOOKING_PROPERTY
+    assert repository.state == ConversationState.BOOKING_TUBING
     assert "tubulação" in combined
-    assert "quantos metros" not in combined
+    assert "r$ 20,00" in combined
+    assert "quantos metros" in combined
+    assert "tubing_length_answered" not in repository.context
+
+    await engine.process(inbound(406, body="5 metros"))
+    assert repository.context["tubing_meters"] == "5"
     assert repository.context["tubing_length_answered"] is True
+    assert repository.state == ConversationState.BOOKING_PROPERTY
 
 
 @mark.asyncio
@@ -3651,6 +3742,53 @@ async def test_purchase_and_install_confirmation_separates_service_equipment_and
     assert "Valor do serviço: R$ 100,00" in body
     assert "Valor do equipamento: R$ 2.500,00" in body
     assert "Total: R$ 2.600,00" in body
+
+
+@mark.asyncio
+async def test_purchase_and_install_quote_itemizes_additions_and_keeps_total_inclusive() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "purchase_mode": "both",
+            "recommended_equipment": {
+                "label": "Electrolux Color Adapt 12.000 BTU — Só Frio",
+                "price": 2099.0,
+            },
+        },
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+    booking_port.plan = replace(
+        booking_port.plan,
+        service=replace(
+            booking_port.plan.service,
+            estimated_price=Decimal("752.00"),
+            applied_rules=(
+                "base_price",
+                "extra_tubing_price:40.00",
+                "service_distance_fee:12.00",
+            ),
+        ),
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1171, body="quero revisar")
+    )
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "Adicional de tubulação: R$ 40,00" in body
+    assert "Adicional de deslocamento: R$ 12,00" in body
+    assert "Valor do serviço (com adicionais): R$ 752,00" in body
+    assert "Valor do equipamento: R$ 2.099,00" in body
+    assert "Total: R$ 2.851,00" in body
 
 
 @mark.asyncio
