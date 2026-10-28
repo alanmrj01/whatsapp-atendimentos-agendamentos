@@ -810,6 +810,60 @@ async def test_booking_plan_uses_configurable_origin_and_buffers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_validated_structured_origin_upgrades_legacy_configured_estimate_to_route() -> None:
+    company = business(
+        service_origin_address=(
+            "Rua da Empresa, 100 - Centro, "
+            "São José dos Campos - SP, CEP 12200-000"
+        ),
+        service_origin_street="Rua da Empresa",
+        service_origin_number="100",
+        service_origin_city="São José dos Campos",
+        service_origin_state="SP",
+        service_origin_validated_at=NOW,
+        travel_calculation_method="configured_estimate",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+        travel_region_rules=[],
+    )
+    destination = ServiceAddress(
+        "Rua dos Alfaiates 109, Novo Horizonte",
+        city="São José dos Campos",
+        state="SP",
+    )
+    travel = RecordingRouteTravel(
+        {
+            (
+                company.service_origin_address,
+                destination.searchable_text,
+            ): 22,
+        }
+    )
+
+    class PlanPort(PostgresBookingAvailabilityPort):
+        async def _load_business_service(self, *args: Any):  # type: ignore[no-untyped-def]
+            return company, service()
+
+        async def _require_eligible_employees(self, *args: Any):  # type: ignore[no-untyped-def]
+            return (EMPLOYEE_A,)
+
+    booking_plan = await PlanPort(  # type: ignore[arg-type]
+        object(),
+        travel_time_port=travel,
+    ).estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(address=destination),
+    )
+
+    assert travel.calls == [
+        (company.service_origin_address, destination.searchable_text)
+    ]
+    assert booking_plan.requires_handoff is False
+    assert booking_plan.travel.travel_minutes == 22
+
+
+@pytest.mark.asyncio
 async def test_same_business_address_uses_zero_travel_without_fallback() -> None:
     company = business(
         service_origin_address=(
