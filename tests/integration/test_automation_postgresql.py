@@ -601,6 +601,68 @@ async def test_cloud_task_worker_rechecks_exclusion_before_engine(
     assert outbound_count == 0
 
 
+async def test_outbound_sender_rechecks_conversation_pause_before_meta_call(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions, phone_number_id="physical-outbound-pause-phone"
+    )
+    whatsapp_id = "5511999997071"
+    event = inbound(
+        "physical-outbound-pause",
+        whatsapp_id,
+        "physical-outbound-pause-phone",
+    )
+
+    # Create a genuine pending automatic reply while the conversation is active.
+    async with sessions() as session:
+        await process_webhook_events(session, [event])
+    async with sessions() as session:
+        row = (
+            await session.execute(
+                select(Message.id, Message.conversation_id).where(
+                    Message.business_id == business_id,
+                    Message.direction == "outbound",
+                    Message.status == "pending",
+                )
+            )
+        ).one()
+        outbound_id = row.id
+        conversation_id = row.conversation_id
+
+    # Mirror the PWA pause: disable first, then the outbound worker runs.
+    async with sessions() as session:
+        async with session.begin():
+            await session.execute(
+                update(Conversation)
+                .where(
+                    Conversation.business_id == business_id,
+                    Conversation.id == conversation_id,
+                )
+                .values(
+                    automation_enabled=False,
+                    handoff_status="waiting",
+                )
+            )
+
+    def external_call_must_not_start():  # type: ignore[no-untyped-def]
+        raise AssertionError("Meta call must not start for a paused conversation")
+
+    async with sessions() as session:
+        result = await process_outbound_message(
+            session,
+            outbound_id,
+            external_call_must_not_start,
+        )
+
+    async with sessions() as session:
+        status = await session.scalar(
+            select(Message.status).where(Message.id == outbound_id)
+        )
+    assert result == "failed"
+    assert status == "failed"
+
+
 async def test_outbound_sender_rechecks_active_exclusion_before_meta_call(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
