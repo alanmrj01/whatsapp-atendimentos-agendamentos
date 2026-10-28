@@ -3176,6 +3176,7 @@ async def _tubing_prompt_transition(
 ) -> ConversationTransition:
     included_meters: Decimal | None = None
     extra_meter_price: Decimal | None = None
+    extra_meter_unit: str | None = None
     try:
         details = await port.get_service_details(
             inbound.business_id,
@@ -3183,6 +3184,7 @@ async def _tubing_prompt_transition(
         )
         included_meters = details.included_tubing_meters
         extra_meter_price = details.extra_tubing_price
+        extra_meter_unit = details.extra_tubing_unit_label
     except BookingRequiresHandoff:
         pass
 
@@ -3194,6 +3196,7 @@ async def _tubing_prompt_transition(
     guidance = tubing_guidance_message(
         included_meters,
         extra_meter_price,
+        extra_meter_unit,
     )
     return _transition(
         ConversationState.BOOKING_TUBING,
@@ -7328,6 +7331,7 @@ async def _advance_intake(
                 outbound=tubing_variation_message(
                     getattr(details, "included_tubing_meters", None),
                     getattr(details, "extra_tubing_price", None),
+                    getattr(details, "extra_tubing_unit_label", None),
                 ),
                 follow_ups=(
                     next_transition.outbound,
@@ -9079,6 +9083,7 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         "contact_phone",
         "contact_phone_confirmed",
         "cleaning_outreach_id",
+        "catalog_item_quantities",
     )
     operational_details = {
         key: context[key]
