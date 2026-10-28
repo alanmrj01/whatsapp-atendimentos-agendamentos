@@ -220,6 +220,7 @@ class FakeBookingPort:
         ]
         self.included_tubing_meters = Decimal("3")
         self.extra_tubing_price: Decimal | None = None
+        self.extra_tubing_unit_label: str | None = "metro"
         self.business_city: str | None = None
         self.business_state: str | None = None
         self.business_address: str | None = None
@@ -276,6 +277,7 @@ class FakeBookingPort:
             description="Serviço configurado para teste.",
             included_tubing_meters=self.included_tubing_meters,
             extra_tubing_price=self.extra_tubing_price,
+            extra_tubing_unit_label=self.extra_tubing_unit_label,
             business_city=self.business_city,
             business_state=self.business_state,
             business_address=self.business_address,
