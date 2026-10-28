@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -23,6 +24,7 @@ from app.repositories.outbound_tasks import (
     OutboundTaskRepository,
     StoredOutboundMessage,
     _automation_blocked_for_message,
+    _basic_service_window_blocked,
 )
 from app.schemas.cloud_tasks import WhatsAppOutboundTaskPayload
 from app.tasks import auth as task_auth
@@ -301,6 +303,7 @@ def stored_message(
     recipient: str = "5511999990001",
     automation_blocked: bool = False,
     quota_blocked: bool = False,
+    service_window_blocked: bool = False,
 ) -> StoredOutboundMessage:
     payloads = {
         "interactive_button": {
@@ -336,9 +339,10 @@ def stored_message(
         provider_message_id=None,
         automation_blocked=automation_blocked,
         quota_blocked=quota_blocked,
-        quota_plan="basic" if quota_blocked else None,
-        quota_used=500 if quota_blocked else None,
-        quota_limit=500 if quota_blocked else None,
+        service_window_blocked=service_window_blocked,
+        quota_plan="basic" if (quota_blocked or service_window_blocked) else None,
+        quota_used=600 if quota_blocked else None,
+        quota_limit=600 if quota_blocked else None,
     )
 
 
@@ -544,6 +548,57 @@ def test_handoff_notice_bypasses_only_standard_automation_block() -> None:
         active_ignore=False,
         standard_automation_blocked=True,
     ) is True
+
+
+def test_basic_service_window_requires_recent_customer_message_and_rejects_templates() -> None:
+    now = datetime(2026, 10, 27, 12, tzinfo=timezone.utc)
+    assert _basic_service_window_blocked(
+        plan="basic",
+        message_type="text",
+        latest_inbound_at=now - timedelta(hours=23),
+        now=now,
+    ) is False
+    assert _basic_service_window_blocked(
+        plan="basic",
+        message_type="text",
+        latest_inbound_at=now - timedelta(hours=25),
+        now=now,
+    ) is True
+    assert _basic_service_window_blocked(
+        plan="basic",
+        message_type="template",
+        latest_inbound_at=now - timedelta(minutes=5),
+        now=now,
+    ) is True
+    assert _basic_service_window_blocked(
+        plan="plus",
+        message_type="template",
+        latest_inbound_at=None,
+        now=now,
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_basic_service_window_stops_send_before_provider_call(
+    caplog: LogCaptureFixture,
+) -> None:
+    repository = FakeOutboundRepository(
+        stored_message(service_window_blocked=True)
+    )
+    factory = AsyncMock()
+
+    with caplog.at_level(logging.INFO):
+        result = await process_outbound_message(
+            FakeSession(),
+            MESSAGE_ID,
+            factory,
+            repository,
+        )
+
+    assert result == "failed"
+    factory.assert_not_called()
+    assert repository.failed == [MESSAGE_ID]
+    assert "outbound_message_basic_service_window_blocked" in caplog.text
 
 
 @pytest.mark.asyncio
