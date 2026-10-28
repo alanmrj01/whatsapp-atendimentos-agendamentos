@@ -16,35 +16,22 @@ com dados reais, dados de demonstração jamais devem reaparecer.
 
 - R$ 197,00 por mês.
 - 1 usuário.
-- Até 500 mensagens enviadas pela Alovia por mês.
+- Até 600 mensagens de serviço enviadas pela Alovia por mês.
 - Mensagens recebidas do cliente e reações não consomem a franquia.
-- Ao atingir a franquia, novos envios ficam pausados até a renovação mensal da
-  franquia ou até um upgrade elegível para o Plus.
+- No MVP, o Basic só envia mensagens de serviço dentro da janela de 24 horas aberta pelo cliente. Templates e disparos iniciados pela empresa ficam bloqueados.
+- Ao atingir a franquia, novos envios ficam pausados até a renovação mensal da franquia.
 
 A franquia é aplicada no servidor antes do envio ao provedor. Contas com
 `admin_full_access=true` e acessos legados preservados não recebem este limite.
 
-## Plus
+## Plus — oferta pós-lançamento
 
 - R$ 397,00 por mês.
 - Até 5 usuários.
-- Até 900 mensagens enviadas pela Alovia por mês.
-- Mensagens recebidas do cliente e reações não consomem a franquia.
-- Ao atingir a franquia, novos envios ficam pausados até a renovação mensal da
-  franquia.
-
-O Plus é parte ativa da oferta comercial. `BILLING_PLUS_ENABLED=false` fica
-disponível apenas como kill switch de emergência.
-
-### Upgrade Basic → Plus
-
-- Assinaturas mensais recorrentes por cartão ou Pix Automático podem migrar
-  para Plus sem criar uma segunda assinatura.
-- A franquia sobe para 900 assim que o provedor confirma a atualização; o valor
-  de R$ 397,00 passa a valer nas cobranças pendentes/futuras do ciclo recorrente.
-- Pix comum e ciclos trimestral/anual não são alterados no meio do período:
-  nesses casos o cliente aguarda a renovação da franquia ou troca de plano na
-  renovação.
+- Oferta planejada de até 1.000 mensagens por mês, somando mensagens de serviço e de utilidade.
+- Dentro dessa franquia, no máximo 300 mensagens de utilidade por mês.
+- Recursos proativos planejados: lembretes de limpeza, retomada de atendimentos parados e outros lembretes operacionais via templates aprovados.
+- No MVP, esses disparos proativos permanecem desabilitados no servidor e o Plus não deve ser vendido como funcionalidade já entregue até o backend de templates/utilidade ser concluído.
 
 ## Liberação administrativa
 
