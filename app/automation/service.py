@@ -87,6 +87,12 @@ class AutomationPolicyService:
         control = await self.repository.lock_conversation_control(
             business_id, conversation_id
         )
+        if (
+            not control.automation_enabled
+            or control.handoff_status == "waiting"
+        ):
+            return AutomationDecision.DISABLED
+
         suppressed_until = control.automation_suppressed_until
         if suppressed_until is None:
             return AutomationDecision.ALLOWED
