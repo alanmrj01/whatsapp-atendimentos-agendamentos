@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -33,12 +34,24 @@ TERMINAL_CONVERSATION_STATES = {
 OUTREACH_BATCH_LIMIT = 100
 
 
+def proactive_outreach_enabled() -> bool:
+    return os.getenv("ALOVIA_PROACTIVE_OUTREACH_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 async def create_due_lifecycle_outreach(
     session: AsyncSession,
     *,
     now: datetime | None = None,
     limit: int = OUTREACH_BATCH_LIMIT,
 ) -> list[uuid.UUID]:
+    if not proactive_outreach_enabled():
+        return []
+
     reference = now or datetime.now(timezone.utc)
     message_ids: list[uuid.UUID] = []
     message_ids.extend(
