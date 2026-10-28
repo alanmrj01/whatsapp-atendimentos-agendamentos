@@ -729,12 +729,12 @@ def tubing_guidance_message(
             f"Acima disso, cada metro adicional custa "
             f"{_format_brl(extra_meter_price)} e entra no orçamento. "
         )
+    else:
+        body += "Se precisar de material adicional, o valor pode variar. "
     body += (
         "Se você não souber a medida exata, sem problema: o técnico pode "
         "conferir no local."
     )
-    else:
-        body += " Se precisar de material adicional, o valor pode variar."
     return OutboundMessage(message_type="text", body=body)
 
 
