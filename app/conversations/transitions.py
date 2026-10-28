@@ -4752,11 +4752,10 @@ async def _handle_address(
 
     city_alias = _city_alias_from_text(value)
     if city_alias is not None:
-        city_name, state_code = city_alias
-        address = ServiceAddress(
-            address_line=value,
-            city=city_name,
-            state=state_code,
+        address = _service_address_from_text(
+            value,
+            business_city=business_city,
+            business_state=business_state,
         )
         return await _advance_intake(
             inbound,
