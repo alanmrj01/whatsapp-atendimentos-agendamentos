@@ -70,6 +70,7 @@ class FakeAutomationRepository:
         self.controls[conversation_id] = ConversationAutomationControl(
             self.controls[conversation_id].automation_suppressed_until,
             "human_only",
+            self.controls[conversation_id].automation_enabled,
         )
 
     async def clear_human_only_marker(
@@ -81,6 +82,7 @@ class FakeAutomationRepository:
             self.controls[conversation_id] = ConversationAutomationControl(
                 control.automation_suppressed_until,
                 "none",
+                control.automation_enabled,
             )
 
     async def clear_temporary_suppression(
@@ -90,6 +92,7 @@ class FakeAutomationRepository:
         self.controls[conversation_id] = ConversationAutomationControl(
             None,
             self.controls[conversation_id].handoff_status,
+            self.controls[conversation_id].automation_enabled,
         )
 
     async def activate_human_control(
@@ -103,6 +106,7 @@ class FakeAutomationRepository:
         self.controls[conversation_id] = ConversationAutomationControl(
             until,
             self.controls[conversation_id].handoff_status,
+            self.controls[conversation_id].automation_enabled,
         )
         return until
 
@@ -177,6 +181,27 @@ async def test_fixed_exclusion_policy_blocks_only_when_active(
     assert bool(repository.human_only_marked) is (
         mode is ExclusionMode.HUMAN_ONLY
     )
+
+
+@pytest.mark.asyncio
+async def test_paused_conversation_is_fail_closed_before_engine_policy_allows_inbound() -> None:
+    repository = FakeAutomationRepository()
+    repository.controls[CONVERSATION] = ConversationAutomationControl(
+        None,
+        "waiting",
+        False,
+    )
+    policy = AutomationPolicyService(repository, now=lambda: NOW)
+
+    decision = await policy.evaluate_customer_inbound(
+        BUSINESS_A,
+        CONVERSATION,
+        None,
+    )
+
+    assert decision is AutomationDecision.CONVERSATION_PAUSED
+    assert repository.human_only_cleared == []
+    assert repository.suppressions_cleared == []
 
 
 @pytest.mark.asyncio
