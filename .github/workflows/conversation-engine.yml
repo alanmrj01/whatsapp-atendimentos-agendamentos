@@ -75,6 +75,7 @@ jobs:
           pytest
           tests/test_conversation_interpreter.py
           tests/test_conversation_engine.py
+          tests/test_automation_policy.py
           tests/test_conversation_repository.py
           tests/test_handoff_reactivation.py
           tests/test_cloud_tasks.py
@@ -91,6 +92,7 @@ jobs:
         run: >-
           pytest
           tests/integration/test_booking_postgresql_additional.py::test_preventive_outreach_can_be_fast_forwarded_without_waiting_six_months
+          tests/integration/test_automation_postgresql.py::test_queued_inbound_is_stopped_if_conversation_is_paused_before_worker
           -q -p no:cacheprovider
 
       - name: Check dependencies
