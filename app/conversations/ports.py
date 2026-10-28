@@ -29,6 +29,7 @@ class ServiceDetails:
     description: str | None
     included_tubing_meters: Decimal | None = None
     extra_tubing_price: Decimal | None = None
+    extra_tubing_unit_label: str | None = None
     business_city: str | None = None
     business_state: str | None = None
     business_address: str | None = None
