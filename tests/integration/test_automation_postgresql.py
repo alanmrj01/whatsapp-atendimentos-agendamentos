@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -272,6 +273,87 @@ async def test_ignore_human_only_deactivation_and_multitenancy(
     assert conversation is not None
     assert conversation.handoff_status == "none"
     assert outbound_count == 1
+
+
+async def test_queued_inbound_is_stopped_if_conversation_is_paused_before_worker(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions,
+        phone_number_id="physical-pause-race-phone",
+    )
+    whatsapp_id = "5511999995050"
+    event = inbound(
+        "physical-pause-race-event",
+        whatsapp_id,
+        "physical-pause-race-phone",
+    )
+
+    # First phase mirrors production webhook persistence while automation is on.
+    async with sessions() as session:
+        event_keys = await persist_webhook_events_for_tasks(session, [event])
+    assert event_keys == [event.event_key]
+
+    async with sessions() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id
+            )
+        )
+        assert conversation is not None
+        conversation_id = conversation.id
+
+    # User pauses the conversation after the webhook was queued, but before the
+    # Cloud Task worker gets to execute it.
+    async with sessions() as session:
+        async with session.begin():
+            await session.execute(
+                update(Conversation)
+                .where(
+                    Conversation.business_id == business_id,
+                    Conversation.id == conversation_id,
+                )
+                .values(
+                    automation_enabled=False,
+                    handoff_status="waiting",
+                )
+            )
+
+    engine = AsyncMock()
+    async with sessions() as session:
+        processed = await process_cloud_task_event(
+            session,
+            event.event_key,
+            conversation_engine=engine,
+        )
+
+    assert processed is False
+    engine.process.assert_not_awaited()
+
+    async with sessions() as session:
+        stored_event = await session.scalar(
+            select(ProcessedWebhook).where(
+                ProcessedWebhook.event_key == event.event_key
+            )
+        )
+        outbound_count = await session.scalar(
+            select(func.count(Message.id)).where(
+                Message.business_id == business_id,
+                Message.conversation_id == conversation_id,
+                Message.direction == "outbound",
+            )
+        )
+        paused = await session.scalar(
+            select(Conversation.automation_enabled).where(
+                Conversation.id == conversation_id
+            )
+        )
+
+    assert stored_event is not None
+    assert stored_event.status == "ignored"
+    assert stored_event.outcome_reason == "conversation_paused"
+    assert outbound_count == 0
+    assert paused is False
 
 
 async def test_manual_echo_suppresses_renews_and_resumes_without_job(
