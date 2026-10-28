@@ -8464,9 +8464,17 @@ async def _confirmation_body(
                 "Valor base do serviço técnico"
                 if service_kind == "diagnostics"
                 else (
-                    "Valor do serviço"
-                    if plan.service.pricing_type is PricingType.FIXED
-                    else "Valor estimado do serviço"
+                    (
+                        "Valor do serviço (com adicionais)"
+                        if plan.service.pricing_type is PricingType.FIXED
+                        else "Valor estimado do serviço (com adicionais)"
+                    )
+                    if addition_lines
+                    else (
+                        "Valor do serviço"
+                        if plan.service.pricing_type is PricingType.FIXED
+                        else "Valor estimado do serviço"
+                    )
                 )
             )
             lines.append(f"• {price_label}: {_format_brl(service_price)}")
