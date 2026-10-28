@@ -3607,8 +3607,13 @@ def _address_has_city_or_state(
             rf"\b{marker}\b\s+([a-z0-9]+(?:\s+[a-z0-9]+){{1,5}})$",
             normalized,
         )
-        if match and len(match.group(1).split()) >= 2:
-            return True
+        if match:
+            tail_tokens = match.group(1).split()
+            if (
+                len(tail_tokens) >= 2
+                and tail_tokens[-1] not in _BRAZIL_STATE_CODES
+            ):
+                return True
     return False
 
 
