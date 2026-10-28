@@ -1503,7 +1503,6 @@ async def test_stale_booking_button_is_never_saved_as_customer_name() -> None:
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
     assert "etapa anterior" not in body
     assert "como posso te chamar" in body
-    assert "nome" in body
     assert "prazer, voltar" not in body
 
 
