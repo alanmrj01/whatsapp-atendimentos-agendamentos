@@ -1856,6 +1856,29 @@ async def test_state_abbreviation_without_city_does_not_fake_route_locality() ->
 
 
 @mark.asyncio
+async def test_neighborhood_plus_state_without_city_still_asks_for_city() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Joao",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.business_city = "São José dos Campos"
+    booking_port.business_state = "SP"
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(213, body="R 28, 47, Pq Imperial SP")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["awaiting_address_city"] is True
+
+
+@mark.asyncio
 async def test_greeting_with_tudo_bem_mirrors_customer_tone() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.COMPLETED,
