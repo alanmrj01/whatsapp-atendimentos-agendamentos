@@ -1440,6 +1440,46 @@ async def test_manual_echo_never_enters_engine_or_creates_fixed_exclusion() -> N
 
 
 @mark.asyncio
+async def test_paused_conversation_never_enters_engine_on_customer_inbound() -> None:
+    repository = FakeWebhookRepository()
+    automation = FakeAutomationRepository()
+    automation.controls[repository.conversation_id] = (
+        ConversationAutomationControl(
+            None,
+            "waiting",
+            automation_enabled=False,
+        )
+    )
+    engine = AsyncMock()
+    event = InboundMessageEvent(
+        event_key=build_event_key("inbound", "provider-paused-conversation"),
+        event_type="message.inbound.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-paused-conversation",
+        whatsapp_id="5511999990008",
+        message_type="text",
+        body="mensagem depois de pausar",
+        interactive_id=None,
+    )
+
+    await process_webhook_events(
+        FakeSession(),
+        [event],
+        repository,
+        engine,
+        automation_repository=automation,
+    )
+
+    engine.process.assert_not_awaited()
+    assert len(repository.persisted_messages) == 1
+    assert repository.completed == [(event.event_key, "ignored")]
+    assert repository.diagnostics[event.event_key] == (
+        repository.business_id,
+        "automation_disabled",
+    )
+
+
+@mark.asyncio
 async def test_customer_is_suppressed_then_resumes_automatically_after_expiry() -> None:
     repository = FakeWebhookRepository()
     automation = FakeAutomationRepository()
