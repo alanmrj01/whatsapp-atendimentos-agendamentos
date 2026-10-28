@@ -3851,7 +3851,7 @@ async def test_confirmation_itemizes_quantity_and_access_additions_from_estimato
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "Adicional por quantidade: R$ 160,00" in body
     assert "Adicional por acesso difícil: R$ 50,00" in body
-    assert "Valor do serviço (com adicionais): R$ 510,00" in body
+    assert "Valor estimado do serviço (com adicionais): R$ 510,00" in body
 
 
 @mark.asyncio
