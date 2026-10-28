@@ -24,6 +24,7 @@ from app.core.config import (
 )
 from app.main import app
 from app.repositories.cloud_tasks import StoredTaskEvent
+from app.repositories.automation import ConversationAutomationControl
 from app.schemas.cloud_tasks import WhatsAppEventTaskPayload
 from app.tasks import auth as task_auth
 from app.tasks import cloud_tasks as cloud_tasks_module
@@ -36,6 +37,7 @@ from app.tasks.cloud_tasks import (
 )
 from app.tasks.worker import process_cloud_task_event
 from app.whatsapp.webhook import build_event_key
+from tests.test_automation_policy import FakeAutomationRepository
 
 INVOKER_EMAIL = (
     "whatsapp-task-invoker@whatsapp-automacao-prod.iam.gserviceaccount.com"
@@ -368,6 +370,33 @@ async def test_worker_executes_engine_once_and_marks_processed() -> None:
     assert second is False
     engine.process.assert_awaited_once_with(repository.inbound)
     assert repository.completed == [(EVENT_KEY, "processed")]
+
+
+@pytest.mark.asyncio
+async def test_worker_rechecks_pause_even_when_event_was_queued_before_toggle() -> None:
+    repository = FakeTaskRepository(stored_event())
+    repository.inbound = replace(
+        repository.inbound,
+        whatsapp_id="5511999990008",
+    )
+    automation = FakeAutomationRepository()
+    automation.controls[repository.inbound.conversation_id] = (
+        ConversationAutomationControl(None, "waiting", False)
+    )
+    engine = AsyncMock()
+
+    processed = await process_cloud_task_event(
+        FakeTaskSession(),
+        EVENT_KEY,
+        repository,
+        engine,
+        automation_repository=automation,
+    )
+
+    assert processed is False
+    engine.process.assert_not_awaited()
+    assert repository.completed == [(EVENT_KEY, "ignored")]
+    assert repository.event.outcome_reason == "conversation_paused"
 
 
 @pytest.mark.asyncio
