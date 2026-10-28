@@ -27,6 +27,7 @@ from app.conversations.constants import ConversationState
 from app.main import app
 from app.operations.service import (
     OperationalService,
+    _display_name,
     _message_history_sort_key,
     _message_view,
 )
@@ -46,6 +47,22 @@ from app.operations.schemas import (
 
 BUSINESS_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 BUSINESS_B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+
+def test_conversation_display_prefers_captured_name_over_profile_noise() -> None:
+    assert _display_name(
+        "Juliana",
+        "~!",
+        "+5512981359722",
+        "5512981359722",
+        name_source="conversation",
+    ) == "Juliana"
+    assert _display_name(
+        None,
+        "🙂",
+        "+5512981359722",
+        "5512981359722",
+    ) == "+5512981359722"
 
 
 def principal(
