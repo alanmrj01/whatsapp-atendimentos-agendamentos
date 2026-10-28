@@ -94,6 +94,7 @@ from app.schemas.automation import (
     BusinessAutomationSettingsUpdate,
 )
 from app.whatsapp.connections import WhatsAppConnectionStatus
+from app.whatsapp.webhook import normalize_human_profile_name
 
 
 class OperationalService:
@@ -2194,12 +2195,18 @@ def _display_name(
     *,
     name_source: str | None = None,
 ) -> str:
-    if name_source == "manual" and isinstance(name, str) and name.strip():
-        return name
-    if isinstance(profile_name, str) and profile_name.strip():
-        return profile_name
-    if isinstance(name, str) and name.strip():
-        return name
+    if (
+        name_source in {"manual", "conversation"}
+        and isinstance(name, str)
+        and name.strip()
+    ):
+        return name.strip()
+    normalized_profile = normalize_human_profile_name(profile_name)
+    if normalized_profile is not None:
+        return normalized_profile
+    normalized_name = normalize_human_profile_name(name)
+    if normalized_name is not None:
+        return normalized_name
     return phone or whatsapp_id
 
 
