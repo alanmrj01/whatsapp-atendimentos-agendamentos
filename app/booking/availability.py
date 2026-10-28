@@ -841,24 +841,41 @@ class PostgresBookingAvailabilityPort:
                 )
                 if same_address is not None:
                     travel = same_address
-                elif (
-                    calculation_method is TravelCalculationMethod.ROUTE
-                    and self.travel_time_port is not None
-                ):
-                    travel = await self.travel_time_port.estimate(
-                        origin,
-                        requirements.address,
-                    )
-                    travel = replace(
-                        travel,
-                        estimated=travel.estimated or not origin.is_precise,
-                        origin_is_precise=origin.is_precise,
-                    )
+                elif calculation_method is TravelCalculationMethod.ROUTE:
+                    if self.travel_time_port is None:
+                        travel = await configured_port.estimate(
+                            origin,
+                            requirements.address,
+                        )
+                    else:
+                        travel = await self.travel_time_port.estimate(
+                            origin,
+                            requirements.address,
+                        )
+                        travel = replace(
+                            travel,
+                            estimated=travel.estimated or not origin.is_precise,
+                            origin_is_precise=origin.is_precise,
+                        )
                 else:
                     travel = await configured_port.estimate(
                         origin,
                         requirements.address,
                     )
+                    # Existing tenants may still carry the structural
+                    # configured_estimate default without any trusted regional
+                    # estimate. When that path is unavailable, use the real
+                    # route provider before handing the customer to a person.
+                    if not travel.available and self.travel_time_port is not None:
+                        travel = await self.travel_time_port.estimate(
+                            origin,
+                            requirements.address,
+                        )
+                        travel = replace(
+                            travel,
+                            estimated=travel.estimated or not origin.is_precise,
+                            origin_is_precise=origin.is_precise,
+                        )
 
         service_distance_outside_radius = False
         if not is_fulfillment and travel.distance_km is not None:
@@ -1386,14 +1403,24 @@ class PostgresBookingAvailabilityPort:
             method = TravelCalculationMethod(business.travel_calculation_method)
         except ValueError:
             return unavailable_travel_estimate(origin)
-        if method is TravelCalculationMethod.ROUTE and self.travel_time_port:
+        if method is TravelCalculationMethod.ROUTE:
+            if self.travel_time_port is None:
+                return await configured_port.estimate(origin, destination)
             estimate = await self.travel_time_port.estimate(origin, destination)
             return replace(
                 estimate,
                 estimated=estimate.estimated or not origin.is_precise,
                 origin_is_precise=origin.is_precise,
             )
-        return await configured_port.estimate(origin, destination)
+        estimate = await configured_port.estimate(origin, destination)
+        if estimate.available or self.travel_time_port is None:
+            return estimate
+        route_estimate = await self.travel_time_port.estimate(origin, destination)
+        return replace(
+            route_estimate,
+            estimated=route_estimate.estimated or not origin.is_precise,
+            origin_is_precise=origin.is_precise,
+        )
 
     async def _load_capacity(
         self,
