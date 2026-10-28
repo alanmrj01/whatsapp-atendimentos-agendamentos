@@ -653,7 +653,7 @@ async def test_unnamed_customer_is_asked_once_and_pending_service_is_resumed() -
 
     assert repository.state == ConversationState.CUSTOMER_NAME
     first_body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "qual é o seu nome" in first_body
+    assert "como posso te chamar" in first_body
     assert "não entendi" not in first_body
 
     await engine.process(inbound(2, body="Alan"))
