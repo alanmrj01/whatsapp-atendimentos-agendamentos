@@ -3201,7 +3201,11 @@ async def _tubing_prompt_transition(
         ConversationState.BOOKING_TUBING,
         context,
         question,
-        follow_ups=(guidance,),
+        follow_ups=(
+            ()
+            if context.get("tube_disclaimer_sent") is True
+            else (guidance,)
+        ),
     )
 
 
@@ -3450,6 +3454,117 @@ def _expand_address_abbreviations(value: str) -> str:
     return " ".join(expanded.split())
 
 
+def _state_code_from_segment(value: str) -> str | None:
+    normalized = normalize_portuguese(value).strip()
+    if normalized in _BRAZIL_STATE_CODES:
+        return normalized.upper()
+    state_names = {
+        "acre": "AC", "alagoas": "AL", "amapa": "AP", "amazonas": "AM",
+        "bahia": "BA", "ceara": "CE", "distrito federal": "DF",
+        "espirito santo": "ES", "goias": "GO", "maranhao": "MA",
+        "mato grosso": "MT", "mato grosso do sul": "MS",
+        "minas gerais": "MG", "para": "PA", "paraiba": "PB",
+        "parana": "PR", "pernambuco": "PE", "piaui": "PI",
+        "rio de janeiro": "RJ", "rio grande do norte": "RN",
+        "rio grande do sul": "RS", "rondonia": "RO", "roraima": "RR",
+        "santa catarina": "SC", "sao paulo": "SP", "sergipe": "SE",
+        "tocantins": "TO",
+    }
+    return state_names.get(normalized)
+
+
+def _split_city_state_label(value: str) -> tuple[str, str | None]:
+    raw = " ".join(value.split()).strip(" ,-")
+    match = re.match(r"^(.*?)\s*(?:-|/|,)\s*([A-Za-z]{2})\s*$", raw)
+    if match and normalize_portuguese(match.group(2)) in _BRAZIL_STATE_CODES:
+        city = match.group(1).strip(" ,-")
+        return city, match.group(2).upper()
+    alias = _CITY_ABBREVIATIONS.get(normalize_portuguese(raw))
+    if alias is not None:
+        return alias
+    return raw, None
+
+
+def _service_address_from_text(
+    value: str,
+    *,
+    business_city: str | None,
+    business_state: str | None,
+) -> ServiceAddress:
+    expanded = _expand_address_abbreviations(value)
+    raw_segments = [
+        " ".join(segment.split()).strip()
+        for segment in re.split(r"[,\n]+", expanded)
+        if segment.strip()
+    ]
+    city: str | None = None
+    state: str | None = None
+    remove_count = 0
+
+    alias = _city_alias_from_text(expanded)
+    if raw_segments:
+        trailing_state = _state_code_from_segment(raw_segments[-1])
+        if trailing_state is not None:
+            state = trailing_state
+            remove_count = 1
+
+    city_index = len(raw_segments) - 1 - remove_count
+    if alias is not None:
+        city, alias_state = alias
+        state = alias_state
+        if city_index >= 1:
+            candidate = normalize_portuguese(raw_segments[city_index])
+            candidate_tokens = [
+                token for token in candidate.split()
+                if token not in _BRAZIL_STATE_CODES
+            ]
+            if len(candidate_tokens) == 1 and candidate_tokens[0] in _CITY_ABBREVIATIONS:
+                remove_count += 1
+    elif (
+        isinstance(business_city, str)
+        and business_city.strip()
+        and normalize_portuguese(business_city) in normalize_portuguese(expanded)
+    ):
+        city = business_city.strip()
+        state = state or (
+            business_state.strip().upper()
+            if isinstance(business_state, str) and business_state.strip()
+            else None
+        )
+        if city_index >= 1:
+            candidate_city, candidate_state = _split_city_state_label(
+                raw_segments[city_index]
+            )
+            if normalize_portuguese(candidate_city) == normalize_portuguese(city):
+                state = candidate_state or state
+                remove_count += 1
+    elif len(raw_segments) - remove_count >= 3 and city_index >= 2:
+        candidate_city, candidate_state = _split_city_state_label(
+            raw_segments[city_index]
+        )
+        normalized_candidate = normalize_portuguese(candidate_city)
+        first_word = normalized_candidate.split()[0] if normalized_candidate.split() else ""
+        if (
+            normalized_candidate
+            and not any(character.isdigit() for character in normalized_candidate)
+            and first_word not in _NEIGHBORHOOD_MARKERS
+            and 1 <= len(normalized_candidate.split()) <= 5
+        ):
+            city = candidate_city
+            state = candidate_state or state
+            remove_count += 1
+
+    address_segments = (
+        raw_segments[:-remove_count] if remove_count else raw_segments
+    )
+    address_line = ", ".join(address_segments) if address_segments else expanded
+    return ServiceAddress(
+        address_line=address_line,
+        city=city,
+        state=state,
+    )
+
+
 def _address_has_city_or_state(
     value: str,
     *,
@@ -3464,18 +3579,18 @@ def _address_has_city_or_state(
         if f" {city} " in padded:
             return True
 
-    tokens = normalized.split()
-    if any(code in tokens for code in _BRAZIL_STATE_CODES):
-        return True
-    if any(f" {state} " in padded for state in _BRAZIL_STATE_NAMES):
+    if _city_alias_from_text(value) is not None:
         return True
 
-    # Rua..., número..., cidade: último segmento textual sem marcador de bairro.
+    # UF sozinha não identifica o município. Removemos um segmento final que
+    # contenha apenas UF/estado e exigimos uma cidade explícita antes dele.
     segments = [
         normalize_portuguese(segment)
         for segment in re.split(r"[,\n]+", value)
         if normalize_portuguese(segment)
     ]
+    if segments and _state_code_from_segment(segments[-1]) is not None:
+        segments = segments[:-1]
     if len(segments) >= 3:
         last = segments[-1]
         first_word = last.split()[0] if last.split() else ""
@@ -4541,9 +4656,11 @@ async def _handle_address(
                     customer_name=customer_name,
                 )
             if _looks_like_city(raw_value):
+                city_name, state_code = _split_city_state_label(raw_value)
                 address = ServiceAddress(
                     address_line=pending_address,
-                    city=raw_value,
+                    city=city_name,
+                    state=state_code,
                 )
                 return await _advance_intake(
                     inbound,
@@ -4572,7 +4689,11 @@ async def _handle_address(
                 business_city=business_city,
                 business_state=business_state,
             ):
-                address = ServiceAddress(address_line=value)
+                address = _service_address_from_text(
+                    value,
+                    business_city=business_city,
+                    business_state=business_state,
+                )
                 return await _advance_intake(
                     inbound,
                     port,
@@ -4665,7 +4786,11 @@ async def _handle_address(
             ),
         )
 
-    address = ServiceAddress(address_line=value)
+    address = _service_address_from_text(
+        value,
+        business_city=business_city,
+        business_state=business_state,
+    )
     return await _advance_intake(
         inbound,
         port,
@@ -5678,7 +5803,6 @@ async def _handle_installation_height(
         "service_id": str(service_id),
         "installation_height_over_3m": height,
         "work_at_height": height,
-        "tubing_length_answered": True,
     }
     updated = invalidate_changed_facts(context, updated)
     return await _advance_intake(
@@ -7188,7 +7312,6 @@ async def _advance_intake(
             updated = {
                 **context,
                 "tube_disclaimer_sent": True,
-                "tubing_length_answered": True,
             }
             next_transition = await _advance_intake(
                 inbound,
@@ -7211,8 +7334,7 @@ async def _advance_intake(
             )
 
     if (
-        service_kind != "installation"
-        and intake.asks_tubing_length
+        intake.asks_tubing_length
         and context.get("tubing_length_answered") is not True
     ):
         return await _tubing_prompt_transition(
@@ -8088,11 +8210,17 @@ async def _quote_transition(
             equipment_amount = Decimal(str(raw_equipment_price))
 
     financial_lines: list[str] = []
+    addition_lines = _price_addition_lines(plan.service.applied_rules)
+    financial_lines.extend(addition_lines)
     if service_amount is not None:
         service_price_label = (
             "Valor base do serviço técnico"
             if service_kind == "diagnostics"
-            else "Valor do serviço"
+            else (
+                "Valor do serviço (com adicionais)"
+                if addition_lines
+                else "Valor do serviço"
+            )
         )
         financial_lines.append(
             f"{service_price_label}: {_format_brl(service_amount)}."
@@ -8283,12 +8411,21 @@ async def _confirmation_body(
                 equipment_price = Decimal(str(raw_equipment_price))
 
         purchase_mode = _context_string(context, "purchase_mode")
+        addition_lines = _price_addition_lines(
+            plan.service.applied_rules,
+            bullet=True,
+        )
         if purchase_mode == "both":
+            lines.extend(addition_lines)
             if service_price is not None:
                 service_label_price = (
                     "Valor base do serviço técnico"
                     if service_kind == "diagnostics"
-                    else "Valor do serviço"
+                    else (
+                        "Valor do serviço (com adicionais)"
+                        if addition_lines
+                        else "Valor do serviço"
+                    )
                 )
                 lines.append(
                     f"• {service_label_price}: {_format_brl(service_price)}"
@@ -8318,6 +8455,7 @@ async def _confirmation_body(
             elif fulfillment_type == "equipment_pickup":
                 lines.append("• Taxa de entrega: não se aplica")
         elif service_price is not None:
+            lines.extend(addition_lines)
             price_label = (
                 "Valor base do serviço técnico"
                 if service_kind == "diagnostics"
@@ -9044,6 +9182,35 @@ def _estimate_message(plan: BookingPlan) -> str:
         f"Pelas informações que você passou, o valor estimado é {formatted}. "
         "Ele pode mudar se houver uma condição diferente no local."
     )
+
+
+def _price_addition_lines(
+    applied_rules: tuple[str, ...],
+    *,
+    bullet: bool = False,
+) -> list[str]:
+    labels = {
+        "extra_tubing_price": "Adicional de tubulação",
+        "service_distance_fee": "Adicional de deslocamento",
+    }
+    values: dict[str, Decimal] = {}
+    for rule in applied_rules:
+        key, separator, raw_value = rule.partition(":")
+        if not separator or key not in labels:
+            continue
+        try:
+            value = Decimal(raw_value)
+        except Exception:
+            continue
+        if value > 0:
+            values[key] = value
+    prefix = "• " if bullet else ""
+    suffix = "" if bullet else "."
+    return [
+        f"{prefix}{labels[key]}: {_format_brl(values[key])}{suffix}"
+        for key in ("extra_tubing_price", "service_distance_fee")
+        if key in values
+    ]
 
 
 def _format_brl(value: Decimal) -> str:
