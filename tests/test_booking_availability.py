@@ -1335,6 +1335,37 @@ class _FulfillmentPlanPort(PostgresBookingAvailabilityPort):
 
 
 @pytest.mark.asyncio
+async def test_configured_estimate_falls_back_to_real_route_before_handoff() -> None:
+    company = business(
+        travel_calculation_method="configured_estimate",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+        travel_region_rules=[],
+        service_distance_included_km=Decimal("15.00"),
+        service_distance_fee_per_km=Decimal("2.40"),
+    )
+    port = _FulfillmentPlanPort(company, distance_km=Decimal("15.65"))
+
+    booking_plan = await port.estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(
+            address=ServiceAddress(
+                "Rua dos Alfaiates 109, Novo Horizonte",
+                city="São José dos Campos",
+                state="SP",
+            ),
+        ),
+    )
+
+    assert booking_plan.requires_handoff is False
+    assert booking_plan.handoff_reason is None
+    assert booking_plan.travel.available is True
+    assert booking_plan.travel.method == "route"
+    assert booking_plan.travel.distance_km == Decimal("15.65")
+
+
+@pytest.mark.asyncio
 async def test_service_distance_fee_is_added_to_service_total_from_real_route() -> None:
     company = business(
         travel_calculation_method="route",
