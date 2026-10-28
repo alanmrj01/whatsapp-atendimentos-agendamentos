@@ -95,6 +95,35 @@ class OutboundTaskRepository:
     async def lock_message(
         self, message_id: uuid.UUID
     ) -> StoredOutboundMessage | None:
+        scope = (
+            await self.session.execute(
+                select(
+                    Message.business_id,
+                    Message.conversation_id,
+                ).where(
+                    Message.id == message_id,
+                    Message.direction == "outbound",
+                )
+            )
+        ).one_or_none()
+        if scope is None:
+            return None
+
+        # Lock the conversation before the outbound message. The assistant toggle
+        # uses the same lock order (conversation -> pending messages), making the
+        # API response a hard boundary: once "disabled" commits, no automatic
+        # worker can start a provider send using stale automation state.
+        locked_conversation = await self.session.scalar(
+            select(Conversation.id)
+            .where(
+                Conversation.business_id == scope.business_id,
+                Conversation.id == scope.conversation_id,
+            )
+            .with_for_update()
+        )
+        if locked_conversation is None:
+            return None
+
         active_exclusion = exists(
             select(BusinessAutomationExclusion.id).where(
                 BusinessAutomationExclusion.business_id == Message.business_id,
