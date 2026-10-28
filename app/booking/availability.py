@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import re
+import unicodedata
 import uuid
 from collections import defaultdict
 from collections.abc import Callable, Sequence
@@ -113,7 +115,23 @@ def _has_validated_structured_origin(business: Business) -> bool:
             business.service_origin_state,
         )
     )
-    return bool(business.service_origin_validated_at is not None or structured)
+    if business.service_origin_validated_at is not None or structured:
+        return True
+
+    # Pre-structured-address tenants may still have a precise legacy address.
+    # Require both a street-like marker and a number; the historical broad
+    # default ("Zona Leste de São José dos Campos - SP") deliberately fails.
+    legacy = " ".join((business.service_origin_address or "").split())
+    decomposed = unicodedata.normalize("NFKD", legacy.casefold())
+    normalized = "".join(
+        char for char in decomposed if not unicodedata.combining(char)
+    )
+    has_number = re.search(r"\b\d+[a-z]?\b", normalized) is not None
+    has_street = re.search(
+        r"\b(?:rua|r\.?|avenida|av\.?|rodovia|rod\.?|estrada|travessa|alameda)\b",
+        normalized,
+    ) is not None
+    return bool(has_number and has_street)
 
 
 def _effective_travel_method(
