@@ -37,6 +37,7 @@ class AutomationDecision(StrEnum):
     ALLOWED = "allowed"
     IGNORED = "ignored"
     HUMAN_ONLY = "human_only"
+    CONVERSATION_PAUSED = "conversation_paused"
     TEMPORARILY_SUPPRESSED = "temporarily_suppressed"
 
 
