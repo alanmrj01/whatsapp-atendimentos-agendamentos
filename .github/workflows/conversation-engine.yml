@@ -7,7 +7,9 @@ on:
     paths:
       - 'app/conversations/**'
       - 'app/booking/**'
+      - 'app/automation/**'
       - 'app/repositories/conversations.py'
+      - 'app/repositories/automation.py'
       - 'app/repositories/cloud_tasks.py'
       - 'app/repositories/outbound_tasks.py'
       - 'app/operations/service.py'
@@ -17,6 +19,8 @@ on:
       - 'app/whatsapp/processor.py'
       - 'tests/test_conversation_*.py'
       - 'tests/test_cloud_tasks.py'
+      - 'tests/test_automation_policy.py'
+      - 'tests/integration/test_automation_postgresql.py'
       - 'tests/test_dialogue.py'
       - 'tests/test_booking_availability.py'
       - 'tests/test_booking_travel.py'
@@ -78,6 +82,7 @@ jobs:
           tests/test_conversation_repository.py
           tests/test_handoff_reactivation.py
           tests/test_cloud_tasks.py
+          tests/test_automation_policy.py
           tests/test_dialogue.py
           tests/test_booking_availability.py
           tests/test_booking_travel.py
