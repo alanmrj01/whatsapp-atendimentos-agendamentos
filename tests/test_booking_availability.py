@@ -810,6 +810,92 @@ async def test_booking_plan_uses_configurable_origin_and_buffers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_specific_legacy_origin_uses_route_without_structured_columns() -> None:
+    company = business(
+        service_origin_address=(
+            "Rua da Empresa, 100 - Centro, São José dos Campos - SP"
+        ),
+        service_origin_street=None,
+        service_origin_number=None,
+        service_origin_city=None,
+        service_origin_state=None,
+        service_origin_validated_at=None,
+        travel_calculation_method="configured_estimate",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+        travel_region_rules=[],
+    )
+    destination = ServiceAddress(
+        "Rua dos Alfaiates 109, Novo Horizonte",
+        city="São José dos Campos",
+        state="SP",
+    )
+    travel = RecordingRouteTravel(
+        {(company.service_origin_address, destination.searchable_text): 22}
+    )
+
+    class PlanPort(PostgresBookingAvailabilityPort):
+        async def _load_business_service(self, *args: Any):  # type: ignore[no-untyped-def]
+            return company, service()
+
+        async def _require_eligible_employees(self, *args: Any):  # type: ignore[no-untyped-def]
+            return (EMPLOYEE_A,)
+
+    result = await PlanPort(  # type: ignore[arg-type]
+        object(),
+        travel_time_port=travel,
+    ).estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(address=destination),
+    )
+
+    assert result.requires_handoff is False
+    assert travel.calls
+
+
+@pytest.mark.asyncio
+async def test_historical_broad_origin_does_not_fake_precise_route_upgrade() -> None:
+    company = business(
+        service_origin_address="Zona Leste de São José dos Campos - SP",
+        service_origin_street=None,
+        service_origin_number=None,
+        service_origin_city=None,
+        service_origin_state=None,
+        service_origin_validated_at=None,
+        travel_calculation_method="configured_estimate",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+        travel_region_rules=[],
+    )
+
+    class PlanPort(PostgresBookingAvailabilityPort):
+        async def _load_business_service(self, *args: Any):  # type: ignore[no-untyped-def]
+            return company, service()
+
+        async def _require_eligible_employees(self, *args: Any):  # type: ignore[no-untyped-def]
+            return (EMPLOYEE_A,)
+
+    result = await PlanPort(  # type: ignore[arg-type]
+        object(),
+        travel_time_port=RecordingRouteTravel({}),
+    ).estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(
+            address=ServiceAddress(
+                "Rua dos Alfaiates 109, Novo Horizonte",
+                city="São José dos Campos",
+                state="SP",
+            )
+        ),
+    )
+
+    assert result.requires_handoff is True
+    assert result.handoff_reason == "travel_estimate_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_validated_structured_origin_upgrades_legacy_configured_estimate_to_route() -> None:
     company = business(
         service_origin_address=(
