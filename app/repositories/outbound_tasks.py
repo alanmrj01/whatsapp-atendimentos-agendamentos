@@ -146,7 +146,10 @@ class OutboundTaskRepository:
                 Message.id == message_id,
                 Message.direction == "outbound",
             )
-            .with_for_update(of=Message)
+            # Serialize delivery against the PWA pause toggle. Once the toggle
+            # returns "paused", no automatic worker can still be holding a stale
+            # "enabled" snapshot and send afterwards.
+            .with_for_update(of=[Message, Conversation])
         )
         row = result.one_or_none()
         if row is None:
