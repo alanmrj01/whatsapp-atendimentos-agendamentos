@@ -11,6 +11,7 @@ from app.conversations.types import (
     ConversationTransition,
 )
 from app.repositories.conversations import (
+    _effective_customer_name,
     build_follow_up_insert_statement,
     build_lock_conversation_statement,
     build_outbound_insert_statement,
@@ -41,6 +42,40 @@ def transition() -> ConversationTransition:
         handoff_status="none",
         outbound=main_menu_message(),
     )
+
+
+def test_invalid_profile_name_does_not_skip_natural_name_capture() -> None:
+    assert _effective_customer_name(
+        None,
+        None,
+        "~!",
+        "+5512981359722",
+        "5512981359722",
+    ) is None
+    assert _effective_customer_name(
+        None,
+        None,
+        "🙂",
+        "+5512981359722",
+        "5512981359722",
+    ) is None
+
+
+def test_conversation_captured_name_overrides_profile_name() -> None:
+    assert _effective_customer_name(
+        "Juliana",
+        "conversation",
+        "~!",
+        "+5512981359722",
+        "5512981359722",
+    ) == "Juliana"
+    assert _effective_customer_name(
+        "Juliana",
+        "conversation",
+        "Nome antigo",
+        "+5512981359722",
+        "5512981359722",
+    ) == "Juliana"
 
 
 def test_conversation_lock_uses_postgresql_for_update() -> None:
