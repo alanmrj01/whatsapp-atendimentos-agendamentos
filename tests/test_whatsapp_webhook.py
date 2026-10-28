@@ -737,6 +737,10 @@ async def test_profile_name_is_normalized_and_associated_by_whatsapp_id(
     [
         {"wa_id": "5511999990002", "profile": {"name": 123}},
         {"wa_id": "5511999990002", "profile": {"name": "x" * 256}},
+        {"wa_id": "5511999990002", "profile": {"name": "~!"}},
+        {"wa_id": "5511999990002", "profile": {"name": "🙂"}},
+        {"wa_id": "5511999990002", "profile": {"name": "12345"}},
+        {"wa_id": "5511999990002", "profile": {"name": "J"}},
         {"wa_id": "5511999990002", "profile": None},
         "malformed",
     ],
