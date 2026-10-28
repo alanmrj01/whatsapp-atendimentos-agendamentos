@@ -1182,7 +1182,7 @@ async def _handle_customer_name(
             updated,
             "customer_name",
             name_request_message(
-                "Não consegui identificar seu nome. Pode me dizer só como gostaria de ser chamado?"
+                "Como você prefere que eu te chame?"
             ),
             handoff_body=(
                 "Não consegui confirmar seu nome com segurança. "
@@ -1256,12 +1256,10 @@ def _name_request_transition(
             conversation.business_timezone,
             include_help=False,
         )
-        body = f"{greeting} Antes de continuarmos, qual é o seu nome?"
+        body = f"{greeting} Como posso te chamar?"
     else:
         greeting = daypart_greeting(conversation.business_timezone)
-        body = (
-            f"{greeting}! Claro. Antes de continuarmos, qual é o seu nome?"
-        )
+        body = f"{greeting}! Claro. Como posso te chamar?"
     return _transition(
         ConversationState.CUSTOMER_NAME,
         context,
