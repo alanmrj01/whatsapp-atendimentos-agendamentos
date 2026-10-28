@@ -751,7 +751,12 @@ def normalize_profile_customer_name(value: str | None) -> str | None:
 
     normalized = normalize_portuguese(candidate)
     letters = "".join(character for character in normalized if character.isalpha())
-    if len(letters) < 3:
+    if len(letters) < 2:
+        return None
+    # Two-letter all-uppercase profile labels are much more likely initials than
+    # a name. Preserve natural short names such as "Lu".
+    raw_letters = "".join(character for character in raw if character.isalpha())
+    if len(letters) == 2 and raw_letters.isupper():
         return None
 
     business_like_tokens = {
