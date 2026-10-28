@@ -3105,7 +3105,7 @@ def _stale_interactive_transition(
             state,
             context,
             name_request_message(
-                "Sem problema. Antes de continuar, qual é o seu nome?"
+                "Sem problema. Como posso te chamar?"
             ),
         )
     if state is ConversationState.BOOKING_ADDRESS:
