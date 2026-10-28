@@ -35,6 +35,7 @@ class ExclusionMode(StrEnum):
 
 class AutomationDecision(StrEnum):
     ALLOWED = "allowed"
+    DISABLED = "automation_disabled"
     IGNORED = "ignored"
     HUMAN_ONLY = "human_only"
     TEMPORARILY_SUPPRESSED = "temporarily_suppressed"
