@@ -255,7 +255,7 @@ async def test_private_endpoint_auth_and_safe_machine_readable_response(client: 
     service = DiagnosticsService(repo, settings())
     app.dependency_overrides[get_settings] = settings
     app.dependency_overrides[get_diagnostics_service] = lambda: service
-    monkeypatch.setattr(app.state, "initialized", True)
+    monkeypatch.setattr(app.state, "initialized", True, raising=False)
     monkeypatch.setattr(auth, "_verify_google_oidc_token", lambda *_: {
         "email": settings().cloud_tasks_invoker_email, "email_verified": True,
     })
@@ -281,7 +281,7 @@ async def test_liveness_ignores_dependencies_and_readiness_checks_lifespan_schem
     repo = FakeDiagnosticsRepository()
     app.dependency_overrides[get_diagnostics_service] = lambda: DiagnosticsService(repo, settings())
     try:
-        monkeypatch.setattr(app.state, "initialized", False)
+        monkeypatch.setattr(app.state, "initialized", False, raising=False)
         assert (await client.get("/health")).json() == {"status": "ok"}
         assert repo.calls == []
         assert (await client.get("/ready")).status_code == 503
@@ -376,7 +376,7 @@ async def test_commit_sha_optional_and_sanitized(sha, client, monkeypatch):
     assert result.version.commit == (sha if sha == "b" * 40 else None)
     assert result.status is Status.OK
     app.dependency_overrides[get_diagnostics_service] = lambda: service
-    monkeypatch.setattr(app.state, "initialized", True)
+    monkeypatch.setattr(app.state, "initialized", True, raising=False)
     try:
         assert (await client.get("/health")).status_code == 200
         assert (await client.get("/ready")).status_code == 200
