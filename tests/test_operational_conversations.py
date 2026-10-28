@@ -183,19 +183,25 @@ async def test_manual_message_for_conversation_outside_tenant_is_not_found() -> 
     assert session.added is None
 
 
-def test_customer_name_precedence_preserves_manual_override() -> None:
+def test_customer_name_precedence_preserves_learned_and_manual_names() -> None:
     assert _display_name(
         "Nome manual",
         "Nome WhatsApp",
         "+5511",
         "5511",
         name_source="manual",
-    ) == (
-        "Nome manual"
-    )
+    ) == "Nome manual"
+    assert _display_name(
+        "Juliana",
+        "~!",
+        "+5511",
+        "5511",
+        name_source="conversation",
+    ) == "Juliana"
     assert _display_name(None, "Nome WhatsApp", "+5511", "5511") == (
         "Nome WhatsApp"
     )
+    assert _display_name(None, "~!", "+5511", "5511") == "+5511"
     assert _display_name(None, None, "+5511", "5511") == "+5511"
     assert _display_name(None, None, None, "5511") == "5511"
 
