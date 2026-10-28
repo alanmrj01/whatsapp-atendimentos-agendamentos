@@ -9194,6 +9194,8 @@ def _price_addition_lines(
     bullet: bool = False,
 ) -> list[str]:
     labels = {
+        "additional_units_price": "Adicional por quantidade",
+        "difficult_access_price": "Adicional por acesso difícil",
         "extra_tubing_price": "Adicional de tubulação",
         "service_distance_fee": "Adicional de deslocamento",
     }
@@ -9212,7 +9214,12 @@ def _price_addition_lines(
     suffix = "" if bullet else "."
     return [
         f"{prefix}{labels[key]}: {_format_brl(values[key])}{suffix}"
-        for key in ("extra_tubing_price", "service_distance_fee")
+        for key in (
+            "additional_units_price",
+            "difficult_access_price",
+            "extra_tubing_price",
+            "service_distance_fee",
+        )
         if key in values
     ]
 
