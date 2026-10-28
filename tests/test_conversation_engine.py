@@ -3815,6 +3815,46 @@ async def test_purchase_and_install_quote_itemizes_additions_and_keeps_total_inc
 
 
 @mark.asyncio
+async def test_confirmation_itemizes_quantity_and_access_additions_from_estimator_rules() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+        },
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    booking_port.plan = replace(
+        booking_port.plan,
+        service=replace(
+            booking_port.plan.service,
+            estimated_price=Decimal("510.00"),
+            applied_rules=(
+                "base_duration",
+                "additional_units",
+                "additional_units_count:2",
+                "additional_units_price:160.00",
+                "difficult_access",
+                "difficult_access_price:50.00",
+            ),
+        ),
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1172, body="quero revisar")
+    )
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "Adicional por quantidade: R$ 160,00" in body
+    assert "Adicional por acesso difícil: R$ 50,00" in body
+    assert "Valor do serviço (com adicionais): R$ 510,00" in body
+
+
+@mark.asyncio
 async def test_diagnostics_confirmation_marks_service_amount_as_base() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_CONFIRM,
