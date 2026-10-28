@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from pydantic import ValidationError
 
+from app.automation.lifecycle import proactive_outreach_enabled
 from app.automation.domain import (
     HUMAN_CONTROL_WINDOW_PRESETS,
     AutomationDecision,
@@ -24,6 +25,14 @@ from app.schemas.automation import (
     BusinessAutomationSettings,
     BusinessAutomationSettingsUpdate,
 )
+
+def test_proactive_outreach_is_fail_closed_until_plus_templates_launch(monkeypatch) -> None:
+    monkeypatch.delenv("ALOVIA_PROACTIVE_OUTREACH_ENABLED", raising=False)
+    assert proactive_outreach_enabled() is False
+
+    monkeypatch.setenv("ALOVIA_PROACTIVE_OUTREACH_ENABLED", "true")
+    assert proactive_outreach_enabled() is True
+
 
 BUSINESS_A = uuid.UUID("10000000-0000-0000-0000-000000000001")
 BUSINESS_B = uuid.UUID("10000000-0000-0000-0000-000000000002")
