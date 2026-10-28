@@ -3446,7 +3446,7 @@ def _expand_address_abbreviations(value: str) -> str:
     expanded = value.strip()
     for abbreviation, replacement in replacements.items():
         expanded = re.sub(
-            rf"\b{re.escape(abbreviation)}\.?\b",
+            rf"(?<!\w){re.escape(abbreviation)}\.?(?=\s|$)",
             replacement,
             expanded,
             flags=re.IGNORECASE,
