@@ -126,12 +126,6 @@ WEBHOOK_DIAGNOSTICS_MIGRATION_PATH = (
     / "versions"
     / "20261022_0040_processed_webhook_diagnostics.py"
 )
-ROUTE_DEFAULT_MIGRATION_PATH = (
-    PROJECT_ROOT
-    / "alembic"
-    / "versions"
-    / "20261028_0042_route_for_validated_origins.py"
-)
 
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
@@ -164,27 +158,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261028_0042"]
-
-
-def test_route_default_migration_backfills_only_validated_operational_origins() -> None:
-    upgrade = " ".join(
-        render_migration_sql("upgrade", ROUTE_DEFAULT_MIGRATION_PATH)
-        .lower()
-        .split()
-    )
-    downgrade = " ".join(
-        render_migration_sql("downgrade", ROUTE_DEFAULT_MIGRATION_PATH)
-        .lower()
-        .split()
-    )
-
-    assert "set default 'route'" in upgrade
-    assert "travel_calculation_method = 'route'" in upgrade
-    assert "service_origin_validated_at is not null" in upgrade
-    assert "travel_fallback_allowed is false" in upgrade
-    assert "jsonb_array_length(travel_region_rules)" in upgrade
-    assert "set default 'configured_estimate'" in downgrade
+    assert script.get_heads() == ["20261026_0041"]
 
 
 def test_processed_webhook_diagnostics_migration_is_additive_and_reversible() -> None:
