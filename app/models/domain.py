@@ -159,8 +159,8 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     travel_calculation_method: Mapped[str] = mapped_column(
         String(32),
-        default="route",
-        server_default="route",
+        default="configured_estimate",
+        server_default="configured_estimate",
         nullable=False,
     )
     default_travel_minutes: Mapped[int | None] = mapped_column(
