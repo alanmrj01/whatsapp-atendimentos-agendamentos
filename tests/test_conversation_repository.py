@@ -68,6 +68,23 @@ def test_symbolic_whatsapp_profile_is_not_treated_as_customer_name() -> None:
     ) is None
 
 
+def test_short_nickname_is_valid_but_two_letter_initials_are_not() -> None:
+    assert _effective_customer_name(
+        None,
+        None,
+        "Lu",
+        "+5512981359722",
+        "5512981359722",
+    ) == "Lu"
+    assert _effective_customer_name(
+        None,
+        None,
+        "JL",
+        "+5512981359722",
+        "5512981359722",
+    ) is None
+
+
 def test_real_whatsapp_profile_name_is_used_without_extra_question() -> None:
     assert _effective_customer_name(
         None,
