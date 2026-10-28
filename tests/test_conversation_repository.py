@@ -59,6 +59,13 @@ def test_symbolic_whatsapp_profile_is_not_treated_as_customer_name() -> None:
         "+5512981359722",
         "5512981359722",
     ) is None
+    assert _effective_customer_name(
+        None,
+        None,
+        "JL",
+        "+5512981359722",
+        "5512981359722",
+    ) is None
 
 
 def test_real_whatsapp_profile_name_is_used_without_extra_question() -> None:
