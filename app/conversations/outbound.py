@@ -516,9 +516,9 @@ def tubing_variation_message(
     )
     if extra_meter_price is not None and extra_meter_price > 0:
         body = (
-            f"Importante: a instalação considera até {included_label} metros de "
-            f"tubulação. Acima disso, o valor cadastrado é "
-            f"{_format_brl(extra_meter_price)} por metro adicional."
+            f"A instalação inclui até {included_label} metros de tubulação. "
+            f"Acima disso, cada metro adicional custa "
+            f"{_format_brl(extra_meter_price)} e entra no orçamento."
         )
     return OutboundMessage(message_type="text", body=body)
 
@@ -722,15 +722,17 @@ def tubing_guidance_message(
         included_label = str(included).replace(".", ",")
 
     body = (
-        f"A instalação padrão considera até {included_label} metros. "
-        "Se você não souber a medida exata, sem problema: o técnico pode "
-        "conferir no local."
+        f"A instalação inclui até {included_label} metros de tubulação. "
     )
     if extra_meter_price is not None and extra_meter_price > 0:
         body += (
-            " Se precisar de tubulação adicional, o valor cadastrado é "
-            f"{_format_brl(extra_meter_price)} por metro."
+            f"Acima disso, cada metro adicional custa "
+            f"{_format_brl(extra_meter_price)} e entra no orçamento. "
         )
+    body += (
+        "Se você não souber a medida exata, sem problema: o técnico pode "
+        "conferir no local."
+    )
     else:
         body += " Se precisar de material adicional, o valor pode variar."
     return OutboundMessage(message_type="text", body=body)
