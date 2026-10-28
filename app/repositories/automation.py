@@ -21,6 +21,7 @@ from app.models import (
 class ConversationAutomationControl:
     automation_suppressed_until: datetime | None
     handoff_status: str
+    automation_enabled: bool = True
 
 
 class AutomationRepository:
@@ -53,6 +54,7 @@ class AutomationRepository:
             select(
                 Conversation.automation_suppressed_until,
                 Conversation.handoff_status,
+                Conversation.automation_enabled,
             )
             .where(
                 Conversation.business_id == business_id,
@@ -64,6 +66,7 @@ class AutomationRepository:
         return ConversationAutomationControl(
             automation_suppressed_until=row.automation_suppressed_until,
             handoff_status=row.handoff_status,
+            automation_enabled=row.automation_enabled,
         )
 
     async def mark_human_only(
