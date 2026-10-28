@@ -1200,6 +1200,133 @@ async def test_priced_extra_tubing_is_added_to_service_total() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fixed_catalog_unit_applies_surcharge_once_not_per_meter() -> None:
+    item = BusinessCatalogItem(
+        business_id=BUSINESS_ID,
+        kind="material",
+        name="Adicional de tubulação",
+        price=Decimal("20.00"),
+        unit_label="valor fixo",
+        preset_key="extra-tubing-meter",
+        active=True,
+    )
+
+    class CatalogSession:
+        async def scalar(self, _statement: object):  # type: ignore[no-untyped-def]
+            return item
+
+    configured = service()
+    configured.base_price = Decimal("700.00")
+    configured.asks_tubing_length = True
+    configured.included_tubing_meters = Decimal("3")
+    estimate = replace(plan().service, estimated_price=Decimal("700.00"))
+    port = PostgresBookingAvailabilityPort(CatalogSession())  # type: ignore[arg-type]
+
+    result = await port._apply_catalog_additions(  # type: ignore[attr-defined]
+        BUSINESS_ID,
+        configured,
+        BookingRequirements(tubing_meters=Decimal("8")),
+        estimate,
+    )
+
+    assert result.estimated_price == Decimal("720.00")
+    assert "extra_tubing_unit:valor fixo" in result.applied_rules
+    assert "extra_tubing_charge_quantity:1" in result.applied_rules
+    assert "extra_tubing_price:20.00" in result.applied_rules
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unit_label", ["kit", "unidade"])
+async def test_catalog_kit_or_unit_never_uses_meter_count_as_quantity(
+    unit_label: str,
+) -> None:
+    item = BusinessCatalogItem(
+        business_id=BUSINESS_ID,
+        kind="material",
+        name="Material adicional",
+        price=Decimal("20.00"),
+        unit_label=unit_label,
+        preset_key="extra-tubing-meter",
+        active=True,
+    )
+
+    class CatalogSession:
+        async def scalar(self, _statement: object):  # type: ignore[no-untyped-def]
+            return item
+
+    configured = service()
+    configured.base_price = Decimal("700.00")
+    configured.asks_tubing_length = True
+    configured.included_tubing_meters = Decimal("3")
+    estimate = replace(plan().service, estimated_price=Decimal("700.00"))
+    port = PostgresBookingAvailabilityPort(CatalogSession())  # type: ignore[arg-type]
+
+    result = await port._apply_catalog_additions(  # type: ignore[attr-defined]
+        BUSINESS_ID,
+        configured,
+        BookingRequirements(tubing_meters=Decimal("8")),
+        estimate,
+    )
+
+    assert result.estimated_price == Decimal("700.00")
+    assert f"extra_tubing_unit:{unit_label}" in result.applied_rules
+    assert (
+        f"extra_tubing_quantity_unconfirmed:{unit_label}"
+        in result.applied_rules
+    )
+    assert not any(
+        rule.startswith("extra_tubing_price:")
+        for rule in result.applied_rules
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unit_label", ["kit", "unidade"])
+async def test_catalog_kit_or_unit_uses_explicit_known_quantity(
+    unit_label: str,
+) -> None:
+    item = BusinessCatalogItem(
+        business_id=BUSINESS_ID,
+        kind="material",
+        name="Material adicional",
+        price=Decimal("20.00"),
+        unit_label=unit_label,
+        preset_key="extra-tubing-meter",
+        active=True,
+    )
+
+    class CatalogSession:
+        async def scalar(self, _statement: object):  # type: ignore[no-untyped-def]
+            return item
+
+    configured = service()
+    configured.base_price = Decimal("700.00")
+    configured.asks_tubing_length = True
+    configured.included_tubing_meters = Decimal("3")
+    estimate = replace(plan().service, estimated_price=Decimal("700.00"))
+    port = PostgresBookingAvailabilityPort(CatalogSession())  # type: ignore[arg-type]
+
+    result = await port._apply_catalog_additions(  # type: ignore[attr-defined]
+        BUSINESS_ID,
+        configured,
+        BookingRequirements(
+            tubing_meters=Decimal("8"),
+            operational_details={
+                "catalog_item_quantities": {
+                    "extra-tubing-meter": "2",
+                }
+            },
+        ),
+        estimate,
+    )
+
+    assert result.estimated_price == Decimal("740.00")
+    assert f"extra_tubing_unit:{unit_label}" in result.applied_rules
+    assert "extra_tubing_charge_quantity:2" in result.applied_rules
+    assert "extra_tubing_price:40.00" in result.applied_rules
+
+
+@pytest.mark.asyncio
 async def test_unpriced_extra_tubing_keeps_booking_without_fabricating_amount() -> None:
     class CatalogSession:
         async def scalar(self, _statement: object):  # type: ignore[no-untyped-def]
