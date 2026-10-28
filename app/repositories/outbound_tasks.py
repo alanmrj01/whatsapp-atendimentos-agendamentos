@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, exists, func, or_, select, update
@@ -38,6 +39,7 @@ class StoredOutboundMessage:
     provider_message_id: str | None
     automation_blocked: bool = False
     quota_blocked: bool = False
+    service_window_blocked: bool = False
     quota_plan: str | None = None
     quota_used: int | None = None
     quota_limit: int | None = None
@@ -66,6 +68,24 @@ def _automation_blocked_for_message(
     if is_manual or is_handoff_notification:
         return False
     return standard_automation_blocked
+
+
+
+def _basic_service_window_blocked(
+    *,
+    plan: str | None,
+    message_type: str,
+    latest_inbound_at: datetime | None,
+    now: datetime | None = None,
+) -> bool:
+    if plan != "basic" or message_type == "reaction":
+        return False
+    if message_type == "template":
+        return True
+    if latest_inbound_at is None:
+        return True
+    reference = now or datetime.now(UTC)
+    return latest_inbound_at < reference - timedelta(hours=24)
 
 
 class OutboundTaskRepository:
@@ -148,6 +168,7 @@ class OutboundTaskRepository:
 
         usage = None
         quota_blocked = False
+        service_window_blocked = False
         if (
             message.status == "pending"
             and not automation_blocked
@@ -162,6 +183,19 @@ class OutboundTaskRepository:
                 lock_business=True,
             )
             quota_blocked = usage.exhausted
+            if usage.plan == "basic":
+                latest_inbound_at = await self.session.scalar(
+                    select(func.max(Message.created_at)).where(
+                        Message.business_id == message.business_id,
+                        Message.conversation_id == message.conversation_id,
+                        Message.direction == "inbound",
+                    )
+                )
+                service_window_blocked = _basic_service_window_blocked(
+                    plan=usage.plan,
+                    message_type=message.message_type,
+                    latest_inbound_at=latest_inbound_at,
+                )
 
         return StoredOutboundMessage(
             message_id=message.id,
@@ -174,6 +208,7 @@ class OutboundTaskRepository:
             provider_message_id=message.provider_message_id,
             automation_blocked=automation_blocked,
             quota_blocked=quota_blocked,
+            service_window_blocked=service_window_blocked,
             quota_plan=usage.plan if usage is not None else None,
             quota_used=usage.used if usage is not None else None,
             quota_limit=usage.limit if usage is not None else None,

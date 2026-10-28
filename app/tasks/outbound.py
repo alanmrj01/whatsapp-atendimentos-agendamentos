@@ -278,6 +278,17 @@ async def process_outbound_message(
         if message.automation_blocked:
             await outbound_repository.mark_failed(message.message_id)
             return "failed"
+        if message.service_window_blocked:
+            await outbound_repository.mark_failed(message.message_id)
+            logger.info(
+                "outbound_message_basic_service_window_blocked",
+                extra={
+                    "business_id": str(message.business_id),
+                    "plan": message.quota_plan,
+                    "message_type": message.message_type,
+                },
+            )
+            return "failed"
         if message.quota_blocked:
             await outbound_repository.mark_failed(message.message_id)
             logger.info(

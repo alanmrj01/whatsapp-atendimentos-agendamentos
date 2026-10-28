@@ -205,7 +205,9 @@ async def test_composite_foreign_keys_reject_cross_business_appointments(
 
 async def test_preventive_outreach_can_be_fast_forwarded_without_waiting_six_months(
     sessions: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("ALOVIA_PROACTIVE_OUTREACH_ENABLED", "true")
     business_id, service_id, employees, customers, _ = await seed_capacity(
         sessions,
         customer_count=1,
