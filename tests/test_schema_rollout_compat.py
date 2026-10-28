@@ -8,7 +8,7 @@ from app.diagnostics.service import migration_result
 
 def test_readiness_requires_current_billing_schema_revision() -> None:
     current = migration_result([EXPECTED_SCHEMA_REVISION], 1)
-    previous = migration_result(["20261020_0036"], 1)
+    previous = migration_result(["20261026_0041"], 1)
 
     assert EXPECTED_SCHEMA_REVISION == "20261028_0042"
 
@@ -18,7 +18,7 @@ def test_readiness_requires_current_billing_schema_revision() -> None:
 
     assert previous.status is Status.ERROR
     assert previous.code is Code.MIGRATION_BEHIND
-    assert previous.details.current_revision == "20261020_0036"
+    assert previous.details.current_revision == "20261026_0041"
 
 
 def test_readiness_keeps_older_or_future_revisions_fail_closed() -> None:
