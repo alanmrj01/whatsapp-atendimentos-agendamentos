@@ -18,6 +18,7 @@ from app.conversations.types import (
     ConversationTransition,
 )
 from app.models import Business, Conversation, Customer, Message, WebPushEvent
+from app.whatsapp.webhook import normalize_human_profile_name
 
 
 def build_lock_conversation_statement(
@@ -61,15 +62,20 @@ def _effective_customer_name(
     phone: str | None,
     whatsapp_id: str,
 ) -> str | None:
-    if name_source == "manual" and isinstance(name, str) and name.strip():
-        return name
-    if isinstance(profile_name, str) and profile_name.strip():
-        return profile_name
-    if isinstance(name, str) and name.strip():
-        return name
-    if isinstance(phone, str) and phone.strip():
-        return phone
-    return whatsapp_id or None
+    del phone, whatsapp_id
+    if (
+        name_source in {"manual", "conversation"}
+        and isinstance(name, str)
+        and name.strip()
+    ):
+        return name.strip()
+    normalized_profile = normalize_human_profile_name(profile_name)
+    if normalized_profile is not None:
+        return normalized_profile
+    normalized_name = normalize_human_profile_name(name)
+    if normalized_name is not None:
+        return normalized_name
+    return None
 
 
 def _sequence_group(idempotency_key: str) -> str:
