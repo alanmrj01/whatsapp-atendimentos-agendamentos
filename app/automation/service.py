@@ -81,10 +81,13 @@ class AutomationPolicyService:
             await self.repository.mark_human_only(business_id, conversation_id)
             return AutomationDecision.HUMAN_ONLY
 
-        await self.repository.clear_human_only_marker(
+        control = await self.repository.lock_conversation_control(
             business_id, conversation_id
         )
-        control = await self.repository.lock_conversation_control(
+        if not control.automation_enabled:
+            return AutomationDecision.CONVERSATION_PAUSED
+
+        await self.repository.clear_human_only_marker(
             business_id, conversation_id
         )
         suppressed_until = control.automation_suppressed_until
