@@ -162,6 +162,67 @@ class _CapacityData:
     appointments: tuple[Appointment, ...]
 
 
+def _catalog_pricing_unit(
+    value: str | None,
+    *,
+    default: str | None = None,
+) -> str:
+    normalized = " ".join((value or "").strip().casefold().split())
+    aliases = {
+        "metro": "metro",
+        "por metro": "metro",
+        "m": "metro",
+        "unidade": "unidade",
+        "por unidade": "unidade",
+        "unit": "unidade",
+        "kit": "kit",
+        "por kit": "kit",
+        "valor fixo": "valor fixo",
+        "fixo": "valor fixo",
+        "fixed": "valor fixo",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    if default is not None:
+        return default
+    return normalized or "unidade"
+
+
+def _catalog_item_quantity(
+    requirements: BookingRequirements,
+    preset_key: str | None,
+) -> Decimal | None:
+    if not preset_key:
+        return None
+    raw_quantities = requirements.operational_details.get(
+        "catalog_item_quantities"
+    )
+    if not isinstance(raw_quantities, dict):
+        return None
+    raw_quantity = raw_quantities.get(preset_key)
+    try:
+        quantity = Decimal(str(raw_quantity))
+    except Exception:
+        return None
+    return quantity if quantity > 0 else None
+
+
+def _catalog_charge_quantity(
+    unit_label: str,
+    *,
+    measured_quantity: Decimal | None = None,
+    explicit_quantity: Decimal | None = None,
+) -> Decimal | None:
+    unit = _catalog_pricing_unit(unit_label)
+    if unit == "valor fixo":
+        return Decimal("1")
+    if unit == "metro":
+        return measured_quantity if measured_quantity is not None and measured_quantity > 0 else None
+    if unit in {"unidade", "kit"}:
+        return explicit_quantity if explicit_quantity is not None and explicit_quantity > 0 else None
+    return explicit_quantity if explicit_quantity is not None and explicit_quantity > 0 else None
+
+
 class PostgresBookingAvailabilityPort:
     minimum_full_booking_lead_days = MIN_FULL_BOOKING_LEAD_DAYS
 
@@ -222,6 +283,7 @@ class PostgresBookingAvailabilityPort:
             business_id, service_id
         )
         extra_tubing_price: Decimal | None = None
+        extra_tubing_unit_label: str | None = None
         if service.asks_tubing_length:
             item = await self.session.scalar(
                 select(BusinessCatalogItem).where(
@@ -230,8 +292,13 @@ class PostgresBookingAvailabilityPort:
                     BusinessCatalogItem.active.is_(True),
                 )
             )
-            if item is not None and item.price is not None:
-                extra_tubing_price = Decimal(item.price)
+            if item is not None:
+                extra_tubing_unit_label = _catalog_pricing_unit(
+                    item.unit_label,
+                    default="metro",
+                )
+                if item.price is not None:
+                    extra_tubing_price = Decimal(item.price)
         return ServiceDetails(
             id=service.id,
             name=service.name,
@@ -242,6 +309,7 @@ class PostgresBookingAvailabilityPort:
                 else None
             ),
             extra_tubing_price=extra_tubing_price,
+            extra_tubing_unit_label=extra_tubing_unit_label,
             business_city=business.service_origin_city,
             business_state=business.service_origin_state,
             business_address=business.service_origin_address,
@@ -1089,7 +1157,18 @@ class PostgresBookingAvailabilityPort:
                 ),
             )
 
-        additional_price = extra_meters * Decimal(item.price)
+        unit_label = _catalog_pricing_unit(
+            item.unit_label,
+            default="metro",
+        )
+        quantity = _catalog_charge_quantity(
+            unit_label,
+            measured_quantity=extra_meters,
+            explicit_quantity=_catalog_item_quantity(
+                requirements,
+                item.preset_key,
+            ),
+        )
         base_price = estimate.estimated_price
         if base_price is None:
             return replace(
@@ -1101,6 +1180,28 @@ class PostgresBookingAvailabilityPort:
                     "base_price_required_for_extra_tubing",
                 ),
             )
+
+        if quantity is None:
+            return replace(
+                estimate,
+                estimated_price=base_price,
+                pricing_type=PricingType.ESTIMATED,
+                requires_human_quote=False,
+                qualifier=(
+                    "Valor base; a quantidade do material adicional será "
+                    "confirmada antes de entrar no orçamento."
+                ),
+                applied_rules=(
+                    *estimate.applied_rules,
+                    f"extra_tubing_meters:{extra_meters}",
+                    f"extra_tubing_unit:{unit_label}",
+                    f"extra_tubing_quantity_unconfirmed:{unit_label}",
+                ),
+            )
+
+        additional_price = (quantity * Decimal(item.price)).quantize(
+            Decimal("0.01")
+        )
         return replace(
             estimate,
             estimated_price=base_price + additional_price,
@@ -1109,6 +1210,8 @@ class PostgresBookingAvailabilityPort:
             applied_rules=(
                 *estimate.applied_rules,
                 f"extra_tubing_meters:{extra_meters}",
+                f"extra_tubing_unit:{unit_label}",
+                f"extra_tubing_charge_quantity:{quantity}",
                 f"extra_tubing_price:{additional_price}",
             ),
         )
