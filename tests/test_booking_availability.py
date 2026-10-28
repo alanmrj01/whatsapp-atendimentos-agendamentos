@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -33,6 +34,7 @@ from app.conversations.ports import (
 from app.models import (
     Appointment,
     Business,
+    BusinessCatalogItem,
     BusinessNotification,
     WebPushEvent,
     ScheduleBlock,
@@ -1020,6 +1022,44 @@ async def test_unknown_tubing_keeps_base_estimate_without_inventing_extra_materi
 
 
 @pytest.mark.asyncio
+async def test_priced_extra_tubing_is_added_to_service_total() -> None:
+    item = BusinessCatalogItem(
+        business_id=BUSINESS_ID,
+        kind="material",
+        name="Metro adicional de tubulação",
+        price=Decimal("20.00"),
+        unit_label="metro",
+        preset_key="extra-tubing-meter",
+        active=True,
+    )
+
+    class CatalogSession:
+        async def scalar(self, _statement: object):  # type: ignore[no-untyped-def]
+            return item
+
+    configured = service()
+    configured.base_price = Decimal("700.00")
+    configured.asks_tubing_length = True
+    configured.included_tubing_meters = Decimal("3")
+    estimate = replace(
+        plan().service,
+        estimated_price=Decimal("700.00"),
+    )
+    port = PostgresBookingAvailabilityPort(CatalogSession())  # type: ignore[arg-type]
+
+    result = await port._apply_catalog_additions(  # type: ignore[attr-defined]
+        BUSINESS_ID,
+        configured,
+        BookingRequirements(tubing_meters=Decimal("5")),
+        estimate,
+    )
+
+    assert result.estimated_price == Decimal("740.00")
+    assert "extra_tubing_meters:2" in result.applied_rules
+    assert "extra_tubing_price:40.00" in result.applied_rules
+
+
+@pytest.mark.asyncio
 async def test_unpriced_extra_tubing_keeps_booking_without_fabricating_amount() -> None:
     class CatalogSession:
         async def scalar(self, _statement: object):  # type: ignore[no-untyped-def]
@@ -1292,6 +1332,36 @@ class _FulfillmentPlanPort(PostgresBookingAvailabilityPort):
         *_: Any,
     ) -> tuple[uuid.UUID, ...]:
         return (EMPLOYEE_A,)
+
+
+@pytest.mark.asyncio
+async def test_service_distance_fee_is_added_to_service_total_from_real_route() -> None:
+    company = business(
+        travel_calculation_method="route",
+        default_travel_minutes=None,
+        travel_fallback_allowed=False,
+        service_distance_included_km=Decimal("15.00"),
+        service_distance_fee_per_km=Decimal("2.40"),
+    )
+    port = _FulfillmentPlanPort(company, distance_km=Decimal("20.00"))
+
+    booking_plan = await port.estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(
+            address=ServiceAddress(
+                "Rua dos Alfaiates 109, Novo Horizonte",
+                city="São José dos Campos",
+                state="SP",
+            ),
+        ),
+    )
+
+    assert booking_plan.requires_handoff is False
+    assert booking_plan.service.estimated_price == Decimal("112.00")
+    assert "service_distance_km:20.00" in booking_plan.service.applied_rules
+    assert "service_distance_excess_km:5.00" in booking_plan.service.applied_rules
+    assert "service_distance_fee:12.00" in booking_plan.service.applied_rules
 
 
 @pytest.mark.asyncio

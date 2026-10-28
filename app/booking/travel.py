@@ -128,64 +128,93 @@ class GoogleRoutesTravelTimePort:
         if cached is not None:
             return cached
 
+        estimate: TravelEstimate | None = None
+        last_error: Exception | None = None
+        provider_status_code: int | None = None
+        attempts = _route_attempts(origin, destination)
         try:
             token = await self._access_token()
             async with httpx.AsyncClient(
                 timeout=self.request_timeout_seconds
             ) as client:
-                response = await client.post(
-                    _GOOGLE_ROUTES_URL,
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Content-Type": "application/json",
-                        "X-Goog-FieldMask": (
-                            "routes.duration,routes.distanceMeters"
-                        ),
-                        "X-Goog-User-Project": self.project_id,
-                    },
-                    json={
-                        "origin": _origin_waypoint(origin),
-                        "destination": {
-                            "address": destination.searchable_text,
-                        },
-                        "travelMode": "DRIVE",
-                        "routingPreference": "TRAFFIC_UNAWARE",
-                        "languageCode": "pt-BR",
-                        "regionCode": "BR",
-                        "units": "METRIC",
-                    },
-                )
-            response.raise_for_status()
-            payload = response.json()
-            routes = payload.get("routes")
-            if not isinstance(routes, list) or not routes:
-                raise ValueError("Routes API returned no route")
-            first = routes[0]
-            if not isinstance(first, dict):
-                raise ValueError("Routes API returned invalid route")
-            duration_seconds = _duration_seconds(first.get("duration"))
-            distance_meters = first.get("distanceMeters")
-            if (
-                duration_seconds is None
-                or not isinstance(distance_meters, int)
-                or isinstance(distance_meters, bool)
-                or distance_meters < 0
-            ):
-                raise ValueError("Routes API returned incomplete route")
-            estimate = TravelEstimate(
-                travel_minutes=max(1, math.ceil(duration_seconds / 60)),
-                distance_km=(
-                    Decimal(distance_meters) / Decimal("1000")
-                ).quantize(Decimal("0.01")),
-                source="google_routes",
-                method="route",
-                estimated=True,
-                origin_is_precise=origin.is_precise,
-            )
+                for origin_waypoint, destination_address in attempts:
+                    try:
+                        response = await client.post(
+                            _GOOGLE_ROUTES_URL,
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Content-Type": "application/json",
+                                "X-Goog-FieldMask": (
+                                    "routes.duration,routes.distanceMeters"
+                                ),
+                                "X-Goog-User-Project": self.project_id,
+                            },
+                            json={
+                                "origin": origin_waypoint,
+                                "destination": {
+                                    "address": destination_address,
+                                },
+                                "travelMode": "DRIVE",
+                                "routingPreference": "TRAFFIC_UNAWARE",
+                                "languageCode": "pt-BR",
+                                "regionCode": "BR",
+                                "units": "METRIC",
+                            },
+                        )
+                        response.raise_for_status()
+                        payload = response.json()
+                        routes = payload.get("routes")
+                        if not isinstance(routes, list) or not routes:
+                            raise ValueError("Routes API returned no route")
+                        first = routes[0]
+                        if not isinstance(first, dict):
+                            raise ValueError("Routes API returned invalid route")
+                        duration_seconds = _duration_seconds(first.get("duration"))
+                        distance_meters = first.get("distanceMeters")
+                        if (
+                            duration_seconds is None
+                            or not isinstance(distance_meters, int)
+                            or isinstance(distance_meters, bool)
+                            or distance_meters < 0
+                        ):
+                            raise ValueError("Routes API returned incomplete route")
+                        estimate = TravelEstimate(
+                            travel_minutes=max(
+                                1, math.ceil(duration_seconds / 60)
+                            ),
+                            distance_km=(
+                                Decimal(distance_meters) / Decimal("1000")
+                            ).quantize(Decimal("0.01")),
+                            source="google_routes",
+                            method="route",
+                            estimated=True,
+                            origin_is_precise=origin.is_precise,
+                        )
+                        break
+                    except httpx.HTTPStatusError as exc:
+                        last_error = exc
+                        provider_status_code = exc.response.status_code
+                        # Credenciais/permissão não são problema de geocodificação;
+                        # repetir a mesma autorização não tornaria a rota confiável.
+                        if provider_status_code in {401, 403}:
+                            break
+                    except Exception as exc:
+                        last_error = exc
         except Exception as exc:
+            last_error = exc
+
+        if estimate is None:
             logger.warning(
                 "google_routes_estimate_failed",
-                extra={"error_type": type(exc).__name__},
+                extra={
+                    "error_type": (
+                        type(last_error).__name__
+                        if last_error is not None
+                        else "UnknownError"
+                    ),
+                    "provider_status_code": provider_status_code,
+                    "attempt_count": len(attempts),
+                },
             )
             return unavailable_travel_estimate(origin)
 
@@ -246,6 +275,29 @@ class GoogleRoutesTravelTimePort:
                 time.monotonic() + _ROUTE_CACHE_TTL_SECONDS,
                 estimate,
             )
+
+
+def _brazil_qualified_address(value: str) -> str:
+    normalized = _normalize(value)
+    if re.search(r"\bbrasil\b|\bbrazil\b", normalized):
+        return value.strip()
+    return f"{value.strip()}, Brasil"
+
+
+def _route_attempts(
+    origin: TravelOrigin,
+    destination: ServiceAddress,
+) -> tuple[tuple[dict[str, object], str], ...]:
+    destination_text = destination.searchable_text.strip()
+    primary = (_origin_waypoint(origin), destination_text)
+    qualified_destination = _brazil_qualified_address(destination_text)
+    qualified_origin = (
+        _origin_waypoint(origin)
+        if origin.latitude is not None and origin.longitude is not None
+        else {"address": _brazil_qualified_address(origin.address)}
+    )
+    secondary = (qualified_origin, qualified_destination)
+    return (primary,) if secondary == primary else (primary, secondary)
 
 
 def _origin_waypoint(origin: TravelOrigin) -> dict[str, object]:
