@@ -161,6 +161,67 @@ async def test_google_routes_returns_real_duration_distance_and_reuses_cache(
     assert "routes.duration" in headers["X-Goog-FieldMask"]
 
 
+async def test_google_routes_retries_geocoding_with_brazil_qualified_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Credentials:
+        valid = True
+        expired = False
+        token = "oauth-token"
+
+    class Response:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self.payload
+
+    class Client:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: object) -> Response:
+            calls.append({"url": url, **kwargs})
+            if len(calls) == 1:
+                return Response({"routes": []})
+            return Response({
+                "routes": [{"duration": "600s", "distanceMeters": 12000}]
+            })
+
+    monkeypatch.setattr("app.booking.travel.httpx.AsyncClient", Client)
+    port = GoogleRoutesTravelTimePort("whatsapp-automacao-prod")
+    port._credentials = Credentials()  # type: ignore[attr-defined]
+
+    estimate = await port.estimate(
+        TravelOrigin("Av. Central, 100, São José dos Campos - SP"),
+        ServiceAddress(
+            "Rua dos Alfaiates 109, Novo Horizonte",
+            city="São José dos Campos",
+            state="SP",
+        ),
+    )
+
+    assert estimate.available is True
+    assert estimate.travel_minutes == 10
+    assert estimate.distance_km == Decimal("12.00")
+    assert len(calls) == 2
+    second_payload = calls[1]["json"]
+    assert isinstance(second_payload, dict)
+    assert str(second_payload["destination"]["address"]).endswith(", Brasil")
+    assert str(second_payload["origin"]["address"]).endswith(", Brasil")
+
+
 async def test_google_routes_fails_closed_without_inventing_travel_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
