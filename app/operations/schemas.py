@@ -24,6 +24,7 @@ class AppointmentView(StrictModel):
     customer_id: UUID
     customer_name: str
     customer_phone: str | None
+    conversation_id: UUID | None = None
     service_id: UUID
     service_name: str
     employee_id: UUID
