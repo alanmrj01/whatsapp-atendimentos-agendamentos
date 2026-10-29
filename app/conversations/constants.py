@@ -182,6 +182,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "site_limit_answered",
         "pending_customer_message",
         "pending_interactive_id",
+        "customer_name_skipped",
         "inactivity_followup_pending_response",
         "inactivity_followup_outreach_id",
         "cleaning_outreach_pending_response",

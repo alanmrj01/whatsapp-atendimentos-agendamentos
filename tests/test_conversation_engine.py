@@ -668,9 +668,35 @@ async def test_unnamed_customer_is_asked_once_and_pending_service_is_resumed() -
 
 
 @mark.asyncio
-async def test_off_order_sentence_is_not_saved_as_customer_name() -> None:
+async def test_explicit_name_reply_also_resumes_pending_service_request() -> None:
     repository = FakeConversationRepository(customer_name=None)
     booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1, body="Preciso fazer uma limpeza"))
+
+    assert repository.state == ConversationState.CUSTOMER_NAME
+
+    await engine.process(inbound(2, body="Meu nome é Juliana"))
+
+    assert repository.customer_name == "Juliana"
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "endereço" in body
+
+
+@mark.asyncio
+async def test_unrecognized_name_is_skipped_once_and_service_continues() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
     engine = ConversationEngine(repository, booking_port)
 
     await engine.process(inbound(1, body="Olá"))
@@ -678,17 +704,62 @@ async def test_off_order_sentence_is_not_saved_as_customer_name() -> None:
     assert repository.state == ConversationState.CUSTOMER_NAME
     assert repository.customer_name is None
 
-    await engine.process(inbound(2, body="Nossa dormi tão mal"))
+    await engine.process(inbound(2, body="Tudo certo, estou no trabalho"))
+
+    assert repository.customer_name is None
+    assert repository.state == ConversationState.MENU
+    assert repository.context["customer_name_skipped"] is True
+    assert repository.handoff_status == "none"
+
+    await engine.process(inbound(3, body="Quero fazer uma limpeza"))
+
+    assert repository.customer_name is None
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["customer_name_skipped"] is True
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "endereço" in body
+    assert "como posso te chamar" not in body
+    assert "equipe" not in body
+
+
+@mark.asyncio
+async def test_invalid_name_reply_resumes_request_that_was_already_pending() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1, body="Preciso fazer uma limpeza"))
 
     assert repository.state == ConversationState.CUSTOMER_NAME
-    assert repository.customer_name is None
-    retry_body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "chame" in retry_body or "chamar" in retry_body
-    assert "equipe" not in retry_body
 
-    await engine.process(inbound(3, body="Juliana"))
+    await engine.process(inbound(2, body="Nossa dormi tão mal"))
+
+    assert repository.customer_name is None
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["customer_name_skipped"] is True
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "endereço" in body
+    assert "nome" not in body
+    assert "equipe" not in body
+
+
+@mark.asyncio
+async def test_explicit_name_can_be_learned_later_after_name_was_skipped() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.MENU,
+        context={"customer_name_skipped": True},
+        customer_name=None,
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(1, body="Meu nome é Juliana"))
 
     assert repository.customer_name == "Juliana"
+    assert repository.context.get("customer_name_skipped") is not True
 
 
 @mark.asyncio

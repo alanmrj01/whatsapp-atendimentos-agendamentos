@@ -188,6 +188,9 @@ from app.conversations.types import (
 )
 
 
+_CUSTOMER_NAME_SKIPPED_KEY = "customer_name_skipped"
+
+
 async def determine_transition(
     conversation: ConversationSnapshot,
     inbound: ConversationInput,
@@ -443,20 +446,8 @@ async def determine_transition(
         return stale_action
 
     captured_name: str | None = interpretation.customer_name
-    if captured_name is not None:
-        conversation = replace(conversation, customer_name=captured_name)
 
     if state is ConversationState.CUSTOMER_NAME:
-        if interpretation.has_act(ConversationAct.SOCIAL) or interpretation.has_act(
-            ConversationAct.NEGATED_ACTION
-        ):
-            return _transition(
-                state,
-                context,
-                name_request_message(
-                    "Tudo certo. Antes de continuar, como você gostaria de ser chamado?"
-                ),
-            )
         transition = await _handle_customer_name(
             conversation,
             inbound,
@@ -468,19 +459,28 @@ async def determine_transition(
             transition = replace(transition, customer_name=captured_name)
         return transition
 
-    if conversation.customer_name is None:
-        if captured_name is None:
-            pending: dict[str, Any] = dict(context)
-            if _should_preserve_pending_message(inbound.body, interpretation):
-                pending["pending_customer_message"] = inbound.body
-            if action is not None:
-                pending["pending_interactive_id"] = action
-            return _name_request_transition(
-                conversation,
-                pending,
-                interpretation,
-                inbound.body,
-            )
+    if captured_name is not None:
+        conversation = replace(conversation, customer_name=captured_name)
+        if context.get(_CUSTOMER_NAME_SKIPPED_KEY) is True:
+            context = dict(context)
+            context.pop(_CUSTOMER_NAME_SKIPPED_KEY, None)
+
+    if (
+        conversation.customer_name is None
+        and context.get(_CUSTOMER_NAME_SKIPPED_KEY) is not True
+        and captured_name is None
+    ):
+        pending: dict[str, Any] = dict(context)
+        if _should_preserve_pending_message(inbound.body, interpretation):
+            pending["pending_customer_message"] = inbound.body
+        if action is not None:
+            pending["pending_interactive_id"] = action
+        return _name_request_transition(
+            conversation,
+            pending,
+            interpretation,
+            inbound.body,
+        )
 
     transition = await _route_named_conversation(
         conversation,
@@ -489,8 +489,11 @@ async def determine_transition(
         interpretation,
         booking_port,
     )
-    if transition is not None and captured_name is not None:
-        transition = replace(transition, customer_name=captured_name)
+    if transition is not None:
+        if captured_name is not None:
+            transition = replace(transition, customer_name=captured_name)
+        elif context.get(_CUSTOMER_NAME_SKIPPED_KEY) is True:
+            transition = _preserve_skipped_customer_name(transition)
     return transition
 
 
@@ -1165,29 +1168,12 @@ async def _handle_customer_name(
         or extract_customer_name(inbound.body, allow_bare=True)
     )
     if customer_name is None:
-        updated = dict(context)
-        if (
-            inbound.body
-            and interpretation.intent
-            not in {ConversationIntent.UNKNOWN, ConversationIntent.GREETING}
-        ):
-            previous = _context_string(updated, "pending_customer_message")
-            updated["pending_customer_message"] = (
-                f"{previous}\n{inbound.body}" if previous else inbound.body
-            )
-        if inbound.interactive_id is not None:
-            updated["pending_interactive_id"] = inbound.interactive_id
-        return _retry_or_handoff(
-            ConversationState.CUSTOMER_NAME,
-            updated,
-            "customer_name",
-            name_request_message(
-                "Como você prefere que eu te chame?"
-            ),
-            handoff_body=(
-                "Não consegui confirmar seu nome com segurança. "
-                "Vou chamar uma pessoa da equipe para continuar com você."
-            ),
+        return await _continue_without_customer_name(
+            conversation,
+            inbound,
+            context,
+            interpretation,
+            booking_port,
         )
 
     pending_body = _context_string(context, "pending_customer_message")
@@ -1242,6 +1228,89 @@ async def _handle_customer_name(
             _text_message(f"Prazer, {customer_name}. Como posso te ajudar?"),
         )
     return replace(transition, customer_name=customer_name)
+
+
+async def _continue_without_customer_name(
+    conversation: ConversationSnapshot,
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+) -> ConversationTransition:
+    updated = _clear_repair_attempt(dict(context), "customer_name")
+    updated[_CUSTOMER_NAME_SKIPPED_KEY] = True
+
+    if inbound.interactive_id is not None:
+        updated["pending_interactive_id"] = inbound.interactive_id
+    elif inbound.body and _has_substantive_intent(interpretation):
+        previous = _context_string(updated, "pending_customer_message")
+        if previous != inbound.body:
+            updated["pending_customer_message"] = (
+                f"{previous}\n{inbound.body}" if previous else inbound.body
+            )
+
+    pending_body = _context_string(updated, "pending_customer_message")
+    pending_action = _context_string(updated, "pending_interactive_id")
+    resumed_context = {
+        key: value
+        for key, value in updated.items()
+        if key not in {"pending_customer_message", "pending_interactive_id"}
+    }
+
+    if pending_body is None and pending_action is None:
+        return _transition(
+            ConversationState.MENU,
+            resumed_context,
+            main_menu_message(),
+        )
+
+    replay = replace(
+        inbound,
+        body=pending_body,
+        interactive_id=pending_action,
+        message_type="interactive" if pending_action else "text",
+    )
+    replay_interpretation = _without_greeting(
+        DeterministicConversationInterpreter().interpret(pending_body)
+    )
+    resumed = replace(
+        conversation,
+        state=(
+            ConversationState.MENU.value
+            if pending_action is not None and pending_action.startswith("menu.")
+            else ConversationState.START.value
+        ),
+        context=resumed_context,
+        customer_name=None,
+    )
+    transition = await _route_named_conversation(
+        resumed,
+        replay,
+        resumed_context,
+        replay_interpretation,
+        booking_port,
+    )
+    if transition is None:
+        transition = _transition(
+            ConversationState.MENU,
+            resumed_context,
+            main_menu_message(),
+        )
+    return _preserve_skipped_customer_name(transition)
+
+
+def _preserve_skipped_customer_name(
+    transition: ConversationTransition,
+) -> ConversationTransition:
+    if transition.context.get(_CUSTOMER_NAME_SKIPPED_KEY) is True:
+        return transition
+    return replace(
+        transition,
+        context={
+            **transition.context,
+            _CUSTOMER_NAME_SKIPPED_KEY: True,
+        },
+    )
 
 
 def _name_request_transition(
