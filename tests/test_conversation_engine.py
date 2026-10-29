@@ -3904,7 +3904,8 @@ async def test_purchase_and_install_quote_itemizes_additions_and_keeps_total_inc
 
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "Adicional de tubulação: R$ 40,00" in body
-    assert "Adicional de deslocamento: R$ 12,00" in body
+    assert "Adicional de deslocamento" not in body
+    assert "R$ 12,00" not in body
     assert "Valor do serviço (com adicionais): R$ 752,00" in body
     assert "Valor do equipamento: R$ 2.099,00" in body
     assert "Total: R$ 2.851,00" in body
