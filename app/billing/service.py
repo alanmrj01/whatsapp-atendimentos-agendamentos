@@ -1113,12 +1113,9 @@ class BillingService:
         if subscription.status in {"canceled", "suspended"}:
             await self.db.commit()
             return await self._subscription_status_response(subscription)
-        if subscription.cancellation_requested_at is not None:
-            await self.db.commit()
-            return await self._subscription_status_response(subscription)
-
         now = datetime.now(UTC)
-        subscription.cancellation_requested_at = now
+        if subscription.cancellation_requested_at is None:
+            subscription.cancellation_requested_at = now
 
         # Common Pix has no provider recurrence. Cancel locally and preserve the
         # already-paid access window.
@@ -1139,9 +1136,9 @@ class BillingService:
             )
             return await self._subscription_status_response(subscription)
 
-        # Persist the intent before any provider call. A concurrent/repeated user
-        # request will observe the pending state and will not issue a second
-        # provider mutation.
+        # Persist the intent before any provider call. If the provider response
+        # is lost, the same endpoint can safely retry: Asaas DELETE is treated
+        # as successful when the subscription is already absent (404).
         await self.db.commit()
 
         try:
@@ -1155,7 +1152,10 @@ class BillingService:
                     "payment_method": subscription.payment_method,
                 },
             )
-            return await self._subscription_status_response(subscription)
+            raise HTTPException(
+                502,
+                "Cancellation is pending confirmation; retry safely",
+            ) from None
 
         subscription.status = "canceled"
         subscription.canceled_at = subscription.canceled_at or datetime.now(UTC)
