@@ -58,7 +58,7 @@ def test_tubing_price_copy_respects_configured_catalog_unit() -> None:
     )
 
     assert "valor fixo de R$ 50,00" in (fixed.body or "")
-    assert "cada kit adicional custa R$ 30,00" in (kit.body or "").casefold()
+    assert "cada kit adicional custa r$ 30,00" in (kit.body or "").casefold()
     assert "cada unidade adicional custa r$ 15,00" in (unit.body or "").casefold()
     for body in (fixed.body or "", kit.body or "", unit.body or ""):
         assert "valor cadastrado" not in body.casefold()
