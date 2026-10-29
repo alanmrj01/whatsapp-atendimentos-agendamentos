@@ -668,6 +668,28 @@ async def test_unnamed_customer_is_asked_once_and_pending_service_is_resumed() -
 
 
 @mark.asyncio
+async def test_explicit_name_reply_also_resumes_pending_service_request() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1, body="Preciso fazer uma limpeza"))
+
+    assert repository.state == ConversationState.CUSTOMER_NAME
+
+    await engine.process(inbound(2, body="Meu nome é Juliana"))
+
+    assert repository.customer_name == "Juliana"
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "endereço" in body
+
+
+@mark.asyncio
 async def test_unrecognized_name_is_skipped_once_and_service_continues() -> None:
     repository = FakeConversationRepository(customer_name=None)
     booking_port = FakeBookingPort()
