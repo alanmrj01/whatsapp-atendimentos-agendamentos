@@ -6,6 +6,7 @@ from app.conversations.interpreter import (
     DeterministicConversationInterpreter,
     extract_customer_name,
     normalize_portuguese,
+    normalize_profile_customer_name,
 )
 
 
@@ -415,4 +416,15 @@ def test_bare_name_extraction_keeps_real_name_shapes(
 
 def test_explicit_name_can_use_word_that_is_ambiguous_in_bare_conversation() -> None:
     assert extract_customer_name("Meu nome é Amor", allow_bare=True) == "Amor"
+
+@pytest.mark.parametrize(
+    "profile_name",
+    [
+        "Nossa dormi tão mal",
+        "Chegou bem",
+        "Tira isso pfv",
+    ],
+)
+def test_profile_customer_name_rejects_conversation_fragments(profile_name: str) -> None:
+    assert normalize_profile_customer_name(profile_name) is None
 
