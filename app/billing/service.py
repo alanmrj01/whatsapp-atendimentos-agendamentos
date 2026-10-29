@@ -911,6 +911,11 @@ class BillingService:
         )
         if subscription is None:
             return SubscriptionStatusResponse(status="none")
+        if (
+            subscription.refund_status == "reconcile_required"
+            and subscription.status not in {"canceled", "suspended"}
+        ):
+            await self._resume_refund_before_provider_submission(subscription)
         return await self._subscription_status_response(subscription)
 
     @staticmethod
@@ -1178,12 +1183,12 @@ class BillingService:
         if subscription is None:
             await self.db.rollback()
             raise HTTPException(404, "Commercial subscription not found")
-        if subscription.refund_status in {
-            "requested",
-            "reconcile_required",
-            "refunded",
-        }:
+        if subscription.refund_status in {"requested", "refunded"}:
             await self.db.commit()
+            return await self._subscription_status_response(subscription)
+        if subscription.refund_status == "reconcile_required":
+            if subscription.status not in {"canceled", "suspended"}:
+                await self._resume_refund_before_provider_submission(subscription)
             return await self._subscription_status_response(subscription)
 
         status = await self._subscription_status_response(subscription)
@@ -1288,6 +1293,80 @@ class BillingService:
             },
         )
         return await self._subscription_status_response(subscription)
+
+    async def _resume_refund_before_provider_submission(
+        self,
+        subscription: CommercialSubscription,
+    ) -> None:
+        """Resume only the safe pre-refund stages of an in-window refund request."""
+        checkout = await self.db.get(BillingCheckout, subscription.checkout_id)
+        if checkout is None:
+            return
+
+        if checkout.provider_payment_id is None:
+            checkout.provider_payment_id = await self._resolve_initial_payment_reference(
+                checkout
+            )
+            if checkout.provider_payment_id is None:
+                await self.db.commit()
+                return
+            await self.db.commit()
+
+        try:
+            await self._cancel_provider_recurrence(subscription)
+        except AsaasGatewayError:
+            logger.warning(
+                "billing_guarantee_refund_reconcile_required",
+                extra={
+                    "business_id": str(subscription.business_id),
+                    "subscription_id": str(subscription.id),
+                    "checkout_id": str(checkout.id),
+                    "provider_payment_id": checkout.provider_payment_id,
+                    "refund_status": subscription.refund_status,
+                    "stage": "cancel_recurrence_retry",
+                },
+            )
+            return
+
+        subscription.status = "canceled"
+        subscription.canceled_at = subscription.canceled_at or datetime.now(UTC)
+        # Persist the one-way boundary before calling refund. Once status is
+        # canceled, this helper will never submit the refund a second time.
+        subscription.refund_status = "requested"
+        await self.db.commit()
+
+        try:
+            await self.gateway.refund_payment(checkout.provider_payment_id)
+        except AsaasGatewayError:
+            # Outcome may be uncertain. Never automatically submit again after
+            # this point; provider status/webhooks are the source of truth.
+            subscription.refund_status = "reconcile_required"
+            await self.db.commit()
+            logger.warning(
+                "billing_guarantee_refund_reconcile_required",
+                extra={
+                    "business_id": str(subscription.business_id),
+                    "subscription_id": str(subscription.id),
+                    "checkout_id": str(checkout.id),
+                    "provider_payment_id": checkout.provider_payment_id,
+                    "refund_status": subscription.refund_status,
+                    "stage": "refund_payment_retry",
+                },
+            )
+            return
+
+        logger.info(
+            "billing_guarantee_refund_submitted",
+            extra={
+                "business_id": str(subscription.business_id),
+                "subscription_id": str(subscription.id),
+                "checkout_id": str(checkout.id),
+                "provider_payment_id": checkout.provider_payment_id,
+                "refund_status": subscription.refund_status,
+                "stage": "reconciled_pre_submission",
+            },
+        )
+
 
     async def _latest_subscription_for_business(
         self, business_id: UUID
