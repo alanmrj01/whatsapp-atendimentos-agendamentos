@@ -4595,6 +4595,37 @@ async def test_service_inquiry_during_booking_answers_and_returns_to_same_checkp
 
 
 @mark.asyncio
+async def test_semantic_maintenance_inquiry_confirms_service_without_false_catalog_warning() -> None:
+    maintenance_id = SERVICE_ID
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(maintenance_id)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(maintenance_id), "Diagnóstico / manutenção corretiva")
+    ]
+    booking_port.get_service_details = AsyncMock(
+        return_value=ServiceDetails(
+            id=maintenance_id,
+            name="Diagnóstico / manutenção corretiva",
+            description=None,
+        )
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(12105, body="Vocês fazem manutenção de ar-condicionado? rua dos alfaiates 109, Novo Horizonte, SJC")
+    )
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    normalized = body.casefold()
+    assert "sim, trabalhamos com diagnóstico / manutenção corretiva" in normalized
+    assert "não está descrito no catálogo" not in normalized
+    assert "nao esta descrito no catalogo" not in normalized
+
+
+@mark.asyncio
 async def test_service_question_from_menu_answers_then_shows_real_service_choices() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.MENU,

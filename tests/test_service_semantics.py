@@ -66,6 +66,9 @@ def test_semantic_matching_covers_installation_and_maintenance_language() -> Non
             "preciso de manutenção",
             "está pingando água",
             "está fazendo barulho",
+            "vocês fazem manutenção de ar-condicionado?",
+            "faz manutenção em ar condicionado?",
+            "trabalham com conserto de split?",
         ),
     }
 
