@@ -1113,8 +1113,9 @@ class BillingService:
         if subscription.status in {"canceled", "suspended"}:
             await self.db.commit()
             return await self._subscription_status_response(subscription)
+        now = datetime.now(UTC)
         if subscription.cancellation_requested_at is None:
-            subscription.cancellation_requested_at = datetime.now(UTC)
+            subscription.cancellation_requested_at = now
 
         # Common Pix has no provider recurrence. Cancel locally and preserve the
         # already-paid access window.
