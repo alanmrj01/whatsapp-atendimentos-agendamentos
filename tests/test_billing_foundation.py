@@ -40,13 +40,16 @@ def test_sandbox_price_override_is_isolated(monkeypatch) -> None:
     assert get_offer("basic", "monthly").amount_cents == 19_700
 
 
-def test_plus_is_enabled_by_default_with_emergency_kill_switch(monkeypatch) -> None:
+def test_plus_is_fail_closed_until_explicitly_enabled(monkeypatch) -> None:
     monkeypatch.delenv("BILLING_PLUS_ENABLED", raising=False)
     assert plan_is_enabled("basic") is True
-    assert plan_is_enabled("plus") is True
+    assert plan_is_enabled("plus") is False
 
     monkeypatch.setenv("BILLING_PLUS_ENABLED", "false")
     assert plan_is_enabled("plus") is False
+
+    monkeypatch.setenv("BILLING_PLUS_ENABLED", "true")
+    assert plan_is_enabled("plus") is True
 
 
 def test_pix_automatic_is_fail_closed_in_production(monkeypatch) -> None:
