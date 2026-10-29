@@ -2377,7 +2377,7 @@ async def _service_question_answer(
         description = getattr(details, "description", None)
         if isinstance(description, str) and description.strip():
             parts.append(description.strip())
-        else:
+        elif not inquiry_language:
             parts.append(
                 "Esse detalhe específico não está descrito no catálogo do serviço. "
                 "Para não te passar uma informação incorreta, prefiro confirmar "
