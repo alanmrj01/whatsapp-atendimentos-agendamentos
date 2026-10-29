@@ -386,6 +386,11 @@ def test_technical_questions_are_side_questions(body: str) -> None:
         "Quero comprar",
         "Preciso de ajuda",
         "Agora pode",
+        "Nossa dormi tão mal",
+        "Amor",
+        "Chegou bem",
+        "Tira isso pfv",
+        "Você já chegou",
     ],
 )
 def test_bare_name_extraction_rejects_conversation_fragments(body: str) -> None:
@@ -406,4 +411,8 @@ def test_bare_name_extraction_keeps_real_name_shapes(
     expected: str,
 ) -> None:
     assert extract_customer_name(body, allow_bare=True) == expected
+
+
+def test_explicit_name_can_use_word_that_is_ambiguous_in_bare_conversation() -> None:
+    assert extract_customer_name("Meu nome é Amor", allow_bare=True) == "Amor"
 
