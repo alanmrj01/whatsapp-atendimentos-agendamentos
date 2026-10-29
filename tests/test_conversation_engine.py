@@ -668,6 +668,30 @@ async def test_unnamed_customer_is_asked_once_and_pending_service_is_resumed() -
 
 
 @mark.asyncio
+async def test_off_order_sentence_is_not_saved_as_customer_name() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1, body="Olá"))
+
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    assert repository.customer_name is None
+
+    await engine.process(inbound(2, body="Nossa dormi tão mal"))
+
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    assert repository.customer_name is None
+    retry_body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "chame" in retry_body or "chamar" in retry_body
+    assert "equipe" not in retry_body
+
+    await engine.process(inbound(3, body="Juliana"))
+
+    assert repository.customer_name == "Juliana"
+
+
+@mark.asyncio
 async def test_customer_can_choose_offered_date_and_time_in_one_text_message() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_DATE,

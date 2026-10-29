@@ -253,6 +253,45 @@ _BARE_NAME_REJECT_WORDS = frozenset(
         "tranquilo",
         "beleza",
         "suave",
+        # Conversation fragments must never be captured as a bare personal name.
+        # Explicit forms such as "meu nome é Amor" are still accepted above.
+        "eu",
+        "voce",
+        "vc",
+        "voces",
+        "vcs",
+        "ele",
+        "ela",
+        "meu",
+        "minha",
+        "nosso",
+        "nossa",
+        "seu",
+        "sua",
+        "amor",
+        "isso",
+        "isto",
+        "aquilo",
+        "ja",
+        "ainda",
+        "antes",
+        "depois",
+        "bem",
+        "mal",
+        "tao",
+        "dormi",
+        "dormiu",
+        "dormindo",
+        "cheguei",
+        "chegou",
+        "chegando",
+        "tira",
+        "manda",
+        "mandar",
+        "pfv",
+        "favor",
+        "video",
+        "mensagem",
     }
 )
 
@@ -757,6 +796,8 @@ def normalize_profile_customer_name(value: str | None) -> str | None:
     # a name. Preserve natural short names such as "Lu".
     raw_letters = "".join(character for character in raw if character.isalpha())
     if len(letters) == 2 and raw_letters.isupper():
+        return None
+    if any(word in _BARE_NAME_REJECT_WORDS for word in normalized.split()):
         return None
 
     business_like_tokens = {
