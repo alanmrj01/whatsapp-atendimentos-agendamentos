@@ -3296,7 +3296,7 @@ async def test_old_button_confirm_applies_change_without_clearing_service() -> N
 
 @mark.asyncio
 async def test_additional_service_request_does_not_replace_active_request() -> None:
-    maintenance_id = uuid.UUID("41000000-0000-0000-0000-000000000004")
+    maintenance_id = SERVICE_ID
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_DATE,
         context={"service_id": str(SERVICE_ID)},
