@@ -797,6 +797,8 @@ def normalize_profile_customer_name(value: str | None) -> str | None:
     raw_letters = "".join(character for character in raw if character.isalpha())
     if len(letters) == 2 and raw_letters.isupper():
         return None
+    if any(word in _BARE_NAME_REJECT_WORDS for word in normalized.split()):
+        return None
 
     business_like_tokens = {
         "assistencia",
