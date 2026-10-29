@@ -1754,10 +1754,19 @@ class OperationalService:
                 Customer.whatsapp_profile_name,
                 Customer.phone_e164,
                 Customer.whatsapp_id,
+                Conversation.id,
                 Service.name,
                 Employee.name,
             )
             .join(Customer, and_(Customer.business_id == Appointment.business_id, Customer.id == Appointment.customer_id))
+            .outerjoin(
+                Conversation,
+                and_(
+                    Conversation.business_id == Appointment.business_id,
+                    Conversation.customer_id == Appointment.customer_id,
+                    Conversation.deleted_at.is_(None),
+                ),
+            )
             .join(Service, and_(Service.business_id == Appointment.business_id, Service.id == Appointment.service_id))
             .join(Employee, and_(Employee.business_id == Appointment.business_id, Employee.id == Appointment.employee_id))
             .where(Appointment.business_id == business_id)
@@ -1932,6 +1941,7 @@ def _appointment_view(row: Any) -> AppointmentView:
         whatsapp_profile_name,
         customer_phone,
         whatsapp_id,
+        conversation_id,
         service_name,
         employee_name,
     ) = row
@@ -1957,7 +1967,10 @@ def _appointment_view(row: Any) -> AppointmentView:
             whatsapp_id,
             name_source=customer_name_source,
         ),
-        customer_phone=customer_phone, service_id=item.service_id, service_name=service_name,
+        customer_phone=customer_phone,
+        conversation_id=conversation_id,
+        service_id=item.service_id,
+        service_name=service_name,
         employee_id=item.employee_id, employee_name=employee_name, starts_at=item.starts_at,
         ends_at=item.ends_at,
         status=item.status,
