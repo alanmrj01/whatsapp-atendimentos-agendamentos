@@ -5,6 +5,7 @@ from uuid import uuid4
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 import app.billing.service as billing_service_module
 from app.billing.asaas import AsaasGatewayTimeoutError
