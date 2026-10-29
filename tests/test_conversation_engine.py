@@ -3296,7 +3296,7 @@ async def test_old_button_confirm_applies_change_without_clearing_service() -> N
 
 @mark.asyncio
 async def test_additional_service_request_does_not_replace_active_request() -> None:
-    maintenance_id = SERVICE_ID
+    maintenance_id = uuid.UUID("41000000-0000-0000-0000-000000000004")
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_DATE,
         context={"service_id": str(SERVICE_ID)},
@@ -4596,7 +4596,7 @@ async def test_service_inquiry_during_booking_answers_and_returns_to_same_checkp
 
 @mark.asyncio
 async def test_semantic_maintenance_inquiry_confirms_service_without_false_catalog_warning() -> None:
-    maintenance_id = uuid.UUID("41000000-0000-0000-0000-000000000004")
+    maintenance_id = SERVICE_ID
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_ADDRESS,
         context={"service_id": str(maintenance_id)},
