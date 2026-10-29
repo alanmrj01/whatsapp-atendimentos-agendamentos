@@ -9277,7 +9277,6 @@ def _price_addition_lines(
         "additional_units_price": "Adicional por quantidade",
         "difficult_access_price": "Adicional por acesso difícil",
         "extra_tubing_price": "Adicional de tubulação",
-        "service_distance_fee": "Adicional de deslocamento",
     }
     values: dict[str, Decimal] = {}
     for rule in applied_rules:
@@ -9298,7 +9297,6 @@ def _price_addition_lines(
             "additional_units_price",
             "difficult_access_price",
             "extra_tubing_price",
-            "service_distance_fee",
         )
         if key in values
     ]
