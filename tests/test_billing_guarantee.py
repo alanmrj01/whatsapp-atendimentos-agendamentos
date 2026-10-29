@@ -184,9 +184,16 @@ class _EmptyPixGateway:
 
 
 class _RefundGateway:
-    def __init__(self, *, fail_refund: bool = False, payment_payload=None):
+    def __init__(
+        self,
+        *,
+        fail_refund: bool = False,
+        payment_payload=None,
+        fail_cancel_calls: int = 0,
+    ):
         self.fail_refund = fail_refund
         self.payment_payload = payment_payload
+        self.fail_cancel_calls = fail_cancel_calls
         self.refund_calls: list[str] = []
         self.cancel_calls: list[str] = []
         self.authorization_cancel_calls: list[str] = []
@@ -208,6 +215,9 @@ class _RefundGateway:
     async def cancel_subscription(self, subscription_id):
         self.cancel_calls.append(subscription_id)
         self.order.append("cancel_subscription")
+        if self.fail_cancel_calls > 0:
+            self.fail_cancel_calls -= 1
+            raise AsaasGatewayTimeoutError("timeout")
 
     async def cancel_pix_authorization(self, authorization_id):
         self.authorization_cancel_calls.append(authorization_id)
@@ -397,6 +407,50 @@ async def test_card_cancellation_stops_provider_recurrence_and_preserves_access(
     response = await service.request_subscription_cancellation(business_id=business_id)
 
     assert gateway.cancel_calls == ["sub_card"]
+    assert response.status == "canceled"
+    assert response.access_until == previous_access_until
+    assert subscription.canceled_at is not None
+
+
+@pytest.mark.asyncio
+async def test_card_cancellation_can_be_retried_after_uncertain_provider_failure(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    business_id = uuid4()
+    checkout = _checkout(
+        business_id=business_id,
+        paid_at=datetime.now(UTC) - timedelta(days=10),
+    )
+    checkout.payment_method = "credit_card"
+    checkout.provider_subscription_id = "sub_card"
+    subscription = _subscription(business_id=business_id, checkout_id=checkout.id)
+    subscription.payment_method = "credit_card"
+    subscription.provider_pix_qr_code_id = None
+    subscription.provider_subscription_id = "sub_card"
+    previous_access_until = subscription.access_until
+    db = _RequestDb(
+        checkout,
+        [
+            subscription,
+            subscription,
+            checkout.id,
+        ],
+    )
+    gateway = _RefundGateway(fail_cancel_calls=1)
+    service = BillingService(db, gateway)
+    service._lock_business_checkout = AsyncMock()
+
+    with pytest.raises(HTTPException) as first:
+        await service.request_subscription_cancellation(business_id=business_id)
+
+    assert first.value.status_code == 502
+    assert first.value.detail == "Cancellation is pending confirmation; retry safely"
+    assert subscription.cancellation_requested_at is not None
+    assert subscription.status == "active"
+    assert gateway.cancel_calls == ["sub_card"]
+
+    response = await service.request_subscription_cancellation(business_id=business_id)
+
+    assert gateway.cancel_calls == ["sub_card", "sub_card"]
     assert response.status == "canceled"
     assert response.access_until == previous_access_until
     assert subscription.canceled_at is not None
