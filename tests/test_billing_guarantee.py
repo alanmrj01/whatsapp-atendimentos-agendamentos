@@ -406,6 +406,8 @@ async def test_refund_reconciliation_retries_failed_recurrence_cancel_then_submi
             subscription,
             checkout.id,
             checkout.id,
+            subscription,
+            checkout.id,
         ],
     )
     gateway = _RefundGateway(fail_cancel_calls=1)
@@ -446,6 +448,7 @@ async def test_refund_timeout_is_never_resubmitted_by_status_reconciliation(monk
         checkout,
         [
             subscription,
+            checkout.id,
             checkout.id,
             subscription,
             checkout.id,
