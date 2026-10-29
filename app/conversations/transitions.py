@@ -446,11 +446,6 @@ async def determine_transition(
         return stale_action
 
     captured_name: str | None = interpretation.customer_name
-    if captured_name is not None:
-        conversation = replace(conversation, customer_name=captured_name)
-        if context.get(_CUSTOMER_NAME_SKIPPED_KEY) is True:
-            context = dict(context)
-            context.pop(_CUSTOMER_NAME_SKIPPED_KEY, None)
 
     if state is ConversationState.CUSTOMER_NAME:
         transition = await _handle_customer_name(
@@ -463,6 +458,12 @@ async def determine_transition(
         if captured_name is not None:
             transition = replace(transition, customer_name=captured_name)
         return transition
+
+    if captured_name is not None:
+        conversation = replace(conversation, customer_name=captured_name)
+        if context.get(_CUSTOMER_NAME_SKIPPED_KEY) is True:
+            context = dict(context)
+            context.pop(_CUSTOMER_NAME_SKIPPED_KEY, None)
 
     if (
         conversation.customer_name is None
