@@ -1260,9 +1260,7 @@ async def _continue_without_customer_name(
         return _transition(
             ConversationState.MENU,
             resumed_context,
-            main_menu_message(
-                body="Tudo certo. Como posso te ajudar?"
-            ),
+            main_menu_message(),
         )
 
     replay = replace(
@@ -1295,7 +1293,7 @@ async def _continue_without_customer_name(
         transition = _transition(
             ConversationState.MENU,
             resumed_context,
-            main_menu_message(body="Tudo certo. Como posso te ajudar?"),
+            main_menu_message(),
         )
     return _preserve_skipped_customer_name(transition)
 
