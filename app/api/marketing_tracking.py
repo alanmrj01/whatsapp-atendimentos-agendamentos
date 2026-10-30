@@ -12,6 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.meta_conversions import (
+    capture_meta_conversion,
+    client_ip_address,
+    marketing_conversion_event,
+)
 from app.analytics.posthog import (
     PostHogEvent,
     capture_posthog_event,
@@ -216,9 +221,9 @@ async def record_marketing_event(
     db: Db,
     principal: Annotated[Principal | None, Depends(optional_principal)],
 ):
-    # First-party product analytics only. We intentionally do not persist IP,
-    # user-agent, auth tokens, message content or form values here. Durable
-    # analytics identity lives only in HttpOnly first-party cookies.
+    # First-party analytics persists no IP, user-agent, auth tokens, message
+    # content or form values. When Meta CAPI is explicitly enabled, ephemeral
+    # request matching signals may be forwarded to Meta but are never stored.
     visitor_id = (
         payload.visitor_id
         or _cookie_uuid(request, VISITOR_COOKIE)
@@ -303,6 +308,31 @@ async def record_marketing_event(
             },
         ),
     )
+
+    meta_event = marketing_conversion_event(
+        settings,
+        event_name=payload.event_name,
+        event_id=client_event_id,
+        occurred_at=occurred_at,
+        path=payload.path,
+        properties=safe_properties,
+        visitor_id=visitor_id,
+        user_id=effective_user_id,
+        user_email=principal.user.email if principal is not None else None,
+        fbp=request.cookies.get("_fbp"),
+        fbc=request.cookies.get("_fbc"),
+        client_ip=client_ip_address(
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client is not None else None,
+        ),
+        client_user_agent=request.headers.get("user-agent"),
+    )
+    if meta_event is not None:
+        background_tasks.add_task(
+            capture_meta_conversion,
+            settings,
+            meta_event,
+        )
 
     secure = settings.environment is Environment.production
     if attribution_cookie_value is not None:
