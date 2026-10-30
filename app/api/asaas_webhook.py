@@ -8,6 +8,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.meta_conversions import (
+    capture_meta_conversion,
+    purchase_conversion_event,
+)
 from app.analytics.posthog import (
     PostHogEvent,
     business_distinct_id,
@@ -20,7 +24,7 @@ from app.billing.asaas import AsaasGateway
 from app.billing.webhooks import BillingWebhookService
 from app.core.config import AsaasConfigurationError, Settings, get_settings
 from app.core.database import get_db
-from app.models import BillingCheckout, BillingWebhookEvent
+from app.models import BillingCheckout, BillingWebhookEvent, User
 from app.push.service import WebPushDispatchError, dispatch_pending_web_push
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
@@ -130,6 +134,54 @@ async def asaas_webhook(
                             occurred_at=analytics_row.processed_at,
                         ),
                     )
+    if (
+        settings.meta_conversions_configuration() is not None
+        and isinstance(provider_event_id, str)
+        and provider_event_type in {"PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"}
+    ):
+        storage_event_id = billing_service._event_storage_id(
+            billing_service.provider_environment,
+            provider_event_id,
+        )
+        meta_row = await db.get(BillingWebhookEvent, storage_event_id)
+        if (
+            meta_row is not None
+            and meta_row.processed_at is not None
+            and meta_row.business_id is not None
+            and meta_row.provider_payment_id is not None
+        ):
+            meta_checkout = await db.scalar(
+                select(BillingCheckout).where(
+                    BillingCheckout.provider_payment_id
+                    == meta_row.provider_payment_id,
+                    BillingCheckout.provider_environment
+                    == meta_row.provider_environment,
+                    BillingCheckout.business_id == meta_row.business_id,
+                )
+            )
+            if meta_checkout is not None:
+                meta_owner_user_id = await business_owner_user_id(
+                    db, meta_row.business_id
+                )
+                meta_owner = (
+                    await db.get(User, meta_owner_user_id)
+                    if meta_owner_user_id is not None
+                    else None
+                )
+                purchase_event = purchase_conversion_event(
+                    settings,
+                    checkout=meta_checkout,
+                    occurred_at=meta_row.processed_at,
+                    owner_user_id=meta_owner_user_id,
+                    owner_email=meta_owner.email if meta_owner is not None else None,
+                )
+                if purchase_event is not None:
+                    background_tasks.add_task(
+                        capture_meta_conversion,
+                        settings,
+                        purchase_event,
+                    )
+
     for event_key in action_event_keys:
         try:
             await dispatch_pending_web_push(db, event_key, settings)
