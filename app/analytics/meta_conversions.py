@@ -320,7 +320,7 @@ async def capture_meta_conversion(
         events_received = response_payload.get("events_received")
         fbtrace_id = response_payload.get("fbtrace_id")
         messages = response_payload.get("messages")
-        logger.warning(
+        logger.info(
             "meta_capi_capture_succeeded",
             extra={
                 "status_code": response.status_code,
