@@ -328,8 +328,11 @@ async def record_marketing_event(
         client_user_agent=request.headers.get("user-agent"),
     )
     if meta_event is not None:
-        background_tasks.add_task(
-            capture_meta_conversion,
+        # Meta CAPI must complete within the request lifecycle. Cloud Run may
+        # throttle CPU after the HTTP response is sent, making background
+        # delivery unreliable for conversion signals. The capture helper is
+        # fail-safe and absorbs HTTP errors/timeouts without failing tracking.
+        await capture_meta_conversion(
             settings,
             meta_event,
         )
