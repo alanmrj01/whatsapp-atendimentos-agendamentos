@@ -10,6 +10,7 @@ from app.analytics.posthog import (
     build_capture_payload,
     identity_alias_event,
     queue_automatic_booking_posthog,
+    subscription_paid_event,
     take_automatic_booking_posthog_ids,
     user_distinct_id,
     visitor_distinct_id,
@@ -25,7 +26,7 @@ from app.api.marketing_tracking import (
 )
 from app.billing.webhooks import BillingWebhookService
 from app.core.config import Settings
-from app.models import BillingWebhookEvent
+from app.models import BillingCheckout, BillingWebhookEvent
 from app.models.marketing import MarketingFunnelEvent
 
 
@@ -289,3 +290,39 @@ def test_automatic_booking_event_is_authoritative_idempotent_and_pii_free() -> N
         fragment not in " ".join(event.properties).casefold()
         for fragment in ("email", "phone", "telefone", "message", "whatsapp_id")
     )
+
+def test_subscription_paid_event_is_authoritative_idempotent_and_revenue_ready() -> None:
+    business_id = UUID("00000000-0000-0000-0000-000000000041")
+    checkout = BillingCheckout(
+        id=UUID("00000000-0000-0000-0000-000000000042"),
+        business_id=business_id,
+        idempotency_key=UUID("00000000-0000-0000-0000-000000000043"),
+        plan_code="basic",
+        billing_cycle="monthly",
+        payment_method="pix",
+        provider_environment="production",
+        amount_cents=19_700,
+        status="paid",
+    )
+    owner_user_id = UUID("00000000-0000-0000-0000-000000000044")
+    occurred_at = datetime.now(UTC)
+
+    event = subscription_paid_event(
+        checkout=checkout,
+        owner_user_id=owner_user_id,
+        occurred_at=occurred_at,
+    )
+
+    assert event.name == "subscription_paid"
+    assert event.insert_id == f"subscription_paid:{checkout.id}"
+    assert event.distinct_id == user_distinct_id(owner_user_id)
+    assert event.occurred_at == occurred_at
+    assert event.properties["business_id"] == str(business_id)
+    assert event.properties["plan"] == "basic"
+    assert event.properties["billing_cycle"] == "monthly"
+    assert event.properties["payment_method"] == "pix"
+    assert event.properties["amount_cents"] == 19_700
+    assert event.properties["funnel_stage"] == "subscription_paid"
+    assert "email" not in event.properties
+    assert "phone" not in event.properties
+

@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.models import Appointment, BusinessUserMembership, ProcessedWebhook
+from app.models import Appointment, BillingCheckout, BusinessUserMembership, ProcessedWebhook
 
 logger = logging.getLogger(__name__)
 AUTOMATIC_BOOKING_SESSION_INFO_KEY = "posthog_automatic_booking_ids"
@@ -67,6 +67,36 @@ def take_automatic_booking_posthog_ids(session: AsyncSession) -> list[UUID]:
     return sorted(
         (value for value in raw if isinstance(value, UUID)),
         key=str,
+    )
+
+
+def subscription_paid_event(
+    *,
+    checkout: BillingCheckout,
+    owner_user_id: UUID | None,
+    occurred_at: datetime | None,
+) -> PostHogEvent:
+    distinct_id = (
+        user_distinct_id(owner_user_id)
+        if owner_user_id is not None
+        else business_distinct_id(checkout.business_id)
+    )
+    return PostHogEvent(
+        name="subscription_paid",
+        distinct_id=distinct_id,
+        insert_id=f"subscription_paid:{checkout.id}",
+        occurred_at=occurred_at,
+        process_person_profile=owner_user_id is not None,
+        properties={
+            "analytics_source": "asaas_webhook",
+            "business_id": str(checkout.business_id),
+            "checkout_id": str(checkout.id),
+            "plan": checkout.plan_code,
+            "billing_cycle": checkout.billing_cycle,
+            "payment_method": checkout.payment_method,
+            "amount_cents": checkout.amount_cents,
+            "funnel_stage": "subscription_paid",
+        },
     )
 
 
