@@ -488,3 +488,37 @@ def test_meta_capi_client_ip_uses_first_valid_forwarded_address() -> None:
     ) == "203.0.113.20"
     assert client_ip_address("not-an-ip", "198.51.100.4") == "198.51.100.4"
 
+def test_meta_capi_derives_fbc_only_from_real_fbclid() -> None:
+    settings = _meta_settings()
+    occurred_at = datetime(2026, 10, 29, 23, 30, tzinfo=UTC)
+    base = {
+        "settings": settings,
+        "event_name": "page_view",
+        "event_id": UUID("00000000-0000-0000-0000-000000000061"),
+        "occurred_at": occurred_at,
+        "path": "/",
+        "visitor_id": UUID("00000000-0000-0000-0000-000000000062"),
+        "user_id": None,
+        "user_email": None,
+        "fbp": None,
+        "fbc": None,
+        "client_ip": "203.0.113.12",
+        "client_user_agent": "Browser",
+    }
+
+    paid = marketing_conversion_event(
+        **base,
+        properties={"route_group": "landing", "fbclid": "REAL_META_CLICK_ID"},
+    )
+    assert paid is not None
+    assert paid.user_data["fbc"] == (
+        f"fb.1.{int(occurred_at.timestamp() * 1000)}.REAL_META_CLICK_ID"
+    )
+
+    organic = marketing_conversion_event(
+        **base,
+        properties={"route_group": "landing"},
+    )
+    assert organic is not None
+    assert "fbc" not in organic.user_data
+
