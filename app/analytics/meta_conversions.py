@@ -310,6 +310,30 @@ async def capture_meta_conversion(
                     "event_name": event.event_name,
                 },
             )
+            return
+
+        events_received: int | None = None
+        message_count: int | None = None
+        try:
+            body = response.json()
+            raw_events_received = body.get("events_received")
+            if isinstance(raw_events_received, int):
+                events_received = raw_events_received
+            raw_messages = body.get("messages")
+            if isinstance(raw_messages, list):
+                message_count = len(raw_messages)
+        except ValueError:
+            pass
+
+        logger.info(
+            "meta_capi_capture_succeeded",
+            extra={
+                "status_code": response.status_code,
+                "event_name": event.event_name,
+                "events_received": events_received,
+                "message_count": message_count,
+            },
+        )
     except (httpx.HTTPError, TimeoutError):
         logger.warning(
             "meta_capi_capture_failed",
