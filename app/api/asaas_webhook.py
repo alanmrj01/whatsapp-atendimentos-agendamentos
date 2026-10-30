@@ -5,6 +5,7 @@ import json
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.posthog import (
@@ -12,13 +13,14 @@ from app.analytics.posthog import (
     business_distinct_id,
     business_owner_user_id,
     capture_posthog_event,
+    subscription_paid_event,
     user_distinct_id,
 )
 from app.billing.asaas import AsaasGateway
 from app.billing.webhooks import BillingWebhookService
 from app.core.config import AsaasConfigurationError, Settings, get_settings
 from app.core.database import get_db
-from app.models import BillingWebhookEvent
+from app.models import BillingCheckout, BillingWebhookEvent
 from app.push.service import WebPushDispatchError, dispatch_pending_web_push
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
@@ -105,6 +107,29 @@ async def asaas_webhook(
                     },
                 ),
             )
+            if (
+                provider_event_type in {"PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"}
+                and analytics_row.provider_payment_id is not None
+            ):
+                checkout = await db.scalar(
+                    select(BillingCheckout).where(
+                        BillingCheckout.provider_payment_id
+                        == analytics_row.provider_payment_id,
+                        BillingCheckout.provider_environment
+                        == analytics_row.provider_environment,
+                        BillingCheckout.business_id == analytics_row.business_id,
+                    )
+                )
+                if checkout is not None:
+                    background_tasks.add_task(
+                        capture_posthog_event,
+                        settings,
+                        subscription_paid_event(
+                            checkout=checkout,
+                            owner_user_id=owner_user_id,
+                            occurred_at=analytics_row.processed_at,
+                        ),
+                    )
     for event_key in action_event_keys:
         try:
             await dispatch_pending_web_push(db, event_key, settings)
