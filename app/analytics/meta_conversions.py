@@ -49,6 +49,25 @@ def _safe_meta_cookie(value: str | None) -> str | None:
     return normalized
 
 
+def _derived_fbc(
+    *,
+    existing_fbc: str | None,
+    fbclid: object,
+    occurred_at: datetime,
+) -> str | None:
+    safe_existing = _safe_meta_cookie(existing_fbc)
+    if safe_existing:
+        return safe_existing
+
+    if not isinstance(fbclid, str):
+        return None
+    normalized = fbclid.strip()
+    if not normalized or len(normalized) > 200:
+        return None
+
+    return f"fb.1.{int(occurred_at.timestamp() * 1000)}.{normalized}"
+
+
 def client_ip_address(
     forwarded_for: str | None,
     client_host: str | None,
@@ -189,7 +208,11 @@ def marketing_conversion_event(
             user_id=user_id,
             user_email=user_email,
             fbp=fbp,
-            fbc=fbc,
+            fbc=_derived_fbc(
+                existing_fbc=fbc,
+                fbclid=safe_properties.get("fbclid"),
+                occurred_at=occurred_at,
+            ),
             client_ip=client_ip,
             client_user_agent=client_user_agent,
         ),
