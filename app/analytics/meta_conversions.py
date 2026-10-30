@@ -310,6 +310,32 @@ async def capture_meta_conversion(
                     "event_name": event.event_name,
                 },
             )
+            return
+
+        try:
+            response_payload = response.json()
+        except ValueError:
+            response_payload = {}
+
+        events_received = response_payload.get("events_received")
+        fbtrace_id = response_payload.get("fbtrace_id")
+        messages = response_payload.get("messages")
+        logger.warning(
+            "meta_capi_capture_succeeded",
+            extra={
+                "status_code": response.status_code,
+                "event_name": event.event_name,
+                "events_received": (
+                    events_received if isinstance(events_received, int) else None
+                ),
+                "fbtrace_id": (
+                    fbtrace_id if isinstance(fbtrace_id, str) else None
+                ),
+                "messages_count": (
+                    len(messages) if isinstance(messages, list) else None
+                ),
+            },
+        )
     except (httpx.HTTPError, TimeoutError):
         logger.warning(
             "meta_capi_capture_failed",
