@@ -176,8 +176,10 @@ async def asaas_webhook(
                     owner_email=meta_owner.email if meta_owner is not None else None,
                 )
                 if purchase_event is not None:
-                    background_tasks.add_task(
-                        capture_meta_conversion,
+                    # Purchase is authoritative revenue telemetry. Keep Meta
+                    # delivery inside the webhook request lifecycle so Cloud Run
+                    # cannot suspend it after the 200 response is emitted.
+                    await capture_meta_conversion(
                         settings,
                         purchase_event,
                     )
