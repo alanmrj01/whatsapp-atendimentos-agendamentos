@@ -50,6 +50,15 @@ class PasswordResetEmailConfiguration:
 
 
 @dataclass(frozen=True, slots=True)
+class MetaConversionsConfiguration:
+    dataset_id: str
+    access_token: SecretStr
+    graph_version: str
+    event_source_base_url: str
+    test_event_code: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class MetaEmbeddedSignupConfiguration:
     app_id: str
     configuration_id: str
@@ -171,6 +180,24 @@ class Settings(BaseSettings):
     )
     meta_verify_token: SecretStr | None = Field(
         default=None, validation_alias="META_VERIFY_TOKEN"
+    )
+    meta_capi_enabled: bool = Field(
+        default=False, validation_alias="META_CAPI_ENABLED"
+    )
+    meta_capi_dataset_id: str | None = Field(
+        default=None, validation_alias="META_CAPI_DATASET_ID"
+    )
+    meta_capi_access_token: SecretStr | None = Field(
+        default=None, validation_alias="META_CAPI_ACCESS_TOKEN"
+    )
+    meta_capi_graph_version: str = Field(
+        default="v26.0", validation_alias="META_CAPI_GRAPH_VERSION"
+    )
+    meta_capi_event_source_base_url: str | None = Field(
+        default=None, validation_alias="META_CAPI_EVENT_SOURCE_BASE_URL"
+    )
+    meta_capi_test_event_code: str | None = Field(
+        default=None, validation_alias="META_CAPI_TEST_EVENT_CODE"
     )
     asaas_api_key: SecretStr | None = Field(
         default=None, validation_alias="ASAAS_API_KEY"
@@ -307,6 +334,54 @@ class Settings(BaseSettings):
         if len(raw) < 32 or len(raw) > 255:
             raise AsaasConfigurationError("Asaas webhook token is not configured")
         return raw
+
+    def meta_conversions_configuration(
+        self,
+    ) -> MetaConversionsConfiguration | None:
+        if not self.meta_capi_enabled or self.environment is not Environment.production:
+            return None
+
+        dataset_id = (self.meta_capi_dataset_id or "").strip()
+        access_token = (
+            self.meta_capi_access_token.get_secret_value().strip()
+            if self.meta_capi_access_token is not None
+            else ""
+        )
+        graph_version = self.meta_capi_graph_version.strip()
+        event_source_base_url = (
+            self.meta_capi_event_source_base_url or ""
+        ).strip().rstrip("/")
+        test_event_code = (self.meta_capi_test_event_code or "").strip() or None
+
+        try:
+            parsed = urlsplit(event_source_base_url)
+            valid_base_url = (
+                parsed.scheme == "https"
+                and bool(parsed.hostname)
+                and not parsed.username
+                and not parsed.password
+                and not parsed.path
+                and not parsed.query
+                and not parsed.fragment
+            )
+        except ValueError:
+            valid_base_url = False
+
+        if (
+            not dataset_id.isdigit()
+            or not access_token
+            or not re.fullmatch(r"v\d{1,3}\.\d{1,3}", graph_version)
+            or not valid_base_url
+        ):
+            return None
+
+        return MetaConversionsConfiguration(
+            dataset_id=dataset_id,
+            access_token=SecretStr(access_token),
+            graph_version=graph_version,
+            event_source_base_url=event_source_base_url,
+            test_event_code=test_event_code,
+        )
 
     def require_meta_embedded_signup_configuration(
         self,
