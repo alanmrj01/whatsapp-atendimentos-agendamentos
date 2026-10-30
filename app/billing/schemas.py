@@ -86,6 +86,7 @@ class CheckoutStatusResponse(BaseModel):
     payment_method: PaymentMethod
     plan: PlanCode
     cycle: BillingCycle
+    amount_cents: int
     expires_at: datetime | None = None
     initial_payment_received: bool = False
 
