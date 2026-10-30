@@ -895,6 +895,7 @@ class BillingService:
             payment_method=checkout.payment_method,  # type: ignore[arg-type]
             plan=checkout.plan_code,  # type: ignore[arg-type]
             cycle=checkout.billing_cycle,  # type: ignore[arg-type]
+            amount_cents=checkout.amount_cents,
             expires_at=checkout.expires_at,
             initial_payment_received=checkout.paid_at is not None,
         )

@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from uuid import UUID
 
+from app.analytics.meta_conversions import (
+    build_meta_payload,
+    client_ip_address,
+    marketing_conversion_event,
+    purchase_conversion_event,
+)
 from app.analytics.posthog import (
     AUTOMATIC_BOOKING_SESSION_INFO_KEY,
     PostHogEvent,
@@ -325,4 +332,159 @@ def test_subscription_paid_event_is_authoritative_idempotent_and_revenue_ready()
     assert event.properties["funnel_stage"] == "subscription_paid"
     assert "email" not in event.properties
     assert "phone" not in event.properties
+
+def _meta_settings(**overrides) -> Settings:
+    values = {
+        "ENVIRONMENT": "production",
+        "META_CAPI_ENABLED": True,
+        "META_CAPI_DATASET_ID": "1432131901730735",
+        "META_CAPI_ACCESS_TOKEN": "meta-secret-token",
+        "META_CAPI_GRAPH_VERSION": "v26.0",
+        "META_CAPI_EVENT_SOURCE_BASE_URL": "https://alovia.netlify.app",
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
+def test_meta_capi_is_fail_closed_outside_explicit_production_configuration() -> None:
+    assert Settings(ENVIRONMENT="test").meta_conversions_configuration() is None
+    assert Settings(
+        ENVIRONMENT="production",
+        META_CAPI_ENABLED=True,
+    ).meta_conversions_configuration() is None
+
+
+def test_meta_capi_registration_uses_shared_event_id_and_hashed_match_data() -> None:
+    settings = _meta_settings(META_CAPI_TEST_EVENT_CODE="TEST123")
+    visitor_id = UUID("00000000-0000-0000-0000-000000000051")
+    user_id = UUID("00000000-0000-0000-0000-000000000052")
+    event_id = UUID("00000000-0000-0000-0000-000000000053")
+    occurred_at = datetime(2026, 10, 29, 23, 0, tzinfo=UTC)
+
+    event = marketing_conversion_event(
+        settings,
+        event_name="signup_completed",
+        event_id=event_id,
+        occurred_at=occurred_at,
+        path="/criar-conta",
+        properties={"funnel_stage": "registration_completed"},
+        visitor_id=visitor_id,
+        user_id=user_id,
+        user_email="Owner@Example.com ",
+        fbp="fb.1.1234567890.123456789",
+        fbc="fb.1.1234567890.TESTFBCLID",
+        client_ip="203.0.113.10",
+        client_user_agent="Alovia Browser",
+    )
+
+    assert event is not None
+    assert event.event_name == "CompleteRegistration"
+    assert event.event_id == str(event_id)
+    assert event.event_source_url == "https://alovia.netlify.app/criar-conta"
+    assert event.user_data["em"] == [
+        sha256(b"owner@example.com").hexdigest()
+    ]
+    assert event.user_data["external_id"] == [
+        sha256(str(user_id).encode()).hexdigest()
+    ]
+    assert event.user_data["fbp"] == "fb.1.1234567890.123456789"
+    assert event.user_data["fbc"] == "fb.1.1234567890.TESTFBCLID"
+    assert event.user_data["client_ip_address"] == "203.0.113.10"
+    assert "Owner@Example.com" not in str(event.user_data)
+
+    configuration = settings.meta_conversions_configuration()
+    assert configuration is not None
+    payload = build_meta_payload(configuration, event)
+    assert payload["data"][0]["event_name"] == "CompleteRegistration"
+    assert payload["data"][0]["event_id"] == str(event_id)
+    assert payload["data"][0]["action_source"] == "website"
+    assert payload["access_token"] == "meta-secret-token"
+    assert payload["test_event_code"] == "TEST123"
+
+
+def test_meta_capi_whitelist_rejects_internal_or_non_authoritative_events() -> None:
+    settings = _meta_settings()
+    common = {
+        "settings": settings,
+        "event_id": UUID("00000000-0000-0000-0000-000000000054"),
+        "occurred_at": datetime.now(UTC),
+        "path": "/app",
+        "visitor_id": UUID("00000000-0000-0000-0000-000000000055"),
+        "user_id": None,
+        "user_email": None,
+        "fbp": None,
+        "fbc": None,
+        "client_ip": "203.0.113.11",
+        "client_user_agent": "Browser",
+    }
+
+    assert marketing_conversion_event(
+        **common,
+        event_name="page_view",
+        properties={"route_group": "conversations"},
+    ) is None
+    assert marketing_conversion_event(
+        **common,
+        event_name="payment_confirmed",
+        properties={"checkout_id": "should-not-be-used"},
+    ) is None
+    assert marketing_conversion_event(
+        **common,
+        event_name="landing_vsl_progress",
+        properties={"percent": 33},
+    ) is None
+
+
+def test_meta_capi_purchase_is_authoritative_and_uses_exact_checkout_value() -> None:
+    settings = _meta_settings()
+    checkout = BillingCheckout(
+        id=UUID("00000000-0000-0000-0000-000000000056"),
+        business_id=UUID("00000000-0000-0000-0000-000000000057"),
+        idempotency_key=UUID("00000000-0000-0000-0000-000000000058"),
+        plan_code="basic",
+        billing_cycle="monthly",
+        payment_method="pix",
+        provider_environment="production",
+        amount_cents=19_700,
+        status="paid",
+    )
+    owner_id = UUID("00000000-0000-0000-0000-000000000059")
+
+    event = purchase_conversion_event(
+        settings,
+        checkout=checkout,
+        occurred_at=datetime(2026, 10, 29, 23, 5, tzinfo=UTC),
+        owner_user_id=owner_id,
+        owner_email="owner@example.com",
+    )
+
+    assert event is not None
+    assert event.event_name == "Purchase"
+    assert event.event_id == str(checkout.id)
+    assert event.custom_data == {
+        "currency": "BRL",
+        "value": 197.0,
+        "order_id": str(checkout.id),
+        "content_name": "basic",
+        "content_type": "product",
+        "content_ids": ["basic"],
+    }
+    assert event.user_data["em"] == [sha256(b"owner@example.com").hexdigest()]
+
+    checkout.provider_environment = "sandbox"
+    assert purchase_conversion_event(
+        settings,
+        checkout=checkout,
+        occurred_at=datetime.now(UTC),
+        owner_user_id=owner_id,
+        owner_email="owner@example.com",
+    ) is None
+
+
+def test_meta_capi_client_ip_uses_first_valid_forwarded_address() -> None:
+    assert client_ip_address(
+        "203.0.113.20, 10.0.0.2",
+        "127.0.0.1",
+    ) == "203.0.113.20"
+    assert client_ip_address("not-an-ip", "198.51.100.4") == "198.51.100.4"
 
