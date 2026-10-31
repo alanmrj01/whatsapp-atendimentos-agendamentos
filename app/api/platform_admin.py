@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_origin, require_super_admin
@@ -15,7 +15,9 @@ from app.platform_admin.schemas import (
     PlatformBusinessResponse,
     PlatformBusinessStatusRequest,
     PlatformBusinessStatusResponse,
+    PlatformAnalyticsSummaryResponse,
 )
+from app.platform_admin.analytics import PlatformAnalyticsService
 from app.platform_admin.service import PlatformAdminService
 
 router = APIRouter(prefix="/api/v1/admin", tags=["platform-admin"])
@@ -26,6 +28,18 @@ Admin = Annotated[Principal, Depends(require_super_admin)]
 @router.get("/businesses", response_model=PlatformBusinessListResponse)
 async def list_businesses(_: Admin, db: Db) -> PlatformBusinessListResponse:
     return await PlatformAdminService(db).list_businesses()
+
+
+@router.get("/analytics/summary", response_model=PlatformAnalyticsSummaryResponse)
+async def analytics_summary(
+    _: Admin,
+    db: Db,
+    days: int = Query(default=30, ge=1, le=90),
+) -> PlatformAnalyticsSummaryResponse:
+    # Keep the first dashboard deliberately bounded. The UI exposes the
+    # supported presets, while the API remains safe for direct admin use.
+    normalized_days = days if days in {1, 7, 30, 90} else 30
+    return await PlatformAnalyticsService(db).summary(normalized_days)
 
 
 @router.post(
