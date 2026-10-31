@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -93,3 +93,64 @@ class PlatformBusinessStatusResponse(BaseModel):
 class PlatformBusinessAccessResponse(BaseModel):
     business_id: UUID
     access_mode: AccessMode
+
+
+class PlatformAnalyticsFunnelStep(BaseModel):
+    key: str
+    label: str
+    value: int | None = None
+    conversion_rate: float | None = None
+    status: Literal["ready", "awaiting_integration", "insufficient_data"] = "ready"
+    note: str | None = None
+
+
+class PlatformAnalyticsKpi(BaseModel):
+    key: str
+    label: str
+    value: int | float | None = None
+    format: Literal["count", "currency_brl", "percent", "ratio"] = "count"
+    status: Literal[
+        "ready",
+        "structuring",
+        "awaiting_integration",
+        "awaiting_history",
+        "insufficient_data",
+    ] = "ready"
+    note: str | None = None
+
+
+class PlatformAnalyticsBreakdownItem(BaseModel):
+    key: str
+    label: str
+    value: int
+
+
+class PlatformAnalyticsBreakdown(BaseModel):
+    key: str
+    label: str
+    status: Literal["ready", "awaiting_integration", "insufficient_data"] = "ready"
+    note: str | None = None
+    items: list[PlatformAnalyticsBreakdownItem] = Field(default_factory=list)
+
+
+class PlatformAnalyticsSeriesPoint(BaseModel):
+    date: date
+    lpv: int = 0
+    vsl: int = 0
+    accounts: int = 0
+    activations: int = 0
+    subscriptions: int = 0
+
+
+class PlatformAnalyticsSummaryResponse(BaseModel):
+    generated_at: datetime
+    period_days: int
+    period_start: datetime
+    period_end: datetime
+    funnel: list[PlatformAnalyticsFunnelStep]
+    kpis: list[PlatformAnalyticsKpi]
+    subscriptions_by_plan: PlatformAnalyticsBreakdown
+    subscriptions_by_payment_method: PlatformAnalyticsBreakdown
+    subscriptions_by_placement: PlatformAnalyticsBreakdown
+    series: list[PlatformAnalyticsSeriesPoint]
+    future_metrics: list[PlatformAnalyticsKpi]
