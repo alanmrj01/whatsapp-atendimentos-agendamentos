@@ -751,3 +751,129 @@ async def test_conversation_audio_media_endpoint_rejects_invalid_range(monkeypat
 
     assert response.status_code == 416
     assert response.headers["content-range"] == "bytes */10"
+
+
+def test_platform_tracking_summary_keeps_paid_and_future_metrics_distinct() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.platform_admin.analytics import (
+        ActiveSubscriptionRow,
+        AnalyticsEventRow,
+        PaidCheckoutRow,
+        build_platform_analytics_summary,
+    )
+
+    now = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
+    summary = build_platform_analytics_summary(
+        events=[
+            AnalyticsEventRow(
+                event_name="page_view",
+                occurred_at=now - timedelta(hours=5),
+                properties={"route_group": "landing"},
+            ),
+            AnalyticsEventRow(
+                event_name="landing_vsl_started",
+                occurred_at=now - timedelta(hours=4),
+                properties=None,
+            ),
+            AnalyticsEventRow(
+                event_name="signup_completed",
+                occurred_at=now - timedelta(hours=3),
+                properties=None,
+            ),
+            AnalyticsEventRow(
+                event_name="whatsapp_connection_completed",
+                occurred_at=now - timedelta(hours=2),
+                properties=None,
+            ),
+            AnalyticsEventRow(
+                event_name="payment_confirmed",
+                occurred_at=now - timedelta(hours=1),
+                properties={"placement": "Instagram_Stories"},
+            ),
+        ],
+        paid_checkouts=[
+            PaidCheckoutRow(
+                plan_code="basic",
+                billing_cycle="monthly",
+                payment_method="pix",
+                amount_cents=19_700,
+                paid_at=now - timedelta(hours=1),
+            )
+        ],
+        active_subscriptions=[
+            ActiveSubscriptionRow(
+                billing_cycle="monthly",
+                amount_cents=19_700,
+                status="active",
+                access_until=now + timedelta(days=20),
+            )
+        ],
+        now=now,
+        days=7,
+    )
+
+    funnel = {item.key: item for item in summary.funnel}
+    assert funnel["ad_clicks"].value is None
+    assert funnel["ad_clicks"].status == "awaiting_integration"
+    assert funnel["lpv"].value == 1
+    assert funnel["vsl"].value == 1
+    assert funnel["accounts"].value == 1
+    assert funnel["activations"].value == 1
+    assert funnel["subscriptions"].value == 1
+
+    kpis = {item.key: item for item in summary.kpis}
+    assert kpis["revenue_received"].value == 197.0
+    assert kpis["mrr"].value == 197.0
+
+    future = {item.key: item for item in summary.future_metrics}
+    assert future["cac"].status == "awaiting_integration"
+    assert future["roas"].value is None
+    assert future["trial_to_paid"].status == "structuring"
+    assert future["ltv"].status == "awaiting_history"
+
+    assert summary.subscriptions_by_plan.items[0].label == "Basic"
+    assert summary.subscriptions_by_payment_method.items[0].label == "Pix"
+    assert summary.subscriptions_by_placement.items[0].label == "Instagram_Stories"
+
+
+def test_platform_tracking_mrr_normalizes_cycles_without_counting_canceled_access() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.platform_admin.analytics import (
+        ActiveSubscriptionRow,
+        build_platform_analytics_summary,
+    )
+
+    now = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
+    summary = build_platform_analytics_summary(
+        events=[],
+        paid_checkouts=[],
+        active_subscriptions=[
+            ActiveSubscriptionRow(
+                billing_cycle="quarterly",
+                amount_cents=59_100,
+                status="active",
+                access_until=now + timedelta(days=50),
+            ),
+            ActiveSubscriptionRow(
+                billing_cycle="annual",
+                amount_cents=236_400,
+                status="active",
+                access_until=now + timedelta(days=200),
+            ),
+            ActiveSubscriptionRow(
+                billing_cycle="monthly",
+                amount_cents=19_700,
+                status="canceled",
+                access_until=now + timedelta(days=10),
+            ),
+        ],
+        now=now,
+        days=30,
+    )
+
+    kpis = {item.key: item for item in summary.kpis}
+    assert kpis["mrr"].value == 394.0
+    assert summary.subscriptions_by_plan.status == "insufficient_data"
+    assert summary.subscriptions_by_placement.status == "awaiting_integration"
