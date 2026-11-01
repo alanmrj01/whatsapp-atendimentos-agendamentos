@@ -984,6 +984,10 @@ class OperationalService:
         item = await repository.get_exclusion(business_id, exclusion_id)
         if item is None:
             raise HTTPException(404, "Automation exclusion not found")
+        if item.mode == "human_only":
+            await repository.clear_human_only_for_contact(
+                business_id, item.whatsapp_id
+            )
         await repository.delete_exclusion(business_id, exclusion_id)
         await self.session.commit()
 
