@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.operations.schemas import ConversationAutomationUpdate
+from app.schemas.automation import AutomationExclusionUpdate
 from app.operations.service import OperationalService
 from app.repositories.automation import AutomationRepository
 from app.models import (
@@ -245,14 +246,17 @@ async def test_ignore_human_only_deactivation_and_multitenancy(
     assert human_outbound_count == 0
 
     async with sessions() as session:
-        async with session.begin():
-            await session.execute(
-                update(BusinessAutomationExclusion)
-                .where(
-                    BusinessAutomationExclusion.business_id == human_business
-                )
-                .values(active=False)
+        exclusion = await session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == human_business
             )
+        )
+        assert exclusion is not None
+        await OperationalService(session).update_automation_exclusion(
+            human_business,
+            exclusion.id,
+            AutomationExclusionUpdate(active=False),
+        )
     resumed = inbound(
         "physical-human-resumed",
         whatsapp_id,
