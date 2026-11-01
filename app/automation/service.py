@@ -169,10 +169,17 @@ class AutomationAdministrationService:
             await self.repository.cancel_pending_for_contact(
                 business_id, exclusion.whatsapp_id
             )
-        if was_human_only and (
-            not exclusion.active
-            or exclusion.mode != ExclusionMode.HUMAN_ONLY.value
-        ):
+        should_release_human_only = (
+            (not exclusion.active)
+            and (
+                was_human_only
+                or exclusion.mode == ExclusionMode.HUMAN_ONLY.value
+            )
+        ) or (
+            was_human_only
+            and exclusion.mode != ExclusionMode.HUMAN_ONLY.value
+        )
+        if should_release_human_only:
             await self.repository.clear_human_only_for_contact(
                 business_id, exclusion.whatsapp_id
             )
