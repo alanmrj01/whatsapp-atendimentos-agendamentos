@@ -424,15 +424,17 @@ def diagnostic_noise_video_request_message() -> OutboundMessage:
 
 
 def media_received_message(kind: str) -> OutboundMessage:
-    labels = {
-        "image": "foto",
-        "video": "vídeo",
-        "audio": "áudio",
+    received_copy = {
+        "image": "Recebi a foto. Ela ficará registrada nesta conversa.",
+        "video": "Recebi o vídeo. Ele ficará registrado nesta conversa.",
+        "audio": "Recebi o áudio. Ele ficará registrado nesta conversa.",
     }
-    label = labels.get(kind, "arquivo")
     return OutboundMessage(
         message_type="text",
-        body=f"Recebi o {label}. Ele ficará registrado nesta conversa.",
+        body=received_copy.get(
+            kind,
+            "Recebi o arquivo. Ele ficará registrado nesta conversa.",
+        ),
     )
 
 
@@ -461,17 +463,18 @@ def farewell_message() -> OutboundMessage:
 
 
 def unsupported_media_message(kind: str) -> OutboundMessage:
-    labels = {
-        "audio": "áudio",
-        "video": "vídeo",
-        "image": "foto",
+    received_labels = {
+        "audio": "seu áudio",
+        "video": "seu vídeo",
+        "image": "sua foto",
     }
-    label = labels.get(kind, "arquivo")
+    received_label = received_labels.get(kind, "seu arquivo")
     return OutboundMessage(
         message_type="interactive_button",
         body=(
-            f"Recebi seu {label} e encaminhei para a equipe. "
-            "Você prefere continuar por texto ou falar com a equipe?"
+            f"Recebi {received_label}. "
+            "Para continuar por aqui, podemos seguir por texto. "
+            "Se preferir, posso encaminhar o atendimento para a equipe."
         ),
         interactive_id="media.unsupported",
         outbound_payload=_button_payload(

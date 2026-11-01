@@ -4316,7 +4316,8 @@ async def _handle_service(
                 equipment_purchase_clarification_message(retry=True),
                 handoff_body=(
                     "Não consegui confirmar com segurança se você quer comprar o aparelho, "
-                    "instalação ou os dois. Vou chamar uma pessoa da equipe para continuar."
+                    "contratar a instalação ou fazer os dois. "
+                    "Vou chamar uma pessoa da equipe para continuar."
                 ),
             )
 
@@ -9329,17 +9330,17 @@ def _handoff_for_reason(reason: str | None) -> ConversationTransition:
     elif "outside service area" in normalized or "address_outside_service_area" in normalized:
         body = (
             "O endereço precisa de uma confirmação da equipe antes de eu conseguir "
-            "fechar o agendamento. Vou encaminhar o atendimento para continuarem com você."
+            "fechar o agendamento. Vou encaminhar o atendimento para a equipe continuar com você."
         )
     elif "quote" in normalized or "orcamento" in normalized:
         body = (
             "Para não te passar um valor incorreto, essa etapa precisa de uma "
-            "conferência da equipe. Vou encaminhar o atendimento para continuarem com você."
+            "conferência da equipe. Vou encaminhar o atendimento para a equipe continuar com você."
         )
     else:
         body = (
             "Cheguei a uma etapa que precisa de uma conferência da equipe para "
-            "seguir com segurança. Vou encaminhar o atendimento para continuarem com você."
+            "seguir com segurança. Vou encaminhar o atendimento para a equipe continuar com você."
         )
     return _handoff_transition(body)
 

@@ -3612,7 +3612,8 @@ async def test_unexpected_audio_never_self_deprecates_and_continue_text_resumes_
     assert repository.context["media_handoff_pending"] is True
     assert repository.context["repair_attempts"] == {"address": 1}
     assert "não consigo analisar" not in (media_prompt.body or "").casefold()
-    assert "encaminhei para a equipe" in (media_prompt.body or "").casefold()
+    assert "encaminhei para a equipe" not in (media_prompt.body or "").casefold()
+    assert "posso encaminhar o atendimento para a equipe" in (media_prompt.body or "").casefold()
     assert media_prompt.interactive_id == "media.unsupported"
 
     await engine.process(
