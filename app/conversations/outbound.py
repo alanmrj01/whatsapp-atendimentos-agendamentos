@@ -424,15 +424,17 @@ def diagnostic_noise_video_request_message() -> OutboundMessage:
 
 
 def media_received_message(kind: str) -> OutboundMessage:
-    labels = {
-        "image": "foto",
-        "video": "vídeo",
-        "audio": "áudio",
+    received_copy = {
+        "image": "Recebi a foto. Ela ficará registrada nesta conversa.",
+        "video": "Recebi o vídeo. Ele ficará registrado nesta conversa.",
+        "audio": "Recebi o áudio. Ele ficará registrado nesta conversa.",
     }
-    label = labels.get(kind, "arquivo")
     return OutboundMessage(
         message_type="text",
-        body=f"Recebi o {label}. Ele ficará registrado nesta conversa.",
+        body=received_copy.get(
+            kind,
+            "Recebi o arquivo. Ele ficará registrado nesta conversa.",
+        ),
     )
 
 
