@@ -145,6 +145,7 @@ class OutboundTaskRepository:
         standard_automation_blocked = or_(
             Conversation.automation_enabled.is_(False),
             Business.assistant_enabled.is_(False),
+            Conversation.handoff_status == "human_only",
             Conversation.automation_suppressed_until > func.now(),
             active_exclusion,
         )

@@ -100,6 +100,35 @@ class AutomationRepository:
             .values(handoff_status="none")
         )
 
+    async def clear_human_only_for_contact(
+        self,
+        business_id: uuid.UUID,
+        whatsapp_id: str,
+    ) -> None:
+        conversation_ids = (
+            select(Conversation.id)
+            .join(
+                Customer,
+                and_(
+                    Customer.business_id == Conversation.business_id,
+                    Customer.id == Conversation.customer_id,
+                ),
+            )
+            .where(
+                Conversation.business_id == business_id,
+                Customer.whatsapp_id == whatsapp_id,
+            )
+        )
+        await self.session.execute(
+            update(Conversation)
+            .where(
+                Conversation.business_id == business_id,
+                Conversation.id.in_(conversation_ids),
+                Conversation.handoff_status == "human_only",
+            )
+            .values(handoff_status="none")
+        )
+
     async def clear_temporary_suppression(
         self,
         business_id: uuid.UUID,
@@ -305,6 +334,24 @@ class AutomationRepository:
             row.assistant_greeting_message,
             row.assistant_fallback_message,
             row.assistant_handoff_message,
+        )
+
+    async def cancel_pending_for_business(
+        self,
+        business_id: uuid.UUID,
+    ) -> None:
+        await self.session.execute(
+            update(Message)
+            .where(
+                Message.business_id == business_id,
+                Message.direction == "outbound",
+                Message.status == "pending",
+                or_(
+                    Message.idempotency_key.is_(None),
+                    ~Message.idempotency_key.like("manual:outbound:%"),
+                ),
+            )
+            .values(status="failed")
         )
 
     async def cancel_pending_for_contact(

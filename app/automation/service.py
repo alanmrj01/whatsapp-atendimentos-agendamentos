@@ -81,9 +81,6 @@ class AutomationPolicyService:
             await self.repository.mark_human_only(business_id, conversation_id)
             return AutomationDecision.HUMAN_ONLY
 
-        await self.repository.clear_human_only_marker(
-            business_id, conversation_id
-        )
         control = await self.repository.lock_conversation_control(
             business_id, conversation_id
         )
@@ -92,6 +89,8 @@ class AutomationPolicyService:
             or control.handoff_status == "waiting"
         ):
             return AutomationDecision.DISABLED
+        if control.handoff_status == "human_only":
+            return AutomationDecision.HUMAN_ONLY
 
         suppressed_until = control.automation_suppressed_until
         if suppressed_until is None:
@@ -160,6 +159,7 @@ class AutomationAdministrationService:
         )
         if exclusion is None:
             return None
+        was_human_only = exclusion.mode == ExclusionMode.HUMAN_ONLY.value
         updates = values.model_dump(exclude_unset=True)
         for key, value in updates.items():
             if key == "mode" and value is not None:
@@ -167,6 +167,20 @@ class AutomationAdministrationService:
             setattr(exclusion, key, value)
         if exclusion.active:
             await self.repository.cancel_pending_for_contact(
+                business_id, exclusion.whatsapp_id
+            )
+        should_release_human_only = (
+            (not exclusion.active)
+            and (
+                was_human_only
+                or exclusion.mode == ExclusionMode.HUMAN_ONLY.value
+            )
+        ) or (
+            was_human_only
+            and exclusion.mode != ExclusionMode.HUMAN_ONLY.value
+        )
+        if should_release_human_only:
+            await self.repository.clear_human_only_for_contact(
                 business_id, exclusion.whatsapp_id
             )
         return exclusion
@@ -216,6 +230,9 @@ class AutomationAdministrationService:
             updates["human_control_window_minutes"] = validate_human_control_window(
                 updates["human_control_window_minutes"]
             )
-        return await self.repository.update_business_settings(
+        updated = await self.repository.update_business_settings(
             business_id, updates
         )
+        if updated and updates.get("assistant_enabled") is False:
+            await self.repository.cancel_pending_for_business(business_id)
+        return updated
