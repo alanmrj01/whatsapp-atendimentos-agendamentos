@@ -180,6 +180,27 @@ async def test_fixed_exclusion_policy_blocks_only_when_active(
 
 
 @pytest.mark.asyncio
+async def test_human_only_marker_is_never_cleared_by_customer_inbound() -> None:
+    repository = FakeAutomationRepository()
+    repository.controls[CONVERSATION] = ConversationAutomationControl(
+        None,
+        "human_only",
+        automation_enabled=True,
+    )
+    policy = AutomationPolicyService(repository, now=lambda: NOW)
+
+    decision = await policy.evaluate_customer_inbound(
+        BUSINESS_A,
+        CONVERSATION,
+        None,
+    )
+
+    assert decision is AutomationDecision.HUMAN_ONLY
+    assert repository.human_only_cleared == []
+    assert repository.controls[CONVERSATION].handoff_status == "human_only"
+
+
+@pytest.mark.asyncio
 async def test_paused_conversation_is_a_hard_policy_stop() -> None:
     repository = FakeAutomationRepository()
     repository.controls[CONVERSATION] = ConversationAutomationControl(
@@ -255,6 +276,8 @@ class FakeAdministrationRepository:
         )
         self.added: list[BusinessAutomationExclusion] = []
         self.cancelled: list[tuple[uuid.UUID, str]] = []
+        self.cleared_contacts: list[tuple[uuid.UUID, str]] = []
+        self.cancelled_businesses: list[uuid.UUID] = []
         self.windows: list[tuple[uuid.UUID, int]] = []
 
     async def add_exclusion(self, exclusion: BusinessAutomationExclusion) -> None:
@@ -279,6 +302,14 @@ class FakeAdministrationRepository:
         self, business_id: uuid.UUID, whatsapp_id: str
     ) -> None:
         self.cancelled.append((business_id, whatsapp_id))
+
+    async def clear_human_only_for_contact(
+        self, business_id: uuid.UUID, whatsapp_id: str
+    ) -> None:
+        self.cleared_contacts.append((business_id, whatsapp_id))
+
+    async def cancel_pending_for_business(self, business_id: uuid.UUID) -> None:
+        self.cancelled_businesses.append(business_id)
 
     async def update_business_window(
         self, business_id: uuid.UUID, minutes: int
@@ -325,6 +356,7 @@ async def test_future_admin_operations_are_validated_and_business_scoped() -> No
     assert updated.mode == "human_only"
     assert updated.label == "Equipe humana"
     assert updated.active is False
+    assert repository.cleared_contacts == [(BUSINESS_A, WHATSAPP_ID)]
 
     assert await service.set_human_control_window(BUSINESS_A, 360) is True
     assert repository.windows == [(BUSINESS_A, 360)]
