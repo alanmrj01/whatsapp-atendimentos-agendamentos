@@ -6,6 +6,8 @@ from app.conversations.outbound import (
     WHATSAPP_REPLY_BUTTON_TITLE_MAX,
     _button_payload,
     equipment_delivery_message,
+    media_received_message,
+    unsupported_media_message,
     tubing_guidance_message,
     tubing_variation_message,
 )
@@ -80,3 +82,35 @@ def test_tubing_price_copy_is_customer_language_not_internal_configuration() -> 
         assert "inclui até 3 metros" in normalized
         assert "cada metro adicional custa r$ 20,00" in normalized
         assert "entra no orçamento" in normalized
+
+
+
+def test_media_received_copy_respects_portuguese_gender() -> None:
+    expected = {
+        "image": "Recebi a foto. Ela ficará registrada nesta conversa.",
+        "video": "Recebi o vídeo. Ele ficará registrado nesta conversa.",
+        "audio": "Recebi o áudio. Ele ficará registrado nesta conversa.",
+        "document": "Recebi o arquivo. Ele ficará registrado nesta conversa.",
+    }
+
+    for kind, body in expected.items():
+        assert media_received_message(kind).body == body
+
+
+def test_unexpected_media_copy_is_grammatical_and_does_not_claim_handoff_early() -> None:
+    expected_openers = {
+        "image": "Recebi sua foto.",
+        "video": "Recebi seu vídeo.",
+        "audio": "Recebi seu áudio.",
+        "document": "Recebi seu arquivo.",
+    }
+
+    for kind, opener in expected_openers.items():
+        message = unsupported_media_message(kind)
+        body = message.body or ""
+        normalized = body.casefold()
+
+        assert body.startswith(opener)
+        assert "encaminhei para a equipe" not in normalized
+        assert "posso encaminhar o atendimento para a equipe" in normalized
+        assert message.interactive_id == "media.unsupported"
