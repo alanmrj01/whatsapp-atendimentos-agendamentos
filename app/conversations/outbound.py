@@ -461,17 +461,18 @@ def farewell_message() -> OutboundMessage:
 
 
 def unsupported_media_message(kind: str) -> OutboundMessage:
-    labels = {
-        "audio": "áudio",
-        "video": "vídeo",
-        "image": "foto",
+    received_labels = {
+        "audio": "seu áudio",
+        "video": "seu vídeo",
+        "image": "sua foto",
     }
-    label = labels.get(kind, "arquivo")
+    received_label = received_labels.get(kind, "seu arquivo")
     return OutboundMessage(
         message_type="interactive_button",
         body=(
-            f"Recebi seu {label} e encaminhei para a equipe. "
-            "Você prefere continuar por texto ou falar com a equipe?"
+            f"Recebi {received_label}. "
+            "Para continuar por aqui, podemos seguir por texto. "
+            "Se preferir, posso encaminhar o atendimento para a equipe."
         ),
         interactive_id="media.unsupported",
         outbound_payload=_button_payload(
