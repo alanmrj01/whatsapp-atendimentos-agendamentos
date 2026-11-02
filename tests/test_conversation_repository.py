@@ -119,6 +119,7 @@ def test_conversation_lock_uses_postgresql_for_update() -> None:
     assert "FROM conversations" in sql
     assert "conversations.business_id" in sql
     assert "conversations.id" in sql
+    assert "businesses.name" in sql
     assert "FOR UPDATE" in sql
 
 

@@ -245,8 +245,8 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     assistant_fallback_message: Mapped[str] = mapped_column(
         String(1000),
-        default="Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa.",
-        server_default="Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa.",
+        default="Desculpa, não entendi. como posso te ajudar?",
+        server_default="Desculpa, não entendi. como posso te ajudar?",
         nullable=False,
     )
     assistant_handoff_message: Mapped[str] = mapped_column(

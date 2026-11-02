@@ -1026,6 +1026,7 @@ async def _route_named_conversation(
             handoff_message=conversation.handoff_message,
             customer_name=customer_name,
             business_timezone=conversation.business_timezone,
+            business_name=conversation.business_name,
         )
     elif state is ConversationState.BOOKING_SERVICE:
         transition = await _handle_service(
@@ -4028,19 +4029,23 @@ async def _resume_paused_quote_if_requested(
 
 
 def _friendly_fallback(configured: str, *, variant: int = 0) -> str:
+    del variant
     normalized = normalize_portuguese(configured)
-    if normalized.startswith("nao entendi"):
-        if variant % 2:
-            return (
-                "Claro. Posso continuar com instalação, limpeza, manutenção, "
-                "recarga de gás ou agendamento. Me diga o que você quer fazer agora."
-            )
-        return (
-            "Posso ajudar com limpeza, instalação, manutenção, recarga de gás, "
-            "agendamento, reagendamento ou cancelamento. "
-            "Me conte em poucas palavras o que você precisa."
-        )
+    if normalized.startswith(
+        ("nao entendi", "desculpe nao entendi", "desculpa nao entendi")
+    ):
+        return "Desculpa, não entendi. como posso te ajudar?"
     return configured
+
+
+def _unknown_fallback_handoff_message(business_name: str | None) -> str:
+    normalized_name = " ".join((business_name or "").split())
+    if normalized_name:
+        return (
+            f"{normalized_name} irá retornar sua mensagem "
+            "o mais rápido possível."
+        )
+    return "A empresa irá retornar sua mensagem o mais rápido possível."
 
 
 def _looks_like_city(value: str | None) -> bool:
@@ -4191,18 +4196,22 @@ async def _handle_natural_start(
             )
         return transition
     fallback_context = _clean_context(conversation.context)
-    variant = fallback_context.get("fallback_variant")
-    variant_index = variant if isinstance(variant, int) else 0
-    fallback_context["fallback_variant"] = 1 if variant_index == 0 else 0
+    previous_fallback = fallback_context.get("fallback_variant")
+    fallback_already_sent = (
+        isinstance(previous_fallback, int)
+        and not isinstance(previous_fallback, bool)
+        and previous_fallback >= 1
+    )
+    if fallback_already_sent:
+        return _handoff_transition(
+            _unknown_fallback_handoff_message(conversation.business_name)
+        )
+
+    fallback_context["fallback_variant"] = 1
     return _transition(
         ConversationState.MENU,
         fallback_context,
-        _text_message(
-            _friendly_fallback(
-                conversation.fallback_message,
-                variant=variant_index,
-            )
-        ),
+        _text_message(_friendly_fallback(conversation.fallback_message)),
     )
 
 async def _handle_menu(
@@ -4213,10 +4222,11 @@ async def _handle_menu(
     context: dict[str, Any] | None = None,
     interpretation: Interpretation | None = None,
     greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?",
-    fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
+    fallback_message: str = "Desculpa, não entendi. como posso te ajudar?",
     handoff_message: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
     customer_name: str | None = None,
     business_timezone: str = "America/Sao_Paulo",
+    business_name: str | None = None,
 ) -> ConversationTransition:
     interpretation = interpretation or DeterministicConversationInterpreter().interpret(
         inbound.body
@@ -4267,6 +4277,7 @@ async def _handle_menu(
             handoff_message=handoff_message,
             customer_name=customer_name,
             business_timezone=business_timezone,
+            business_name=business_name,
         )
         return await _handle_natural_start(
             snapshot, inbound, interpretation, booking_port
@@ -4280,7 +4291,7 @@ async def _handle_service(
     booking_port: BookingAvailabilityPort | None,
     *,
     interpretation: Interpretation | None = None,
-    fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
+    fallback_message: str = "Desculpa, não entendi. como posso te ajudar?",
     customer_name: str | None = None,
 ) -> ConversationTransition:
     try:

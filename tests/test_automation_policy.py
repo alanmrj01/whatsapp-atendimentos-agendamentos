@@ -111,6 +111,7 @@ def test_human_control_defaults_to_36_hours() -> None:
     settings = BusinessAutomationSettings(business_id=BUSINESS_A)
 
     assert settings.human_control_window_minutes == 2160
+    assert settings.fallback_message == "Desculpa, não entendi. como posso te ajudar?"
 
 
 @pytest.mark.parametrize("minutes", HUMAN_CONTROL_WINDOW_PRESETS)

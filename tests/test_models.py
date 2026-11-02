@@ -303,7 +303,7 @@ def test_required_server_defaults_are_registered() -> None:
             "Olá! Como posso ajudar com seu ar-condicionado?"
         ),
         ("businesses", "assistant_fallback_message"): (
-            "Desculpe, não entendi. Conte em poucas palavras o serviço que você precisa."
+            "Desculpa, não entendi. como posso te ajudar?"
         ),
         ("businesses", "assistant_handoff_message"): (
             "Seu atendimento foi encaminhado para uma pessoa da equipe. Por favor, aguarde alguns instantes."
