@@ -155,7 +155,6 @@ _PRICE_PHRASES = (
     "quanto sai",
     "qual o valor",
     "qual valor",
-    "valor",
     "preco",
     "preco do servico",
     "valor do servico",
@@ -211,11 +210,6 @@ _SERVICE_QUESTION_PHRASES = (
     "que servicos voces fazem",
     "o que e feito",
     "faz parte",
-    "voces fazem",
-    "vocês fazem",
-    "trabalham com",
-    "realizam",
-    "oferecem",
 )
 
 _TECHNICAL_TERMS = (
@@ -406,8 +400,8 @@ class DeterministicConversationInterpreter:
             "atendente humano",
             "atendimento humano",
             "pessoa da equipe",
-            "chamar uma pessoa",
-            "chamar atendente",
+            "quero chamar atendente",
+            "pode chamar atendente",
         )
         if _contains_any(assertion, handoff_aliases) and not any(
             _phrase_is_negated(normalized, alias) for alias in handoff_aliases
