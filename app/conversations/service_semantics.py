@@ -150,6 +150,27 @@ _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "split": ("ar condicionado", "ar-condicionado", "aparelho", "ar"),
 }
 
+_PERSONAL_NON_SERVICE_PHRASES = (
+    "revisao do carro",
+    "revisao do veiculo",
+    "revisao da moto",
+    "meu celular nao liga",
+    "celular nao liga",
+    "telefone nao liga",
+    "computador nao liga",
+    "notebook nao liga",
+    "limpar a sala",
+    "limpar sala",
+    "limpar o quarto",
+    "limpar quarto",
+    "limpar a cozinha",
+    "limpar cozinha",
+    "limpar a casa",
+    "vou retirar um pedido",
+    "retirar um pedido",
+)
+
+
 _SEMANTIC_STOPWORDS = {
     "a",
     "ao",
@@ -254,6 +275,8 @@ def semantic_service_score(
 ) -> float:
     query = normalize_service_text(message)
     if not query:
+        return 0.0
+    if any(_contains_phrase(query, phrase) for phrase in _PERSONAL_NON_SERVICE_PHRASES):
         return 0.0
     candidates = (service_name, *tuple(examples))
     return max((_semantic_similarity(query, value) for value in candidates), default=0.0)
