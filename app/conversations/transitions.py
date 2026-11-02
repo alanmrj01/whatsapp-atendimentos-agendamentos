@@ -657,7 +657,10 @@ async def _route_named_conversation(
         and not interpretation.has(ConversationIntent.BOOK)
         and not interpretation.has(ConversationIntent.AVAILABILITY)
         and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
-        and not interpretation.has(ConversationIntent.SERVICE_INTENT)
+        and (
+            not interpretation.has(ConversationIntent.SERVICE_INTENT)
+            or interpretation.has(ConversationIntent.SERVICE_QUESTION)
+        )
         and context.get("request_mode") != "quote"
     ):
         try:
