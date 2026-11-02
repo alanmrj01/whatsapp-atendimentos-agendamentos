@@ -493,6 +493,36 @@ async def test_installation_quote_request_prioritizes_service_over_equipment_cat
 
 
 @mark.asyncio
+async def test_custom_pmoc_catalog_service_is_resolved_without_global_alias() -> None:
+    repository = FakeConversationRepository()
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "PMOC - Plano de manutenção, operação e controle",
+            generate_service_intent_examples(
+                "PMOC - Plano de manutenção, operação e controle"
+            ),
+        ),
+        BookingOption(
+            "40000000-0000-0000-0000-000000000099",
+            "Limpeza e higienização",
+            generate_service_intent_examples("Limpeza e higienização"),
+        ),
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1, body="Gostaria de um orçamento para PMOC")
+    )
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "Antes de comparar modelos" not in body
+    assert "Não consegui identificar com segurança" not in body
+    assert repository.context.get("service_id") == str(SERVICE_ID)
+    assert repository.state != ConversationState.HUMAN_HANDOFF
+
+
+@mark.asyncio
 async def test_ambiguous_installation_request_lists_only_compatible_installation_services() -> None:
     repository = FakeConversationRepository()
     booking_port = FakeBookingPort()
