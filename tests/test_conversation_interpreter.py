@@ -459,3 +459,177 @@ def test_explicit_name_can_use_word_that_is_ambiguous_in_bare_conversation() -> 
 def test_profile_customer_name_rejects_conversation_fragments(profile_name: str) -> None:
     assert normalize_profile_customer_name(profile_name) is None
 
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_intent", "service_key"),
+    [
+        ("Quero fazer um orçamento para instalar meu ar", ConversationIntent.SERVICE_INTENT, "split-installation"),
+        ("Gostaria de cotar a instalação de um split", ConversationIntent.SERVICE_INTENT, "split-installation"),
+        ("Preciso colocar o ar condicionado na sala", ConversationIntent.SERVICE_INTENT, "split-installation"),
+        ("Queria montar um ar condicionado no quarto", ConversationIntent.SERVICE_INTENT, "split-installation"),
+        ("Preciso higienizar meu ar condicionado", ConversationIntent.SERVICE_INTENT, "cleaning"),
+        ("Quero fazer uma lavagem no split", ConversationIntent.SERVICE_INTENT, "cleaning"),
+        ("O ar está com mau cheiro e precisa limpar", ConversationIntent.SERVICE_INTENT, "cleaning"),
+        ("Quero fazer manutenção preventiva", ConversationIntent.SERVICE_INTENT, "preventive-maintenance"),
+        ("Preciso de uma revisão periódica", ConversationIntent.SERVICE_INTENT, "preventive-maintenance"),
+        ("Preciso de PMOC", ConversationIntent.SERVICE_INTENT, "pmoc"),
+        ("Quero orçamento para plano de manutenção operação e controle", ConversationIntent.SERVICE_INTENT, "pmoc"),
+        ("Meu ar não liga", ConversationIntent.SERVICE_INTENT, "diagnostics"),
+        ("O aparelho não resfria", ConversationIntent.SERVICE_INTENT, "diagnostics"),
+        ("Está gelando pouco", ConversationIntent.SERVICE_INTENT, "diagnostics"),
+        ("Preciso de assistência técnica", ConversationIntent.SERVICE_INTENT, "diagnostics"),
+        ("Quero reparar o ar condicionado", ConversationIntent.SERVICE_INTENT, "diagnostics"),
+        ("Preciso repor gás do ar", ConversationIntent.SERVICE_INTENT, "gas-recharge"),
+        ("Quero fazer carga de gás", ConversationIntent.SERVICE_INTENT, "gas-recharge"),
+        ("Preciso de teste de vazamento", ConversationIntent.SERVICE_INTENT, "gas-recharge"),
+        ("Quero caça vazamento no ar", ConversationIntent.SERVICE_INTENT, "gas-recharge"),
+    ],
+)
+def test_enriched_service_language_maps_to_expected_deterministic_intent(
+    body: str,
+    expected_intent: ConversationIntent,
+    service_key: str,
+) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.intent is expected_intent
+    assert result.service_key == service_key
+    assert result.has(ConversationIntent.SERVICE_INTENT)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Quanto sai a instalação?",
+        "Queria uma estimativa de valor da limpeza",
+        "Pode fazer um orçamento da manutenção?",
+        "Quero pedir orçamento para o serviço",
+        "Quanto fica esse serviço?",
+    ],
+)
+def test_enriched_price_language_is_recognized(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Tem vaga amanhã?",
+        "Quais horários vocês têm?",
+        "Quando vocês conseguem vir?",
+        "Tem agenda disponível essa semana?",
+        "Qual horário disponível?",
+    ],
+)
+def test_enriched_availability_language_is_recognized(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.AVAILABILITY)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Quero marcar uma visita",
+        "Preciso marcar atendimento",
+        "Pode mandar um técnico?",
+        "Preciso de uma visita",
+        "Quero agendamento",
+    ],
+)
+def test_enriched_booking_language_is_recognized(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.BOOK)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Quero alterar o horário",
+        "Preciso trocar a data",
+        "Quero mudar a data do atendimento",
+        "Preciso de remarcação",
+    ],
+)
+def test_enriched_reschedule_language_is_recognized(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.RESCHEDULE)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Quero desmarcar",
+        "Preciso de desmarcação",
+        "Pode cancelar minha visita?",
+    ],
+)
+def test_enriched_cancel_language_is_recognized(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.CANCEL)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Quero falar com humano",
+        "Chama um atendente",
+        "Quero atendimento humano",
+        "Pode chamar uma pessoa?",
+    ],
+)
+def test_enriched_human_handoff_language_is_recognized(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.HUMAN_HANDOFF)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Não quero falar com humano",
+        "Não quero chamar atendente",
+        "Não quero desmarcar",
+        "Não quero trocar a data",
+        "Não quero comprar, só instalar",
+    ],
+)
+def test_enriched_lexicon_respects_negation_and_does_not_steal_intent(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    normalized = normalize_portuguese(body)
+    if "humano" in normalized or "atendente" in normalized:
+        assert not result.has(ConversationIntent.HUMAN_HANDOFF)
+    if "desmarcar" in normalized:
+        assert not result.has(ConversationIntent.CANCEL)
+    if "trocar a data" in normalized:
+        assert not result.has(ConversationIntent.RESCHEDULE)
+    if "so instalar" in normalized:
+        assert result.service_key == "split-installation"
+        assert not result.has(ConversationIntent.EQUIPMENT_PURCHASE)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Meu orçamento está apertado esse mês",
+        "Tenho uma visita da família amanhã",
+        "Vou marcar isso no meu calendário",
+        "A revisão do carro ficou cara",
+        "Preciso limpar a sala de casa",
+        "Meu celular não liga",
+    ],
+)
+def test_enriched_lexicon_does_not_overclassify_unrelated_conversation(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert not result.has(ConversationIntent.SERVICE_INTENT)
+    if body == "Tenho uma visita da família amanhã":
+        assert not result.has(ConversationIntent.BOOK)
