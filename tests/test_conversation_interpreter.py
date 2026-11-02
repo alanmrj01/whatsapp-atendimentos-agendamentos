@@ -582,7 +582,7 @@ def test_enriched_cancel_language_is_recognized(body: str) -> None:
         "Quero falar com humano",
         "Chama um atendente",
         "Quero atendimento humano",
-        "Pode chamar uma pessoa?",
+        "Pode chamar atendente?",
     ],
 )
 def test_enriched_human_handoff_language_is_recognized(body: str) -> None:
@@ -625,6 +625,9 @@ def test_enriched_lexicon_respects_negation_and_does_not_steal_intent(body: str)
         "A revisão do carro ficou cara",
         "Preciso limpar a sala de casa",
         "Meu celular não liga",
+        "Vou chamar uma pessoa aqui em casa",
+        "Dou muito valor a isso",
+        "Vou retirar um pedido depois",
     ],
 )
 def test_enriched_lexicon_does_not_overclassify_unrelated_conversation(body: str) -> None:
