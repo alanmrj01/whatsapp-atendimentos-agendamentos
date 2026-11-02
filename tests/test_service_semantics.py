@@ -259,3 +259,109 @@ def test_semantic_matching_covers_preventive_corrective_and_pmoc_catalog_names()
         services,
         interpreter.interpret("preciso de orçamento para pmoc"),
     ) == pmoc
+
+
+def test_catalog_semantics_cover_common_refrigeration_service_synonyms() -> None:
+    services = {
+        "installation": BookingOption(
+            "1",
+            "Instalação de ar condicionado",
+            generate_service_intent_examples("Instalação de ar condicionado"),
+        ),
+        "removal": BookingOption(
+            "2",
+            "Desinstalação de ar condicionado",
+            generate_service_intent_examples("Desinstalação de ar condicionado"),
+        ),
+        "relocation": BookingOption(
+            "3",
+            "Realocação de ar condicionado",
+            generate_service_intent_examples("Realocação de ar condicionado"),
+        ),
+        "infra": BookingOption(
+            "4",
+            "Infraestrutura para ar condicionado",
+            generate_service_intent_examples("Infraestrutura para ar condicionado"),
+        ),
+        "cleaning": BookingOption(
+            "5",
+            "Limpeza e higienização",
+            generate_service_intent_examples("Limpeza e higienização"),
+        ),
+        "maintenance": BookingOption(
+            "6",
+            "Manutenção corretiva",
+            generate_service_intent_examples("Manutenção corretiva"),
+        ),
+        "gas": BookingOption(
+            "7",
+            "Recarga de gás e teste de vazamento",
+            generate_service_intent_examples("Recarga de gás e teste de vazamento"),
+        ),
+    }
+    options = tuple(services.values())
+    interpreter = DeterministicConversationInterpreter()
+    cases = {
+        "installation": (
+            "quero colocar um ar condicionado",
+            "preciso montar o split",
+        ),
+        "removal": (
+            "quero retirar o ar condicionado",
+            "preciso remover o split",
+            "quero desinstalar o aparelho",
+        ),
+        "relocation": (
+            "quero mudar o ar de lugar",
+            "preciso remanejar o aparelho",
+            "quero retirar e instalar em outro lugar",
+        ),
+        "infra": (
+            "preciso preparar o ponto do ar",
+            "quero fazer a infraestrutura",
+            "preciso deixar a tubulação pronta",
+        ),
+        "cleaning": (
+            "meu ar está com mau cheiro",
+            "quero sanitizar o aparelho",
+        ),
+        "maintenance": (
+            "meu ar não liga",
+            "preciso de assistência técnica",
+            "o aparelho não resfria",
+        ),
+        "gas": (
+            "preciso repor gás",
+            "quero caça vazamento",
+        ),
+    }
+
+    for key, phrases in cases.items():
+        expected = services[key]
+        for phrase in phrases:
+            assert _service_for_interpretation(
+                options,
+                interpreter.interpret(phrase),
+            ) == expected
+
+
+def test_catalog_semantics_keep_generic_request_ambiguous_instead_of_guessing() -> None:
+    preventive = BookingOption(
+        "1",
+        "Manutenção preventiva",
+        generate_service_intent_examples("Manutenção preventiva"),
+    )
+    corrective = BookingOption(
+        "2",
+        "Manutenção corretiva",
+        generate_service_intent_examples("Manutenção corretiva"),
+    )
+
+    interpretation = DeterministicConversationInterpreter().interpret(
+        "quero fazer manutenção"
+    )
+
+    assert _service_for_interpretation(
+        (preventive, corrective),
+        interpretation,
+    ) is None
