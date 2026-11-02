@@ -40,6 +40,7 @@ class ConversationSnapshot:
     customer_name: str | None = None
     whatsapp_profile_name: str | None = None
     business_timezone: str = "America/Sao_Paulo"
+    business_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
