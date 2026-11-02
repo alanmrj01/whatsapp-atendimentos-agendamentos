@@ -4163,17 +4163,44 @@ async def _handle_natural_start(
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
         return _handoff_transition(conversation.handoff_message)
-    if interpretation.intent in {
+
+    service_route_intents = {
         ConversationIntent.BOOK,
         ConversationIntent.AVAILABILITY,
         ConversationIntent.SERVICE_INTENT,
         ConversationIntent.EQUIPMENT_PURCHASE,
-    }:
+    }
+    route_to_service = interpretation.intent in service_route_intents
+    port: BookingAvailabilityPort | None = None
+    services: tuple[BookingOption, ...] = ()
+
+    if (
+        not route_to_service
+        and inbound.interactive_id is None
+        and isinstance(inbound.body, str)
+        and inbound.body.strip()
+    ):
         try:
             port = _require_booking_port(booking_port)
             services = _snapshot_options(
                 await port.list_services(inbound.business_id)
             )
+        except BookingPortUnavailable:
+            port = None
+            services = ()
+        if services and _service_candidates_for_interpretation(
+            services,
+            interpretation,
+        ):
+            route_to_service = True
+
+    if route_to_service:
+        try:
+            port = port or _require_booking_port(booking_port)
+            if not services:
+                services = _snapshot_options(
+                    await port.list_services(inbound.business_id)
+                )
         except BookingPortUnavailable:
             return _transition(
                 ConversationState.MENU, {}, booking_unavailable_message()
