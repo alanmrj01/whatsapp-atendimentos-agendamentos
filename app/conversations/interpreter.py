@@ -55,28 +55,88 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
     "split-installation": (
         "instalar",
         "instalacao",
-        "colocar um split",
         "instalacao de ar",
+        "instalacao de ar condicionado",
+        "instalacao de split",
+        "colocar um split",
+        "colocar o split",
+        "colocar ar condicionado",
+        "colocar o ar condicionado",
+        "montar ar condicionado",
+        "montagem de ar condicionado",
+        "instalar aparelho",
+        "instalacao do aparelho",
     ),
-    "cleaning": ("limpar", "limpeza", "higienizar", "higienizacao", "lavar", "lavagem"),
-    "preventive-maintenance": ("preventiva", "revisao", "revisar"),
+    "cleaning": (
+        "limpar",
+        "limpeza",
+        "limpeza de ar",
+        "limpeza do ar",
+        "higienizar",
+        "higienizacao",
+        "higienizacao do ar",
+        "lavar",
+        "lavagem",
+        "lavagem do ar",
+        "sanitizacao",
+        "sanitizar",
+    ),
+    "preventive-maintenance": (
+        "preventiva",
+        "manutencao preventiva",
+        "revisao",
+        "revisar",
+        "revisao preventiva",
+        "revisao periodica",
+        "manutencao periodica",
+    ),
+    "pmoc": (
+        "pmoc",
+        "plano de manutencao operacao e controle",
+        "plano de manutencao",
+    ),
     "diagnostics": (
         "nao gela",
         "nao esta gelando",
+        "nao resfria",
+        "nao esfria",
+        "gelando pouco",
+        "gelando fraco",
         "parou",
+        "nao liga",
+        "nao funciona",
         "barulho",
+        "ruido",
         "pingando",
+        "vazando agua",
         "defeito",
         "manutencao",
+        "manutencao corretiva",
         "corretiva",
         "diagnostico",
+        "assistencia tecnica",
         "conserto",
+        "consertar",
+        "reparo",
+        "reparar",
         "arrumar",
         "com problema",
         "esta com problema",
         "problema no ar",
     ),
-    "gas-recharge": ("gas", "sem gas", "recarga", "vazamento"),
+    "gas-recharge": (
+        "gas",
+        "sem gas",
+        "recarga",
+        "recarga de gas",
+        "carga de gas",
+        "colocar gas",
+        "completar gas",
+        "repor gas",
+        "vazamento",
+        "teste de vazamento",
+        "caca vazamento",
+    ),
 }
 
 _GREETING_PHRASES = (
@@ -91,14 +151,23 @@ _GREETING_PHRASES = (
 
 _PRICE_PHRASES = (
     "quanto custa",
+    "quanto fica",
+    "quanto sai",
     "qual o valor",
     "qual valor",
+    "valor",
     "preco",
+    "preco do servico",
     "valor do servico",
     "fica quanto",
     "cotacao",
+    "cotar",
     "orcamento",
+    "fazer orcamento",
+    "pedir orcamento",
     "orcar",
+    "estimativa de valor",
+    "estimativa de preco",
     "pesquisa de preco",
     "mais barato",
     "mais em conta",
@@ -122,17 +191,31 @@ _DURATION_PHRASES = (
     "qual a duracao",
     "duracao",
     "leva quanto tempo",
+    "tempo de servico",
+    "tempo do servico",
+    "quanto tempo leva",
+    "termina em quanto tempo",
 )
 
 _SERVICE_QUESTION_PHRASES = (
     "o que inclui",
+    "o que esta incluso",
     "esta incluso",
     "esta incluida",
     "inclui",
     "como funciona",
+    "como e o servico",
+    "como funciona o servico",
     "o que voces fazem",
+    "quais servicos voces fazem",
+    "que servicos voces fazem",
     "o que e feito",
     "faz parte",
+    "voces fazem",
+    "vocês fazem",
+    "trabalham com",
+    "realizam",
+    "oferecem",
 )
 
 _TECHNICAL_TERMS = (
@@ -314,11 +397,17 @@ class DeterministicConversationInterpreter:
 
         handoff_aliases = (
             "falar com atendente",
+            "falar com um atendente",
             "falar com alguem",
             "falar com uma pessoa",
+            "falar com humano",
             "quero um atendente",
+            "quero falar com atendente",
             "atendente humano",
+            "atendimento humano",
             "pessoa da equipe",
+            "chamar uma pessoa",
+            "chamar atendente",
         )
         if _contains_any(assertion, handoff_aliases) and not any(
             _phrase_is_negated(normalized, alias) for alias in handoff_aliases
@@ -328,22 +417,32 @@ class DeterministicConversationInterpreter:
             assertion,
             (
                 "remarcar",
+                "remarcacao",
                 "reagendar",
                 "reagendamento",
                 "mudar horario",
                 "trocar horario",
+                "alterar horario",
+                "mudar a data",
+                "trocar a data",
+                "alterar a data",
             ),
         )
         cancel_signal = _contains_any(
             assertion,
-            ("cancelar", "cancelamento", "cancela", "desmarcar"),
+            ("cancelar", "cancelamento", "cancela", "desmarcar", "desmarcacao"),
         )
         reschedule_aliases = (
             "remarcar",
+            "remarcacao",
             "reagendar",
             "reagendamento",
             "mudar horario",
             "trocar horario",
+            "alterar horario",
+            "mudar a data",
+            "trocar a data",
+            "alterar a data",
         )
         if reschedule_signal and not any(
             _phrase_is_negated(assertion, alias) for alias in reschedule_aliases
@@ -353,7 +452,13 @@ class DeterministicConversationInterpreter:
             else:
                 intents.add(ConversationIntent.RESCHEDULE_QUESTION)
                 acts.add(ConversationAct.SIDE_QUESTION)
-        cancel_aliases = ("cancelar", "cancelamento", "cancela", "desmarcar")
+        cancel_aliases = (
+            "cancelar",
+            "cancelamento",
+            "cancela",
+            "desmarcar",
+            "desmarcacao",
+        )
         if cancel_signal and not any(
             _phrase_is_negated(assertion, alias) for alias in cancel_aliases
         ):
@@ -385,9 +490,41 @@ class DeterministicConversationInterpreter:
         ):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
 
-        if _contains_any(normalized, ("tem horario", "disponibilidade", "quando pode", "qual horario")):
+        if _contains_any(
+            normalized,
+            (
+                "tem horario",
+                "tem horarios",
+                "tem vaga",
+                "tem vagas",
+                "disponibilidade",
+                "quando pode",
+                "quando voces podem",
+                "quando conseguem",
+                "qual horario",
+                "quais horarios",
+                "horario disponivel",
+                "agenda disponivel",
+            ),
+        ):
             intents.add(ConversationIntent.AVAILABILITY)
-        if _contains_any(normalized, ("agendar", "marcar", "quero atendimento", "quero uma visita")):
+        if _contains_any(
+            normalized,
+            (
+                "agendar",
+                "agendamento",
+                "marcar",
+                "marcar horario",
+                "marcar visita",
+                "marcar atendimento",
+                "quero atendimento",
+                "quero uma visita",
+                "preciso de uma visita",
+                "mandar tecnico",
+                "enviar tecnico",
+                "chamar tecnico",
+            ),
+        ):
             intents.add(ConversationIntent.BOOK)
         if _contains_any(normalized, _PRICE_PHRASES):
             intents.add(ConversationIntent.PRICE_QUESTION)
@@ -828,9 +965,16 @@ def _contains_equipment_purchase(value: str) -> bool:
         "comprar",
         "compra",
         "adquirir",
+        "adquirir aparelho",
+        "comprar aparelho",
+        "comprar ar condicionado",
         "vender",
         "vendem",
         "vende",
+        "tem para vender",
+        "tem aparelho",
+        "fornecem aparelho",
+        "fornece aparelho",
     )
     if _contains_any(value, purchase_verbs):
         return True
@@ -851,8 +995,11 @@ def _contains_equipment_purchase(value: str) -> bool:
 
     quote_phrases = (
         "cotacao",
-        "orcamento",
+        "fazer cotacao",
         "cotar",
+        "orcamento",
+        "fazer orcamento",
+        "pedir orcamento",
         "orcar",
         "preco do aparelho",
         "preco do ar condicionado",
