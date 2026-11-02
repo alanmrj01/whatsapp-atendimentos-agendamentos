@@ -63,6 +63,7 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
         "colocar ar condicionado",
         "colocar o ar condicionado",
         "montar ar condicionado",
+        "montar um ar condicionado",
         "montagem de ar condicionado",
         "instalar aparelho",
         "instalacao do aparelho",
@@ -138,6 +139,68 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
         "caca vazamento",
     ),
 }
+
+_HVAC_CONTEXT_TERMS = (
+    "ar condicionado",
+    "ar-condicionado",
+    "meu ar",
+    "o ar",
+    "split",
+    "condensadora",
+    "evaporadora",
+    "climatizacao",
+    "refrigeracao",
+    "btu",
+)
+
+_SERVICE_CONTEXT_EXCLUSIONS: dict[str, tuple[str, ...]] = {
+    "split-installation": (
+        "aplicativo",
+        "programa",
+        "software",
+        "impressora",
+        "maquina",
+        "movel",
+        "armario",
+    ),
+    "cleaning": (
+        "limpar a sala",
+        "limpar sala",
+        "limpar o quarto",
+        "limpar quarto",
+        "limpar a cozinha",
+        "limpar cozinha",
+        "limpar a casa",
+        "faxina",
+        "roupa",
+        "louca",
+    ),
+    "preventive-maintenance": (
+        "carro",
+        "moto",
+        "motocicleta",
+        "bicicleta",
+        "veiculo",
+    ),
+    "diagnostics": (
+        "celular",
+        "telefone",
+        "smartphone",
+        "computador",
+        "notebook",
+        "televisao",
+        "tv",
+        "carro",
+        "moto",
+    ),
+    "gas-recharge": (
+        "botijao",
+        "fogao",
+        "gas de cozinha",
+        "gas encanado",
+    ),
+}
+
 
 _GREETING_PHRASES = (
     "oi",
@@ -402,6 +465,8 @@ class DeterministicConversationInterpreter:
             "pessoa da equipe",
             "quero chamar atendente",
             "pode chamar atendente",
+            "chama um atendente",
+            "chame um atendente",
         )
         if _contains_any(assertion, handoff_aliases) and not any(
             _phrase_is_negated(normalized, alias) for alias in handoff_aliases
@@ -417,6 +482,7 @@ class DeterministicConversationInterpreter:
                 "mudar horario",
                 "trocar horario",
                 "alterar horario",
+                "alterar o horario",
                 "mudar a data",
                 "trocar a data",
                 "alterar a data",
@@ -434,6 +500,7 @@ class DeterministicConversationInterpreter:
             "mudar horario",
             "trocar horario",
             "alterar horario",
+            "alterar o horario",
             "mudar a data",
             "trocar a data",
             "alterar a data",
@@ -463,7 +530,7 @@ class DeterministicConversationInterpreter:
                 acts.add(ConversationAct.SIDE_QUESTION)
 
         for candidate_key, aliases in SERVICE_ALIASES.items():
-            if _contains_any(assertion, aliases):
+            if _service_alias_matches(assertion, candidate_key, aliases):
                 service_key = candidate_key
                 intents.add(ConversationIntent.SERVICE_INTENT)
                 break
@@ -495,6 +562,8 @@ class DeterministicConversationInterpreter:
                 "quando pode",
                 "quando voces podem",
                 "quando conseguem",
+                "quando voces conseguem",
+                "quando voces conseguem vir",
                 "qual horario",
                 "quais horarios",
                 "horario disponivel",
@@ -515,8 +584,11 @@ class DeterministicConversationInterpreter:
                 "quero uma visita",
                 "preciso de uma visita",
                 "mandar tecnico",
+                "mandar um tecnico",
                 "enviar tecnico",
+                "enviar um tecnico",
                 "chamar tecnico",
+                "chamar um tecnico",
             ),
         ):
             intents.add(ConversationIntent.BOOK)
@@ -1013,6 +1085,21 @@ def _contains_greeting(value: str) -> bool:
         or f" {phrase} " in padded
         for phrase in _GREETING_PHRASES
     )
+
+
+def _service_alias_matches(
+    value: str,
+    service_key: str,
+    aliases: tuple[str, ...],
+) -> bool:
+    if not _contains_any(value, aliases):
+        return False
+    if _contains_any(value, _HVAC_CONTEXT_TERMS):
+        return True
+    exclusions = _SERVICE_CONTEXT_EXCLUSIONS.get(service_key, ())
+    if exclusions and _contains_any(value, exclusions):
+        return False
+    return True
 
 
 def _contains_any(value: str, aliases: tuple[str, ...]) -> bool:
