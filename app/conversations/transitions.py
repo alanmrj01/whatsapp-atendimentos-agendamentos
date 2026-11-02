@@ -4034,7 +4034,7 @@ def _friendly_fallback(configured: str, *, variant: int = 0) -> str:
     if normalized.startswith(
         ("nao entendi", "desculpe nao entendi", "desculpa nao entendi")
     ):
-        return "Desculpa, não entendi. Como posso te ajudar?"
+        return "Desculpa, não entendi. como posso te ajudar?"
     return configured
 
 
@@ -4042,7 +4042,7 @@ def _unknown_fallback_handoff_message(business_name: str | None) -> str:
     normalized_name = " ".join((business_name or "").split())
     if normalized_name:
         return (
-            f"A equipe de {normalized_name} irá retornar sua mensagem "
+            f"{normalized_name} irá retornar sua mensagem "
             "o mais rápido possível."
         )
     return "A empresa irá retornar sua mensagem o mais rápido possível."
@@ -4222,7 +4222,7 @@ async def _handle_menu(
     context: dict[str, Any] | None = None,
     interpretation: Interpretation | None = None,
     greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?",
-    fallback_message: str = "Desculpa, não entendi. Como posso te ajudar?",
+    fallback_message: str = "Desculpa, não entendi. como posso te ajudar?",
     handoff_message: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
     customer_name: str | None = None,
     business_timezone: str = "America/Sao_Paulo",
@@ -4291,7 +4291,7 @@ async def _handle_service(
     booking_port: BookingAvailabilityPort | None,
     *,
     interpretation: Interpretation | None = None,
-    fallback_message: str = "Desculpa, não entendi. Como posso te ajudar?",
+    fallback_message: str = "Desculpa, não entendi. como posso te ajudar?",
     customer_name: str | None = None,
 ) -> ConversationTransition:
     try:
