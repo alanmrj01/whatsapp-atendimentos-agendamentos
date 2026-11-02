@@ -61,10 +61,13 @@ _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "desinstalacao": (
         "desinstalar",
         "desinstalar ar condicionado",
+        "desinstalar split",
         "retirar o ar condicionado",
+        "retirar split",
         "retirar ar condicionado",
         "remover o ar condicionado",
         "remover ar condicionado",
+        "remover split",
         "tirar o ar",
         "tirar ar condicionado",
         "remocao do ar condicionado",
