@@ -18,9 +18,7 @@ HUMAN_CONTROL_WINDOW_PRESETS = (
 )
 DEFAULT_HUMAN_CONTROL_WINDOW_MINUTES = 2160
 DEFAULT_ASSISTANT_GREETING = "Olá! Como posso ajudar com seu ar-condicionado?"
-DEFAULT_ASSISTANT_FALLBACK = (
-    "Não entendi. Conte em poucas palavras o serviço que você precisa."
-)
+DEFAULT_ASSISTANT_FALLBACK = "Desculpa, não entendi. Como posso te ajudar?"
 DEFAULT_ASSISTANT_HANDOFF = (
     "Seu atendimento foi encaminhado para uma pessoa da equipe."
 )
