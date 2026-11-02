@@ -8813,7 +8813,8 @@ def _service_candidates_for_interpretation(
     key_tokens = {
         "split-installation": ("instal",),
         "cleaning": ("limpeza", "higien", "lavagem"),
-        "preventive-maintenance": ("preventiv", "revis", "pmoc"),
+        "preventive-maintenance": ("preventiv", "revis"),
+        "pmoc": ("pmoc", "plano de manutencao"),
         "diagnostics": ("diagnost", "corretiv", "manutencao corretiva", "conser"),
         "gas-recharge": ("recarga", "gas", "vazamento"),
     }
