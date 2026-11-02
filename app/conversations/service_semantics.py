@@ -50,6 +50,24 @@ _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
         "pingando",
         "barulho",
     ),
+    "preventiva": (
+        "preventivo",
+        "manutenção preventiva",
+        "revisão preventiva",
+        "revisão periódica",
+    ),
+    "corretiva": (
+        "corretivo",
+        "manutenção corretiva",
+        "conserto",
+        "reparo",
+    ),
+    "pmoc": (
+        "plano de manutenção operação e controle",
+        "plano de manutencao operacao e controle",
+        "manutenção pmoc",
+        "manutencao pmoc",
+    ),
     "diagnostico": ("avaliar", "verificar", "descobrir o problema"),
     "gas": ("recarga de gás", "colocar gás", "completar gás"),
     "vazamento": ("teste de vazamento", "procurar vazamento"),
@@ -74,6 +92,11 @@ _SEMANTIC_STOPWORDS = {
     "para",
     "preciso",
     "quero",
+    "queria",
+    "gostaria",
+    "orcamento",
+    "cotacao",
+    "servico",
     "split",
     "um",
     "uma",
@@ -86,7 +109,30 @@ def normalize_service_text(value: str) -> str:
     without_accents = "".join(
         character for character in decomposed if not unicodedata.combining(character)
     )
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", without_accents).split())
+    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", without_accents).split())
+    normalized = re.sub(
+        r"\b(\d{1,2})\s*mil\s*btu?s?\b",
+        lambda match: f"capacidade_{int(match.group(1)) * 1000}",
+        normalized,
+    )
+    normalized = re.sub(
+        r"\b(\d{4,6})\s*btu?s?\b",
+        lambda match: f"capacidade_{int(match.group(1))}",
+        normalized,
+    )
+
+    def shorthand_capacity(match: re.Match[str]) -> str:
+        value = int(match.group(1))
+        if 7 <= value <= 60:
+            return f"capacidade_{value * 1000}"
+        return match.group(0)
+
+    normalized = re.sub(
+        r"\b(\d{1,2})\s*btu?s?\b",
+        shorthand_capacity,
+        normalized,
+    )
+    return normalized
 
 
 def generate_service_intent_examples(name: str) -> tuple[str, ...]:
@@ -154,15 +200,44 @@ def _expanded_tokens(value: str) -> set[str]:
     normalized = normalize_service_text(value)
     tokens = set(normalized.split())
     expanded = set(tokens)
+    for token in tuple(tokens):
+        root = _semantic_root(token)
+        if root:
+            expanded.add(root)
     for token, synonyms in _DOMAIN_EXPANSIONS.items():
         if token in tokens or any(
             _contains_phrase(normalized, normalize_service_text(item))
             for item in synonyms
         ):
             expanded.add(token)
+            root = _semantic_root(token)
+            if root:
+                expanded.add(root)
             for synonym in synonyms:
-                expanded.update(normalize_service_text(synonym).split())
+                synonym_tokens = normalize_service_text(synonym).split()
+                expanded.update(synonym_tokens)
+                for synonym_token in synonym_tokens:
+                    synonym_root = _semantic_root(synonym_token)
+                    if synonym_root:
+                        expanded.add(synonym_root)
     return expanded
+
+
+def _semantic_root(token: str) -> str | None:
+    if token.startswith("capacidade_"):
+        return token
+    if len(token) < 5:
+        return None
+    for suffix in ("acoes", "acao"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+            return token[: -len(suffix)]
+    for suffix in ("ivas", "ivos", "iva", "ivo"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+            return token[: -len(suffix)]
+    for suffix in ("ar", "er", "ir"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+            return token[: -len(suffix)]
+    return None
 
 
 def _contains_phrase(value: str, phrase: str) -> bool:

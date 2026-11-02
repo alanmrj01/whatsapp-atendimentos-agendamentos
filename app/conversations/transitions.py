@@ -657,6 +657,10 @@ async def _route_named_conversation(
         and not interpretation.has(ConversationIntent.BOOK)
         and not interpretation.has(ConversationIntent.AVAILABILITY)
         and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
+        and (
+            not interpretation.has(ConversationIntent.SERVICE_INTENT)
+            or interpretation.has(ConversationIntent.SERVICE_QUESTION)
+        )
         and context.get("request_mode") != "quote"
     ):
         try:
@@ -1795,6 +1799,11 @@ async def _equipment_question_answer(
     interpretation: Interpretation,
     booking_port: BookingAvailabilityPort | None,
 ) -> str | None:
+    if (
+        interpretation.has(ConversationIntent.SERVICE_INTENT)
+        and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
+    ):
+        return None
     normalized = normalize_portuguese(inbound.body or "")
     equipment_terms = (
         "ar condicionado",
@@ -4157,17 +4166,44 @@ async def _handle_natural_start(
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
     if interpretation.intent is ConversationIntent.HUMAN_HANDOFF:
         return _handoff_transition(conversation.handoff_message)
-    if interpretation.intent in {
+
+    service_route_intents = {
         ConversationIntent.BOOK,
         ConversationIntent.AVAILABILITY,
         ConversationIntent.SERVICE_INTENT,
         ConversationIntent.EQUIPMENT_PURCHASE,
-    }:
+    }
+    route_to_service = interpretation.intent in service_route_intents
+    port: BookingAvailabilityPort | None = None
+    services: tuple[BookingOption, ...] = ()
+
+    if (
+        not route_to_service
+        and inbound.interactive_id is None
+        and isinstance(inbound.body, str)
+        and inbound.body.strip()
+    ):
         try:
             port = _require_booking_port(booking_port)
             services = _snapshot_options(
                 await port.list_services(inbound.business_id)
             )
+        except BookingPortUnavailable:
+            port = None
+            services = ()
+        if services and _service_candidates_for_interpretation(
+            services,
+            interpretation,
+        ):
+            route_to_service = True
+
+    if route_to_service:
+        try:
+            port = port or _require_booking_port(booking_port)
+            if not services:
+                services = _snapshot_options(
+                    await port.list_services(inbound.business_id)
+                )
         except BookingPortUnavailable:
             return _transition(
                 ConversationState.MENU, {}, booking_unavailable_message()
@@ -4423,11 +4459,25 @@ async def _handle_service(
                 body="Claro. Qual serviço você quer agendar?",
             )
         elif inbound.body and inbound.body.strip():
-            message = service_selection_message(
+            compatible_services = _service_candidates_for_interpretation(
                 services,
+                interpretation,
+            ) if interpretation is not None else ()
+            selection = (
+                compatible_services
+                if compatible_services and len(compatible_services) < len(services)
+                else services
+            )
+            message = service_selection_message(
+                selection,
                 body=(
-                    "Não consegui identificar com segurança o serviço. "
-                    "Você pode escolher uma das opções abaixo?"
+                    "Entendi o tipo de serviço, mas preciso confirmar qual opção "
+                    "corresponde ao que você precisa."
+                    if selection is not services
+                    else (
+                        "Não consegui identificar com segurança o serviço. "
+                        "Você pode escolher uma das opções abaixo?"
+                    )
                 ),
             )
         else:
@@ -8752,47 +8802,86 @@ def _option_exists(options: Sequence[BookingOption], expected_id: str) -> bool:
     return any(option.id == expected_id for option in options)
 
 
-def _service_for_interpretation(
+def _service_candidates_for_interpretation(
     services: Sequence[BookingOption],
     interpretation: Interpretation,
-) -> BookingOption | None:
+) -> tuple[BookingOption, ...]:
     text = interpretation.normalized_text
     if not text:
-        return None
+        return ()
 
     key_tokens = {
         "split-installation": ("instal",),
         "cleaning": ("limpeza", "higien", "lavagem"),
-        "preventive-maintenance": ("preventiv", "revis"),
-        "diagnostics": ("diagnost", "corretiv", "manutencao corretiva"),
+        "preventive-maintenance": ("preventiv", "revis", "pmoc"),
+        "diagnostics": ("diagnost", "corretiv", "manutencao corretiva", "conser"),
         "gas-recharge": ("recarga", "gas", "vazamento"),
     }
+    direct: tuple[BookingOption, ...] = ()
     if interpretation.service_key in key_tokens:
         tokens = key_tokens[interpretation.service_key]
-        direct = [
+        direct = tuple(
             service
             for service in services
             if any(
                 token in normalize_portuguese(service.label)
                 for token in tokens
             )
-        ]
-        if len(direct) == 1:
-            return direct[0]
+        )
 
+    pool = direct or tuple(services)
     ranked = sorted(
         (
             (
                 semantic_service_score(text, service.label, service.examples),
                 service,
             )
-            for service in services
+            for service in pool
         ),
         key=lambda item: item[0],
         reverse=True,
     )
-    if not ranked or ranked[0][0] < 0.48:
+    if not ranked:
+        return ()
+
+    best_score = ranked[0][0]
+    if best_score < 0.48:
+        return direct if direct else ()
+
+    floor = max(0.48, best_score - 0.12)
+    compatible = tuple(
+        service
+        for score, service in ranked
+        if score >= floor
+    )
+    return compatible or (ranked[0][1],)
+
+
+def _service_for_interpretation(
+    services: Sequence[BookingOption],
+    interpretation: Interpretation,
+) -> BookingOption | None:
+    candidates = _service_candidates_for_interpretation(services, interpretation)
+    if not candidates:
         return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    ranked = sorted(
+        (
+            (
+                semantic_service_score(
+                    interpretation.normalized_text,
+                    service.label,
+                    service.examples,
+                ),
+                service,
+            )
+            for service in candidates
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
     if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < 0.08:
         return None
     return ranked[0][1]

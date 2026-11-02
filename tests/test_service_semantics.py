@@ -2,9 +2,13 @@ from app.conversations.interpreter import DeterministicConversationInterpreter
 from app.conversations.ports import BookingOption
 from app.conversations.service_semantics import (
     generate_service_intent_examples,
+    normalize_service_text,
     semantic_service_score,
 )
-from app.conversations.transitions import _service_for_interpretation
+from app.conversations.transitions import (
+    _service_candidates_for_interpretation,
+    _service_for_interpretation,
+)
 
 
 def test_service_examples_are_generated_automatically_and_are_varied() -> None:
@@ -132,3 +136,126 @@ def test_semantic_score_keeps_unrelated_requests_low() -> None:
         generate_service_intent_examples("Limpeza de ar-condicionado"),
     )
     assert score < 0.48
+
+
+def test_semantic_matching_normalizes_common_btu_shorthand() -> None:
+    assert "capacidade_9000" in normalize_service_text("instalar ar condicionado 9 BTU")
+    assert "capacidade_9000" in normalize_service_text("instalação split 9 mil BTUs")
+    assert "capacidade_9000" in normalize_service_text("instalação split 9000 BTU")
+
+
+def test_dynamic_catalog_resolves_installation_budget_without_equipment_purchase_noise() -> None:
+    installation = BookingOption(
+        "1",
+        "Instalar ar condicionado",
+        generate_service_intent_examples("Instalar ar condicionado"),
+    )
+    cleaning = BookingOption(
+        "2",
+        "Limpeza e higienização",
+        generate_service_intent_examples("Limpeza e higienização"),
+    )
+    maintenance = BookingOption(
+        "3",
+        "Manutenção preventiva",
+        generate_service_intent_examples("Manutenção preventiva"),
+    )
+    interpretation = DeterministicConversationInterpreter().interpret(
+        "Bom dia, gostaria de fazer um orçamento de uma instalação"
+    )
+
+    assert _service_for_interpretation(
+        (installation, cleaning, maintenance),
+        interpretation,
+    ) == installation
+
+
+def test_dynamic_catalog_uses_capacity_to_resolve_specific_installation() -> None:
+    installation_9 = BookingOption(
+        "1",
+        "Instalação de ar condicionado split 9 mil BTUs",
+        generate_service_intent_examples("Instalação de ar condicionado split 9 mil BTUs"),
+    )
+    installation_12 = BookingOption(
+        "2",
+        "Instalação de ar condicionado split 12 mil BTUs",
+        generate_service_intent_examples("Instalação de ar condicionado split 12 mil BTUs"),
+    )
+    cleaning = BookingOption(
+        "3",
+        "Limpeza e higienização",
+        generate_service_intent_examples("Limpeza e higienização"),
+    )
+    interpretation = DeterministicConversationInterpreter().interpret(
+        "instalar ar condicionado 9 btu na sala de estar"
+    )
+
+    assert _service_for_interpretation(
+        (installation_9, installation_12, cleaning),
+        interpretation,
+    ) == installation_9
+
+
+def test_generic_installation_ambiguity_filters_only_installation_family() -> None:
+    installation_9 = BookingOption(
+        "1",
+        "Instalação de ar condicionado split 9 mil BTUs",
+        generate_service_intent_examples("Instalação de ar condicionado split 9 mil BTUs"),
+    )
+    installation_12 = BookingOption(
+        "2",
+        "Instalação de ar condicionado split 12 mil BTUs",
+        generate_service_intent_examples("Instalação de ar condicionado split 12 mil BTUs"),
+    )
+    cleaning = BookingOption(
+        "3",
+        "Limpeza e higienização",
+        generate_service_intent_examples("Limpeza e higienização"),
+    )
+    interpretation = DeterministicConversationInterpreter().interpret(
+        "gostaria de fazer um orçamento para instalar ar condicionado"
+    )
+
+    candidates = _service_candidates_for_interpretation(
+        (installation_9, installation_12, cleaning),
+        interpretation,
+    )
+
+    assert set(candidates) == {installation_9, installation_12}
+    assert _service_for_interpretation(
+        (installation_9, installation_12, cleaning),
+        interpretation,
+    ) is None
+
+
+def test_semantic_matching_covers_preventive_corrective_and_pmoc_catalog_names() -> None:
+    preventive = BookingOption(
+        "1",
+        "Manutenção preventiva",
+        generate_service_intent_examples("Manutenção preventiva"),
+    )
+    corrective = BookingOption(
+        "2",
+        "Manutenção corretiva",
+        generate_service_intent_examples("Manutenção corretiva"),
+    )
+    pmoc = BookingOption(
+        "3",
+        "PMOC - Plano de manutenção",
+        generate_service_intent_examples("PMOC - Plano de manutenção"),
+    )
+    services = (preventive, corrective, pmoc)
+    interpreter = DeterministicConversationInterpreter()
+
+    assert _service_for_interpretation(
+        services,
+        interpreter.interpret("quero fazer uma preventiva no ar"),
+    ) == preventive
+    assert _service_for_interpretation(
+        services,
+        interpreter.interpret("preciso de manutenção corretiva"),
+    ) == corrective
+    assert _service_for_interpretation(
+        services,
+        interpreter.interpret("preciso de orçamento para pmoc"),
+    ) == pmoc
