@@ -70,7 +70,7 @@ class FakeConversationRepository:
         handoff_status: str = "none",
         assistant_enabled: bool = True,
         greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?",
-        fallback_message: str = "Desculpa, não entendi. Como posso te ajudar?",
+        fallback_message: str = "Desculpa, não entendi. como posso te ajudar?",
         handoff_message: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
         customer_name: str | None = "Cliente",
         business_timezone: str = "America/Sao_Paulo",
@@ -4142,7 +4142,7 @@ async def test_generic_unknown_is_sent_once_then_handoffs_to_human() -> None:
 
     assert await engine.process(inbound(1187, body="quero resolver uma coisa")) is True
     first = repository.outbounds[-1].transition
-    assert first.outbound.body == "Desculpa, não entendi. Como posso te ajudar?"
+    assert first.outbound.body == "Desculpa, não entendi. como posso te ajudar?"
     assert repository.state == ConversationState.MENU
     assert repository.context["fallback_variant"] == 1
     assert repository.automation_enabled is True
@@ -4154,7 +4154,7 @@ async def test_generic_unknown_is_sent_once_then_handoffs_to_human() -> None:
     assert second.automation_enabled is False
     assert second.handoff_status == "waiting"
     assert second.outbound.body == (
-        "A equipe de Clima Forte Refrigeração irá retornar sua mensagem "
+        "Clima Forte Refrigeração irá retornar sua mensagem "
         "o mais rápido possível."
     )
     assert repository.context == {}
