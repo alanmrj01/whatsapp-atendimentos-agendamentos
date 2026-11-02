@@ -70,10 +70,11 @@ class FakeConversationRepository:
         handoff_status: str = "none",
         assistant_enabled: bool = True,
         greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?",
-        fallback_message: str = "Não entendi. Conte em poucas palavras o serviço que você precisa.",
+        fallback_message: str = "Desculpa, não entendi. Como posso te ajudar?",
         handoff_message: str = "Seu atendimento foi encaminhado para uma pessoa da equipe.",
         customer_name: str | None = "Cliente",
         business_timezone: str = "America/Sao_Paulo",
+        business_name: str | None = "Clima Forte Refrigeração",
     ) -> None:
         self.state = state
         self.context = context or {}
@@ -85,6 +86,7 @@ class FakeConversationRepository:
         self.handoff_message = handoff_message
         self.customer_name = customer_name
         self.business_timezone = business_timezone
+        self.business_name = business_name
         self.outbounds: list[StoredOutbound] = []
         self.idempotency_keys: set[str] = set()
         self.lock = asyncio.Lock()
@@ -139,6 +141,7 @@ class FakeConversationRepository:
             handoff_message=self.handoff_message,
             customer_name=self.customer_name,
             business_timezone=self.business_timezone,
+            business_name=self.business_name,
         )
 
     def export_state(self) -> dict[str, Any]:
@@ -4129,22 +4132,56 @@ async def test_paused_quote_menu_agendar_resumes_instead_of_restarting_service()
 
 
 @mark.asyncio
-async def test_repeated_generic_fallback_is_rephrased_on_second_turn() -> None:
+async def test_generic_unknown_is_sent_once_then_handoffs_to_human() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.START,
         customer_name="Alan",
+        business_name="Clima Forte Refrigeração",
     )
     engine = ConversationEngine(repository, FakeBookingPort())
 
-    await engine.process(inbound(1187, body="quero resolver uma coisa"))
-    first = repository.outbounds[-1].transition.outbound.body or ""
+    assert await engine.process(inbound(1187, body="quero resolver uma coisa")) is True
+    first = repository.outbounds[-1].transition
+    assert first.outbound.body == "Desculpa, não entendi. Como posso te ajudar?"
+    assert repository.state == ConversationState.MENU
+    assert repository.context["fallback_variant"] == 1
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
 
-    await engine.process(inbound(1188, body="quero resolver uma coisa"))
-    second = repository.outbounds[-1].transition.outbound.body or ""
+    assert await engine.process(inbound(1188, body="outra coisa que eu queria")) is True
+    second = repository.outbounds[-1].transition
+    assert second.state == ConversationState.HUMAN_HANDOFF
+    assert second.automation_enabled is False
+    assert second.handoff_status == "waiting"
+    assert second.outbound.body == (
+        "A equipe de Clima Forte Refrigeração irá retornar sua mensagem "
+        "o mais rápido possível."
+    )
+    assert repository.context == {}
 
-    assert first != second
-    assert "posso ajudar" in first.casefold()
-    assert "posso continuar" in second.casefold()
+
+@mark.asyncio
+async def test_successful_reformulation_clears_generic_unknown_retry() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.START,
+        customer_name="Alan",
+        business_name="Clima Forte Refrigeração",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1189, body="quero resolver uma coisa"))
+    assert repository.context["fallback_variant"] == 1
+
+    await engine.process(inbound(1190, body="quero fazer limpeza no ar condicionado"))
+
+    assert repository.state != ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert "fallback_variant" not in repository.context
 
 
 @mark.asyncio
