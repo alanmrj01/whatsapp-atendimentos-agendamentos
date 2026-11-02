@@ -36,6 +36,7 @@ def build_lock_conversation_statement(
             Business.assistant_fallback_message,
             Business.assistant_handoff_message,
             Business.timezone.label("business_timezone"),
+            Business.name.label("business_name"),
             Customer.name.label("customer_name"),
             Customer.name_source.label("customer_name_source"),
             Customer.whatsapp_profile_name.label("whatsapp_profile_name"),
@@ -225,6 +226,7 @@ class ConversationRepository:
             ),
             whatsapp_profile_name=row.whatsapp_profile_name,
             business_timezone=row.business_timezone,
+            business_name=row.business_name,
         )
 
     async def outbound_exists(self, idempotency_key: str) -> bool:
