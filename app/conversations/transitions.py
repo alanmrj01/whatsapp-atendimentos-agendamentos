@@ -3214,11 +3214,14 @@ def _stale_interactive_transition(
         return _request_change_confirmation(state, context, action, label)
 
     if state is ConversationState.CUSTOMER_NAME:
-        return _transition(
+        return _retry_or_handoff(
             state,
             context,
-            name_request_message(
-                "Sem problema. Como posso te chamar?"
+            "customer_name",
+            name_request_message("Sem problema. Como posso te chamar?"),
+            handoff_body=(
+                "Não consegui confirmar como você prefere ser chamado. "
+                "Vou chamar uma pessoa da equipe para continuar."
             ),
         )
     if state is ConversationState.BOOKING_ADDRESS:
@@ -3227,53 +3230,156 @@ def _stale_interactive_transition(
             and action in {ADDRESS_CITY_CONFIRM, ADDRESS_CITY_OTHER}
         )
         if not expected_city_action:
-            return _transition(
+            slot = _repair_slot_for_pending_state(state, context) or "address"
+            return _retry_or_handoff(
                 state,
                 context,
+                slot,
                 address_request_message(
                     "Pode me enviar o endereço com rua, número e cidade?"
+                ),
+                handoff_body=(
+                    "Não consegui confirmar o endereço com segurança. "
+                    "Vou chamar uma pessoa da equipe para continuar."
                 ),
             )
     if (
         state is ConversationState.BOOKING_TUBING
         and action not in {TUBING_CONFIRM, TUBING_UNKNOWN}
     ):
-        return _transition(
+        return _retry_or_handoff(
             state,
             context,
+            "tubing",
             tubing_length_message(),
+            handoff_body=(
+                "Não consegui confirmar a metragem com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
         )
     if state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
-        return _transition(state, context, installation_equipment_status_message())
-    if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
-        return _transition(state, context, equipment_model_known_message())
-    if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
-        return _transition(
+        return _retry_or_handoff(
             state,
             context,
+            "equipment_ownership",
+            installation_equipment_status_message(),
+            handoff_body=(
+                "Não consegui confirmar se você já tem o aparelho com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        return _retry_or_handoff(
+            state,
+            context,
+            "equipment_model",
+            equipment_model_known_message(),
+            handoff_body=(
+                "Não consegui confirmar o equipamento com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
+        slot = _repair_slot_for_pending_state(state, context) or "equipment_profile"
+        return _retry_or_handoff(
+            state,
+            context,
+            slot,
             equipment_profile_message(missing_equipment_profile_fields(context)),
+            handoff_body=(
+                "Não consegui confirmar essa informação do equipamento. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
         )
     if state is ConversationState.BOOKING_INSTALLATION_HEIGHT:
-        return _transition(state, context, installation_height_message())
-    if state is ConversationState.BOOKING_PROPERTY:
-        return _transition(state, context, property_type_message())
-    if state is ConversationState.BOOKING_BUILDING_HOURS:
-        return _transition(state, context, building_hours_message())
-    if state is ConversationState.BOOKING_GATE_DETAILS:
-        return _transition(state, context, gate_details_message())
-    if state is ConversationState.BOOKING_ATTENDEE:
-        return _transition(state, context, attendee_message(customer_name))
-    if state is ConversationState.BOOKING_ATTENDEE_NAME:
-        return _transition(state, context, attendee_name_message())
-    if state is ConversationState.BOOKING_PHONE_CONFIRM:
-        phone = _context_string(context, "whatsapp_contact_phone") or "este número"
-        return _transition(state, context, phone_confirmation_message(phone))
-    if state is ConversationState.QUOTE_DECISION:
-        return _transition(
+        return _retry_or_handoff(
             state,
             context,
+            "installation_height",
+            installation_height_message(),
+            handoff_body=(
+                "Não consegui confirmar a altura da instalação com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_PROPERTY:
+        return _retry_or_handoff(
+            state,
+            context,
+            "property_type",
+            property_type_message(),
+            handoff_body=(
+                "Não consegui confirmar o tipo de local com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_BUILDING_HOURS:
+        return _retry_or_handoff(
+            state,
+            context,
+            "building_hours",
+            building_hours_message(),
+            handoff_body=(
+                "Não consegui confirmar o horário permitido no local. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_GATE_DETAILS:
+        return _retry_or_handoff(
+            state,
+            context,
+            "gate_details",
+            gate_details_message(),
+            handoff_body=(
+                "Não consegui confirmar os dados de acesso/portaria. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_ATTENDEE:
+        return _retry_or_handoff(
+            state,
+            context,
+            "attendee",
+            attendee_message(customer_name),
+            handoff_body=(
+                "Não consegui confirmar quem estará no local. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_ATTENDEE_NAME:
+        return _retry_or_handoff(
+            state,
+            context,
+            "attendee_name",
+            attendee_name_message(),
+            handoff_body=(
+                "Não consegui confirmar o nome da pessoa que estará no local. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_PHONE_CONFIRM:
+        phone = _context_string(context, "whatsapp_contact_phone") or "este número"
+        return _retry_or_handoff(
+            state,
+            context,
+            "phone",
+            phone_confirmation_message(phone),
+            handoff_body=(
+                "Não consegui confirmar o telefone de contato com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.QUOTE_DECISION:
+        return _retry_or_handoff(
+            state,
+            context,
+            "quote_decision",
             quote_decision_message(
                 "Posso consultar a agenda para esse atendimento?"
+            ),
+            handoff_body=(
+                "Não consegui confirmar se você quer seguir para o agendamento. "
+                "Vou chamar uma pessoa da equipe para continuar."
             ),
         )
     return None
