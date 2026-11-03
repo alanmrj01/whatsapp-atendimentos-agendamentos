@@ -278,8 +278,27 @@ def semantic_service_score(
         return 0.0
     if any(_contains_phrase(query, phrase) for phrase in _PERSONAL_NON_SERVICE_PHRASES):
         return 0.0
+
+    query_capacities = {
+        token for token in query.split() if token.startswith("capacidade_")
+    }
+    service_text = normalize_service_text(service_name)
+    service_capacities = {
+        token for token in service_text.split() if token.startswith("capacidade_")
+    }
+    if query_capacities and service_capacities:
+        if query_capacities.isdisjoint(service_capacities):
+            return 0.0
+        capacity_bonus = 0.22
+    else:
+        capacity_bonus = 0.0
+
     candidates = (service_name, *tuple(examples))
-    return max((_semantic_similarity(query, value) for value in candidates), default=0.0)
+    base_score = max(
+        (_semantic_similarity(query, value) for value in candidates),
+        default=0.0,
+    )
+    return min(1.0, base_score + capacity_bonus)
 
 
 def _semantic_similarity(query: str, candidate: str) -> float:
