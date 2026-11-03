@@ -9196,6 +9196,56 @@ def _service_candidates_for_interpretation(
             )
         )
 
+    explicit_family_tokens: tuple[str, ...] = ()
+    if any(
+        phrase in text
+        for phrase in (
+            "retirar e instalar",
+            "mudar de lugar",
+            "trocar de lugar",
+            "remanejar",
+            "remanejamento",
+            "realocar",
+            "realocacao",
+        )
+    ):
+        explicit_family_tokens = ("realoc", "remanej")
+    elif any(
+        phrase in text
+        for phrase in (
+            "desinstalar",
+            "retirar o ar condicionado",
+            "retirar ar condicionado",
+            "remover o ar condicionado",
+            "remover ar condicionado",
+            "remover split",
+        )
+    ):
+        explicit_family_tokens = ("desinstal", "remoc")
+    elif any(
+        phrase in text
+        for phrase in (
+            "infraestrutura",
+            "preparar o ponto",
+            "preparar ponto",
+            "tubulacao pronta",
+            "deixar a tubulacao pronta",
+        )
+    ):
+        explicit_family_tokens = ("infra",)
+
+    if explicit_family_tokens:
+        explicit = tuple(
+            service
+            for service in services
+            if any(
+                token in normalize_portuguese(service.label)
+                for token in explicit_family_tokens
+            )
+        )
+        if explicit:
+            direct = explicit
+
     pool = direct or tuple(services)
     ranked = sorted(
         (
