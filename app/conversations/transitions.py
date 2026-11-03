@@ -369,7 +369,7 @@ async def determine_transition(
             "Como o atendimento será manual, a resposta e o agendamento podem levar um pouco mais."
         )
     if action == MEDIA_CONTINUE_TEXT and context.get("media_handoff_pending") is True:
-        updated = dict(context)
+        updated = _clear_repair_attempt(dict(context), "media")
         updated.pop("media_handoff_pending", None)
         if state not in {
             ConversationState.START,
@@ -396,17 +396,27 @@ async def determine_transition(
         and isinstance(inbound.body, str)
         and inbound.body.strip()
     ):
-        context = dict(context)
+        context = _clear_repair_attempt(dict(context), "media")
         context.pop("media_handoff_pending", None)
 
+    media_is_expected_for_model = (
+        state is ConversationState.BOOKING_EQUIPMENT_MODEL
+        and inbound.message_type in {"image", "video"}
+    )
     if (
         inbound.message_type in {"image", "audio", "video"}
-        and state is not ConversationState.BOOKING_EQUIPMENT_MODEL
+        and not media_is_expected_for_model
     ):
-        return _transition(
+        media_context = {**context, "media_handoff_pending": True}
+        return _retry_or_handoff(
             state,
-            {**context, "media_handoff_pending": True},
+            media_context,
+            "media",
             unsupported_media_message(inbound.message_type),
+            handoff_body=(
+                "Não consegui continuar o atendimento automaticamente por esse arquivo. "
+                + _unknown_fallback_handoff_message(conversation.business_name)
+            ),
         )
 
     if action in {CHANGE_CONFIRM, CHANGE_KEEP} and (
@@ -464,6 +474,20 @@ async def determine_transition(
         if context.get(_CUSTOMER_NAME_SKIPPED_KEY) is True:
             context = dict(context)
             context.pop(_CUSTOMER_NAME_SKIPPED_KEY, None)
+
+    if (
+        conversation.customer_name is None
+        and context.get(_CUSTOMER_NAME_SKIPPED_KEY) is not True
+        and captured_name is None
+        and action is None
+        and state in {ConversationState.START, ConversationState.MENU}
+        and _is_low_friction_contextual_opener(inbound.body, interpretation)
+    ):
+        return _transition(
+            ConversationState.MENU,
+            context,
+            _text_message(_low_friction_opener_message(inbound.body, conversation)),
+        )
 
     if (
         conversation.customer_name is None
@@ -949,10 +973,20 @@ async def _route_named_conversation(
                     )
                 )
             )
+            repair_slot = _repair_slot_for_pending_state(state, context)
+            repair_context = (
+                _context_after_repair_attempt(context, repair_slot)
+                if repair_slot is not None
+                else dict(context)
+            )
+            if repair_slot is not None and repair_context is None:
+                return _handoff_transition(
+                    _unknown_fallback_handoff_message(conversation.business_name)
+                )
             return await _resume_pending_question(
                 conversation,
                 inbound,
-                context,
+                repair_context or context,
                 booking_port,
                 prefix=prefix,
             )
@@ -3180,11 +3214,14 @@ def _stale_interactive_transition(
         return _request_change_confirmation(state, context, action, label)
 
     if state is ConversationState.CUSTOMER_NAME:
-        return _transition(
+        return _retry_or_handoff(
             state,
             context,
-            name_request_message(
-                "Sem problema. Como posso te chamar?"
+            "customer_name",
+            name_request_message("Sem problema. Como posso te chamar?"),
+            handoff_body=(
+                "Não consegui confirmar como você prefere ser chamado. "
+                "Vou chamar uma pessoa da equipe para continuar."
             ),
         )
     if state is ConversationState.BOOKING_ADDRESS:
@@ -3193,53 +3230,156 @@ def _stale_interactive_transition(
             and action in {ADDRESS_CITY_CONFIRM, ADDRESS_CITY_OTHER}
         )
         if not expected_city_action:
-            return _transition(
+            slot = _repair_slot_for_pending_state(state, context) or "address"
+            return _retry_or_handoff(
                 state,
                 context,
+                slot,
                 address_request_message(
                     "Pode me enviar o endereço com rua, número e cidade?"
+                ),
+                handoff_body=(
+                    "Não consegui confirmar o endereço com segurança. "
+                    "Vou chamar uma pessoa da equipe para continuar."
                 ),
             )
     if (
         state is ConversationState.BOOKING_TUBING
         and action not in {TUBING_CONFIRM, TUBING_UNKNOWN}
     ):
-        return _transition(
+        return _retry_or_handoff(
             state,
             context,
+            "tubing",
             tubing_length_message(),
+            handoff_body=(
+                "Não consegui confirmar a metragem com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
         )
     if state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
-        return _transition(state, context, installation_equipment_status_message())
-    if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
-        return _transition(state, context, equipment_model_known_message())
-    if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
-        return _transition(
+        return _retry_or_handoff(
             state,
             context,
+            "equipment_ownership",
+            installation_equipment_status_message(),
+            handoff_body=(
+                "Não consegui confirmar se você já tem o aparelho com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        return _retry_or_handoff(
+            state,
+            context,
+            "equipment_model",
+            equipment_model_known_message(),
+            handoff_body=(
+                "Não consegui confirmar o equipamento com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
+        slot = _repair_slot_for_pending_state(state, context) or "equipment_profile"
+        return _retry_or_handoff(
+            state,
+            context,
+            slot,
             equipment_profile_message(missing_equipment_profile_fields(context)),
+            handoff_body=(
+                "Não consegui confirmar essa informação do equipamento. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
         )
     if state is ConversationState.BOOKING_INSTALLATION_HEIGHT:
-        return _transition(state, context, installation_height_message())
-    if state is ConversationState.BOOKING_PROPERTY:
-        return _transition(state, context, property_type_message())
-    if state is ConversationState.BOOKING_BUILDING_HOURS:
-        return _transition(state, context, building_hours_message())
-    if state is ConversationState.BOOKING_GATE_DETAILS:
-        return _transition(state, context, gate_details_message())
-    if state is ConversationState.BOOKING_ATTENDEE:
-        return _transition(state, context, attendee_message(customer_name))
-    if state is ConversationState.BOOKING_ATTENDEE_NAME:
-        return _transition(state, context, attendee_name_message())
-    if state is ConversationState.BOOKING_PHONE_CONFIRM:
-        phone = _context_string(context, "whatsapp_contact_phone") or "este número"
-        return _transition(state, context, phone_confirmation_message(phone))
-    if state is ConversationState.QUOTE_DECISION:
-        return _transition(
+        return _retry_or_handoff(
             state,
             context,
+            "installation_height",
+            installation_height_message(),
+            handoff_body=(
+                "Não consegui confirmar a altura da instalação com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_PROPERTY:
+        return _retry_or_handoff(
+            state,
+            context,
+            "property_type",
+            property_type_message(),
+            handoff_body=(
+                "Não consegui confirmar o tipo de local com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_BUILDING_HOURS:
+        return _retry_or_handoff(
+            state,
+            context,
+            "building_hours",
+            building_hours_message(),
+            handoff_body=(
+                "Não consegui confirmar o horário permitido no local. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_GATE_DETAILS:
+        return _retry_or_handoff(
+            state,
+            context,
+            "gate_details",
+            gate_details_message(),
+            handoff_body=(
+                "Não consegui confirmar os dados de acesso/portaria. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_ATTENDEE:
+        return _retry_or_handoff(
+            state,
+            context,
+            "attendee",
+            attendee_message(customer_name),
+            handoff_body=(
+                "Não consegui confirmar quem estará no local. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_ATTENDEE_NAME:
+        return _retry_or_handoff(
+            state,
+            context,
+            "attendee_name",
+            attendee_name_message(),
+            handoff_body=(
+                "Não consegui confirmar o nome da pessoa que estará no local. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.BOOKING_PHONE_CONFIRM:
+        phone = _context_string(context, "whatsapp_contact_phone") or "este número"
+        return _retry_or_handoff(
+            state,
+            context,
+            "phone",
+            phone_confirmation_message(phone),
+            handoff_body=(
+                "Não consegui confirmar o telefone de contato com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
+    if state is ConversationState.QUOTE_DECISION:
+        return _retry_or_handoff(
+            state,
+            context,
+            "quote_decision",
             quote_decision_message(
                 "Posso consultar a agenda para esse atendimento?"
+            ),
+            handoff_body=(
+                "Não consegui confirmar se você quer seguir para o agendamento. "
+                "Vou chamar uma pessoa da equipe para continuar."
             ),
         )
     return None
@@ -3336,6 +3476,72 @@ def _has_substantive_intent(interpretation: Interpretation) -> bool:
     )
 
 
+_LOW_FRICTION_CONTEXTUAL_OPENERS = (
+    "me indicaram",
+    "me indicou",
+    "por indicacao",
+    "vim por indicacao",
+    "foi indicacao",
+    "recebi seu contato",
+    "peguei seu contato",
+    "me passaram seu contato",
+    "me passou seu contato",
+    "me deram seu contato",
+    "me deram seu numero",
+    "me passaram seu numero",
+    "consegui seu contato",
+    "achei seu contato",
+    "vi seu status",
+    "vi o status",
+    "respondendo seu status",
+    "vim pelo status",
+    "vi sua postagem",
+    "vi seu post",
+    "vi seu anuncio",
+    "vi sua propaganda",
+    "vi no instagram",
+    "vim pelo instagram",
+    "quero saber mais",
+    "queria saber mais",
+    "me interessei",
+    "tenho interesse",
+)
+
+
+def _is_low_friction_contextual_opener(
+    body: str | None,
+    interpretation: Interpretation,
+) -> bool:
+    if not isinstance(body, str) or not body.strip():
+        return False
+    if _has_substantive_intent(interpretation):
+        return False
+    normalized = normalize_portuguese(body)
+    return any(
+        f" {phrase} " in f" {normalized} "
+        for phrase in _LOW_FRICTION_CONTEXTUAL_OPENERS
+    )
+
+
+def _low_friction_opener_message(
+    body: str | None,
+    conversation: ConversationSnapshot,
+) -> str:
+    normalized = normalize_portuguese(body or "")
+    if any(
+        phrase in f" {normalized} "
+        for phrase in (" oi ", " ola ", " bom dia ", " boa tarde ", " boa noite ")
+    ):
+        greeting = conversational_greeting(
+            body,
+            conversation.business_timezone,
+            customer_name=conversation.customer_name,
+            include_help=False,
+        )
+        return f"{greeting} Como posso te ajudar?"
+    return "Olá! Tudo bem? Como posso te ajudar?"
+
+
 def _should_preserve_pending_message(
     body: str | None,
     interpretation: Interpretation,
@@ -3409,6 +3615,59 @@ def _repair_attempts(context: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _context_after_repair_attempt(
+    context: dict[str, Any],
+    slot: str,
+) -> dict[str, Any] | None:
+    attempts = _repair_attempts(context)
+    next_attempt = attempts.get(slot, 0) + 1
+    if next_attempt >= 2:
+        return None
+    attempts[slot] = next_attempt
+    return {**context, "repair_attempts": attempts}
+
+
+def _repair_slot_for_pending_state(
+    state: ConversationState,
+    context: dict[str, Any],
+) -> str | None:
+    if state is ConversationState.BOOKING_ADDRESS:
+        if (
+            context.get("awaiting_address_city") is True
+            or _context_string(context, "pending_service_address") is not None
+        ):
+            return "city"
+        return "address"
+    if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
+        missing = missing_equipment_profile_fields(context)
+        return f"equipment_profile:{missing[0]}" if missing else "equipment_profile"
+    return {
+        ConversationState.CUSTOMER_NAME: "customer_name",
+        ConversationState.BOOKING_SERVICE: "service",
+        ConversationState.BOOKING_QUANTITY: "quantity",
+        ConversationState.BOOKING_ACCESS: "access",
+        ConversationState.BOOKING_EQUIPMENT_OWNERSHIP: "equipment_ownership",
+        ConversationState.BOOKING_EQUIPMENT_MODEL: "equipment_model",
+        ConversationState.BOOKING_EQUIPMENT_DELIVERY: "equipment_delivery",
+        ConversationState.BOOKING_INSTALLATION_HEIGHT: "installation_height",
+        ConversationState.BOOKING_PROPERTY: "property_type",
+        ConversationState.BOOKING_BUILDING_HOURS: "building_hours",
+        ConversationState.BOOKING_GATE_DETAILS: "gate_details",
+        ConversationState.BOOKING_TUBING: "tubing",
+        ConversationState.BOOKING_SITE_LIMIT: "site_limit",
+        ConversationState.BOOKING_WEEKDAY: "weekday",
+        ConversationState.BOOKING_DATE: "date",
+        ConversationState.BOOKING_TIME: "time",
+        ConversationState.BOOKING_ATTENDEE: "attendee",
+        ConversationState.BOOKING_ATTENDEE_NAME: "attendee_name",
+        ConversationState.BOOKING_PHONE_CONFIRM: "phone",
+        ConversationState.BOOKING_CONFIRM: "confirmation",
+        ConversationState.QUOTE_DECISION: "quote_decision",
+        ConversationState.MENU: "menu_action",
+        ConversationState.POST_BOOKING_HELP: "post_booking_help",
+    }.get(state)
+
+
 def _retry_or_handoff(
     state: ConversationState,
     context: dict[str, Any],
@@ -3417,14 +3676,12 @@ def _retry_or_handoff(
     *,
     handoff_body: str,
 ) -> ConversationTransition:
-    attempts = _repair_attempts(context)
-    next_attempt = attempts.get(slot, 0) + 1
-    if next_attempt >= 2:
+    updated = _context_after_repair_attempt(context, slot)
+    if updated is None:
         return _handoff_transition(handoff_body)
-    attempts[slot] = next_attempt
     return _transition(
         state,
-        {**context, "repair_attempts": attempts},
+        updated,
         outbound,
     )
 
@@ -4318,7 +4575,16 @@ async def _handle_menu(
         return await _handle_natural_start(
             snapshot, inbound, interpretation, booking_port
         )
-    return _transition(ConversationState.MENU, {}, main_menu_message())
+    return _retry_or_handoff(
+        ConversationState.MENU,
+        active_context,
+        "menu_action",
+        main_menu_message(),
+        handoff_body=(
+            "Não consegui confirmar essa opção do menu. "
+            "Vou chamar uma pessoa da equipe para continuar com você."
+        ),
+    )
 
 async def _handle_service(
     inbound: ConversationInput,
@@ -4387,10 +4653,15 @@ async def _handle_service(
     if purchase_action is not None:
         purchase_mode = _purchase_mode_for_action(purchase_action)
         if purchase_mode is None:
-            return _transition(
+            return _retry_or_handoff(
                 ConversationState.BOOKING_SERVICE,
                 context,
+                "service_clarification",
                 equipment_purchase_clarification_message(retry=True),
+                handoff_body=(
+                    "Não consegui confirmar a opção de compra/instalação com segurança. "
+                    "Vou chamar uma pessoa da equipe para continuar."
+                ),
             )
         installation = _installation_service_option(services)
         if installation is None:
@@ -4441,12 +4712,17 @@ async def _handle_service(
         and action.startswith("service:")
         and (service_id is None or not _option_exists(services, str(service_id)))
     ):
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_SERVICE,
             context,
+            "service",
             service_selection_message(
                 services,
                 body="Essa opção não está mais disponível. Escolha um serviço para continuar.",
+            ),
+            handoff_body=(
+                "Não consegui confirmar o serviço com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
             ),
         )
     if service_id is None or not _option_exists(services, str(service_id)):
@@ -6453,12 +6729,17 @@ async def _handle_date(
 
     selected_date = _selected_date(action) or _date_from_text(inbound.body, dates)
     if action is not None and action.startswith("date:") and _selected_date(action) is None:
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_DATE,
             context,
+            "date",
             date_selection_message(
                 dates,
                 body="Essa opção de data não é mais válida. Escolha uma data disponível.",
+            ),
+            handoff_body=(
+                "Não consegui confirmar a data com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
             ),
         )
     if selected_date is None:
@@ -6582,12 +6863,17 @@ async def _handle_time(
             or not _option_exists(times, _selected_time(action) or "")
         )
     ):
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_TIME,
             context,
+            "time",
             time_selection_message(
                 times,
                 body=_time_prompt(selected_date, times, customer_name),
+            ),
+            handoff_body=(
+                "Não consegui confirmar o horário com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
             ),
         )
     if selected_time is None or not _option_exists(times, selected_time):

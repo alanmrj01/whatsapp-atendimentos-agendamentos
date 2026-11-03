@@ -31,9 +31,7 @@ class ConversationSnapshot:
     handoff_status: str
     assistant_enabled: bool = True
     greeting_message: str = "Olá! Como posso ajudar com seu ar-condicionado?"
-    fallback_message: str = (
-        "Não entendi. Conte em poucas palavras o serviço que você precisa."
-    )
+    fallback_message: str = "Desculpa, não entendi. como posso te ajudar?"
     handoff_message: str = (
         "Seu atendimento foi encaminhado para uma pessoa da equipe."
     )
