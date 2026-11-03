@@ -9158,7 +9158,34 @@ def _service_candidates_for_interpretation(
         "gas-recharge": ("recarga", "gas", "vazamento"),
     }
     direct: tuple[BookingOption, ...] = ()
-    if interpretation.service_key in key_tokens:
+    skip_direct_filter = (
+        interpretation.service_key == "split-installation"
+        and any(
+            phrase in text
+            for phrase in (
+                "retirar e instalar",
+                "mudar de lugar",
+                "trocar de lugar",
+                "remanejar",
+                "remanejamento",
+                "realocar",
+                "desinstalar",
+                "retirar o ar",
+                "retirar ar condicionado",
+                "remover o ar",
+                "remover ar condicionado",
+                "infraestrutura",
+                "preparar o ponto",
+                "preparar ponto",
+                "tubulacao",
+            )
+        )
+    ) or (
+        interpretation.service_key == "diagnostics"
+        and _is_generic_maintenance_request(text)
+    )
+
+    if interpretation.service_key in key_tokens and not skip_direct_filter:
         tokens = key_tokens[interpretation.service_key]
         direct = tuple(
             service
@@ -9197,6 +9224,31 @@ def _service_candidates_for_interpretation(
     return compatible or (ranked[0][1],)
 
 
+def _is_generic_maintenance_request(text: str) -> bool:
+    if "manutencao" not in text:
+        return False
+    qualifiers = (
+        "preventiv",
+        "corretiv",
+        "pmoc",
+        "diagnost",
+        "conser",
+        "reparo",
+        "assistencia tecnica",
+        "nao gela",
+        "nao resfria",
+        "nao esfria",
+        "nao liga",
+        "nao funciona",
+        "parou",
+        "pingando",
+        "vazando agua",
+        "barulho",
+        "ruido",
+    )
+    return not any(qualifier in text for qualifier in qualifiers)
+
+
 def _service_for_interpretation(
     services: Sequence[BookingOption],
     interpretation: Interpretation,
@@ -9204,6 +9256,16 @@ def _service_for_interpretation(
     candidates = _service_candidates_for_interpretation(services, interpretation)
     if not candidates:
         return None
+
+    if _is_generic_maintenance_request(interpretation.normalized_text):
+        maintenance_candidates = tuple(
+            service
+            for service in candidates
+            if "manutencao" in normalize_portuguese(service.label)
+        )
+        if len(maintenance_candidates) > 1:
+            return None
+
     if len(candidates) == 1:
         return candidates[0]
 
