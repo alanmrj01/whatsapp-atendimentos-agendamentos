@@ -3111,6 +3111,25 @@ def _stale_interactive_transition(
         return None
     if state is ConversationState.BOOKING_QUANTITY and action.startswith("quantity:"):
         return None
+    if state is ConversationState.RESCHEDULE:
+        appointment_id = _context_uuid(context, "appointment_id")
+        selected_date = _context_string(context, "selected_date")
+        selected_time = _context_string(context, "selected_time")
+        if appointment_id is None and action.startswith("appointment:"):
+            return None
+        if (
+            appointment_id is not None
+            and selected_date is None
+            and action.startswith("date:")
+        ):
+            return None
+        if (
+            appointment_id is not None
+            and selected_date is not None
+            and selected_time is None
+            and action.startswith("time:")
+        ):
+            return None
 
     expected_actions: dict[ConversationState, set[str]] = {
         ConversationState.BOOKING_ACCESS: {
