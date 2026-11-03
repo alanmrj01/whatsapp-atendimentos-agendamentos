@@ -3111,6 +3111,25 @@ def _stale_interactive_transition(
         return None
     if state is ConversationState.BOOKING_QUANTITY and action.startswith("quantity:"):
         return None
+    if state is ConversationState.RESCHEDULE:
+        appointment_id = _context_uuid(context, "appointment_id")
+        selected_date = _context_string(context, "selected_date")
+        selected_time = _context_string(context, "selected_time")
+        if appointment_id is None and action.startswith("appointment:"):
+            return None
+        if (
+            appointment_id is not None
+            and selected_date is None
+            and action.startswith("date:")
+        ):
+            return None
+        if (
+            appointment_id is not None
+            and selected_date is not None
+            and selected_time is None
+            and action.startswith("time:")
+        ):
+            return None
 
     expected_actions: dict[ConversationState, set[str]] = {
         ConversationState.BOOKING_ACCESS: {
@@ -7217,10 +7236,15 @@ async def _handle_reschedule(
             )
             if not options:
                 return _transition(ConversationState.MENU, {}, reschedule_message())
-            return _transition(
+            return _retry_or_handoff(
                 ConversationState.RESCHEDULE,
-                {},
+                context,
+                "reschedule_booking",
                 existing_booking_selection_message(options, purpose="reschedule"),
+                handoff_body=(
+                    "Não consegui confirmar qual atendimento você quer reagendar. "
+                    "Vou chamar uma pessoa da equipe para continuar com você."
+                ),
             )
         base_context = _context_from_existing_booking(selected)
         dates = _snapshot_options(
@@ -7257,11 +7281,17 @@ async def _handle_reschedule(
         )
         selected_date = _selected_date(action) or _date_from_text(inbound.body, dates)
         if selected_date is None or not _option_exists(dates, selected_date):
-            return _transition(
+            return _retry_or_handoff(
                 ConversationState.RESCHEDULE,
                 context,
+                "reschedule_date",
                 date_selection_message(dates, body="Escolha a nova data do atendimento."),
+                handoff_body=(
+                    "Não consegui confirmar a nova data com segurança. "
+                    "Vou chamar uma pessoa da equipe para continuar com você."
+                ),
             )
+        context = _clear_repair_attempt(context, "reschedule_date")
         times = _snapshot_options(
             await port.list_times(
                 inbound.business_id,
@@ -7287,11 +7317,17 @@ async def _handle_reschedule(
         )
         selected_time = _selected_time(action) or _time_from_text(inbound.body, times)
         if selected_time is None or not _option_exists(times, selected_time):
-            return _transition(
+            return _retry_or_handoff(
                 ConversationState.RESCHEDULE,
                 context,
+                "reschedule_time",
                 time_selection_message(times, body="Escolha o novo horário."),
+                handoff_body=(
+                    "Não consegui confirmar o novo horário com segurança. "
+                    "Vou chamar uma pessoa da equipe para continuar com você."
+                ),
             )
+        context = _clear_repair_attempt(context, "reschedule_time")
         return _transition(
             ConversationState.RESCHEDULE,
             {**context, "selected_time": selected_time},
@@ -7317,7 +7353,7 @@ async def _handle_reschedule(
         action == BOOKING_BACK
         and context.get("admin_preferred_reschedule") is True
     ):
-        updated = dict(context)
+        updated = _clear_repair_attempt(context, "reschedule_confirmation")
         updated.pop("selected_date", None)
         updated.pop("selected_time", None)
         updated.pop("admin_preferred_reschedule", None)
@@ -7341,7 +7377,7 @@ async def _handle_reschedule(
         )
 
     if action == BOOKING_BACK:
-        updated = dict(context)
+        updated = _clear_repair_attempt(context, "reschedule_confirmation")
         updated.pop("selected_time", None)
         times = _snapshot_options(
             await port.list_times(
@@ -7357,12 +7393,18 @@ async def _handle_reschedule(
             time_selection_message(times, body="Escolha o novo horário."),
         )
     if action != RESCHEDULE_CONFIRM:
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.RESCHEDULE,
             context,
+            "reschedule_confirmation",
             reschedule_confirmation_message(),
+            handoff_body=(
+                "Não consegui confirmar sua decisão sobre o reagendamento. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
         )
 
+    context = _clear_repair_attempt(context, "reschedule_confirmation")
     try:
         result = await port.reschedule_booking_atomic(
             inbound.business_id,
@@ -7420,10 +7462,15 @@ async def _handle_cancel(
             )
             if not options:
                 return _transition(ConversationState.MENU, {}, cancel_message())
-            return _transition(
+            return _retry_or_handoff(
                 ConversationState.CANCEL,
-                {},
+                context,
+                "cancel_booking",
                 existing_booking_selection_message(options, purpose="cancel"),
+                handoff_body=(
+                    "Não consegui confirmar qual atendimento você quer cancelar. "
+                    "Vou chamar uma pessoa da equipe para continuar com você."
+                ),
             )
         return _transition(
             ConversationState.CANCEL,
@@ -7440,11 +7487,17 @@ async def _handle_cancel(
     if action == CANCEL_ABORT or action == BOOKING_BACK:
         return _transition(ConversationState.MENU, {}, main_menu_message())
     if action != CANCEL_CONFIRM:
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.CANCEL,
             context,
+            "cancel_confirmation",
             cancel_confirmation_message(),
+            handoff_body=(
+                "Não consegui confirmar sua decisão sobre o cancelamento. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
         )
+    context = _clear_repair_attempt(context, "cancel_confirmation")
     try:
         result = await port.cancel_booking(
             inbound.business_id,

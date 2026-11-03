@@ -1376,6 +1376,136 @@ async def test_repeated_invalid_interactive_id_handoffs_instead_of_looping(
     assert repository.handoff_status == "waiting"
 
 
+@mark.parametrize(
+    ("state", "repair_slot"),
+    [
+        (ConversationState.RESCHEDULE, "reschedule_booking"),
+        (ConversationState.CANCEL, "cancel_booking"),
+    ],
+)
+@mark.asyncio
+async def test_existing_booking_invalid_selection_reprompts_once_then_handoffs(
+    state: ConversationState,
+    repair_slot: str,
+) -> None:
+    repository = FakeConversationRepository(state=state)
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(20, action="appointment:not-a-uuid"))
+
+    assert repository.state == state
+    assert repository.context["repair_attempts"][repair_slot] == 1
+
+    await engine.process(inbound(21, action="appointment:not-a-uuid"))
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+
+
+@mark.asyncio
+async def test_reschedule_invalid_date_reprompts_once_then_handoffs() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.RESCHEDULE,
+        context={
+            "appointment_id": str(APPOINTMENT_ID),
+            "service_id": str(SERVICE_ID),
+        },
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(22, action="date:2026-12-31"))
+    assert repository.state == ConversationState.RESCHEDULE
+    assert repository.context["repair_attempts"]["reschedule_date"] == 1
+
+    await engine.process(inbound(23, action="date:2026-12-31"))
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+
+
+@mark.asyncio
+async def test_reschedule_valid_date_after_retry_clears_date_repair() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.RESCHEDULE,
+        context={
+            "appointment_id": str(APPOINTMENT_ID),
+            "service_id": str(SERVICE_ID),
+        },
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(24, action="date:2026-12-31"))
+    assert repository.context["repair_attempts"]["reschedule_date"] == 1
+
+    await engine.process(inbound(25, action="date:2026-09-02"))
+
+    assert repository.state == ConversationState.RESCHEDULE
+    assert repository.context["selected_date"] == "2026-09-02"
+    attempts = repository.context.get("repair_attempts") or {}
+    assert "reschedule_date" not in attempts
+
+
+@mark.asyncio
+async def test_reschedule_invalid_time_reprompts_once_then_handoffs() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.RESCHEDULE,
+        context={
+            "appointment_id": str(APPOINTMENT_ID),
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+        },
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(26, action="time:23:59"))
+    assert repository.state == ConversationState.RESCHEDULE
+    assert repository.context["repair_attempts"]["reschedule_time"] == 1
+
+    await engine.process(inbound(27, action="time:23:59"))
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+
+
+@mark.parametrize(
+    ("state", "context", "repair_slot"),
+    [
+        (
+            ConversationState.RESCHEDULE,
+            {
+                "appointment_id": str(APPOINTMENT_ID),
+                "service_id": str(SERVICE_ID),
+                "selected_date": "2026-09-02",
+                "selected_time": "09:00",
+            },
+            "reschedule_confirmation",
+        ),
+        (
+            ConversationState.CANCEL,
+            {"appointment_id": str(APPOINTMENT_ID)},
+            "cancel_confirmation",
+        ),
+    ],
+)
+@mark.asyncio
+async def test_existing_booking_invalid_confirmation_reprompts_once_then_handoffs(
+    state: ConversationState,
+    context: dict[str, Any],
+    repair_slot: str,
+) -> None:
+    repository = FakeConversationRepository(state=state, context=context)
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(28, body="talvez eu veja isso"))
+    assert repository.state == state
+    assert repository.context["repair_attempts"][repair_slot] == 1
+
+    await engine.process(inbound(29, body="ainda não decidi isso"))
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+
+
 @mark.asyncio
 async def test_completed_conversation_returns_to_menu_on_new_message() -> None:
     repository = FakeConversationRepository(
