@@ -4712,12 +4712,17 @@ async def _handle_service(
         and action.startswith("service:")
         and (service_id is None or not _option_exists(services, str(service_id)))
     ):
-        return _transition(
+        return _retry_or_handoff(
             ConversationState.BOOKING_SERVICE,
             context,
+            "service",
             service_selection_message(
                 services,
                 body="Essa opção não está mais disponível. Escolha um serviço para continuar.",
+            ),
+            handoff_body=(
+                "Não consegui confirmar o serviço com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
             ),
         )
     if service_id is None or not _option_exists(services, str(service_id)):
