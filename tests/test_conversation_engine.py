@@ -1293,15 +1293,57 @@ async def test_disabled_automation_does_not_change_state_or_create_outbound() ->
 
 
 @mark.parametrize(
-    ("state", "context", "action"),
+    ("state", "context", "action", "repair_slot"),
     [
-        (ConversationState.MENU, {}, "unknown.action"),
-        (ConversationState.BOOKING_SERVICE, {}, "service:not-a-uuid"),
+        (ConversationState.MENU, {}, "unknown.action", "menu_action"),
+        (ConversationState.BOOKING_SERVICE, {}, "service:not-a-uuid", "service"),
         (
             ConversationState.BOOKING_SERVICE,
             {},
             "service:50000000-0000-0000-0000-000000000005",
+            "service",
         ),
+        (
+            ConversationState.BOOKING_DATE,
+            {"service_id": str(SERVICE_ID)},
+            "date:invalid",
+            "date",
+        ),
+        (
+            ConversationState.BOOKING_TIME,
+            {
+                "service_id": str(SERVICE_ID),
+                "selected_date": "2026-09-02",
+            },
+            "time:invalid",
+            "time",
+        ),
+    ],
+)
+@mark.asyncio
+async def test_unexpected_or_invalid_ids_are_reprompted_once_without_advancing(
+    state: ConversationState,
+    context: dict[str, Any],
+    action: str,
+    repair_slot: str,
+) -> None:
+    repository = FakeConversationRepository(state=state, context=context)
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    assert await engine.process(inbound(1, action=action)) is True
+
+    assert repository.state == state
+    for key, value in context.items():
+        assert repository.context[key] == value
+    assert repository.context["repair_attempts"][repair_slot] == 1
+    assert len(repository.outbounds) == 1
+
+
+@mark.parametrize(
+    ("state", "context", "action"),
+    [
+        (ConversationState.MENU, {}, "unknown.action"),
+        (ConversationState.BOOKING_SERVICE, {}, "service:not-a-uuid"),
         (
             ConversationState.BOOKING_DATE,
             {"service_id": str(SERVICE_ID)},
@@ -1318,7 +1360,7 @@ async def test_disabled_automation_does_not_change_state_or_create_outbound() ->
     ],
 )
 @mark.asyncio
-async def test_unexpected_or_invalid_ids_do_not_advance_state(
+async def test_repeated_invalid_interactive_id_handoffs_instead_of_looping(
     state: ConversationState,
     context: dict[str, Any],
     action: str,
@@ -1326,11 +1368,12 @@ async def test_unexpected_or_invalid_ids_do_not_advance_state(
     repository = FakeConversationRepository(state=state, context=context)
     engine = ConversationEngine(repository, FakeBookingPort())
 
-    assert await engine.process(inbound(1, action=action)) is True
+    await engine.process(inbound(10, action=action))
+    await engine.process(inbound(11, action=action))
 
-    assert repository.state == state
-    assert repository.context == context
-    assert len(repository.outbounds) == 1
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
 
 
 @mark.asyncio
@@ -3715,7 +3758,7 @@ async def test_unexpected_audio_never_self_deprecates_and_continue_text_resumes_
     media_prompt = repository.outbounds[-1].transition.outbound
     assert repository.state == ConversationState.BOOKING_ADDRESS
     assert repository.context["media_handoff_pending"] is True
-    assert repository.context["repair_attempts"] == {"address": 1}
+    assert repository.context["repair_attempts"] == {"address": 1, "media": 1}
     assert "não consigo analisar" not in (media_prompt.body or "").casefold()
     assert "encaminhei para a equipe" not in (media_prompt.body or "").casefold()
     assert "posso encaminhar o atendimento para a equipe" in (media_prompt.body or "").casefold()
@@ -3735,6 +3778,196 @@ async def test_unexpected_audio_never_self_deprecates_and_continue_text_resumes_
     assert repository.context["repair_attempts"] == {"address": 1}
     assert "seguimos por texto" in resumed.casefold()
     assert "endereço" in resumed.casefold()
+
+
+@mark.asyncio
+async def test_second_unexpected_audio_handoffs_instead_of_repeating_media_prompt() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        business_name="Clima Forte Refrigeração",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1102, message_type="audio"))
+    first = repository.outbounds[-1].transition
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert first.outbound.interactive_id == "media.unsupported"
+    assert repository.context["repair_attempts"]["media"] == 1
+
+    await engine.process(inbound(1103, message_type="audio"))
+    second = repository.outbounds[-1].transition
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+    assert "Clima Forte Refrigeração" in (second.outbound.body or "")
+    assert "retornar sua mensagem" in (second.outbound.body or "").casefold()
+
+    outbound_count = len(repository.outbounds)
+    assert await engine.process(inbound(1104, message_type="audio")) is False
+    assert len(repository.outbounds) == outbound_count
+
+
+@mark.asyncio
+async def test_audio_at_equipment_model_is_bounded_as_unsupported_media() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "equipment_ownership": "has_equipment",
+        },
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(1105, message_type="audio"))
+
+    first = repository.outbounds[-1].transition
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert first.outbound.interactive_id == "media.unsupported"
+    assert repository.context["repair_attempts"]["media"] == 1
+
+    await engine.process(inbound(1106, message_type="audio"))
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+
+
+@mark.asyncio
+async def test_unknown_structured_checkpoint_reprompts_once_then_handoffs() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_PROPERTY,
+        context={"service_id": str(SERVICE_ID)},
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(1107, body="estou vendo aqui uma coisa"))
+    assert repository.state == ConversationState.BOOKING_PROPERTY
+    assert repository.context["repair_attempts"]["property_type"] == 1
+
+    await engine.process(inbound(1108, body="depois eu vejo isso"))
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+
+
+@mark.asyncio
+async def test_valid_answer_after_unknown_checkpoint_clears_repair_counter() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_PROPERTY,
+        context={"service_id": str(SERVICE_ID)},
+    )
+    booking_port = FakeBookingPort()
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(1109, body="estou vendo aqui uma coisa"))
+    assert repository.context["repair_attempts"]["property_type"] == 1
+
+    await engine.process(inbound(1110, body="é uma casa"))
+
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    attempts = repository.context.get("repair_attempts") or {}
+    assert "property_type" not in attempts
+
+
+@mark.asyncio
+async def test_referral_opener_is_answered_naturally_before_name_collection() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(
+        inbound(
+            1111,
+            body="Oi, recebi seu contato por indicação do meu irmão. Tudo bem com você?",
+        )
+    )
+
+    assert repository.state == ConversationState.MENU
+    assert repository.customer_name is None
+    assert "customer_name_skipped" not in repository.context
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "tudo bem" in body.casefold()
+    assert "como posso te ajudar" in body.casefold()
+    assert "como posso te chamar" not in body.casefold()
+
+
+@mark.asyncio
+async def test_status_reply_opener_is_answered_naturally_without_forcing_name() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(
+        inbound(1112, body="Vi seu status e queria saber mais")
+    )
+
+    assert repository.state == ConversationState.MENU
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "como posso te ajudar" in body.casefold()
+    assert "como posso te chamar" not in body.casefold()
+
+
+@mark.asyncio
+async def test_referral_then_service_request_still_collects_name_and_resumes_service() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(1113, body="Me passaram seu contato por indicação")
+    )
+    assert repository.state == ConversationState.MENU
+
+    await engine.process(inbound(1114, body="Preciso fazer uma limpeza no ar"))
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    assert repository.context["pending_customer_message"] == (
+        "Preciso fazer uma limpeza no ar"
+    )
+
+    await engine.process(inbound(1115, body="Alan"))
+
+    assert repository.customer_name == "Alan"
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["service_id"] == str(SERVICE_ID)
+
+
+@mark.asyncio
+async def test_referral_with_explicit_service_does_not_hide_substantive_intent() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(
+            1116,
+            body="Meu irmão me indicou vocês e eu quero instalar um ar condicionado",
+        )
+    )
+
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    assert "instalar" in repository.context["pending_customer_message"].casefold()
+
+
+@mark.asyncio
+async def test_plain_greeting_still_preserves_existing_name_first_flow() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(1117, body="Bom dia, tudo bem?"))
+
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "como posso te chamar" in body.casefold()
 
 
 @mark.asyncio
@@ -5030,7 +5263,7 @@ async def test_service_technical_question_is_safe_and_returns_to_pending_booking
     assert "endereço" in body.casefold() or "endereco" in body.casefold()
 
 @mark.asyncio
-async def test_arbitrary_comment_in_structured_checkpoint_does_not_consume_slot_or_increment_retry() -> None:
+async def test_arbitrary_comment_in_structured_checkpoint_reprompts_once_and_counts_repair() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_TIME,
         context={
@@ -5047,7 +5280,7 @@ async def test_arbitrary_comment_in_structured_checkpoint_does_not_consume_slot_
 
     assert repository.state == ConversationState.BOOKING_TIME
     assert repository.context["selected_date"] == "2026-09-02"
-    assert "repair_attempts" not in repository.context
+    assert repository.context["repair_attempts"]["time"] == 1
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "preservar o que já foi preenchido" in body.casefold()
     assert "09:00" in body
@@ -5074,7 +5307,7 @@ async def test_arbitrary_comment_during_equipment_ownership_keeps_purchase_check
 
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_OWNERSHIP
     assert repository.context["service_id"] == str(SERVICE_ID)
-    assert "repair_attempts" not in repository.context
+    assert repository.context["repair_attempts"]["equipment_ownership"] == 1
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "preservar o que já foi preenchido" in body.casefold()
 
@@ -5093,6 +5326,7 @@ async def test_unknown_comment_at_gate_details_does_not_become_gate_instruction(
 
     assert repository.state == ConversationState.BOOKING_GATE_DETAILS
     assert "gate_instructions" not in repository.context
+    assert repository.context["repair_attempts"]["gate_details"] == 1
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "continuar exatamente" in body.casefold() or "etapa em que estávamos" in body.casefold()
     assert "portaria" in body.casefold() or "acesso" in body.casefold()
@@ -5115,7 +5349,7 @@ async def test_real_gate_instruction_is_still_consumed() -> None:
 
 
 @mark.asyncio
-async def test_unknown_comment_at_attendee_name_does_not_increment_repair_or_handoff() -> None:
+async def test_unknown_comment_at_attendee_name_reprompts_once_without_immediate_handoff() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_ATTENDEE_NAME,
         context={
@@ -5136,7 +5370,7 @@ async def test_unknown_comment_at_attendee_name_does_not_increment_repair_or_han
     assert repository.automation_enabled is True
     assert "onsite_contact_name" not in repository.context
     attempts = repository.context.get("repair_attempts") or {}
-    assert "attendee_name" not in attempts
+    assert attempts["attendee_name"] == 1
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "nome" in body.casefold()
 
