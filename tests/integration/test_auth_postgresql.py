@@ -360,7 +360,7 @@ async def test_plan_preserves_confirmation_and_no_mutation(auth_env):
     assert (await env.client.get("/api/v1/whatsapp/connection")).json()["status"] == "connected"
 
 
-async def test_embedded_signup_allows_new_free_but_blocks_former_until_reactivated(auth_env):
+async def test_embedded_signup_allows_new_and_former_free_owner_before_activation(auth_env):
     env = auth_env
     await login(env)
     async with env.factory() as db, db.begin():
@@ -395,10 +395,11 @@ async def test_embedded_signup_allows_new_free_but_blocks_former_until_reactivat
         access = await db.get(BusinessAccess, env.a)
         access.has_had_operational_access = True
 
-    blocked = await env.client.post(
+    former_started = await env.client.post(
         "/api/v1/whatsapp/onboarding/embedded-signup/start", json={}
     )
-    assert blocked.status_code == 402
+    assert former_started.status_code == 200
+    assert former_started.json()["mode"] == "coexistence"
 
 
 class _EmbeddedSignupGateway:

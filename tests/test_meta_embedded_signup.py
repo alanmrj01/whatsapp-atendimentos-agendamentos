@@ -105,7 +105,7 @@ class EmptyAdministration:
 
 
 @pytest.mark.asyncio
-async def test_paid_and_never_activated_business_can_start_but_former_is_blocked(
+async def test_paid_new_and_former_free_businesses_can_start_whatsapp_onboarding(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -130,14 +130,13 @@ async def test_paid_and_never_activated_business_can_start_but_former_is_blocked
     )
     assert free_started.mode == "coexistence"
 
-    with pytest.raises(HTTPException) as blocked:
-        await public_pwa.start_meta_embedded_signup(
-            EmptyRequest(),
-            FakePrincipal("free", has_had_operational_access=True),
-            settings(),
-            object(),
-        )
-    assert blocked.value.status_code == 402
+    former_started = await public_pwa.start_meta_embedded_signup(
+        EmptyRequest(),
+        FakePrincipal("free", has_had_operational_access=True),
+        settings(),
+        object(),
+    )
+    assert former_started.mode == "coexistence"
 
 
 class FakeDb:
@@ -702,13 +701,12 @@ async def test_client_telemetry_is_sanitized_and_access_controlled(caplog) -> No
     )
     assert free_response.status_code == 204
 
-    with pytest.raises(HTTPException) as former:
-        await public_pwa.meta_embedded_signup_telemetry(
-            payload,
-            FakePrincipal("free", has_had_operational_access=True),
-            FakeDb(),
-        )
-    assert former.value.status_code == 402
+    former_response = await public_pwa.meta_embedded_signup_telemetry(
+        payload,
+        FakePrincipal("free", has_had_operational_access=True),
+        FakeDb(),
+    )
+    assert former_response.status_code == 204
 
     with pytest.raises(HTTPException) as read_only:
         await public_pwa.meta_embedded_signup_telemetry(

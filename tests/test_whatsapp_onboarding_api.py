@@ -175,7 +175,7 @@ def test_whatsapp_onboarding_still_rejects_non_admin_roles() -> None:
 
 
 
-def test_former_subscriber_cannot_reconfigure_whatsapp_until_reactivation() -> None:
+def test_former_subscriber_can_reconfigure_whatsapp_before_reactivation() -> None:
     membership = SimpleNamespace(
         role="owner",
         access_mode="free",
@@ -183,8 +183,4 @@ def test_former_subscriber_cannot_reconfigure_whatsapp_until_reactivation() -> N
     )
     principal = SimpleNamespace(active_membership=lambda: membership)
 
-    with pytest.raises(HTTPException) as caught:
-        _require_whatsapp_administrator(principal)
-
-    assert caught.value.status_code == 402
-    assert caught.value.detail == "Active subscription required"
+    assert _require_whatsapp_administrator(principal) is membership

@@ -600,15 +600,10 @@ async def onboarding_plan(payload: PublicPlanRequest, principal: Identity, db: D
 
 
 def _require_whatsapp_administrator(principal: Principal):
-    """Allow paid tenants or never-activated prospects to configure WhatsApp."""
+    """Allow owners/admins to configure WhatsApp before commercial activation."""
     business = principal.active_membership()
     if business.role not in {MembershipRole.OWNER, MembershipRole.ADMIN}:
         raise HTTPException(403, "Read-only access")
-    if (
-        business.access_mode != "paid"
-        and business.has_had_operational_access
-    ):
-        raise HTTPException(402, "Active subscription required")
     return business
 
 
