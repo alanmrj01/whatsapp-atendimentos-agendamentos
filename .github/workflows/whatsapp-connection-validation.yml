@@ -1,6 +1,8 @@
 name: WhatsApp connection validation
 
 on:
+  push:
+    branches: [productivity]
   pull_request:
     paths:
       - 'app/analytics/**'
