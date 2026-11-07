@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, case, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.automation.domain import ExclusionMode
+from app.automation.domain import ExclusionMode, whatsapp_id_lookup_aliases
 from app.models import (
     Business,
     BusinessAutomationExclusion,
@@ -376,7 +376,9 @@ class AutomationRepository:
                     )
                     .where(
                         Conversation.business_id == business_id,
-                        Customer.whatsapp_id == whatsapp_id,
+                        Customer.whatsapp_id.in_(
+                            whatsapp_id_lookup_aliases(whatsapp_id)
+                        ),
                     )
                 ),
             )
