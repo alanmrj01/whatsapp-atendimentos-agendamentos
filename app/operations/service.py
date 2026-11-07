@@ -25,6 +25,7 @@ from app.conversations.interpreter import (
 from app.models import (
     Appointment,
     Business,
+    BusinessAutomationExclusion,
     BusinessCatalogItem,
     BusinessNotification,
     BusinessWhatsAppConnection,
@@ -66,6 +67,7 @@ from app.operations.schemas import (
     ConversationMessageDelta,
     ConversationView,
     CustomerNameUpdate,
+    CustomerAutomationUpdate,
     CustomerCreate,
     CustomerOption,
     CustomerOutreachView,
@@ -567,8 +569,96 @@ class OperationalService:
             raise HTTPException(404, "Conversation not found")
         customer.name = values.name
         customer.name_source = "manual" if values.name is not None else None
+        await AutomationRepository(self.session).sync_exclusion_label_for_contact(
+            business_id,
+            customer.whatsapp_id,
+            values.name,
+        )
         await self.session.commit()
         return await self.get_conversation(business_id, conversation_id)
+
+
+    async def update_customer_automation(
+        self,
+        business_id: UUID,
+        customer_id: UUID,
+        values: CustomerAutomationUpdate,
+    ) -> CustomerOption:
+        customer = await self.session.scalar(
+            select(Customer)
+            .where(
+                Customer.business_id == business_id,
+                Customer.id == customer_id,
+            )
+            .with_for_update()
+        )
+        if customer is None:
+            raise HTTPException(404, "Customer not found")
+
+        repository = AutomationRepository(self.session)
+        aliases = tuple(
+            __import__(
+                "app.automation.domain",
+                fromlist=["whatsapp_id_lookup_aliases"],
+            ).whatsapp_id_lookup_aliases(customer.whatsapp_id)
+        )
+
+        if values.mode == "human_only":
+            existing = await self.session.scalar(
+                select(BusinessAutomationExclusion)
+                .where(
+                    BusinessAutomationExclusion.business_id == business_id,
+                    BusinessAutomationExclusion.whatsapp_id.in_(aliases),
+                )
+                .order_by(BusinessAutomationExclusion.active.desc())
+                .limit(1)
+                .with_for_update()
+            )
+            if existing is None:
+                existing = BusinessAutomationExclusion(
+                    business_id=business_id,
+                    whatsapp_id=aliases[0],
+                    mode="human_only",
+                    label=customer.name,
+                    reason="Definido pela conversa",
+                    active=True,
+                )
+                self.session.add(existing)
+            else:
+                existing.whatsapp_id = aliases[0]
+                existing.mode = "human_only"
+                existing.label = customer.name
+                existing.active = True
+            await self.session.flush()
+            await repository.reconcile_customer_automation_mode(
+                business_id,
+                customer.whatsapp_id,
+                label=customer.name,
+            )
+            await repository.cancel_pending_for_contact(
+                business_id,
+                customer.whatsapp_id,
+            )
+        else:
+            await self.session.execute(
+                delete(BusinessAutomationExclusion).where(
+                    BusinessAutomationExclusion.business_id == business_id,
+                    BusinessAutomationExclusion.whatsapp_id.in_(aliases),
+                )
+            )
+            customer.automation_mode = "automatic"
+            await repository.clear_human_only_for_contact(
+                business_id,
+                customer.whatsapp_id,
+            )
+
+        await self.session.commit()
+        return CustomerOption(
+            id=customer.id,
+            name=_customer_display_name(customer),
+            phone=customer.phone_e164,
+            automation_mode=customer.automation_mode,
+        )
 
     async def update_conversation_automation(
         self,
@@ -988,7 +1078,13 @@ class OperationalService:
             await repository.clear_human_only_for_contact(
                 business_id, item.whatsapp_id
             )
+        whatsapp_id = item.whatsapp_id
         await repository.delete_exclusion(business_id, exclusion_id)
+        await self.session.flush()
+        await repository.reconcile_customer_automation_mode(
+            business_id,
+            whatsapp_id,
+        )
         await self.session.commit()
 
     async def list_employees(self, business_id: UUID) -> list[EmployeeView]:
@@ -1119,6 +1215,7 @@ class OperationalService:
                 id=item.id,
                 name=_customer_display_name(item),
                 phone=item.phone_e164,
+                automation_mode=item.automation_mode,
             )
             for item in items
         ]
@@ -1138,7 +1235,12 @@ class OperationalService:
         except IntegrityError:
             await self.session.rollback()
             raise HTTPException(409, "Customer already exists") from None
-        return CustomerOption(id=item.id, name=item.name or "Cliente", phone=item.phone_e164)
+        return CustomerOption(
+            id=item.id,
+            name=item.name or "Cliente",
+            phone=item.phone_e164,
+            automation_mode=item.automation_mode,
+        )
 
     async def list_services(self, business_id: UUID) -> list[ServiceOption]:
         items = (await self.session.scalars(
@@ -1868,6 +1970,7 @@ class OperationalService:
         query = select(
             Conversation, Customer.name, Customer.name_source,
             Customer.whatsapp_profile_name, Customer.phone_e164, Customer.whatsapp_id,
+            Customer.automation_mode,
             latest_body.label("last_content"), latest_time.label("last_message_at"),
             latest_direction.label("last_direction"),
             latest_transition.label("last_transition"),
@@ -2053,6 +2156,7 @@ def _conversation_view(row: Any) -> ConversationView:
         whatsapp_profile_name,
         customer_phone,
         whatsapp_id,
+        customer_automation_mode,
         last_content,
         last_message_at,
         last_direction,
@@ -2087,6 +2191,7 @@ def _conversation_view(row: Any) -> ConversationView:
         ),
         customer_phone=customer_phone,
         customer_whatsapp_id=whatsapp_id,
+        customer_automation_mode=customer_automation_mode,
         last_content=last_content,
         last_message_at=last_message_at,
         status=status,
