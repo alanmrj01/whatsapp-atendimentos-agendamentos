@@ -54,6 +54,50 @@ def normalize_whatsapp_id(value: str) -> str:
     return normalized
 
 
+def _looks_like_brazil_national_number(value: str) -> bool:
+    if len(value) not in {10, 11} or not value.isdigit():
+        return False
+    try:
+        area_code = int(value[:2])
+    except ValueError:
+        return False
+    if not 11 <= area_code <= 99:
+        return False
+    subscriber_prefix = value[2]
+    if len(value) == 11:
+        return subscriber_prefix == "9"
+    return subscriber_prefix in {"2", "3", "4", "5"}
+
+
+def whatsapp_id_lookup_aliases(value: str) -> tuple[str, ...]:
+    """Return canonical and legacy aliases for one individual WhatsApp identity.
+
+    Brazilian device contacts are commonly exposed without country code. Runtime
+    lookups must still match those historical exclusions against Meta's E.164-like
+    WhatsApp ID, while leaving non-Brazilian international IDs untouched.
+    """
+
+    normalized = normalize_whatsapp_id(value)
+    candidates: list[str] = []
+
+    if normalized.startswith("55") and _looks_like_brazil_national_number(
+        normalized[2:]
+    ):
+        candidates.extend((normalized, normalized[2:]))
+    elif _looks_like_brazil_national_number(normalized):
+        candidates.extend(("55" + normalized, normalized))
+    else:
+        candidates.append(normalized)
+
+    return tuple(dict.fromkeys(candidates))
+
+
+def normalize_automation_exclusion_whatsapp_id(value: str) -> str:
+    """Canonicalize exclusions so future Brazilian contacts persist with +55."""
+
+    return whatsapp_id_lookup_aliases(value)[0]
+
+
 def normalize_assistant_message(value: str) -> str:
     normalized = " ".join(value.split())
     if not normalized or len(normalized) > ASSISTANT_MESSAGE_MAX_LENGTH:
