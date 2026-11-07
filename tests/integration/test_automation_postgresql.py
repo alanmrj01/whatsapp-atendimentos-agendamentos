@@ -17,7 +17,7 @@ from app.operations.schemas import (
     CustomerNameUpdate,
     ConversationAutomationUpdate,
 )
-from app.schemas.automation import AutomationExclusionUpdate
+from app.schemas.automation import AutomationExclusionCreate, AutomationExclusionUpdate
 from app.operations.service import OperationalService
 from app.repositories.automation import AutomationRepository
 from app.models import (
@@ -700,6 +700,59 @@ async def test_pause_cancels_automatic_pending_but_preserves_manual_outbound(
         status for message_id, status in statuses.items()
         if message_id != manual_id
     }
+
+
+async def test_settings_exclusion_creates_customer_master_and_unblock_preserves_it(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions,
+        phone_number_id="physical-settings-customer-master",
+    )
+
+    async with sessions() as session:
+        created = await OperationalService(session).create_automation_exclusion(
+            business_id,
+            AutomationExclusionCreate(
+                whatsapp_id="129883216763",
+                mode="human_only",
+                label="Cliente da agenda",
+                reason="Selecionado nas configurações",
+            ),
+        )
+        exclusion_id = created.id
+
+    async with sessions() as session:
+        customer = await session.scalar(
+            select(Customer).where(
+                Customer.business_id == business_id,
+                Customer.whatsapp_id == "55129883216763",
+            )
+        )
+        assert customer is not None
+        customer_id = customer.id
+        assert customer.phone_e164 == "+55129883216763"
+        assert customer.name == "Cliente da agenda"
+        assert customer.name_source == "manual"
+        assert customer.automation_mode == "human_only"
+
+    async with sessions() as session:
+        await OperationalService(session).delete_automation_exclusion(
+            business_id,
+            exclusion_id,
+        )
+
+    async with sessions() as session:
+        customer = await session.get(Customer, customer_id)
+        exclusion_count = await session.scalar(
+            select(func.count(BusinessAutomationExclusion.id)).where(
+                BusinessAutomationExclusion.business_id == business_id,
+            )
+        )
+        assert customer is not None
+        assert customer.name == "Cliente da agenda"
+        assert customer.automation_mode == "automatic"
+        assert exclusion_count == 0
 
 
 async def test_customer_policy_is_the_master_permanent_block_and_manual_send_survives(
