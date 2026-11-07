@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.automation.domain import whatsapp_id_lookup_aliases
 from app.automation.service import (
     AutomationAdministrationService,
     AutomationPolicyService,
@@ -596,12 +597,7 @@ class OperationalService:
             raise HTTPException(404, "Customer not found")
 
         repository = AutomationRepository(self.session)
-        aliases = tuple(
-            __import__(
-                "app.automation.domain",
-                fromlist=["whatsapp_id_lookup_aliases"],
-            ).whatsapp_id_lookup_aliases(customer.whatsapp_id)
-        )
+        aliases = whatsapp_id_lookup_aliases(customer.whatsapp_id)
 
         if values.mode == "human_only":
             existing = await self.session.scalar(
