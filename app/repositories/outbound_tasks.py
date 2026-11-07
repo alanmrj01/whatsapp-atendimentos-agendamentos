@@ -148,6 +148,7 @@ class OutboundTaskRepository:
             Business.assistant_enabled.is_(False),
             Conversation.handoff_status == "human_only",
             Conversation.automation_suppressed_until > func.now(),
+            Customer.automation_mode != "automatic",
             active_exclusion,
         )
         result = await self.session.execute(
@@ -210,13 +211,29 @@ class OutboundTaskRepository:
         )
         alias_exclusion_active = bool(exclusion_modes)
         alias_ignore_active = "ignore" in exclusion_modes
+        customer_mode = await self.session.scalar(
+            select(Customer.automation_mode).where(
+                Customer.business_id == message.business_id,
+                Customer.whatsapp_id.in_(
+                    whatsapp_id_lookup_aliases(recipient)
+                ),
+            ).limit(1)
+        )
+        customer_policy_blocked = customer_mode in {"human_only", "ignore"}
+        customer_ignore_active = customer_mode == "ignore"
 
         automation_blocked = _automation_blocked_for_message(
             idempotency_key=message.idempotency_key,
             outbound_payload=message.outbound_payload,
-            active_ignore=bool(active_ignore_value) or alias_ignore_active,
+            active_ignore=(
+                bool(active_ignore_value)
+                or alias_ignore_active
+                or customer_ignore_active
+            ),
             standard_automation_blocked=(
-                bool(standard_blocked_value) or alias_exclusion_active
+                bool(standard_blocked_value)
+                or alias_exclusion_active
+                or customer_policy_blocked
             ),
             entitlement_blocked=bool(entitlement_blocked_value),
         )
