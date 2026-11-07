@@ -714,7 +714,7 @@ async def test_settings_exclusion_creates_customer_master_and_unblock_preserves_
         created = await OperationalService(session).create_automation_exclusion(
             business_id,
             AutomationExclusionCreate(
-                whatsapp_id="129883216763",
+                whatsapp_id="12983216763",
                 mode="human_only",
                 label="Cliente da agenda",
                 reason="Selecionado nas configurações",
@@ -726,12 +726,12 @@ async def test_settings_exclusion_creates_customer_master_and_unblock_preserves_
         customer = await session.scalar(
             select(Customer).where(
                 Customer.business_id == business_id,
-                Customer.whatsapp_id == "55129883216763",
+                Customer.whatsapp_id == "5512983216763",
             )
         )
         assert customer is not None
         customer_id = customer.id
-        assert customer.phone_e164 == "+55129883216763"
+        assert customer.phone_e164 == "+5512983216763"
         assert customer.name == "Cliente da agenda"
         assert customer.name_source == "manual"
         assert customer.automation_mode == "human_only"
