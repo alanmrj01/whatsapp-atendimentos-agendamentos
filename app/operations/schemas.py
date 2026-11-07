@@ -183,6 +183,7 @@ class ConversationView(StrictModel):
     customer_name: str
     customer_phone: str | None
     customer_whatsapp_id: str | None = None
+    customer_automation_mode: Literal["automatic", "human_only", "ignore"] = "automatic"
     last_content: str | None
     last_message_at: datetime | None
     status: ConversationStatus
@@ -605,6 +606,11 @@ class CustomerOption(StrictModel):
     id: UUID
     name: str
     phone: str | None
+    automation_mode: Literal["automatic", "human_only", "ignore"] = "automatic"
+
+
+class CustomerAutomationUpdate(StrictModel):
+    mode: Literal["automatic", "human_only"]
 
 
 class CustomerList(StrictModel):
