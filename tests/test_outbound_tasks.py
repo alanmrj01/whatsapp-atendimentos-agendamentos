@@ -625,6 +625,55 @@ async def test_message_quota_stops_send_before_provider_call(
 
 
 @pytest.mark.asyncio
+async def test_repository_final_send_barrier_blocks_legacy_local_exclusion() -> None:
+    conversation_id = uuid.UUID("81000000-0000-0000-0000-000000000008")
+    message = SimpleNamespace(
+        id=MESSAGE_ID,
+        business_id=BUSINESS_ID,
+        conversation_id=conversation_id,
+        idempotency_key="conversation:outbound:reply",
+        outbound_payload=None,
+        message_type="text",
+        body="não deve sair",
+        status="pending",
+        provider_message_id=None,
+    )
+
+    scope_result = Mock()
+    scope_result.one_or_none.return_value = SimpleNamespace(
+        business_id=BUSINESS_ID,
+        conversation_id=conversation_id,
+    )
+    message_result = Mock()
+    message_result.one_or_none.return_value = (
+        message,
+        "5512988164392",
+        False,
+        False,
+        False,
+    )
+    legacy_exclusion_result = Mock()
+    legacy_exclusion_result.scalars.return_value = ["human_only"]
+
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                scope_result,
+                message_result,
+                legacy_exclusion_result,
+            ]
+        ),
+        scalar=AsyncMock(return_value=conversation_id),
+    )
+
+    stored = await OutboundTaskRepository(session).lock_message(MESSAGE_ID)  # type: ignore[arg-type]
+
+    assert stored is not None
+    assert stored.recipient == "5512988164392"
+    assert stored.automation_blocked is True
+
+
+@pytest.mark.asyncio
 async def test_excluded_or_human_controlled_recipient_is_not_sent() -> None:
     repository = FakeOutboundRepository(
         stored_message(automation_blocked=True)

@@ -8,7 +8,7 @@ from typing import Protocol
 from app.automation.domain import (
     AutomationDecision,
     ExclusionMode,
-    normalize_whatsapp_id,
+    whatsapp_id_lookup_aliases,
     validate_human_control_window,
 )
 from app.models import BusinessAutomationExclusion
@@ -64,10 +64,14 @@ class AutomationPolicyService:
         business_id: uuid.UUID,
         whatsapp_id: str,
     ) -> ExclusionMode | None:
-        return await self.repository.get_active_exclusion_mode(
-            business_id,
-            normalize_whatsapp_id(whatsapp_id),
-        )
+        for candidate in whatsapp_id_lookup_aliases(whatsapp_id):
+            mode = await self.repository.get_active_exclusion_mode(
+                business_id,
+                candidate,
+            )
+            if mode is not None:
+                return mode
+        return None
 
     async def evaluate_customer_inbound(
         self,
