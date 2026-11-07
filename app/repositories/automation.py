@@ -116,7 +116,9 @@ class AutomationRepository:
             )
             .where(
                 Conversation.business_id == business_id,
-                Customer.whatsapp_id == whatsapp_id,
+                Customer.whatsapp_id.in_(
+                    whatsapp_id_lookup_aliases(whatsapp_id)
+                ),
             )
         )
         await self.session.execute(
