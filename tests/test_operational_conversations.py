@@ -249,6 +249,7 @@ def test_conversation_view_exposes_whatsapp_id_without_phone() -> None:
         "Cliente WhatsApp",
         None,
         "5511999999999",
+        "automatic",
         "Olá",
         datetime.now(UTC),
         "inbound",
@@ -261,3 +262,4 @@ def test_conversation_view_exposes_whatsapp_id_without_phone() -> None:
     assert view.customer_id == customer_id
     assert view.customer_phone is None
     assert view.customer_whatsapp_id == "5511999999999"
+    assert view.customer_automation_mode == "automatic"
