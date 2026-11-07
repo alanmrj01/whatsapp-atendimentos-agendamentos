@@ -10,7 +10,7 @@ from app.automation.domain import (
     DEFAULT_ASSISTANT_HANDOFF,
     DEFAULT_HUMAN_CONTROL_WINDOW_MINUTES,
     ExclusionMode,
-    normalize_whatsapp_id,
+    normalize_automation_exclusion_whatsapp_id,
     normalize_assistant_message,
     validate_human_control_window,
 )
@@ -28,7 +28,7 @@ class AutomationExclusionCreate(BaseModel):
     @field_validator("whatsapp_id")
     @classmethod
     def validate_whatsapp_id(cls, value: str) -> str:
-        return normalize_whatsapp_id(value)
+        return normalize_automation_exclusion_whatsapp_id(value)
 
 
 class AutomationExclusionUpdate(BaseModel):
