@@ -600,15 +600,29 @@ class OperationalService:
         aliases = whatsapp_id_lookup_aliases(customer.whatsapp_id)
 
         if values.mode == "human_only":
-            existing = await self.session.scalar(
-                select(BusinessAutomationExclusion)
-                .where(
-                    BusinessAutomationExclusion.business_id == business_id,
-                    BusinessAutomationExclusion.whatsapp_id.in_(aliases),
-                )
-                .order_by(BusinessAutomationExclusion.active.desc())
-                .limit(1)
-                .with_for_update()
+            existing_items = list(
+                (
+                    await self.session.execute(
+                        select(BusinessAutomationExclusion)
+                        .where(
+                            BusinessAutomationExclusion.business_id == business_id,
+                            BusinessAutomationExclusion.whatsapp_id.in_(aliases),
+                        )
+                        .order_by(
+                            BusinessAutomationExclusion.active.desc(),
+                            BusinessAutomationExclusion.created_at.asc(),
+                        )
+                        .with_for_update()
+                    )
+                ).scalars()
+            )
+            existing = next(
+                (
+                    item
+                    for item in existing_items
+                    if item.whatsapp_id == aliases[0]
+                ),
+                existing_items[0] if existing_items else None,
             )
             if existing is None:
                 existing = BusinessAutomationExclusion(
@@ -621,9 +635,13 @@ class OperationalService:
                 )
                 self.session.add(existing)
             else:
+                for duplicate in existing_items:
+                    if duplicate.id != existing.id:
+                        await self.session.delete(duplicate)
                 existing.whatsapp_id = aliases[0]
                 existing.mode = "human_only"
                 existing.label = customer.name
+                existing.reason = existing.reason or "Definido pela conversa"
                 existing.active = True
             await self.session.flush()
             await repository.reconcile_customer_automation_mode(
