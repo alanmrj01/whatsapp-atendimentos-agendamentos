@@ -11,7 +11,11 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.operations.schemas import CustomerAutomationUpdate, ConversationAutomationUpdate
+from app.operations.schemas import (
+    CustomerAutomationUpdate,
+    CustomerNameUpdate,
+    ConversationAutomationUpdate,
+)
 from app.schemas.automation import AutomationExclusionUpdate
 from app.operations.service import OperationalService
 from app.repositories.automation import AutomationRepository
@@ -844,6 +848,108 @@ async def test_customer_policy_is_the_master_permanent_block_and_manual_send_sur
         assert customer.automation_mode == "automatic"
         assert exclusion_count == 0
         assert conversation.handoff_status == "none"
+
+
+async def test_manual_conversation_rename_becomes_customer_source_of_truth(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions,
+        phone_number_id="physical-customer-name-source",
+    )
+    whatsapp_id = "5512988574448"
+    first = inbound(
+        "physical-customer-name-first",
+        whatsapp_id,
+        "physical-customer-name-source",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [first])
+
+    async with sessions() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+            )
+        )
+        customer = await session.scalar(
+            select(Customer).where(
+                Customer.business_id == business_id,
+                Customer.whatsapp_id == whatsapp_id,
+            )
+        )
+        assert conversation is not None
+        assert customer is not None
+        conversation_id = conversation.id
+        customer_id = customer.id
+
+        await OperationalService(session).update_customer_automation(
+            business_id,
+            customer_id,
+            CustomerAutomationUpdate(mode="human_only"),
+        )
+        updated = await OperationalService(session).update_customer_name(
+            business_id,
+            conversation_id,
+            CustomerNameUpdate(name="Carlos Correto"),
+        )
+        assert updated.customer_name == "Carlos Correto"
+
+    async with sessions() as session:
+        customer = await session.get(Customer, customer_id)
+        exclusion = await session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.active.is_(True),
+            )
+        )
+        assert customer is not None
+        assert customer.name == "Carlos Correto"
+        assert customer.name_source == "manual"
+        assert exclusion is not None
+        assert exclusion.label == "Carlos Correto"
+
+        # Re-enable only to exercise the next automatic greeting with the same
+        # persisted customer identity. Address behavior is intentionally untouched.
+        await OperationalService(session).update_customer_automation(
+            business_id,
+            customer_id,
+            CustomerAutomationUpdate(mode="automatic"),
+        )
+
+    second = inbound(
+        "physical-customer-name-second",
+        whatsapp_id,
+        "physical-customer-name-source",
+    )
+    second = InboundMessageEvent(
+        **{
+            **second.__dict__,
+            "body": "Olá",
+        }
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [second])
+
+    async with sessions() as session:
+        latest = await session.scalar(
+            select(Message.body)
+            .where(
+                Message.business_id == business_id,
+                Message.conversation_id == conversation_id,
+                Message.direction == "outbound",
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(1)
+        )
+        customer = await session.get(Customer, customer_id)
+
+    assert customer is not None
+    assert customer.name == "Carlos Correto"
+    assert customer.name_source == "manual"
+    assert latest is not None
+    assert "Carlos Correto" in latest
+    assert "como posso te chamar" not in latest.casefold()
 
 
 async def test_customer_policy_alone_blocks_queued_automatic_before_meta(
