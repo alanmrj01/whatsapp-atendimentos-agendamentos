@@ -12,6 +12,7 @@ from app.automation.domain import (
     AutomationDecision,
     ExclusionMode,
     normalize_whatsapp_id,
+    whatsapp_id_lookup_aliases,
 )
 from app.automation.service import (
     AutomationAdministrationService,
@@ -139,6 +140,20 @@ def test_exclusion_schema_normalizes_individual_and_rejects_collective() -> None
 
     assert values.whatsapp_id == WHATSAPP_ID
     assert values.mode is ExclusionMode.IGNORE
+
+    local_brazilian = AutomationExclusionCreate(
+        whatsapp_id="11999990001",
+        mode="human_only",
+    )
+    assert local_brazilian.whatsapp_id == "5511999990001"
+    assert whatsapp_id_lookup_aliases("5511999990001") == (
+        "5511999990001",
+        "11999990001",
+    )
+    assert whatsapp_id_lookup_aliases("11999990001") == (
+        "5511999990001",
+        "11999990001",
+    )
     with pytest.raises(ValidationError):
         AutomationExclusionCreate(
             whatsapp_id="120363025000000000@g.us",
@@ -178,6 +193,24 @@ async def test_fixed_exclusion_policy_blocks_only_when_active(
     assert bool(repository.human_only_marked) is (
         mode is ExclusionMode.HUMAN_ONLY
     )
+
+
+@pytest.mark.asyncio
+async def test_legacy_brazilian_local_exclusion_blocks_canonical_meta_sender() -> None:
+    repository = FakeAutomationRepository()
+    repository.exclusions[(BUSINESS_A, "11999990001")] = ExclusionMode.HUMAN_ONLY
+    policy = AutomationPolicyService(repository, now=lambda: NOW)
+
+    active = await policy.active_exclusion(BUSINESS_A, "5511999990001")
+    decision = await policy.evaluate_customer_inbound(
+        BUSINESS_A,
+        CONVERSATION,
+        active,
+    )
+
+    assert active is ExclusionMode.HUMAN_ONLY
+    assert decision is AutomationDecision.HUMAN_ONLY
+    assert repository.human_only_marked == [(BUSINESS_A, CONVERSATION)]
 
 
 @pytest.mark.asyncio

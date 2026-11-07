@@ -9,6 +9,7 @@ from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.automation.domain import whatsapp_id_lookup_aliases
 from app.billing.entitlements import active_operational_access_exists
 from app.billing.usage import message_usage_snapshot
 from app.models import (
@@ -188,11 +189,35 @@ class OutboundTaskRepository:
             standard_blocked_value,
             entitlement_blocked_value,
         ) = row
+
+        # Final provider-send barrier: re-resolve the exclusion with canonical
+        # and legacy aliases while the conversation/message locks are held.
+        # This prevents both historical local-number exclusions and races where
+        # an automatic reply was queued immediately before the contact was blocked.
+        exclusion_modes = list(
+            (
+                await self.session.execute(
+                    select(BusinessAutomationExclusion.mode).where(
+                        BusinessAutomationExclusion.business_id
+                        == message.business_id,
+                        BusinessAutomationExclusion.whatsapp_id.in_(
+                            whatsapp_id_lookup_aliases(recipient)
+                        ),
+                        BusinessAutomationExclusion.active.is_(True),
+                    )
+                )
+            ).scalars()
+        )
+        alias_exclusion_active = bool(exclusion_modes)
+        alias_ignore_active = "ignore" in exclusion_modes
+
         automation_blocked = _automation_blocked_for_message(
             idempotency_key=message.idempotency_key,
             outbound_payload=message.outbound_payload,
-            active_ignore=bool(active_ignore_value),
-            standard_automation_blocked=bool(standard_blocked_value),
+            active_ignore=bool(active_ignore_value) or alias_ignore_active,
+            standard_automation_blocked=(
+                bool(standard_blocked_value) or alias_exclusion_active
+            ),
             entitlement_blocked=bool(entitlement_blocked_value),
         )
 
