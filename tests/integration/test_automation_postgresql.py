@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import replace
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 
@@ -922,12 +923,7 @@ async def test_manual_conversation_rename_becomes_customer_source_of_truth(
         whatsapp_id,
         "physical-customer-name-source",
     )
-    second = InboundMessageEvent(
-        **{
-            **second.__dict__,
-            "body": "Olá",
-        }
-    )
+    second = replace(second, body="Olá")
     async with sessions() as session:
         await process_webhook_events(session, [second])
 
