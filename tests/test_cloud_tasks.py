@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from pytest import MonkeyPatch
 
 from app.api import internal_tasks
+from app.automation.domain import ExclusionMode
 from app.conversations.types import ConversationInput
 from app.core.config import (
     CloudTasksConfiguration,
@@ -23,6 +24,7 @@ from app.core.config import (
     Settings,
 )
 from app.main import app
+from app.repositories.automation import ConversationAutomationControl
 from app.repositories.cloud_tasks import StoredTaskEvent
 from app.schemas.cloud_tasks import WhatsAppEventTaskPayload
 from app.tasks import auth as task_auth
@@ -36,6 +38,7 @@ from app.tasks.cloud_tasks import (
 )
 from app.tasks.worker import process_cloud_task_event
 from app.whatsapp.webhook import build_event_key
+from tests.test_automation_policy import FakeAutomationRepository
 
 INVOKER_EMAIL = (
     "whatsapp-task-invoker@whatsapp-automacao-prod.iam.gserviceaccount.com"
@@ -368,6 +371,36 @@ async def test_worker_executes_engine_once_and_marks_processed() -> None:
     assert second is False
     engine.process.assert_awaited_once_with(repository.inbound)
     assert repository.completed == [(EVENT_KEY, "processed")]
+
+
+@pytest.mark.asyncio
+async def test_worker_rechecks_legacy_local_exclusion_before_engine() -> None:
+    repository = FakeTaskRepository(stored_event())
+    repository.inbound = replace(
+        repository.inbound,
+        whatsapp_id="5512988164392",
+    )
+    automation = FakeAutomationRepository()
+    automation.controls[repository.inbound.conversation_id] = (
+        ConversationAutomationControl(None, "none")
+    )
+    automation.exclusions[
+        (repository.inbound.business_id, "12988164392")
+    ] = ExclusionMode.HUMAN_ONLY
+    engine = AsyncMock()
+
+    processed = await process_cloud_task_event(
+        FakeTaskSession(),
+        EVENT_KEY,
+        repository,
+        engine,
+        automation_repository=automation,
+    )
+
+    assert processed is False
+    engine.process.assert_not_awaited()
+    assert repository.completed == [(EVENT_KEY, "ignored")]
+    assert repository.event.outcome_reason == "human_only"
 
 
 @pytest.mark.asyncio
