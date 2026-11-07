@@ -1600,6 +1600,45 @@ async def test_active_fixed_exclusion_prevents_engine_and_outbound(
 
 
 @mark.asyncio
+async def test_legacy_local_exclusion_blocks_canonical_inbound_before_engine() -> None:
+    repository = FakeWebhookRepository()
+    automation = FakeAutomationRepository()
+    automation.controls[repository.conversation_id] = (
+        ConversationAutomationControl(None, "none")
+    )
+    automation.exclusions[
+        (repository.business_id, "12988164392")
+    ] = ExclusionMode.HUMAN_ONLY
+    engine = AsyncMock()
+    event = InboundMessageEvent(
+        event_key=build_event_key("inbound", "provider-legacy-local-block"),
+        event_type="message.inbound.text",
+        meta_phone_number_id="known-phone-id",
+        provider_message_id="provider-legacy-local-block",
+        whatsapp_id="5512988164392",
+        message_type="text",
+        body="não responder automaticamente",
+        interactive_id=None,
+    )
+
+    await process_webhook_events(
+        FakeSession(),
+        [event],
+        repository,
+        engine,
+        automation_repository=automation,
+    )
+
+    engine.process.assert_not_awaited()
+    assert repository.completed == [(event.event_key, "ignored")]
+    assert repository.diagnostics[event.event_key] == (
+        repository.business_id,
+        "human_only",
+    )
+    assert len(repository.persisted_messages) == 1
+
+
+@mark.asyncio
 async def test_ambiguous_or_collective_coexistence_event_is_fail_closed(
     client: AsyncClient,
     monkeypatch: MonkeyPatch,
