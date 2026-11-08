@@ -43,6 +43,7 @@ from app.operations.schemas import (
     ConversationBulkResult,
     ConversationList,
     ConversationMessageDelta,
+    CustomerAutomationUpdate,
     CustomerCreate,
     CustomerNameUpdate,
     CustomerOutreachList,
@@ -862,6 +863,25 @@ async def list_customers(principal: Identity, service: ServiceDep):
 async def create_customer(payload: CustomerCreate, principal: Identity, service: ServiceDep):
     membership = _authorize(principal, AGENDA_ROLES)
     return await service.create_customer(membership.business_id, payload)
+
+
+@router.patch(
+    "/customers/{customer_id}/automation",
+    response_model=CustomerOption,
+    dependencies=[Depends(require_origin)],
+)
+async def update_customer_automation(
+    customer_id: UUID,
+    payload: CustomerAutomationUpdate,
+    principal: Identity,
+    service: ServiceDep,
+):
+    membership = _authorize(principal, AGENDA_ROLES)
+    return await service.update_customer_automation(
+        membership.business_id,
+        customer_id,
+        payload,
+    )
 
 
 @router.get("/services", response_model=ServiceList)
