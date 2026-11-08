@@ -495,6 +495,19 @@ class OperationalService:
 
         now = datetime.now(UTC)
         automation = AutomationRepository(self.session)
+        customers = list(
+            (
+                await self.session.scalars(
+                    select(Customer).where(
+                        Customer.business_id == business_id,
+                        Customer.id.in_(
+                            [conversation.customer_id for conversation in conversations]
+                        ),
+                    )
+                )
+            ).all()
+        )
+        customers_by_id = {customer.id: customer for customer in customers}
         for conversation in conversations:
             action = values.action
             if action == "mark_read":
@@ -507,6 +520,10 @@ class OperationalService:
             elif action == "unpin":
                 conversation.pinned_at = None
             elif action == "assistant_on":
+                customer = customers_by_id[conversation.customer_id]
+                await automation.remove_human_only_exclusion_for_contact(
+                    business_id, customer.whatsapp_id
+                )
                 conversation.automation_enabled = True
                 conversation.handoff_status = "none"
                 conversation.automation_suppressed_until = None
@@ -515,12 +532,19 @@ class OperationalService:
                     conversation.state = ConversationState.START.value
                     conversation.context = {}
             elif action == "assistant_off":
-                conversation.automation_enabled = False
-                conversation.handoff_status = "waiting"
-                await automation.cancel_pending_outbounds(
+                customer = customers_by_id[conversation.customer_id]
+                await automation.ensure_human_only_exclusion(
                     business_id,
-                    conversation.id,
+                    customer.whatsapp_id,
+                    label=(
+                        customer.name
+                        or customer.whatsapp_profile_name
+                        or customer.whatsapp_id
+                    ),
+                    reason="Definido pela conversa",
                 )
+                conversation.automation_enabled = False
+                conversation.handoff_status = "human_only"
             elif action == "delete":
                 conversation.deleted_at = now
                 conversation.state = ConversationState.START.value
@@ -586,8 +610,22 @@ class OperationalService:
         )
         if conversation is None:
             raise HTTPException(404, "Conversation not found")
-        conversation.automation_enabled = values.enabled
+        customer = await self.session.scalar(
+            select(Customer)
+            .where(
+                Customer.business_id == business_id,
+                Customer.id == conversation.customer_id,
+            )
+            .with_for_update()
+        )
+        if customer is None:
+            raise HTTPException(404, "Customer not found")
+        automation = AutomationRepository(self.session)
         if values.enabled:
+            await automation.remove_human_only_exclusion_for_contact(
+                business_id, customer.whatsapp_id
+            )
+            conversation.automation_enabled = True
             conversation.handoff_status = "none"
             conversation.automation_suppressed_until = None
             conversation.suppression_reason = None
@@ -595,10 +633,18 @@ class OperationalService:
                 conversation.state = ConversationState.START.value
                 conversation.context = {}
         else:
-            conversation.handoff_status = "waiting"
-            await AutomationRepository(self.session).cancel_pending_outbounds(
-                business_id, conversation_id
+            await automation.ensure_human_only_exclusion(
+                business_id,
+                customer.whatsapp_id,
+                label=(
+                    customer.name
+                    or customer.whatsapp_profile_name
+                    or customer.whatsapp_id
+                ),
+                reason="Definido pela conversa",
             )
+            conversation.automation_enabled = False
+            conversation.handoff_status = "human_only"
         await self.session.commit()
         return await self.get_conversation(business_id, conversation_id)
 
