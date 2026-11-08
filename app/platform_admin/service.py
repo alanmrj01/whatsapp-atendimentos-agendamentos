@@ -62,14 +62,29 @@ class PlatformAdminService:
             select(
                 BusinessWhatsAppConnection.business_id,
                 BusinessWhatsAppConnection.status,
+                BusinessWhatsAppConnection.mode,
+                BusinessWhatsAppConnection.display_phone_number,
+                BusinessWhatsAppConnection.connected_at,
+                BusinessWhatsAppConnection.disconnected_at,
+                BusinessWhatsAppConnection.last_error_code,
+                BusinessWhatsAppConnection.meta_review_status,
+                BusinessWhatsAppConnection.meta_phone_number_id,
+                BusinessWhatsAppConnection.updated_at,
                 BusinessWhatsAppConnection.created_at,
             )
             .where(BusinessWhatsAppConnection.business_id.in_(ids))
-            .order_by(BusinessWhatsAppConnection.created_at.desc())
+            .order_by(
+                BusinessWhatsAppConnection.business_id,
+                BusinessWhatsAppConnection.created_at.desc(),
+            )
         )
-        statuses: dict[UUID, str] = {}
-        for business_id, status, _ in connection_rows:
-            statuses.setdefault(business_id, status)
+        latest_connections: dict[UUID, tuple] = {}
+        ever_connected: set[UUID] = set()
+        for row in connection_rows:
+            business_id = row[0]
+            if row[4] is not None:
+                ever_connected.add(business_id)
+            latest_connections.setdefault(business_id, tuple(row[1:]))
 
         access_rows = await self.db.execute(
             select(
@@ -263,9 +278,22 @@ class PlatformAdminService:
                     else None
                 ),
                 owners=owners.get(business.id, []),
-                whatsapp_status=statuses.get(business.id, "disconnected"),
+                whatsapp_status=connection[0] if connection else "disconnected",
+                whatsapp_mode=connection[1] if connection else None,
+                whatsapp_display_phone_number=connection[2] if connection else None,
+                whatsapp_connected_at=connection[3] if connection else None,
+                whatsapp_disconnected_at=connection[4] if connection else None,
+                whatsapp_last_error_code=connection[5] if connection else None,
+                whatsapp_meta_review_status=connection[6] if connection else None,
+                whatsapp_has_phone_number_id=bool(connection and connection[7]),
+                whatsapp_connection_updated_at=connection[8] if connection else None,
+                whatsapp_ever_connected=business.id in ever_connected,
+                whatsapp_legacy_binding=bool(
+                    business.meta_phone_number_id or business.meta_waba_id
+                ),
             )
             for business in businesses
+            for connection in [latest_connections.get(business.id)]
         ])
 
     async def _idempotent_replay(
