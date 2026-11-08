@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import replace
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 
@@ -11,8 +12,12 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.operations.schemas import ConversationAutomationUpdate
-from app.schemas.automation import AutomationExclusionUpdate
+from app.operations.schemas import (
+    CustomerAutomationUpdate,
+    CustomerNameUpdate,
+    ConversationAutomationUpdate,
+)
+from app.schemas.automation import AutomationExclusionCreate, AutomationExclusionUpdate
 from app.operations.service import OperationalService
 from app.repositories.automation import AutomationRepository
 from app.models import (
@@ -695,6 +700,358 @@ async def test_pause_cancels_automatic_pending_but_preserves_manual_outbound(
         status for message_id, status in statuses.items()
         if message_id != manual_id
     }
+
+
+async def test_settings_exclusion_creates_customer_master_and_unblock_preserves_it(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions,
+        phone_number_id="physical-settings-customer-master",
+    )
+
+    async with sessions() as session:
+        created = await OperationalService(session).create_automation_exclusion(
+            business_id,
+            AutomationExclusionCreate(
+                whatsapp_id="12983216763",
+                mode="human_only",
+                label="Cliente da agenda",
+                reason="Selecionado nas configurações",
+            ),
+        )
+        exclusion_id = created.id
+
+    async with sessions() as session:
+        customer = await session.scalar(
+            select(Customer).where(
+                Customer.business_id == business_id,
+                Customer.whatsapp_id == "5512983216763",
+            )
+        )
+        assert customer is not None
+        customer_id = customer.id
+        assert customer.phone_e164 == "+5512983216763"
+        assert customer.name == "Cliente da agenda"
+        assert customer.name_source == "manual"
+        assert customer.automation_mode == "human_only"
+
+    async with sessions() as session:
+        await OperationalService(session).delete_automation_exclusion(
+            business_id,
+            exclusion_id,
+        )
+
+    async with sessions() as session:
+        customer = await session.get(Customer, customer_id)
+        exclusion_count = await session.scalar(
+            select(func.count(BusinessAutomationExclusion.id)).where(
+                BusinessAutomationExclusion.business_id == business_id,
+            )
+        )
+        assert customer is not None
+        assert customer.name == "Cliente da agenda"
+        assert customer.automation_mode == "automatic"
+        assert exclusion_count == 0
+
+
+async def test_customer_policy_is_the_master_permanent_block_and_manual_send_survives(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions,
+        phone_number_id="physical-customer-policy-phone",
+    )
+    whatsapp_id = "5512988164392"
+    event = inbound(
+        "physical-customer-policy-first",
+        whatsapp_id,
+        "physical-customer-policy-phone",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [event])
+
+    async with sessions() as session:
+        customer = await session.scalar(
+            select(Customer).where(
+                Customer.business_id == business_id,
+                Customer.whatsapp_id == whatsapp_id,
+            )
+        )
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+                Conversation.customer_id == customer.id,
+            )
+        )
+        assert customer is not None
+        assert conversation is not None
+        customer_id = customer.id
+        conversation_id = conversation.id
+
+        result = await OperationalService(session).update_customer_automation(
+            business_id,
+            customer_id,
+            CustomerAutomationUpdate(mode="human_only"),
+        )
+        assert result.automation_mode == "human_only"
+
+    async with sessions() as session:
+        customer = await session.get(Customer, customer_id)
+        exclusion = await session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id == whatsapp_id,
+                BusinessAutomationExclusion.active.is_(True),
+            )
+        )
+        automatic_statuses = list(
+            (
+                await session.scalars(
+                    select(Message.status).where(
+                        Message.business_id == business_id,
+                        Message.conversation_id == conversation_id,
+                        Message.direction == "outbound",
+                    )
+                )
+            ).all()
+        )
+        assert customer is not None
+        assert customer.automation_mode == "human_only"
+        assert exclusion is not None
+        assert exclusion.mode == "human_only"
+        assert "failed" in automatic_statuses
+
+        manual = Message(
+            business_id=business_id,
+            conversation_id=conversation_id,
+            direction="outbound",
+            message_type="text",
+            body="mensagem manual permitida",
+            status="pending",
+            idempotency_key=f"manual:outbound:{uuid.uuid4()}",
+        )
+        session.add(manual)
+        await session.commit()
+        manual_id = manual.id
+
+    class ManualSender:
+        calls = 0
+
+        async def send_text(self, to: str, text: str) -> str:
+            self.calls += 1
+            assert to == whatsapp_id
+            assert text == "mensagem manual permitida"
+            return "wamid.customer-policy-manual"
+
+        async def aclose(self) -> None:
+            return None
+
+    sender = ManualSender()
+    async with sessions() as session:
+        result = await process_outbound_message(
+            session,
+            manual_id,
+            lambda: sender,
+        )
+    assert result == "sent"
+    assert sender.calls == 1
+
+    second = inbound(
+        "physical-customer-policy-second",
+        whatsapp_id,
+        "physical-customer-policy-phone",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [second])
+
+    async with sessions() as session:
+        pending_automatic = await session.scalar(
+            select(func.count(Message.id)).where(
+                Message.business_id == business_id,
+                Message.conversation_id == conversation_id,
+                Message.direction == "outbound",
+                Message.status == "pending",
+                ~Message.idempotency_key.like("manual:outbound:%"),
+            )
+        )
+        conversation = await session.get(Conversation, conversation_id)
+        assert conversation is not None
+        assert conversation.handoff_status == "human_only"
+        assert pending_automatic == 0
+
+    async with sessions() as session:
+        result = await OperationalService(session).update_customer_automation(
+            business_id,
+            customer_id,
+            CustomerAutomationUpdate(mode="automatic"),
+        )
+        assert result.automation_mode == "automatic"
+
+    async with sessions() as session:
+        customer = await session.get(Customer, customer_id)
+        exclusion_count = await session.scalar(
+            select(func.count(BusinessAutomationExclusion.id)).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id == whatsapp_id,
+            )
+        )
+        conversation = await session.get(Conversation, conversation_id)
+        assert customer is not None
+        assert conversation is not None
+        assert customer.automation_mode == "automatic"
+        assert exclusion_count == 0
+        assert conversation.handoff_status == "none"
+
+
+async def test_manual_conversation_rename_becomes_customer_source_of_truth(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions,
+        phone_number_id="physical-customer-name-source",
+    )
+    whatsapp_id = "5512988574448"
+    first = inbound(
+        "physical-customer-name-first",
+        whatsapp_id,
+        "physical-customer-name-source",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [first])
+
+    async with sessions() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id,
+            )
+        )
+        customer = await session.scalar(
+            select(Customer).where(
+                Customer.business_id == business_id,
+                Customer.whatsapp_id == whatsapp_id,
+            )
+        )
+        assert conversation is not None
+        assert customer is not None
+        conversation_id = conversation.id
+        customer_id = customer.id
+
+        await OperationalService(session).update_customer_automation(
+            business_id,
+            customer_id,
+            CustomerAutomationUpdate(mode="human_only"),
+        )
+        updated = await OperationalService(session).update_customer_name(
+            business_id,
+            conversation_id,
+            CustomerNameUpdate(name="Carlos Correto"),
+        )
+        assert updated.customer_name == "Carlos Correto"
+
+    async with sessions() as session:
+        customer = await session.get(Customer, customer_id)
+        exclusion = await session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.active.is_(True),
+            )
+        )
+        assert customer is not None
+        assert customer.name == "Carlos Correto"
+        assert customer.name_source == "manual"
+        assert exclusion is not None
+        assert exclusion.label == "Carlos Correto"
+
+        # Re-enable only to exercise the next automatic greeting with the same
+        # persisted customer identity. Address behavior is intentionally untouched.
+        await OperationalService(session).update_customer_automation(
+            business_id,
+            customer_id,
+            CustomerAutomationUpdate(mode="automatic"),
+        )
+
+    second = inbound(
+        "physical-customer-name-second",
+        whatsapp_id,
+        "physical-customer-name-source",
+    )
+    second = replace(second, body="Olá")
+    async with sessions() as session:
+        await process_webhook_events(session, [second])
+
+    async with sessions() as session:
+        latest = await session.scalar(
+            select(Message.body)
+            .where(
+                Message.business_id == business_id,
+                Message.conversation_id == conversation_id,
+                Message.direction == "outbound",
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(1)
+        )
+        customer = await session.get(Customer, customer_id)
+
+    assert customer is not None
+    assert customer.name == "Carlos Correto"
+    assert customer.name_source == "manual"
+    assert latest is not None
+    assert "Carlos Correto" in latest
+    assert "como posso te chamar" not in latest.casefold()
+
+
+async def test_customer_policy_alone_blocks_queued_automatic_before_meta(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions,
+        phone_number_id="physical-customer-policy-last-barrier",
+    )
+    whatsapp_id = "5512988428921"
+    event = inbound(
+        "physical-customer-policy-barrier",
+        whatsapp_id,
+        "physical-customer-policy-last-barrier",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [event])
+
+    async with sessions() as session:
+        row = (
+            await session.execute(
+                select(Message.id, Customer.id)
+                .join(
+                    Conversation,
+                    Conversation.id == Message.conversation_id,
+                )
+                .join(
+                    Customer,
+                    Customer.id == Conversation.customer_id,
+                )
+                .where(
+                    Message.business_id == business_id,
+                    Message.direction == "outbound",
+                    Message.status == "pending",
+                )
+            )
+        ).one()
+        outbound_id, customer_id = row
+        customer = await session.get(Customer, customer_id)
+        assert customer is not None
+        customer.automation_mode = "human_only"
+        await session.commit()
+
+    def external_call_must_not_start():  # type: ignore[no-untyped-def]
+        raise AssertionError("Meta call must not start for customer human_only")
+
+    async with sessions() as session:
+        result = await process_outbound_message(
+            session,
+            outbound_id,
+            external_call_must_not_start,
+        )
+    assert result == "failed"
 
 
 async def test_pause_confirmation_waits_for_already_started_automatic_send(
