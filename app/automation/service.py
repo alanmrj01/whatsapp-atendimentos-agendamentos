@@ -64,19 +64,6 @@ class AutomationPolicyService:
         business_id: uuid.UUID,
         whatsapp_id: str,
     ) -> ExclusionMode | None:
-        get_customer_mode = getattr(
-            self.repository,
-            "get_customer_automation_mode",
-            None,
-        )
-        if callable(get_customer_mode):
-            customer_mode = await get_customer_mode(
-                business_id,
-                whatsapp_id,
-            )
-            if customer_mode is not None:
-                return customer_mode
-
         for candidate in whatsapp_id_lookup_aliases(whatsapp_id):
             mode = await self.repository.get_active_exclusion_mode(
                 business_id,
@@ -153,17 +140,6 @@ class AutomationAdministrationService:
             active=values.active,
         )
         await self.repository.add_exclusion(exclusion)
-        reconcile = getattr(
-            self.repository,
-            "reconcile_customer_automation_mode",
-            None,
-        )
-        if callable(reconcile):
-            await reconcile(
-                business_id,
-                values.whatsapp_id,
-                label=values.label,
-            )
         if values.active:
             await self.repository.cancel_pending_for_contact(
                 business_id, values.whatsapp_id
@@ -193,17 +169,6 @@ class AutomationAdministrationService:
             if key == "mode" and value is not None:
                 value = value.value
             setattr(exclusion, key, value)
-        reconcile = getattr(
-            self.repository,
-            "reconcile_customer_automation_mode",
-            None,
-        )
-        if callable(reconcile):
-            await reconcile(
-                business_id,
-                exclusion.whatsapp_id,
-                label=exclusion.label,
-            )
         if exclusion.active:
             await self.repository.cancel_pending_for_contact(
                 business_id, exclusion.whatsapp_id
