@@ -79,6 +79,16 @@ class PlatformBusinessResponse(BaseModel):
     commercial_refund_deadline_at: datetime | None = None
     owners: list[str]
     whatsapp_status: Literal["disconnected", "pending", "connected", "error"]
+    whatsapp_mode: Literal["coexistence", "api_only"] | None = None
+    whatsapp_display_phone_number: str | None = None
+    whatsapp_connected_at: datetime | None = None
+    whatsapp_disconnected_at: datetime | None = None
+    whatsapp_last_error_code: str | None = None
+    whatsapp_meta_review_status: Literal["approved", "rejected"] | None = None
+    whatsapp_connection_updated_at: datetime | None = None
+    whatsapp_has_phone_number_id: bool = False
+    whatsapp_ever_connected: bool = False
+    whatsapp_legacy_binding: bool = False
 
 
 class PlatformBusinessListResponse(BaseModel):
