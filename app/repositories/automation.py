@@ -7,7 +7,11 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, case, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.automation.domain import ExclusionMode, whatsapp_id_lookup_aliases
+from app.automation.domain import (
+    ExclusionMode,
+    normalize_automation_exclusion_whatsapp_id,
+    whatsapp_id_lookup_aliases,
+)
 from app.models import (
     Business,
     BusinessAutomationExclusion,
@@ -79,11 +83,49 @@ class AutomationRepository:
             .where(
                 Conversation.business_id == business_id,
                 Conversation.id == conversation_id,
-                Conversation.handoff_status == "none",
             )
-            .values(handoff_status="human_only")
+            .values(
+                automation_enabled=False,
+                handoff_status="human_only",
+                automation_suppressed_until=None,
+                suppression_reason=None,
+            )
         )
         await self.cancel_pending_outbounds(business_id, conversation_id)
+
+    async def mark_human_only_for_contact(
+        self,
+        business_id: uuid.UUID,
+        whatsapp_id: str,
+    ) -> None:
+        conversation_ids = (
+            select(Conversation.id)
+            .join(
+                Customer,
+                and_(
+                    Customer.business_id == Conversation.business_id,
+                    Customer.id == Conversation.customer_id,
+                ),
+            )
+            .where(
+                Conversation.business_id == business_id,
+                Customer.whatsapp_id.in_(whatsapp_id_lookup_aliases(whatsapp_id)),
+            )
+        )
+        await self.session.execute(
+            update(Conversation)
+            .where(
+                Conversation.business_id == business_id,
+                Conversation.id.in_(conversation_ids),
+            )
+            .values(
+                automation_enabled=False,
+                handoff_status="human_only",
+                automation_suppressed_until=None,
+                suppression_reason=None,
+            )
+        )
+        await self.cancel_pending_for_contact(business_id, whatsapp_id)
 
     async def clear_human_only_marker(
         self,
@@ -128,7 +170,12 @@ class AutomationRepository:
                 Conversation.id.in_(conversation_ids),
                 Conversation.handoff_status == "human_only",
             )
-            .values(handoff_status="none")
+            .values(
+                automation_enabled=True,
+                handoff_status="none",
+                automation_suppressed_until=None,
+                suppression_reason=None,
+            )
         )
 
     async def clear_temporary_suppression(
@@ -238,6 +285,71 @@ class AutomationRepository:
             .order_by(BusinessAutomationExclusion.created_at)
         )
         return list(result.scalars())
+
+    async def get_exclusion_for_contact(
+        self,
+        business_id: uuid.UUID,
+        whatsapp_id: str,
+    ) -> BusinessAutomationExclusion | None:
+        aliases = whatsapp_id_lookup_aliases(whatsapp_id)
+        result = await self.session.execute(
+            select(BusinessAutomationExclusion)
+            .where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id.in_(aliases),
+            )
+            .order_by(
+                BusinessAutomationExclusion.active.desc(),
+                BusinessAutomationExclusion.created_at.desc(),
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def ensure_human_only_exclusion(
+        self,
+        business_id: uuid.UUID,
+        whatsapp_id: str,
+        *,
+        label: str | None = None,
+        reason: str | None = None,
+    ) -> BusinessAutomationExclusion:
+        item = await self.get_exclusion_for_contact(business_id, whatsapp_id)
+        if item is None:
+            item = BusinessAutomationExclusion(
+                business_id=business_id,
+                whatsapp_id=normalize_automation_exclusion_whatsapp_id(whatsapp_id),
+                mode=ExclusionMode.HUMAN_ONLY.value,
+                label=label,
+                reason=reason,
+                active=True,
+            )
+            self.session.add(item)
+        else:
+            item.mode = ExclusionMode.HUMAN_ONLY.value
+            item.active = True
+            if label:
+                item.label = label
+            if reason:
+                item.reason = reason
+        await self.mark_human_only_for_contact(business_id, whatsapp_id)
+        return item
+
+    async def remove_human_only_exclusion_for_contact(
+        self,
+        business_id: uuid.UUID,
+        whatsapp_id: str,
+    ) -> None:
+        await self.session.execute(
+            delete(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id.in_(
+                    whatsapp_id_lookup_aliases(whatsapp_id)
+                ),
+                BusinessAutomationExclusion.mode == ExclusionMode.HUMAN_ONLY.value,
+            )
+        )
+        await self.clear_human_only_for_contact(business_id, whatsapp_id)
 
     async def get_exclusion(
         self,

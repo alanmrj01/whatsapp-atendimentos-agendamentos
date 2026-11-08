@@ -310,6 +310,7 @@ class FakeAdministrationRepository:
         )
         self.added: list[BusinessAutomationExclusion] = []
         self.cancelled: list[tuple[uuid.UUID, str]] = []
+        self.human_only_contacts: list[tuple[uuid.UUID, str]] = []
         self.cleared_contacts: list[tuple[uuid.UUID, str]] = []
         self.cancelled_businesses: list[uuid.UUID] = []
         self.windows: list[tuple[uuid.UUID, int]] = []
@@ -335,6 +336,12 @@ class FakeAdministrationRepository:
     async def cancel_pending_for_contact(
         self, business_id: uuid.UUID, whatsapp_id: str
     ) -> None:
+        self.cancelled.append((business_id, whatsapp_id))
+
+    async def mark_human_only_for_contact(
+        self, business_id: uuid.UUID, whatsapp_id: str
+    ) -> None:
+        self.human_only_contacts.append((business_id, whatsapp_id))
         self.cancelled.append((business_id, whatsapp_id))
 
     async def clear_human_only_for_contact(
@@ -368,6 +375,7 @@ async def test_future_admin_operations_are_validated_and_business_scoped() -> No
     )
 
     assert created.business_id == BUSINESS_B
+    assert repository.human_only_contacts == [(BUSINESS_B, WHATSAPP_ID)]
     assert repository.cancelled == [(BUSINESS_B, WHATSAPP_ID)]
     assert await service.list_exclusions(BUSINESS_A) == [repository.exclusion]
     assert await service.list_exclusions(BUSINESS_B) == []

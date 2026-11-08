@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.operations.schemas import ConversationAutomationUpdate
-from app.schemas.automation import AutomationExclusionUpdate
+from app.schemas.automation import AutomationExclusionCreate, AutomationExclusionUpdate
 from app.operations.service import OperationalService
 from app.repositories.automation import AutomationRepository
 from app.models import (
@@ -574,8 +574,19 @@ async def test_paused_conversation_blocks_queued_worker_before_engine(
         )
     assert event_row is not None
     assert event_row.status == "ignored"
-    assert event_row.outcome_reason == "automation_disabled"
+    assert event_row.outcome_reason == "human_only"
     assert outbound_count == 0
+
+    async with sessions() as session:
+        exclusion = await session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id == whatsapp_id,
+                BusinessAutomationExclusion.mode == "human_only",
+                BusinessAutomationExclusion.active.is_(True),
+            )
+        )
+    assert exclusion is not None
 
 
 async def test_paused_conversation_blocks_pending_outbound_before_meta_call(
@@ -776,7 +787,124 @@ async def test_pause_confirmation_waits_for_already_started_automatic_send(
         )
     assert conversation is not None
     assert conversation.automation_enabled is False
-    assert conversation.handoff_status == "waiting"
+    assert conversation.handoff_status == "human_only"
+
+
+async def test_settings_exclusion_updates_existing_conversation_and_removal_reenables(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions, phone_number_id="physical-settings-sync-phone"
+    )
+    whatsapp_id = "5511999999393"
+    event = inbound(
+        "physical-settings-sync",
+        whatsapp_id,
+        "physical-settings-sync-phone",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [event])
+
+    async with sessions() as session:
+        service = OperationalService(session)
+        exclusion = await service.create_automation_exclusion(
+            business_id,
+            AutomationExclusionCreate(
+                whatsapp_id=whatsapp_id,
+                mode="human_only",
+                label="Contato sincronizado",
+                reason="Configurações",
+            ),
+        )
+
+    async with sessions() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id
+            )
+        )
+        listed = await OperationalService(session).list_automation_exclusions(
+            business_id
+        )
+    assert conversation is not None
+    assert conversation.automation_enabled is False
+    assert conversation.handoff_status == "human_only"
+    assert any(item.id == exclusion.id for item in listed)
+
+    async with sessions() as session:
+        await OperationalService(session).delete_automation_exclusion(
+            business_id, exclusion.id
+        )
+
+    async with sessions() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id
+            )
+        )
+        remaining = await session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id == whatsapp_id,
+            )
+        )
+    assert remaining is None
+    assert conversation is not None
+    assert conversation.automation_enabled is True
+    assert conversation.handoff_status == "none"
+
+
+async def test_reactivating_conversation_removes_permanent_contact_exclusion(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business_id = await add_business(
+        sessions, phone_number_id="physical-reactivate-contact-phone"
+    )
+    whatsapp_id = "5511999999292"
+    event = inbound(
+        "physical-reactivate-contact",
+        whatsapp_id,
+        "physical-reactivate-contact-phone",
+    )
+    async with sessions() as session:
+        await process_webhook_events(session, [event])
+
+    async with sessions() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id
+            )
+        )
+        assert conversation is not None
+        service = OperationalService(session)
+        await service.update_conversation_automation(
+            business_id,
+            conversation.id,
+            ConversationAutomationUpdate(enabled=False),
+        )
+        await service.update_conversation_automation(
+            business_id,
+            conversation.id,
+            ConversationAutomationUpdate(enabled=True),
+        )
+
+    async with sessions() as session:
+        exclusion = await session.scalar(
+            select(BusinessAutomationExclusion).where(
+                BusinessAutomationExclusion.business_id == business_id,
+                BusinessAutomationExclusion.whatsapp_id == whatsapp_id,
+                BusinessAutomationExclusion.mode == "human_only",
+            )
+        )
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.business_id == business_id
+            )
+        )
+    assert exclusion is None
+    assert conversation is not None
+    assert conversation.automation_enabled is True
+    assert conversation.handoff_status == "none"
 
 
 async def test_outbound_sender_rechecks_active_exclusion_before_meta_call(
