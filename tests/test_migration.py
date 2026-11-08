@@ -127,13 +127,6 @@ WEBHOOK_DIAGNOSTICS_MIGRATION_PATH = (
     / "20261022_0040_processed_webhook_diagnostics.py"
 )
 
-CUSTOMER_AUTOMATION_MIGRATION_PATH = (
-    PROJECT_ROOT
-    / "alembic"
-    / "versions"
-    / "20261107_0043_customer_automation_policy.py"
-)
-
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
     spec = importlib.util.spec_from_file_location(
@@ -165,27 +158,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261107_0043"]
-
-
-def test_customer_automation_policy_migration_is_additive_and_reversible() -> None:
-    upgrade = " ".join(
-        render_migration_sql("upgrade", CUSTOMER_AUTOMATION_MIGRATION_PATH)
-        .lower()
-        .split()
-    )
-    downgrade = " ".join(
-        render_migration_sql("downgrade", CUSTOMER_AUTOMATION_MIGRATION_PATH)
-        .lower()
-        .split()
-    )
-
-    assert "add column automation_mode" in upgrade
-    assert "automation_mode_allowed" in upgrade
-    assert "ix_customers_business_automation_mode" in upgrade
-    assert "business_automation_exclusions" in upgrade
-    assert "human_only" in upgrade
-    assert "drop column automation_mode" in downgrade
+    assert script.get_heads() == ["20261102_0042"]
 
 
 def test_processed_webhook_diagnostics_migration_is_additive_and_reversible() -> None:

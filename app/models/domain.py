@@ -417,16 +417,7 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint(
             "business_id", "id", name="uq_customers_business_id_id"
         ),
-        CheckConstraint(
-            "automation_mode IN ('automatic', 'human_only', 'ignore')",
-            name="automation_mode_allowed",
-        ),
         Index("ix_customers_business_id", "business_id"),
-        Index(
-            "ix_customers_business_automation_mode",
-            "business_id",
-            "automation_mode",
-        ),
     )
 
     business_id: Mapped[uuid.UUID] = mapped_column(
@@ -438,12 +429,6 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     whatsapp_profile_name: Mapped[str | None] = mapped_column(
         String(255), nullable=True
-    )
-    automation_mode: Mapped[str] = mapped_column(
-        String(32),
-        default="automatic",
-        server_default="automatic",
-        nullable=False,
     )
 
 
