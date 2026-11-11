@@ -1287,28 +1287,39 @@ class PlatformAnalyticsService:
             for billing_cycle, amount_cents, status, access_until in active_rows
         ]
 
-        lead_rows = await self.db.execute(
-            select(
-                MarketingLeadContact.business_id,
-                MarketingLeadContact.lead_name,
-                MarketingLeadContact.whatsapp_e164,
-                Business.name,
-                MarketingLeadContact.created_at,
-            )
-            .join(Business, Business.id == MarketingLeadContact.business_id)
-            .where(MarketingLeadContact.created_at >= period_start)
-            .order_by(MarketingLeadContact.created_at.desc())
+        lead_contacts: list[LeadContactRow] = []
+        lead_table_ready = await self.db.scalar(
+            select(func.to_regclass("public.marketing_lead_contacts"))
         )
-        lead_contacts = [
-            LeadContactRow(
-                business_id=business_id,
-                lead_name=lead_name,
-                whatsapp_e164=whatsapp_e164,
-                business_name=business_name,
-                created_at=created_at,
+        if lead_table_ready is not None:
+            lead_rows = await self.db.execute(
+                select(
+                    MarketingLeadContact.business_id,
+                    MarketingLeadContact.lead_name,
+                    MarketingLeadContact.whatsapp_e164,
+                    Business.name,
+                    MarketingLeadContact.created_at,
+                )
+                .join(Business, Business.id == MarketingLeadContact.business_id)
+                .where(MarketingLeadContact.created_at >= period_start)
+                .order_by(MarketingLeadContact.created_at.desc())
             )
-            for business_id, lead_name, whatsapp_e164, business_name, created_at in lead_rows
-        ]
+            lead_contacts = [
+                LeadContactRow(
+                    business_id=business_id,
+                    lead_name=lead_name,
+                    whatsapp_e164=whatsapp_e164,
+                    business_name=business_name,
+                    created_at=created_at,
+                )
+                for (
+                    business_id,
+                    lead_name,
+                    whatsapp_e164,
+                    business_name,
+                    created_at,
+                ) in lead_rows
+            ]
 
         paid_business_ids = {checkout.business_id for checkout in paid_checkouts}
         lead_business_ids = {lead.business_id for lead in lead_contacts}
