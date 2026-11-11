@@ -194,6 +194,34 @@ class PlatformAnalyticsAdPerformanceItem(BaseModel):
     roas: float | None = None
 
 
+class PlatformAnalyticsLeadRecoveryItem(BaseModel):
+    business_id: UUID
+    lead_name: str
+    whatsapp_e164: str
+    business_name: str
+    created_at: datetime
+    last_activity_at: datetime
+    stage_key: Literal[
+        "account",
+        "demo",
+        "whatsapp_connected_unpaid",
+        "offer",
+        "checkout",
+        "payment_failed",
+        "purchase",
+        "activated",
+        "refunded",
+    ]
+    stage_label: str
+    purchased: bool = False
+    activated: bool = False
+    needs_follow_up: bool = True
+    angle: str | None = None
+    quiz_profile: str | None = None
+    ad_id: str | None = None
+    ad_name: str | None = None
+
+
 class PlatformAnalyticsSeriesPoint(BaseModel):
     date: date
     # Backward-compatible aliases for the previous dashboard.
@@ -225,6 +253,7 @@ class PlatformAnalyticsSummaryResponse(BaseModel):
     onboarding_issues: PlatformAnalyticsBreakdown
     quiz_questions: list[PlatformAnalyticsQuizQuestion]
     ad_performance: list[PlatformAnalyticsAdPerformanceItem]
+    lead_recovery: list[PlatformAnalyticsLeadRecoveryItem]
     meta_ads_status: Literal["ready", "awaiting_integration"]
     meta_ads_note: str | None = None
     series: list[PlatformAnalyticsSeriesPoint]
