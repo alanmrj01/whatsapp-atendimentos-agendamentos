@@ -59,6 +59,14 @@ class MetaConversionsConfiguration:
 
 
 @dataclass(frozen=True, slots=True)
+class MetaAdsConfiguration:
+    account_id: str
+    access_token: SecretStr
+    graph_version: str
+    campaign_name_prefix: str
+
+
+@dataclass(frozen=True, slots=True)
 class MetaEmbeddedSignupConfiguration:
     app_id: str
     configuration_id: str
@@ -198,6 +206,21 @@ class Settings(BaseSettings):
     )
     meta_capi_test_event_code: str | None = Field(
         default=None, validation_alias="META_CAPI_TEST_EVENT_CODE"
+    )
+    meta_ads_enabled: bool = Field(
+        default=False, validation_alias="META_ADS_ENABLED"
+    )
+    meta_ads_account_id: str | None = Field(
+        default=None, validation_alias="META_ADS_ACCOUNT_ID"
+    )
+    meta_ads_access_token: SecretStr | None = Field(
+        default=None, validation_alias="META_ADS_ACCESS_TOKEN"
+    )
+    meta_ads_graph_version: str = Field(
+        default="v26.0", validation_alias="META_ADS_GRAPH_VERSION"
+    )
+    meta_ads_campaign_name_prefix: str = Field(
+        default="ALOVIA", validation_alias="META_ADS_CAMPAIGN_NAME_PREFIX"
     )
     asaas_api_key: SecretStr | None = Field(
         default=None, validation_alias="ASAAS_API_KEY"
@@ -381,6 +404,35 @@ class Settings(BaseSettings):
             graph_version=graph_version,
             event_source_base_url=event_source_base_url,
             test_event_code=test_event_code,
+        )
+
+    def meta_ads_configuration(self) -> MetaAdsConfiguration | None:
+        if not self.meta_ads_enabled or self.environment is not Environment.production:
+            return None
+
+        account_id = (self.meta_ads_account_id or "").strip()
+        access_token = (
+            self.meta_ads_access_token.get_secret_value().strip()
+            if self.meta_ads_access_token is not None
+            else ""
+        )
+        graph_version = self.meta_ads_graph_version.strip()
+        campaign_name_prefix = self.meta_ads_campaign_name_prefix.strip()
+
+        if (
+            not account_id.isdigit()
+            or not access_token
+            or not re.fullmatch(r"v\d{1,3}\.\d{1,3}", graph_version)
+            or not campaign_name_prefix
+            or len(campaign_name_prefix) > 80
+        ):
+            return None
+
+        return MetaAdsConfiguration(
+            account_id=account_id,
+            access_token=SecretStr(access_token),
+            graph_version=graph_version,
+            campaign_name_prefix=campaign_name_prefix,
         )
 
     def require_meta_embedded_signup_configuration(
