@@ -67,6 +67,8 @@ def test_campaign_attribution_survives_navigation_without_javascript_storage() -
             "campaign_id": "campaign-123",
             "adset_id": "adset-456",
             "ad_id": "ad-789",
+            "angle": "cliente_esperando_whatsapp",
+            "quiz_profile": "at_risk",
             "landing_path": "/",
             "attribution_version": 3,
             "email": "must-not-be-stored@example.com",
@@ -76,6 +78,8 @@ def test_campaign_attribution_survives_navigation_without_javascript_storage() -
     decoded = _decode_attribution_cookie(cookie_value)
     assert decoded["utm_source"] == "meta"
     assert decoded["utm_campaign"] == "refrigeracao_outubro"
+    assert decoded["angle"] == "cliente_esperando_whatsapp"
+    assert decoded["quiz_profile"] == "at_risk"
     assert decoded["landing_path"] == "/"
     assert "email" not in decoded
 
@@ -92,6 +96,8 @@ def test_campaign_attribution_survives_navigation_without_javascript_storage() -
     assert enriched["utm_source"] == "meta"
     assert enriched["utm_campaign"] == "refrigeracao_outubro"
     assert enriched["campaign_id"] == "campaign-123"
+    assert enriched["angle"] == "cliente_esperando_whatsapp"
+    assert enriched["quiz_profile"] == "at_risk"
     assert enriched["landing_path"] == "/"
 
 
@@ -352,6 +358,58 @@ def test_meta_capi_is_fail_closed_outside_explicit_production_configuration() ->
         ENVIRONMENT="production",
         META_CAPI_ENABLED=True,
     ).meta_conversions_configuration() is None
+
+
+def test_meta_capi_tracks_current_quiz_page_and_vsl_events() -> None:
+    settings = _meta_settings()
+    common = {
+        "settings": settings,
+        "event_id": UUID("00000000-0000-0000-0000-000000000071"),
+        "occurred_at": datetime(2026, 11, 11, 17, 0, tzinfo=UTC),
+        "path": "/",
+        "visitor_id": UUID("00000000-0000-0000-0000-000000000072"),
+        "user_id": None,
+        "user_email": None,
+        "fbp": None,
+        "fbc": None,
+        "client_ip": "203.0.113.30",
+        "client_user_agent": "Browser",
+    }
+
+    page = marketing_conversion_event(
+        **common,
+        event_name="page_view",
+        properties={"route_group": "quiz"},
+    )
+    assert page is not None
+    assert page.event_name == "PageView"
+
+    started = marketing_conversion_event(
+        **common,
+        event_name="quiz_demo_started",
+        properties={"video_id": "1240828681"},
+    )
+    assert started is not None
+    assert started.event_name == "VSLStarted"
+    assert started.custom_data == {"video_id": "1240828681", "surface": "quiz"}
+
+    progress = marketing_conversion_event(
+        **common,
+        event_name="quiz_demo_progress",
+        properties={"percent": 75},
+    )
+    assert progress is not None
+    assert progress.event_name == "VSLProgress"
+    assert progress.custom_data == {"progress_percent": 75, "surface": "quiz"}
+
+    completed = marketing_conversion_event(
+        **common,
+        event_name="quiz_demo_completed",
+        properties={"percent": 100},
+    )
+    assert completed is not None
+    assert completed.event_name == "VSLCompleted"
+    assert completed.custom_data == {"progress_percent": 100, "surface": "quiz"}
 
 
 def test_meta_capi_registration_uses_shared_event_id_and_hashed_match_data() -> None:
