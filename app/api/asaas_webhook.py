@@ -16,6 +16,7 @@ from app.analytics.posthog import (
     PostHogEvent,
     business_distinct_id,
     business_owner_user_id,
+    business_acquisition_properties,
     capture_posthog_event,
     subscription_paid_event,
     user_distinct_id,
@@ -87,6 +88,9 @@ async def asaas_webhook(
             owner_user_id = await business_owner_user_id(
                 db, analytics_row.business_id
             )
+            acquisition = await business_acquisition_properties(
+                db, analytics_row.business_id
+            )
             distinct_id = (
                 user_distinct_id(owner_user_id)
                 if owner_user_id is not None
@@ -108,6 +112,7 @@ async def asaas_webhook(
                         "provider_environment": analytics_row.provider_environment,
                         "resource_type": analytics_row.resource_type,
                         "amount_cents": analytics_row.amount_cents,
+                        **acquisition,
                     },
                 ),
             )
@@ -132,6 +137,7 @@ async def asaas_webhook(
                             checkout=checkout,
                             owner_user_id=owner_user_id,
                             occurred_at=analytics_row.processed_at,
+                            attribution=acquisition,
                         ),
                     )
     if (
