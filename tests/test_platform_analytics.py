@@ -7,6 +7,7 @@ from app.analytics.meta_ads import MetaAdInsight, MetaAdsReport
 from app.platform_admin.analytics import (
     ActiveSubscriptionRow,
     AnalyticsEventRow,
+    LeadContactRow,
     PaidCheckoutRow,
     RefundRow,
     build_platform_analytics_summary,
@@ -244,6 +245,7 @@ def test_refund_is_visible_and_removed_from_net_revenue() -> None:
         ],
         active_subscriptions=[],
         acquisition_by_business={BUSINESS: acquisition()},
+        activation_at_by_business={},
         meta_report=meta_report(),
         now=NOW,
         days=7,
@@ -254,6 +256,56 @@ def test_refund_is_visible_and_removed_from_net_revenue() -> None:
     assert metric(summary, "net_revenue").value == 0.0
     assert metric(summary, "roas").value == 0.0
     assert summary.ad_performance[0].revenue_brl == 0.0
+
+
+def test_lead_recovery_prioritizes_unpaid_and_reports_furthest_stage() -> None:
+    events = base_events() + [
+        event(
+            "payment_failed",
+            minutes=2,
+            properties={**acquisition(), "reason": "provider_declined"},
+            business_id=BUSINESS,
+        )
+    ]
+    summary = build_platform_analytics_summary(
+        events=events,
+        paid_checkouts=[],
+        refunds=[],
+        active_subscriptions=[],
+        acquisition_by_business={BUSINESS: acquisition()},
+        activation_at_by_business={},
+        meta_report=MetaAdsReport(
+            status="awaiting_integration",
+            note="Aguardando credencial de leitura da Meta Ads.",
+            ads=[],
+        ),
+        now=NOW,
+        days=7,
+        lead_contacts=[
+            LeadContactRow(
+                business_id=BUSINESS,
+                lead_name="João da Silva",
+                whatsapp_e164="+5512999991234",
+                business_name="João Refrigeração",
+                created_at=NOW - timedelta(minutes=12),
+            )
+        ],
+        connection_at_by_business={BUSINESS: NOW - timedelta(minutes=1)},
+    )
+
+    assert len(summary.lead_recovery) == 1
+    lead = summary.lead_recovery[0]
+    assert lead.lead_name == "João da Silva"
+    assert lead.whatsapp_e164 == "+5512999991234"
+    assert lead.business_name == "João Refrigeração"
+    assert lead.stage_key == "payment_failed"
+    assert lead.stage_label == "Pagamento não concluído"
+    assert lead.purchased is False
+    assert lead.activated is False
+    assert lead.needs_follow_up is True
+    assert lead.angle == "cliente_esperando_whatsapp"
+    assert lead.quiz_profile == "at_risk"
+    assert lead.ad_id == "9003"
 
 
 def test_meta_metrics_remain_explicit_when_integration_is_not_configured() -> None:
