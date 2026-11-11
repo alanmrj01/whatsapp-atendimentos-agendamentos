@@ -54,6 +54,8 @@ ATTRIBUTION_PROPERTY_KEYS = (
     "adset_id",
     "ad_id",
     "placement",
+    "angle",
+    "quiz_profile",
     "fbclid",
     "gclid",
     "referrer_host",

@@ -753,9 +753,8 @@ async def test_conversation_audio_media_endpoint_rejects_invalid_range(monkeypat
     assert response.headers["content-range"] == "bytes */10"
 
 
-def test_platform_tracking_summary_keeps_paid_and_future_metrics_distinct() -> None:
-    from datetime import UTC, datetime, timedelta
-
+def test_platform_tracking_summary_uses_current_quiz_funnel_and_real_revenue() -> None:
+    from app.analytics.meta_ads import MetaAdsReport
     from app.platform_admin.analytics import (
         ActiveSubscriptionRow,
         AnalyticsEventRow,
@@ -764,43 +763,86 @@ def test_platform_tracking_summary_keeps_paid_and_future_metrics_distinct() -> N
     )
 
     now = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
+    visitor_id = uuid4()
+    business_id = uuid4()
+    checkout_id = uuid4()
+    events = [
+        AnalyticsEventRow(
+            visitor_id=visitor_id,
+            business_id=None,
+            user_id=None,
+            event_name="quiz_viewed",
+            occurred_at=now - timedelta(hours=5),
+            properties={"angle": "cliente_esperando_whatsapp"},
+        ),
+        AnalyticsEventRow(
+            visitor_id=visitor_id,
+            business_id=None,
+            user_id=None,
+            event_name="quiz_completed",
+            occurred_at=now - timedelta(hours=4),
+            properties={"result_profile": "at_risk"},
+        ),
+        AnalyticsEventRow(
+            visitor_id=visitor_id,
+            business_id=None,
+            user_id=None,
+            event_name="quiz_demo_started",
+            occurred_at=now - timedelta(hours=3, minutes=30),
+            properties=None,
+        ),
+        AnalyticsEventRow(
+            visitor_id=visitor_id,
+            business_id=business_id,
+            user_id=uuid4(),
+            event_name="signup_completed",
+            occurred_at=now - timedelta(hours=3),
+            properties={
+                "angle": "cliente_esperando_whatsapp",
+                "quiz_profile": "at_risk",
+                "placement": "Instagram_Stories",
+            },
+        ),
+        AnalyticsEventRow(
+            visitor_id=visitor_id,
+            business_id=business_id,
+            user_id=uuid4(),
+            event_name="preactivation_started",
+            occurred_at=now - timedelta(hours=2, minutes=30),
+            properties=None,
+        ),
+        AnalyticsEventRow(
+            visitor_id=visitor_id,
+            business_id=business_id,
+            user_id=uuid4(),
+            event_name="checkout_started",
+            occurred_at=now - timedelta(hours=2),
+            properties=None,
+        ),
+        AnalyticsEventRow(
+            visitor_id=visitor_id,
+            business_id=business_id,
+            user_id=uuid4(),
+            event_name="whatsapp_connection_completed",
+            occurred_at=now - timedelta(hours=1),
+            properties=None,
+        ),
+    ]
+    paid = PaidCheckoutRow(
+        checkout_id=checkout_id,
+        business_id=business_id,
+        plan_code="basic",
+        billing_cycle="monthly",
+        payment_method="pix",
+        amount_cents=19_700,
+        paid_at=now - timedelta(hours=1),
+        refund_status="none",
+        refunded_at=None,
+    )
     summary = build_platform_analytics_summary(
-        events=[
-            AnalyticsEventRow(
-                event_name="page_view",
-                occurred_at=now - timedelta(hours=5),
-                properties={"route_group": "landing"},
-            ),
-            AnalyticsEventRow(
-                event_name="landing_vsl_started",
-                occurred_at=now - timedelta(hours=4),
-                properties=None,
-            ),
-            AnalyticsEventRow(
-                event_name="signup_completed",
-                occurred_at=now - timedelta(hours=3),
-                properties=None,
-            ),
-            AnalyticsEventRow(
-                event_name="whatsapp_connection_completed",
-                occurred_at=now - timedelta(hours=2),
-                properties=None,
-            ),
-            AnalyticsEventRow(
-                event_name="payment_confirmed",
-                occurred_at=now - timedelta(hours=1),
-                properties={"placement": "Instagram_Stories"},
-            ),
-        ],
-        paid_checkouts=[
-            PaidCheckoutRow(
-                plan_code="basic",
-                billing_cycle="monthly",
-                payment_method="pix",
-                amount_cents=19_700,
-                paid_at=now - timedelta(hours=1),
-            )
-        ],
+        events=events,
+        paid_checkouts=[paid],
+        refunds=[],
         active_subscriptions=[
             ActiveSubscriptionRow(
                 billing_cycle="monthly",
@@ -809,6 +851,18 @@ def test_platform_tracking_summary_keeps_paid_and_future_metrics_distinct() -> N
                 access_until=now + timedelta(days=20),
             )
         ],
+        acquisition_by_business={
+            business_id: {
+                "angle": "cliente_esperando_whatsapp",
+                "quiz_profile": "at_risk",
+                "placement": "Instagram_Stories",
+            }
+        },
+        meta_report=MetaAdsReport(
+            status="awaiting_integration",
+            note="Aguardando credencial de leitura da Meta Ads.",
+            ads=[],
+        ),
         now=now,
         days=7,
     )
@@ -816,30 +870,31 @@ def test_platform_tracking_summary_keeps_paid_and_future_metrics_distinct() -> N
     funnel = {item.key: item for item in summary.funnel}
     assert funnel["ad_clicks"].value is None
     assert funnel["ad_clicks"].status == "awaiting_integration"
-    assert funnel["lpv"].value == 1
-    assert funnel["vsl"].value == 1
+    assert funnel["quiz_views"].value == 1
+    assert funnel["quiz_completed"].value == 1
+    assert funnel["vsl_started"].value == 1
     assert funnel["accounts"].value == 1
-    assert funnel["activations"].value == 1
+    assert funnel["demo_entries"].value == 1
+    assert funnel["checkout_started"].value == 1
     assert funnel["subscriptions"].value == 1
+    assert funnel["activations"].value == 1
 
     kpis = {item.key: item for item in summary.kpis}
     assert kpis["revenue_received"].value == 197.0
+    assert kpis["net_revenue"].value == 197.0
     assert kpis["mrr"].value == 197.0
+    assert kpis["cac"].status == "awaiting_integration"
+    assert kpis["roas"].value is None
 
     future = {item.key: item for item in summary.future_metrics}
-    assert future["cac"].status == "awaiting_integration"
-    assert future["roas"].value is None
-    assert future["trial_to_paid"].status == "structuring"
     assert future["ltv"].status == "awaiting_history"
-
     assert summary.subscriptions_by_plan.items[0].label == "Basic"
     assert summary.subscriptions_by_payment_method.items[0].label == "Pix"
     assert summary.subscriptions_by_placement.items[0].label == "Instagram_Stories"
 
 
 def test_platform_tracking_mrr_normalizes_cycles_without_counting_canceled_access() -> None:
-    from datetime import UTC, datetime, timedelta
-
+    from app.analytics.meta_ads import MetaAdsReport
     from app.platform_admin.analytics import (
         ActiveSubscriptionRow,
         build_platform_analytics_summary,
@@ -849,6 +904,7 @@ def test_platform_tracking_mrr_normalizes_cycles_without_counting_canceled_acces
     summary = build_platform_analytics_summary(
         events=[],
         paid_checkouts=[],
+        refunds=[],
         active_subscriptions=[
             ActiveSubscriptionRow(
                 billing_cycle="quarterly",
@@ -869,6 +925,12 @@ def test_platform_tracking_mrr_normalizes_cycles_without_counting_canceled_acces
                 access_until=now + timedelta(days=10),
             ),
         ],
+        acquisition_by_business={},
+        meta_report=MetaAdsReport(
+            status="awaiting_integration",
+            note="Aguardando credencial de leitura da Meta Ads.",
+            ads=[],
+        ),
         now=now,
         days=30,
     )
@@ -876,4 +938,5 @@ def test_platform_tracking_mrr_normalizes_cycles_without_counting_canceled_acces
     kpis = {item.key: item for item in summary.kpis}
     assert kpis["mrr"].value == 394.0
     assert summary.subscriptions_by_plan.status == "insufficient_data"
-    assert summary.subscriptions_by_placement.status == "awaiting_integration"
+    assert summary.subscriptions_by_placement.status == "insufficient_data"
+

@@ -130,21 +130,30 @@ def _marketing_meta_name(
     properties: Mapping[str, Any],
 ) -> tuple[str, dict[str, Any] | None] | None:
     if event_name == "page_view":
-        if properties.get("route_group") not in {"landing", "signup", "checkout", "plan"}:
+        if properties.get("route_group") not in {"quiz", "landing", "signup", "checkout", "plan"}:
             return None
         return "PageView", None
 
-    if event_name == "landing_vsl_started":
-        return "VSLStarted", {"video_id": str(properties.get("video_id") or "")[:64]}
+    if event_name in {"quiz_demo_started", "landing_vsl_started"}:
+        custom_data = {"video_id": str(properties.get("video_id") or "")[:64]}
+        if event_name == "quiz_demo_started":
+            custom_data["surface"] = "quiz"
+        return "VSLStarted", custom_data
 
-    if event_name == "landing_vsl_progress":
+    if event_name in {"quiz_demo_progress", "landing_vsl_progress"}:
         percent = properties.get("percent")
         if percent not in {25, 50, 75}:
             return None
-        return "VSLProgress", {"progress_percent": int(percent)}
+        custom_data = {"progress_percent": int(percent)}
+        if event_name == "quiz_demo_progress":
+            custom_data["surface"] = "quiz"
+        return "VSLProgress", custom_data
 
-    if event_name == "landing_vsl_completed":
-        return "VSLCompleted", {"progress_percent": 100}
+    if event_name in {"quiz_demo_completed", "landing_vsl_completed"}:
+        custom_data = {"progress_percent": 100}
+        if event_name == "quiz_demo_completed":
+            custom_data["surface"] = "quiz"
+        return "VSLCompleted", custom_data
 
     if event_name == "signup_completed":
         return "CompleteRegistration", {"content_name": "alovia_account"}

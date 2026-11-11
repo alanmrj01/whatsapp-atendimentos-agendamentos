@@ -17,6 +17,7 @@ from app.analytics.posthog import (
     build_capture_payload,
     identity_alias_event,
     queue_automatic_booking_posthog,
+    safe_acquisition_properties,
     subscription_paid_event,
     take_automatic_booking_posthog_ids,
     user_distinct_id,
@@ -67,6 +68,8 @@ def test_campaign_attribution_survives_navigation_without_javascript_storage() -
             "campaign_id": "campaign-123",
             "adset_id": "adset-456",
             "ad_id": "ad-789",
+            "angle": "cliente_esperando_whatsapp",
+            "quiz_profile": "at_risk",
             "landing_path": "/",
             "attribution_version": 3,
             "email": "must-not-be-stored@example.com",
@@ -76,6 +79,8 @@ def test_campaign_attribution_survives_navigation_without_javascript_storage() -
     decoded = _decode_attribution_cookie(cookie_value)
     assert decoded["utm_source"] == "meta"
     assert decoded["utm_campaign"] == "refrigeracao_outubro"
+    assert decoded["angle"] == "cliente_esperando_whatsapp"
+    assert decoded["quiz_profile"] == "at_risk"
     assert decoded["landing_path"] == "/"
     assert "email" not in decoded
 
@@ -92,6 +97,8 @@ def test_campaign_attribution_survives_navigation_without_javascript_storage() -
     assert enriched["utm_source"] == "meta"
     assert enriched["utm_campaign"] == "refrigeracao_outubro"
     assert enriched["campaign_id"] == "campaign-123"
+    assert enriched["angle"] == "cliente_esperando_whatsapp"
+    assert enriched["quiz_profile"] == "at_risk"
     assert enriched["landing_path"] == "/"
 
 
@@ -318,6 +325,14 @@ def test_subscription_paid_event_is_authoritative_idempotent_and_revenue_ready()
         checkout=checkout,
         owner_user_id=owner_user_id,
         occurred_at=occurred_at,
+        attribution={
+            "campaign_id": "9001",
+            "adset_id": "9002",
+            "ad_id": "9003",
+            "angle": "cliente_esperando_whatsapp",
+            "quiz_profile": "at_risk",
+            "email": "must-not-leak@example.com",
+        },
     )
 
     assert event.name == "subscription_paid"
@@ -330,8 +345,53 @@ def test_subscription_paid_event_is_authoritative_idempotent_and_revenue_ready()
     assert event.properties["payment_method"] == "pix"
     assert event.properties["amount_cents"] == 19_700
     assert event.properties["funnel_stage"] == "subscription_paid"
+    assert event.properties["campaign_id"] == "9001"
+    assert event.properties["ad_id"] == "9003"
+    assert event.properties["angle"] == "cliente_esperando_whatsapp"
+    assert event.properties["quiz_profile"] == "at_risk"
     assert "email" not in event.properties
     assert "phone" not in event.properties
+
+def test_safe_acquisition_properties_keeps_only_analysis_dimensions() -> None:
+    safe = safe_acquisition_properties(
+        {
+            "utm_source": "fb",
+            "campaign_id": "9001",
+            "ad_id": "9003",
+            "angle": "cliente_esperando_whatsapp",
+            "quiz_profile": "at_risk",
+            "email": "must-not-leak@example.com",
+            "phone": "5511999999999",
+        }
+    )
+    assert safe == {
+        "utm_source": "fb",
+        "campaign_id": "9001",
+        "ad_id": "9003",
+        "angle": "cliente_esperando_whatsapp",
+        "quiz_profile": "at_risk",
+    }
+
+
+def test_meta_ads_configuration_is_explicit_and_production_only() -> None:
+    assert Settings(ENVIRONMENT="test", META_ADS_ENABLED=True).meta_ads_configuration() is None
+    assert Settings(ENVIRONMENT="production", META_ADS_ENABLED=True).meta_ads_configuration() is None
+
+    settings = Settings(
+        ENVIRONMENT="production",
+        META_ADS_ENABLED=True,
+        META_ADS_ACCOUNT_ID="1475560132551828",
+        META_ADS_ACCESS_TOKEN="ads-read-secret",
+        META_ADS_GRAPH_VERSION="v25.0",
+        META_ADS_CAMPAIGN_NAME_PREFIX="ALOVIA",
+    )
+    configuration = settings.meta_ads_configuration()
+    assert configuration is not None
+    assert configuration.account_id == "1475560132551828"
+    assert configuration.graph_version == "v25.0"
+    assert configuration.campaign_name_prefix == "ALOVIA"
+    assert configuration.access_token.get_secret_value() == "ads-read-secret"
+
 
 def _meta_settings(**overrides) -> Settings:
     values = {
@@ -339,7 +399,7 @@ def _meta_settings(**overrides) -> Settings:
         "META_CAPI_ENABLED": True,
         "META_CAPI_DATASET_ID": "1432131901730735",
         "META_CAPI_ACCESS_TOKEN": "meta-secret-token",
-        "META_CAPI_GRAPH_VERSION": "v26.0",
+        "META_CAPI_GRAPH_VERSION": "v25.0",
         "META_CAPI_EVENT_SOURCE_BASE_URL": "https://alovia.netlify.app",
     }
     values.update(overrides)
@@ -352,6 +412,58 @@ def test_meta_capi_is_fail_closed_outside_explicit_production_configuration() ->
         ENVIRONMENT="production",
         META_CAPI_ENABLED=True,
     ).meta_conversions_configuration() is None
+
+
+def test_meta_capi_tracks_current_quiz_page_and_vsl_events() -> None:
+    settings = _meta_settings()
+    common = {
+        "settings": settings,
+        "event_id": UUID("00000000-0000-0000-0000-000000000071"),
+        "occurred_at": datetime(2026, 11, 11, 17, 0, tzinfo=UTC),
+        "path": "/",
+        "visitor_id": UUID("00000000-0000-0000-0000-000000000072"),
+        "user_id": None,
+        "user_email": None,
+        "fbp": None,
+        "fbc": None,
+        "client_ip": "203.0.113.30",
+        "client_user_agent": "Browser",
+    }
+
+    page = marketing_conversion_event(
+        **common,
+        event_name="page_view",
+        properties={"route_group": "quiz"},
+    )
+    assert page is not None
+    assert page.event_name == "PageView"
+
+    started = marketing_conversion_event(
+        **common,
+        event_name="quiz_demo_started",
+        properties={"video_id": "1240828681"},
+    )
+    assert started is not None
+    assert started.event_name == "VSLStarted"
+    assert started.custom_data == {"video_id": "1240828681", "surface": "quiz"}
+
+    progress = marketing_conversion_event(
+        **common,
+        event_name="quiz_demo_progress",
+        properties={"percent": 75},
+    )
+    assert progress is not None
+    assert progress.event_name == "VSLProgress"
+    assert progress.custom_data == {"progress_percent": 75, "surface": "quiz"}
+
+    completed = marketing_conversion_event(
+        **common,
+        event_name="quiz_demo_completed",
+        properties={"percent": 100},
+    )
+    assert completed is not None
+    assert completed.event_name == "VSLCompleted"
+    assert completed.custom_data == {"progress_percent": 100, "surface": "quiz"}
 
 
 def test_meta_capi_registration_uses_shared_event_id_and_hashed_match_data() -> None:

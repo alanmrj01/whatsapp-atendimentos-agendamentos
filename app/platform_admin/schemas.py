@@ -133,13 +133,81 @@ class PlatformAnalyticsBreakdown(BaseModel):
     items: list[PlatformAnalyticsBreakdownItem] = Field(default_factory=list)
 
 
+class PlatformAnalyticsConversionBreakdownItem(BaseModel):
+    key: str
+    label: str
+    quiz_visitors: int = 0
+    accounts: int = 0
+    subscriptions: int = 0
+    activations: int = 0
+    revenue_brl: float = 0
+
+
+class PlatformAnalyticsConversionBreakdown(BaseModel):
+    key: str
+    label: str
+    status: Literal["ready", "awaiting_integration", "insufficient_data"] = "ready"
+    note: str | None = None
+    items: list[PlatformAnalyticsConversionBreakdownItem] = Field(default_factory=list)
+
+
+class PlatformAnalyticsQuizAnswerItem(BaseModel):
+    answer_id: str
+    profile_dimension: str
+    responses: int
+    share: float | None = None
+    accounts: int = 0
+    account_conversion_rate: float | None = None
+    subscriptions: int = 0
+    purchase_conversion_rate: float | None = None
+
+
+class PlatformAnalyticsQuizQuestion(BaseModel):
+    question_id: str
+    label: str
+    responses: int
+    answers: list[PlatformAnalyticsQuizAnswerItem] = Field(default_factory=list)
+
+
+class PlatformAnalyticsAdPerformanceItem(BaseModel):
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    adset_id: str | None = None
+    adset_name: str | None = None
+    ad_id: str
+    ad_name: str
+    spend_brl: float | None = None
+    impressions: int | None = None
+    reach: int | None = None
+    link_clicks: int | None = None
+    ctr: float | None = None
+    cpc: float | None = None
+    cpm: float | None = None
+    quiz_visitors: int = 0
+    quiz_completed: int = 0
+    accounts: int = 0
+    subscriptions: int = 0
+    activations: int = 0
+    revenue_brl: float = 0
+    account_conversion_rate: float | None = None
+    cac_brl: float | None = None
+    roas: float | None = None
+
+
 class PlatformAnalyticsSeriesPoint(BaseModel):
     date: date
+    # Backward-compatible aliases for the previous dashboard.
     lpv: int = 0
     vsl: int = 0
+    quiz_views: int = 0
+    quiz_completed: int = 0
+    vsl_started: int = 0
+    vsl_completed: int = 0
     accounts: int = 0
-    activations: int = 0
+    demo_entries: int = 0
+    checkout_started: int = 0
     subscriptions: int = 0
+    activations: int = 0
 
 
 class PlatformAnalyticsSummaryResponse(BaseModel):
@@ -152,5 +220,12 @@ class PlatformAnalyticsSummaryResponse(BaseModel):
     subscriptions_by_plan: PlatformAnalyticsBreakdown
     subscriptions_by_payment_method: PlatformAnalyticsBreakdown
     subscriptions_by_placement: PlatformAnalyticsBreakdown
+    conversions_by_angle: PlatformAnalyticsConversionBreakdown
+    conversions_by_quiz_profile: PlatformAnalyticsConversionBreakdown
+    onboarding_issues: PlatformAnalyticsBreakdown
+    quiz_questions: list[PlatformAnalyticsQuizQuestion]
+    ad_performance: list[PlatformAnalyticsAdPerformanceItem]
+    meta_ads_status: Literal["ready", "awaiting_integration"]
+    meta_ads_note: str | None = None
     series: list[PlatformAnalyticsSeriesPoint]
     future_metrics: list[PlatformAnalyticsKpi]
