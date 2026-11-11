@@ -858,6 +858,7 @@ def test_platform_tracking_summary_uses_current_quiz_funnel_and_real_revenue() -
                 "placement": "Instagram_Stories",
             }
         },
+        activation_at_by_business={business_id: now - timedelta(hours=1)},
         meta_report=MetaAdsReport(
             status="awaiting_integration",
             note="Aguardando credencial de leitura da Meta Ads.",
@@ -926,6 +927,7 @@ def test_platform_tracking_mrr_normalizes_cycles_without_counting_canceled_acces
             ),
         ],
         acquisition_by_business={},
+        activation_at_by_business={},
         meta_report=MetaAdsReport(
             status="awaiting_integration",
             note="Aguardando credencial de leitura da Meta Ads.",
