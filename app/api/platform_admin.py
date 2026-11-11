@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_origin, require_super_admin
 from app.auth.service import Principal
+from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.platform_admin.schemas import (
     PlatformBusinessAccessRequest,
@@ -23,6 +24,7 @@ from app.platform_admin.service import PlatformAdminService
 router = APIRouter(prefix="/api/v1/admin", tags=["platform-admin"])
 Db = Annotated[AsyncSession, Depends(get_db)]
 Admin = Annotated[Principal, Depends(require_super_admin)]
+Config = Annotated[Settings, Depends(get_settings)]
 
 
 @router.get("/businesses", response_model=PlatformBusinessListResponse)
@@ -34,12 +36,13 @@ async def list_businesses(_: Admin, db: Db) -> PlatformBusinessListResponse:
 async def analytics_summary(
     _: Admin,
     db: Db,
+    settings: Config,
     days: int = Query(default=30, ge=1, le=90),
 ) -> PlatformAnalyticsSummaryResponse:
     # Keep the first dashboard deliberately bounded. The UI exposes the
     # supported presets, while the API remains safe for direct admin use.
     normalized_days = days if days in {1, 7, 30, 90} else 30
-    return await PlatformAnalyticsService(db).summary(normalized_days)
+    return await PlatformAnalyticsService(db, settings).summary(normalized_days)
 
 
 @router.post(
