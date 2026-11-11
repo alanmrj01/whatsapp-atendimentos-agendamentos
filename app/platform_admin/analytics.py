@@ -7,12 +7,12 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.meta_ads import MetaAdsReport, fetch_meta_ads_report
 from app.core.config import Settings
-from app.models import BillingCheckout, CommercialSubscription, MarketingFunnelEvent
+from app.models import BillingCheckout, BusinessWhatsAppConnection, CommercialSubscription, MarketingFunnelEvent
 from app.models.billing import billing_provider_environment
 from app.platform_admin.schemas import (
     PlatformAnalyticsAdPerformanceItem,
@@ -483,6 +483,7 @@ def build_platform_analytics_summary(
     refunds: list[RefundRow],
     active_subscriptions: list[ActiveSubscriptionRow],
     acquisition_by_business: dict[UUID, dict[str, str]],
+    activation_at_by_business: dict[UUID, datetime],
     meta_report: MetaAdsReport,
     now: datetime,
     days: int,
@@ -498,10 +499,10 @@ def build_platform_analytics_summary(
     demo_businesses = _demo_business_ids(events)
     plan_businesses = _business_ids(events, "activation_paywall_viewed")
     checkout_businesses = _business_ids(events, "checkout_started")
-    activation_businesses = _business_ids(events, "whatsapp_connection_completed")
 
     sales = len(paid_checkouts)
     paid_businesses = {checkout.business_id for checkout in paid_checkouts}
+    activation_businesses = paid_businesses & set(activation_at_by_business)
     revenue_cents = sum(checkout.amount_cents for checkout in paid_checkouts)
     refund_cents = sum(refund.amount_cents for refund in refunds)
     net_revenue_cents = revenue_cents - refund_cents
@@ -594,7 +595,7 @@ def build_platform_analytics_summary(
             value=len(activation_businesses),
             conversion_rate=_ratio(len(activation_businesses), sales),
             status="ready",
-            note="Conexão do WhatsApp concluída.",
+            note="Pagamento confirmado + WhatsApp conectado: automação apta a operar.",
         ),
     ]
 
@@ -777,6 +778,7 @@ def build_platform_analytics_summary(
             label="Ativações",
             value=len(activation_businesses),
             format="count",
+            note="Compras do período que já têm WhatsApp conectado.",
         ),
         PlatformAnalyticsKpi(
             key="activation_rate",
@@ -929,8 +931,12 @@ def build_platform_analytics_summary(
             bucket["demo_entries"].add(business)
         elif event.event_name == "checkout_started":
             bucket["checkout_started"].add(business)
-        elif event.event_name == "whatsapp_connection_completed":
-            bucket["activations"].add(business)
+    for business_id, activated_at in activation_at_by_business.items():
+        if business_id not in paid_businesses:
+            continue
+        bucket = series_sets.get(_local_day(activated_at))
+        if bucket is not None:
+            bucket["activations"].add(str(business_id))
 
     subscriptions_by_day: Counter[date] = Counter(
         _local_day(checkout.paid_at) for checkout in paid_checkouts
@@ -1164,9 +1170,33 @@ class PlatformAnalyticsService:
             for billing_cycle, amount_cents, status, access_until in active_rows
         ]
 
+        paid_business_ids = {checkout.business_id for checkout in paid_checkouts}
+        activation_at_by_business: dict[UUID, datetime] = {}
+        if paid_business_ids:
+            connection_rows = await self.db.execute(
+                select(
+                    BusinessWhatsAppConnection.business_id,
+                    func.min(BusinessWhatsAppConnection.connected_at),
+                )
+                .where(
+                    BusinessWhatsAppConnection.business_id.in_(paid_business_ids),
+                    BusinessWhatsAppConnection.connected_at.is_not(None),
+                )
+                .group_by(BusinessWhatsAppConnection.business_id)
+            )
+            first_paid_at_by_business: dict[UUID, datetime] = {}
+            for checkout in paid_checkouts:
+                current = first_paid_at_by_business.get(checkout.business_id)
+                if current is None or checkout.paid_at < current:
+                    first_paid_at_by_business[checkout.business_id] = checkout.paid_at
+            for business_id, connected_at in connection_rows:
+                paid_at = first_paid_at_by_business.get(business_id)
+                if paid_at is not None and connected_at is not None:
+                    activation_at_by_business[business_id] = max(paid_at, connected_at)
+
         relevant_business_ids = {
             event.business_id for event in events if event.business_id is not None
-        } | {checkout.business_id for checkout in paid_checkouts}
+        } | paid_business_ids
         acquisition_by_business = _signup_acquisition_from_events(events)
         missing_business_ids = relevant_business_ids - set(acquisition_by_business)
         if missing_business_ids:
@@ -1201,6 +1231,7 @@ class PlatformAnalyticsService:
             refunds=refunds,
             active_subscriptions=active_subscriptions,
             acquisition_by_business=acquisition_by_business,
+            activation_at_by_business=activation_at_by_business,
             meta_report=meta_report,
             now=now,
             days=days,
