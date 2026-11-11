@@ -29,6 +29,7 @@ from app.models import (
     BusinessWhatsAppConnection,
     MarketingLeadContact,
     PasswordResetToken,
+    Service,
     User,
 )
 from app.whatsapp.administration import WhatsAppConnectionAdministrationService
@@ -88,6 +89,7 @@ async def auth_env(monkeypatch):
         for model in (
             MarketingLeadContact,
             PasswordResetToken,
+            Service,
             AuthSession,
             BusinessUserMembership,
             User,
