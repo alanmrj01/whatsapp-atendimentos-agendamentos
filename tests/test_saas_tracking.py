@@ -382,13 +382,13 @@ def test_meta_ads_configuration_is_explicit_and_production_only() -> None:
         META_ADS_ENABLED=True,
         META_ADS_ACCOUNT_ID="1475560132551828",
         META_ADS_ACCESS_TOKEN="ads-read-secret",
-        META_ADS_GRAPH_VERSION="v26.0",
+        META_ADS_GRAPH_VERSION="v25.0",
         META_ADS_CAMPAIGN_NAME_PREFIX="ALOVIA",
     )
     configuration = settings.meta_ads_configuration()
     assert configuration is not None
     assert configuration.account_id == "1475560132551828"
-    assert configuration.graph_version == "v26.0"
+    assert configuration.graph_version == "v25.0"
     assert configuration.campaign_name_prefix == "ALOVIA"
     assert configuration.access_token.get_secret_value() == "ads-read-secret"
 
@@ -399,7 +399,7 @@ def _meta_settings(**overrides) -> Settings:
         "META_CAPI_ENABLED": True,
         "META_CAPI_DATASET_ID": "1432131901730735",
         "META_CAPI_ACCESS_TOKEN": "meta-secret-token",
-        "META_CAPI_GRAPH_VERSION": "v26.0",
+        "META_CAPI_GRAPH_VERSION": "v25.0",
         "META_CAPI_EVENT_SOURCE_BASE_URL": "https://alovia.netlify.app",
     }
     values.update(overrides)
