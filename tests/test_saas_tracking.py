@@ -17,6 +17,7 @@ from app.analytics.posthog import (
     build_capture_payload,
     identity_alias_event,
     queue_automatic_booking_posthog,
+    safe_acquisition_properties,
     subscription_paid_event,
     take_automatic_booking_posthog_ids,
     user_distinct_id,
@@ -324,6 +325,14 @@ def test_subscription_paid_event_is_authoritative_idempotent_and_revenue_ready()
         checkout=checkout,
         owner_user_id=owner_user_id,
         occurred_at=occurred_at,
+        attribution={
+            "campaign_id": "9001",
+            "adset_id": "9002",
+            "ad_id": "9003",
+            "angle": "cliente_esperando_whatsapp",
+            "quiz_profile": "at_risk",
+            "email": "must-not-leak@example.com",
+        },
     )
 
     assert event.name == "subscription_paid"
@@ -336,8 +345,53 @@ def test_subscription_paid_event_is_authoritative_idempotent_and_revenue_ready()
     assert event.properties["payment_method"] == "pix"
     assert event.properties["amount_cents"] == 19_700
     assert event.properties["funnel_stage"] == "subscription_paid"
+    assert event.properties["campaign_id"] == "9001"
+    assert event.properties["ad_id"] == "9003"
+    assert event.properties["angle"] == "cliente_esperando_whatsapp"
+    assert event.properties["quiz_profile"] == "at_risk"
     assert "email" not in event.properties
     assert "phone" not in event.properties
+
+def test_safe_acquisition_properties_keeps_only_analysis_dimensions() -> None:
+    safe = safe_acquisition_properties(
+        {
+            "utm_source": "fb",
+            "campaign_id": "9001",
+            "ad_id": "9003",
+            "angle": "cliente_esperando_whatsapp",
+            "quiz_profile": "at_risk",
+            "email": "must-not-leak@example.com",
+            "phone": "5511999999999",
+        }
+    )
+    assert safe == {
+        "utm_source": "fb",
+        "campaign_id": "9001",
+        "ad_id": "9003",
+        "angle": "cliente_esperando_whatsapp",
+        "quiz_profile": "at_risk",
+    }
+
+
+def test_meta_ads_configuration_is_explicit_and_production_only() -> None:
+    assert Settings(ENVIRONMENT="test", META_ADS_ENABLED=True).meta_ads_configuration() is None
+    assert Settings(ENVIRONMENT="production", META_ADS_ENABLED=True).meta_ads_configuration() is None
+
+    settings = Settings(
+        ENVIRONMENT="production",
+        META_ADS_ENABLED=True,
+        META_ADS_ACCOUNT_ID="1475560132551828",
+        META_ADS_ACCESS_TOKEN="ads-read-secret",
+        META_ADS_GRAPH_VERSION="v26.0",
+        META_ADS_CAMPAIGN_NAME_PREFIX="ALOVIA",
+    )
+    configuration = settings.meta_ads_configuration()
+    assert configuration is not None
+    assert configuration.account_id == "1475560132551828"
+    assert configuration.graph_version == "v26.0"
+    assert configuration.campaign_name_prefix == "ALOVIA"
+    assert configuration.access_token.get_secret_value() == "ads-read-secret"
+
 
 def _meta_settings(**overrides) -> Settings:
     values = {
