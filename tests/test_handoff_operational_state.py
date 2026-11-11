@@ -20,6 +20,7 @@ CUSTOMER_ID = uuid.UUID("b0000000-0000-0000-0000-000000000003")
 @pytest.mark.asyncio
 async def test_reenabling_handoff_resets_state_and_context() -> None:
     conversation = SimpleNamespace(
+        customer_id=CUSTOMER_ID,
         state=ConversationState.HUMAN_HANDOFF.value,
         context={"service_id": "stale"},
         automation_enabled=False,
@@ -27,8 +28,10 @@ async def test_reenabling_handoff_resets_state_and_context() -> None:
         automation_suppressed_until=None,
         suppression_reason=None,
     )
+    customer = SimpleNamespace(whatsapp_id="5511999999999")
     session = SimpleNamespace(
-        scalar=AsyncMock(return_value=conversation),
+        scalar=AsyncMock(side_effect=[conversation, customer]),
+        execute=AsyncMock(),
         commit=AsyncMock(),
     )
     service = OperationalService(session)  # type: ignore[arg-type]
