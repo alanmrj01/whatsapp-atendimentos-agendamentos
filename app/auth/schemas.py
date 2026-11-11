@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.auth.security import normalize_email
 from app.whatsapp.onboarding import WhatsAppOnboardingIntent
@@ -39,6 +39,8 @@ class SignupRequest(StrictRequest):
     business_name: str = Field(min_length=2, max_length=255)
     email: str = Field(max_length=254)
     password: SecretStr = Field(min_length=8, max_length=1024)
+    lead_name: str | None = Field(default=None, min_length=2, max_length=120)
+    lead_whatsapp: str | None = Field(default=None, max_length=32)
 
     @field_validator("business_name")
     @classmethod
@@ -52,6 +54,38 @@ class SignupRequest(StrictRequest):
     @classmethod
     def normalized_email(cls, value: str) -> str:
         return normalize_email(value)
+
+    @field_validator("lead_name")
+    @classmethod
+    def normalized_lead_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.strip().split())
+        if len(normalized) < 2:
+            raise ValueError("Lead name is required")
+        return normalized
+
+    @field_validator("lead_whatsapp")
+    @classmethod
+    def normalized_lead_whatsapp(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        digits = "".join(character for character in value if character.isdigit())
+        if len(digits) in {10, 11}:
+            digits = f"55{digits}"
+        if (
+            len(digits) not in {12, 13}
+            or not digits.startswith("55")
+            or digits[2] == "0"
+        ):
+            raise ValueError("Lead WhatsApp must be a Brazilian number with DDD")
+        return f"+{digits}"
+
+    @model_validator(mode="after")
+    def lead_contact_is_complete(self):
+        if (self.lead_name is None) != (self.lead_whatsapp is None):
+            raise ValueError("Lead name and WhatsApp must be provided together")
+        return self
 
 
 class PasswordChangeRequest(StrictRequest):
