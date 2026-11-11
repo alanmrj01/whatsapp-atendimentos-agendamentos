@@ -27,7 +27,9 @@ from app.models import (
     BusinessAccess,
     BusinessUserMembership,
     BusinessWhatsAppConnection,
+    MarketingLeadContact,
     PasswordResetToken,
+    Service,
     User,
 )
 from app.whatsapp.administration import WhatsAppConnectionAdministrationService
@@ -85,7 +87,9 @@ async def auth_env(monkeypatch):
     ids = {name: uuid4() for name in ("owner", "admin", "attendant", "viewer", "multi", "super", "inactive")}
     async with factory() as db, db.begin():
         for model in (
+            MarketingLeadContact,
             PasswordResetToken,
+            Service,
             AuthSession,
             BusinessUserMembership,
             User,
@@ -113,6 +117,79 @@ async def auth_env(monkeypatch):
         await client.aclose()
         await engine.dispose()
         get_settings.cache_clear()
+
+
+async def test_signup_lead_capture_is_additive_idempotent_and_private(auth_env, caplog):
+    env = auth_env
+    env.client.headers.pop("Authorization", None)
+    caplog.set_level(logging.INFO)
+
+    legacy_key = uuid4()
+    legacy = await env.client.post(
+        "/api/v1/auth/signup",
+        headers={"Idempotency-Key": str(legacy_key)},
+        json={
+            "business_name": "Empresa legado",
+            "email": f"legacy-{legacy_key.hex}@example.test",
+            "password": env.password,
+        },
+    )
+    assert legacy.status_code == 201
+
+    key = uuid4()
+    payload = {
+        "business_name": "João Refrigeração",
+        "email": f"lead-{key.hex}@example.test",
+        "password": env.password,
+        "lead_name": "  João   da Silva  ",
+        "lead_whatsapp": "(12) 99999-1234",
+    }
+    created = await env.client.post(
+        "/api/v1/auth/signup",
+        headers={"Idempotency-Key": str(key)},
+        json=payload,
+    )
+    assert created.status_code == 201
+    assert "99999-1234" not in created.text
+    assert "João da Silva" not in created.text
+
+    replay = await env.client.post(
+        "/api/v1/auth/signup",
+        headers={"Idempotency-Key": str(key)},
+        json=payload,
+    )
+    assert replay.status_code == 201
+
+    mismatched = await env.client.post(
+        "/api/v1/auth/signup",
+        headers={"Idempotency-Key": str(key)},
+        json={**payload, "lead_whatsapp": "(12) 98888-4321"},
+    )
+    assert mismatched.status_code == 400
+
+    async with env.factory() as db:
+        legacy_contact = await db.scalar(
+            select(MarketingLeadContact).where(
+                MarketingLeadContact.business_id == legacy_key
+            )
+        )
+        assert legacy_contact is None
+        contacts = list(
+            (
+                await db.scalars(
+                    select(MarketingLeadContact).where(
+                        MarketingLeadContact.business_id == key
+                    )
+                )
+            ).all()
+        )
+        assert len(contacts) == 1
+        assert contacts[0].lead_name == "João da Silva"
+        assert contacts[0].whatsapp_e164 == "+5512999991234"
+        assert contacts[0].source == "signup"
+
+    assert "+5512999991234" not in caplog.text
+    assert "João da Silva" not in caplog.text
 
 
 async def login(env, name="owner"):

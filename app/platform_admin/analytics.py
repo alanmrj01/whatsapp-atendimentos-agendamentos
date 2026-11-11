@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.meta_ads import MetaAdsReport, fetch_meta_ads_report
 from app.core.config import Settings
-from app.models import BillingCheckout, BusinessWhatsAppConnection, CommercialSubscription, MarketingFunnelEvent
+from app.models import BillingCheckout, Business, BusinessWhatsAppConnection, CommercialSubscription, MarketingFunnelEvent, MarketingLeadContact
 from app.models.billing import billing_provider_environment
 from app.platform_admin.schemas import (
     PlatformAnalyticsAdPerformanceItem,
@@ -22,6 +22,7 @@ from app.platform_admin.schemas import (
     PlatformAnalyticsConversionBreakdownItem,
     PlatformAnalyticsFunnelStep,
     PlatformAnalyticsKpi,
+    PlatformAnalyticsLeadRecoveryItem,
     PlatformAnalyticsQuizAnswerItem,
     PlatformAnalyticsQuizQuestion,
     PlatformAnalyticsSeriesPoint,
@@ -90,6 +91,15 @@ class AnalyticsEventRow:
     event_name: str
     occurred_at: datetime
     properties: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class LeadContactRow:
+    business_id: UUID
+    lead_name: str
+    whatsapp_e164: str
+    business_name: str
+    created_at: datetime
 
 
 @dataclass(frozen=True)
@@ -367,6 +377,100 @@ def _quiz_questions(
     return questions
 
 
+def _lead_recovery(
+    *,
+    contacts: list[LeadContactRow],
+    events: list[AnalyticsEventRow],
+    paid_checkouts: list[PaidCheckoutRow],
+    activation_at_by_business: dict[UUID, datetime],
+    connection_at_by_business: dict[UUID, datetime],
+    acquisition_by_business: dict[UUID, dict[str, str]],
+) -> list[PlatformAnalyticsLeadRecoveryItem]:
+    events_by_business: dict[UUID, list[AnalyticsEventRow]] = defaultdict(list)
+    for event in events:
+        if event.business_id is not None:
+            events_by_business[event.business_id].append(event)
+
+    paid_by_business: dict[UUID, list[PaidCheckoutRow]] = defaultdict(list)
+    for checkout in paid_checkouts:
+        paid_by_business[checkout.business_id].append(checkout)
+
+    result: list[PlatformAnalyticsLeadRecoveryItem] = []
+    for contact in contacts:
+        business_events = events_by_business.get(contact.business_id, [])
+        event_names = {event.event_name for event in business_events}
+        checkouts = paid_by_business.get(contact.business_id, [])
+        purchased = bool(checkouts)
+        refunded = any(checkout.refund_status == "refunded" for checkout in checkouts)
+        activated = contact.business_id in activation_at_by_business
+        connected = contact.business_id in connection_at_by_business
+
+        if refunded:
+            stage_key, stage_label = "refunded", "Reembolsado"
+        elif activated:
+            stage_key, stage_label = "activated", "Ativado"
+        elif purchased:
+            stage_key, stage_label = "purchase", "Compra confirmada · aguardando ativação"
+        elif "payment_failed" in event_names:
+            stage_key, stage_label = "payment_failed", "Pagamento não concluído"
+        elif event_names & {
+            "checkout_started",
+            "checkout_created",
+            "payment_submitted",
+        }:
+            stage_key, stage_label = "checkout", "Checkout iniciado"
+        elif event_names & {"plan_selected", "activation_paywall_viewed"}:
+            stage_key, stage_label = "offer", "Oferta / plano"
+        elif connected:
+            stage_key, stage_label = (
+                "whatsapp_connected_unpaid",
+                "WhatsApp conectado · sem compra",
+            )
+        elif event_names & {"preactivation_started", "demo_page_view", "demo_interaction"}:
+            stage_key, stage_label = "demo", "Demonstração"
+        else:
+            stage_key, stage_label = "account", "Conta criada"
+
+        activity_candidates = [contact.created_at]
+        activity_candidates.extend(event.occurred_at for event in business_events)
+        activity_candidates.extend(checkout.paid_at for checkout in checkouts)
+        if contact.business_id in connection_at_by_business:
+            activity_candidates.append(connection_at_by_business[contact.business_id])
+        if contact.business_id in activation_at_by_business:
+            activity_candidates.append(activation_at_by_business[contact.business_id])
+
+        acquisition = acquisition_by_business.get(contact.business_id, {})
+        result.append(
+            PlatformAnalyticsLeadRecoveryItem(
+                business_id=contact.business_id,
+                lead_name=contact.lead_name,
+                whatsapp_e164=contact.whatsapp_e164,
+                business_name=contact.business_name,
+                created_at=contact.created_at,
+                last_activity_at=max(activity_candidates),
+                stage_key=stage_key,
+                stage_label=stage_label,
+                purchased=purchased,
+                activated=activated,
+                needs_follow_up=(not purchased) or refunded,
+                angle=acquisition.get("angle"),
+                quiz_profile=acquisition.get("quiz_profile"),
+                ad_id=acquisition.get("ad_id"),
+                ad_name=acquisition.get("utm_content"),
+            )
+        )
+
+    return sorted(
+        result,
+        key=lambda item: (
+            item.needs_follow_up,
+            item.last_activity_at,
+            item.created_at,
+        ),
+        reverse=True,
+    )
+
+
 def _ad_performance(
     *,
     events: list[AnalyticsEventRow],
@@ -487,8 +591,12 @@ def build_platform_analytics_summary(
     meta_report: MetaAdsReport,
     now: datetime,
     days: int,
+    lead_contacts: list[LeadContactRow] | None = None,
+    connection_at_by_business: dict[UUID, datetime] | None = None,
 ) -> PlatformAnalyticsSummaryResponse:
     period_start = now - timedelta(days=days)
+    lead_contacts = lead_contacts or []
+    connection_at_by_business = connection_at_by_business or {}
 
     quiz_visitors = _visitor_ids(events, "quiz_viewed")
     quiz_completed_visitors = _visitor_ids(events, "quiz_completed")
@@ -894,6 +1002,14 @@ def build_platform_analytics_summary(
         acquisition_by_business=acquisition_by_business,
         meta_report=meta_report,
     )
+    lead_recovery = _lead_recovery(
+        contacts=lead_contacts,
+        events=events,
+        paid_checkouts=paid_checkouts,
+        activation_at_by_business=activation_at_by_business,
+        connection_at_by_business=connection_at_by_business,
+        acquisition_by_business=acquisition_by_business,
+    )
 
     local_end = _local_day(now)
     local_start = _local_day(period_start)
@@ -1020,6 +1136,7 @@ def build_platform_analytics_summary(
         onboarding_issues=onboarding_issues,
         quiz_questions=quiz_questions,
         ad_performance=ad_performance,
+        lead_recovery=lead_recovery,
         meta_ads_status="ready" if meta_ready else "awaiting_integration",
         meta_ads_note=meta_report.note,
         series=series,
@@ -1170,33 +1287,78 @@ class PlatformAnalyticsService:
             for billing_cycle, amount_cents, status, access_until in active_rows
         ]
 
+        lead_contacts: list[LeadContactRow] = []
+        lead_table_ready = await self.db.scalar(
+            select(func.to_regclass("public.marketing_lead_contacts"))
+        )
+        if lead_table_ready is not None:
+            lead_rows = await self.db.execute(
+                select(
+                    MarketingLeadContact.business_id,
+                    MarketingLeadContact.lead_name,
+                    MarketingLeadContact.whatsapp_e164,
+                    Business.name,
+                    MarketingLeadContact.created_at,
+                )
+                .join(Business, Business.id == MarketingLeadContact.business_id)
+                .where(MarketingLeadContact.created_at >= period_start)
+                .order_by(MarketingLeadContact.created_at.desc())
+            )
+            lead_contacts = [
+                LeadContactRow(
+                    business_id=business_id,
+                    lead_name=lead_name,
+                    whatsapp_e164=whatsapp_e164,
+                    business_name=business_name,
+                    created_at=created_at,
+                )
+                for (
+                    business_id,
+                    lead_name,
+                    whatsapp_e164,
+                    business_name,
+                    created_at,
+                ) in lead_rows
+            ]
+
         paid_business_ids = {checkout.business_id for checkout in paid_checkouts}
-        activation_at_by_business: dict[UUID, datetime] = {}
-        if paid_business_ids:
+        lead_business_ids = {lead.business_id for lead in lead_contacts}
+        connection_business_ids = paid_business_ids | lead_business_ids
+        connection_at_by_business: dict[UUID, datetime] = {}
+        if connection_business_ids:
             connection_rows = await self.db.execute(
                 select(
                     BusinessWhatsAppConnection.business_id,
                     func.min(BusinessWhatsAppConnection.connected_at),
                 )
                 .where(
-                    BusinessWhatsAppConnection.business_id.in_(paid_business_ids),
+                    BusinessWhatsAppConnection.business_id.in_(connection_business_ids),
                     BusinessWhatsAppConnection.connected_at.is_not(None),
                 )
                 .group_by(BusinessWhatsAppConnection.business_id)
             )
+            connection_at_by_business = {
+                business_id: connected_at
+                for business_id, connected_at in connection_rows
+                if connected_at is not None
+            }
+
+        activation_at_by_business: dict[UUID, datetime] = {}
+        if paid_business_ids:
             first_paid_at_by_business: dict[UUID, datetime] = {}
             for checkout in paid_checkouts:
                 current = first_paid_at_by_business.get(checkout.business_id)
                 if current is None or checkout.paid_at < current:
                     first_paid_at_by_business[checkout.business_id] = checkout.paid_at
-            for business_id, connected_at in connection_rows:
+            for business_id in paid_business_ids:
+                connected_at = connection_at_by_business.get(business_id)
                 paid_at = first_paid_at_by_business.get(business_id)
                 if paid_at is not None and connected_at is not None:
                     activation_at_by_business[business_id] = max(paid_at, connected_at)
 
         relevant_business_ids = {
             event.business_id for event in events if event.business_id is not None
-        } | paid_business_ids
+        } | paid_business_ids | lead_business_ids
         acquisition_by_business = _signup_acquisition_from_events(events)
         missing_business_ids = relevant_business_ids - set(acquisition_by_business)
         if missing_business_ids:
@@ -1235,4 +1397,6 @@ class PlatformAnalyticsService:
             meta_report=meta_report,
             now=now,
             days=days,
+            lead_contacts=lead_contacts,
+            connection_at_by_business=connection_at_by_business,
         )

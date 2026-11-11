@@ -27,6 +27,7 @@ from app.models import (
     BusinessAccess,
     BusinessUserMembership,
     CommercialSubscription,
+    MarketingLeadContact,
     PasswordResetToken,
     User,
 )
@@ -350,6 +351,42 @@ class AuthService:
         await self.db.commit()
         return user, session, refresh
 
+    async def _sync_signup_lead_contact(
+        self,
+        *,
+        payload: SignupRequest,
+        business_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        if payload.lead_name is None or payload.lead_whatsapp is None:
+            return
+        existing = await self.db.scalar(
+            select(MarketingLeadContact)
+            .where(MarketingLeadContact.business_id == business_id)
+            .with_for_update()
+        )
+        if existing is None:
+            self.db.add(
+                MarketingLeadContact(
+                    business_id=business_id,
+                    user_id=user_id,
+                    lead_name=payload.lead_name,
+                    whatsapp_e164=payload.lead_whatsapp,
+                    source="signup",
+                )
+            )
+            await self.db.flush()
+            return
+        if (
+            existing.user_id != user_id
+            or existing.lead_name != payload.lead_name
+            or existing.whatsapp_e164 != payload.lead_whatsapp
+        ):
+            raise HTTPException(
+                400,
+                "Idempotency key already used for another request",
+            )
+
     async def _signup_replay(
         self,
         payload: SignupRequest,
@@ -377,6 +414,11 @@ class AuthService:
             or not valid_password
         ):
             raise HTTPException(400, "Idempotency key already used for another request")
+        await self._sync_signup_lead_contact(
+            payload=payload,
+            business_id=business.id,
+            user_id=user.id,
+        )
         session, refresh = self._new_session(user.id, business.id)
         self.db.add(session)
         await self.db.commit()
@@ -432,6 +474,11 @@ class AuthService:
                 [access, membership, *default_services_for_business(business.id)]
             )
             await self.db.flush()
+            await self._sync_signup_lead_contact(
+                payload=payload,
+                business_id=business.id,
+                user_id=user.id,
+            )
             self.db.add(session)
             await self.db.commit()
         except IntegrityError:

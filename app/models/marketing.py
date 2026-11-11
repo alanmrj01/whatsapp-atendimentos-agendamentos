@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, JSON, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, JSON, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,4 +52,58 @@ class MarketingFunnelEvent(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+
+class MarketingLeadContact(Base):
+    __tablename__ = "marketing_lead_contacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id",
+            name="uq_marketing_lead_contacts_business_id",
+        ),
+        Index(
+            "ix_marketing_lead_contacts_created",
+            "created_at",
+        ),
+        CheckConstraint(
+            "whatsapp_e164 ~ '^\\+55[1-9][0-9]{9,10}$'",
+            name="whatsapp_e164_brazilian",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("businesses.id"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    lead_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    whatsapp_e164: Mapped[str] = mapped_column(String(16), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(32),
+        default="signup",
+        server_default="signup",
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
