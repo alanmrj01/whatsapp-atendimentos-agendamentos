@@ -199,7 +199,7 @@ class Settings(BaseSettings):
         default=None, validation_alias="META_CAPI_ACCESS_TOKEN"
     )
     meta_capi_graph_version: str = Field(
-        default="v26.0", validation_alias="META_CAPI_GRAPH_VERSION"
+        default="v25.0", validation_alias="META_CAPI_GRAPH_VERSION"
     )
     meta_capi_event_source_base_url: str | None = Field(
         default=None, validation_alias="META_CAPI_EVENT_SOURCE_BASE_URL"
@@ -217,7 +217,7 @@ class Settings(BaseSettings):
         default=None, validation_alias="META_ADS_ACCESS_TOKEN"
     )
     meta_ads_graph_version: str = Field(
-        default="v26.0", validation_alias="META_ADS_GRAPH_VERSION"
+        default="v25.0", validation_alias="META_ADS_GRAPH_VERSION"
     )
     meta_ads_campaign_name_prefix: str = Field(
         default="ALOVIA", validation_alias="META_ADS_CAMPAIGN_NAME_PREFIX"
