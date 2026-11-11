@@ -134,6 +134,13 @@ CUSTOMER_AUTOMATION_MIGRATION_PATH = (
     / "20261107_0043_customer_automation_policy.py"
 )
 
+MARKETING_LEAD_CONTACTS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261111_0044_marketing_lead_contacts.py"
+)
+
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
     spec = importlib.util.spec_from_file_location(
@@ -165,7 +172,31 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261107_0043"]
+    assert script.get_heads() == ["20261111_0044"]
+
+
+def test_marketing_lead_contacts_migration_is_isolated_additive_and_reversible() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", MARKETING_LEAD_CONTACTS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", MARKETING_LEAD_CONTACTS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "create table marketing_lead_contacts" in upgrade
+    assert "fk_marketing_lead_contacts_business_id_businesses" in upgrade
+    assert "fk_marketing_lead_contacts_user_id_users" in upgrade
+    assert "uq_marketing_lead_contacts_business_id" in upgrade
+    assert "whatsapp_e164" in upgrade
+    assert "enable row level security" in upgrade
+    assert "alter table customers" not in upgrade
+    assert "alter table conversations" not in upgrade
+    assert "alter table business_automation_exclusions" not in upgrade
+    assert "drop table marketing_lead_contacts" in downgrade
 
 
 def test_customer_automation_policy_migration_is_additive_and_reversible() -> None:
