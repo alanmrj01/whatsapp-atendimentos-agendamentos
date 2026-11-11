@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import logging
-from typing import Any
+from typing import Any, Mapping
 from uuid import UUID
 
 import httpx
@@ -11,10 +11,60 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.models import Appointment, BillingCheckout, BusinessUserMembership, ProcessedWebhook
+from app.models import Appointment, BillingCheckout, BusinessUserMembership, MarketingFunnelEvent, ProcessedWebhook
 
 logger = logging.getLogger(__name__)
 AUTOMATIC_BOOKING_SESSION_INFO_KEY = "posthog_automatic_booking_ids"
+
+ACQUISITION_PROPERTY_KEYS = (
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_content",
+    "utm_term",
+    "utm_id",
+    "utm_source_platform",
+    "utm_creative_format",
+    "campaign_id",
+    "adset_id",
+    "ad_id",
+    "placement",
+    "angle",
+    "quiz_profile",
+    "fbclid",
+)
+
+
+def safe_acquisition_properties(properties: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not properties:
+        return {}
+    result: dict[str, Any] = {}
+    for key in ACQUISITION_PROPERTY_KEYS:
+        value = properties.get(key)
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                result[key] = normalized[:256]
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            result[key] = value
+    return result
+
+
+async def business_acquisition_properties(
+    db: AsyncSession,
+    business_id: UUID,
+) -> dict[str, Any]:
+    properties = await db.scalar(
+        select(MarketingFunnelEvent.properties)
+        .where(
+            MarketingFunnelEvent.business_id == business_id,
+            MarketingFunnelEvent.event_name == "signup_completed",
+        )
+        .order_by(MarketingFunnelEvent.occurred_at.asc())
+        .limit(1)
+    )
+    return safe_acquisition_properties(properties)
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +125,7 @@ def subscription_paid_event(
     checkout: BillingCheckout,
     owner_user_id: UUID | None,
     occurred_at: datetime | None,
+    attribution: Mapping[str, Any] | None = None,
 ) -> PostHogEvent:
     distinct_id = (
         user_distinct_id(owner_user_id)
@@ -96,6 +147,7 @@ def subscription_paid_event(
             "payment_method": checkout.payment_method,
             "amount_cents": checkout.amount_cents,
             "funnel_stage": "subscription_paid",
+            **safe_acquisition_properties(attribution),
         },
     )
 
