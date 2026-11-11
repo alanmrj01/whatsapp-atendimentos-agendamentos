@@ -184,6 +184,7 @@ def test_dashboard_uses_unique_leads_and_current_quiz_funnel() -> None:
             )
         ],
         acquisition_by_business={BUSINESS: acquisition()},
+        activation_at_by_business={BUSINESS: NOW - timedelta(minutes=1)},
         meta_report=meta_report(),
         now=NOW,
         days=7,
@@ -262,6 +263,7 @@ def test_meta_metrics_remain_explicit_when_integration_is_not_configured() -> No
         refunds=[],
         active_subscriptions=[],
         acquisition_by_business={BUSINESS: acquisition()},
+        activation_at_by_business={},
         meta_report=MetaAdsReport(
             status="awaiting_integration",
             note="Aguardando credencial de leitura da Meta Ads.",
