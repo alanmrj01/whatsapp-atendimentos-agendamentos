@@ -1287,33 +1287,67 @@ class PlatformAnalyticsService:
             for billing_cycle, amount_cents, status, access_until in active_rows
         ]
 
+        lead_rows = await self.db.execute(
+            select(
+                MarketingLeadContact.business_id,
+                MarketingLeadContact.lead_name,
+                MarketingLeadContact.whatsapp_e164,
+                Business.name,
+                MarketingLeadContact.created_at,
+            )
+            .join(Business, Business.id == MarketingLeadContact.business_id)
+            .where(MarketingLeadContact.created_at >= period_start)
+            .order_by(MarketingLeadContact.created_at.desc())
+        )
+        lead_contacts = [
+            LeadContactRow(
+                business_id=business_id,
+                lead_name=lead_name,
+                whatsapp_e164=whatsapp_e164,
+                business_name=business_name,
+                created_at=created_at,
+            )
+            for business_id, lead_name, whatsapp_e164, business_name, created_at in lead_rows
+        ]
+
         paid_business_ids = {checkout.business_id for checkout in paid_checkouts}
-        activation_at_by_business: dict[UUID, datetime] = {}
-        if paid_business_ids:
+        lead_business_ids = {lead.business_id for lead in lead_contacts}
+        connection_business_ids = paid_business_ids | lead_business_ids
+        connection_at_by_business: dict[UUID, datetime] = {}
+        if connection_business_ids:
             connection_rows = await self.db.execute(
                 select(
                     BusinessWhatsAppConnection.business_id,
                     func.min(BusinessWhatsAppConnection.connected_at),
                 )
                 .where(
-                    BusinessWhatsAppConnection.business_id.in_(paid_business_ids),
+                    BusinessWhatsAppConnection.business_id.in_(connection_business_ids),
                     BusinessWhatsAppConnection.connected_at.is_not(None),
                 )
                 .group_by(BusinessWhatsAppConnection.business_id)
             )
+            connection_at_by_business = {
+                business_id: connected_at
+                for business_id, connected_at in connection_rows
+                if connected_at is not None
+            }
+
+        activation_at_by_business: dict[UUID, datetime] = {}
+        if paid_business_ids:
             first_paid_at_by_business: dict[UUID, datetime] = {}
             for checkout in paid_checkouts:
                 current = first_paid_at_by_business.get(checkout.business_id)
                 if current is None or checkout.paid_at < current:
                     first_paid_at_by_business[checkout.business_id] = checkout.paid_at
-            for business_id, connected_at in connection_rows:
+            for business_id in paid_business_ids:
+                connected_at = connection_at_by_business.get(business_id)
                 paid_at = first_paid_at_by_business.get(business_id)
                 if paid_at is not None and connected_at is not None:
                     activation_at_by_business[business_id] = max(paid_at, connected_at)
 
         relevant_business_ids = {
             event.business_id for event in events if event.business_id is not None
-        } | paid_business_ids
+        } | paid_business_ids | lead_business_ids
         acquisition_by_business = _signup_acquisition_from_events(events)
         missing_business_ids = relevant_business_ids - set(acquisition_by_business)
         if missing_business_ids:
@@ -1352,4 +1386,6 @@ class PlatformAnalyticsService:
             meta_report=meta_report,
             now=now,
             days=days,
+            lead_contacts=lead_contacts,
+            connection_at_by_business=connection_at_by_business,
         )
