@@ -2179,8 +2179,14 @@ class BillingService:
                 provider_environment=self.provider_environment,
                 status="active",
                 provider_subscription_id=checkout.provider_subscription_id,
-                provider_pix_qr_code_id=checkout.provider_pix_qr_code_id,
-                provider_payment_id=checkout.provider_payment_id,
+                # Preserve the existing one-time Pix provider reference column.
+                # Dynamic Pix uses the payment id as the opaque provider reference
+                # for the commercial subscription; financial operations remain
+                # authoritative on BillingCheckout.provider_payment_id.
+                provider_pix_qr_code_id=(
+                    checkout.provider_pix_qr_code_id
+                    or checkout.provider_payment_id
+                ),
                 provider_customer_id=checkout.provider_customer_id,
                 access_until=access_until,
             )
@@ -2188,8 +2194,10 @@ class BillingService:
         else:
             subscription.status = "active"
             subscription.provider_subscription_id = checkout.provider_subscription_id
-            subscription.provider_pix_qr_code_id = checkout.provider_pix_qr_code_id
-            subscription.provider_payment_id = checkout.provider_payment_id
+            subscription.provider_pix_qr_code_id = (
+                checkout.provider_pix_qr_code_id
+                or checkout.provider_payment_id
+            )
             subscription.provider_customer_id = checkout.provider_customer_id
             subscription.access_until = max(subscription.access_until, access_until)
 
