@@ -12,7 +12,7 @@ import pytest
 from fastapi import HTTPException
 from google.api_core.exceptions import AlreadyExists
 from httpx import AsyncClient
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 from pytest import MonkeyPatch
 
 from app.api import internal_tasks
@@ -22,6 +22,7 @@ from app.core.config import (
     CloudTasksConfiguration,
     CloudTasksConfigurationError,
     Settings,
+    get_settings,
 )
 from app.main import app
 from app.repositories.automation import ConversationAutomationControl
@@ -559,6 +560,77 @@ async def test_worker_propagates_transient_error_for_retry() -> None:
         )
 
     assert repository.completed == []
+
+
+@pytest.mark.asyncio
+async def test_internal_billing_pix_expiry_task_is_oidc_protected_and_idempotent(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    checkout_id = uuid.uuid4()
+    calls = []
+
+    class FakeBillingService:
+        def __init__(self, session, gateway):
+            calls.append(("init", session, gateway))
+
+        async def expire_common_pix_checkout(self, *, checkout_id):
+            calls.append(("expire", checkout_id))
+            return "expired"
+
+    monkeypatch.setattr(internal_tasks, "BillingService", FakeBillingService)
+    monkeypatch.setattr(internal_tasks, "AsaasGateway", lambda configuration: object())
+
+    task_settings = enabled_settings().model_copy(
+        update={"asaas_api_key": SecretStr("$aact_hmlg_example")}
+    )
+    app.dependency_overrides[require_cloud_tasks_oidc] = lambda: None
+    app.dependency_overrides[get_settings] = lambda: task_settings
+    try:
+        response = await client.post(
+            "/internal/tasks/billing-pix-expiry",
+            json={"checkout_id": str(checkout_id)},
+        )
+    finally:
+        app.dependency_overrides.pop(require_cloud_tasks_oidc, None)
+        app.dependency_overrides.pop(get_settings, None)
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    assert ("expire", checkout_id) in calls
+
+
+@pytest.mark.asyncio
+async def test_internal_billing_pix_expiry_task_returns_503_for_transient_failure(
+    client: AsyncClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FailingBillingService:
+        def __init__(self, session, gateway):
+            pass
+
+        async def expire_common_pix_checkout(self, *, checkout_id):
+            raise RuntimeError("temporary provider failure")
+
+    monkeypatch.setattr(internal_tasks, "BillingService", FailingBillingService)
+    monkeypatch.setattr(internal_tasks, "AsaasGateway", lambda configuration: object())
+
+    task_settings = enabled_settings().model_copy(
+        update={"asaas_api_key": SecretStr("$aact_hmlg_example")}
+    )
+    app.dependency_overrides[require_cloud_tasks_oidc] = lambda: None
+    app.dependency_overrides[get_settings] = lambda: task_settings
+    try:
+        response = await client.post(
+            "/internal/tasks/billing-pix-expiry",
+            json={"checkout_id": str(uuid.uuid4())},
+        )
+    finally:
+        app.dependency_overrides.pop(require_cloud_tasks_oidc, None)
+        app.dependency_overrides.pop(get_settings, None)
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Billing Pix expiry task failed"}
 
 
 @pytest.mark.asyncio
