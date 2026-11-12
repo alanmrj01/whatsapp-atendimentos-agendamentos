@@ -151,15 +151,21 @@ class BillingService:
     def _common_pix_effective_expiry(
         checkout: BillingCheckout,
     ) -> datetime | None:
-        expires_at = checkout.pix_qr_expires_at or checkout.expires_at
-        if expires_at is not None:
-            return expires_at
+        candidates: list[datetime] = []
+        for value in (checkout.pix_qr_expires_at, checkout.expires_at):
+            if value is None:
+                continue
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=UTC)
+            candidates.append(value)
         created_at = getattr(checkout, "created_at", None)
-        if created_at is None:
-            return None
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=UTC)
-        return created_at + timedelta(seconds=PAYMENT_CHECKOUT_TTL_SECONDS)
+        if created_at is not None:
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+            candidates.append(
+                created_at + timedelta(seconds=PAYMENT_CHECKOUT_TTL_SECONDS)
+            )
+        return min(candidates) if candidates else None
 
     @classmethod
     def _recoverable_static_pix_checkout(cls, checkout: BillingCheckout) -> bool:

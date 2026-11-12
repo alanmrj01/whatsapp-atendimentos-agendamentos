@@ -1144,6 +1144,44 @@ async def test_stuck_common_pix_without_metadata_expires_after_ttl_and_allows_re
 
 
 @pytest.mark.asyncio
+async def test_common_pix_created_over_15_minutes_ago_expires_even_with_bad_future_expiry(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    first = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    checkout = db.checkouts[0]
+    checkout.pix_qr_payload = None
+    checkout.created_at = datetime.now(UTC) - timedelta(minutes=20)
+    checkout.pix_qr_expires_at = datetime.now(UTC) + timedelta(hours=6)
+    checkout.expires_at = datetime.now(UTC) + timedelta(hours=6)
+
+    replacement = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert checkout.status == "expired"
+    assert replacement.checkout_id != first.checkout_id
+    assert replacement.pix_payload == "pix-common-payload-2"
+    assert gateway.common_pix_creates == 2
+
+
+@pytest.mark.asyncio
 async def test_fresh_incomplete_common_pix_stays_blocked_until_ttl(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
