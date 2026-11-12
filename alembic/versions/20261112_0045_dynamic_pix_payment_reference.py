@@ -44,16 +44,22 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        """
-        UPDATE commercial_subscriptions
-        SET provider_pix_qr_code_id = provider_payment_id
-        WHERE provider_payment_id IS NOT NULL
-          AND provider_subscription_id IS NULL
-          AND provider_authorization_id IS NULL
-          AND provider_pix_qr_code_id IS NULL
-        """
-    )
+    bind = op.get_bind()
+    dynamic_rows = bind.execute(
+        sa.text(
+            """
+            SELECT 1
+            FROM commercial_subscriptions
+            WHERE provider_payment_id IS NOT NULL
+            LIMIT 1
+            """
+        )
+    ).first()
+    if dynamic_rows is not None:
+        raise RuntimeError(
+            "Cannot drop provider_payment_id while dynamic Pix subscriptions exist"
+        )
+
     op.drop_constraint(
         "commercial_subscription_provider_reference_required",
         "commercial_subscriptions",
