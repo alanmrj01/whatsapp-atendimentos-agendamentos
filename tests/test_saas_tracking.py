@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID
 
+import pytest
+
 from app.analytics.meta_ads import fetch_meta_ads_report
 from app.analytics.meta_conversions import (
     build_meta_payload,
@@ -701,9 +703,6 @@ async def _meta_ads_report_for_currency(monkeypatch, currency: str):
         since=datetime(2026, 11, 12, tzinfo=UTC).date(),
         until=datetime(2026, 11, 12, tzinfo=UTC).date(),
     )
-
-
-import pytest
 
 
 @pytest.mark.asyncio
