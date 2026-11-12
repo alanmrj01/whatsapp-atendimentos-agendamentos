@@ -438,6 +438,52 @@ class BillingService:
             raise HTTPException(404, "No recoverable Pix checkout")
         return self._checkout_response(checkout)
 
+    async def expire_common_pix_checkout(
+        self,
+        *,
+        checkout_id: UUID,
+    ) -> str:
+        checkout = await self.db.get(BillingCheckout, checkout_id)
+        if (
+            checkout is None
+            or checkout.provider_environment != self.provider_environment
+            or checkout.payment_method != "pix"
+        ):
+            return "ignored"
+        await self._lock_business_checkout(checkout.business_id)
+        checkout = await self.db.get(BillingCheckout, checkout_id)
+        if checkout is None:
+            return "ignored"
+        if checkout.status == "paid" or checkout.paid_at is not None:
+            return "paid"
+        if checkout.status in {"canceled", "failed"}:
+            return checkout.status
+
+        expires_at = self._common_pix_effective_expiry(checkout)
+        if expires_at is not None and expires_at > datetime.now(UTC):
+            return "active"
+
+        if checkout.provider_payment_id:
+            result = await self._retire_dynamic_pix_payment(
+                checkout,
+                terminal_status="expired",
+            )
+            await self.db.commit()
+            return result
+        if checkout.provider_pix_qr_code_id:
+            await self.gateway.delete_static_pix_qr_code(
+                checkout.provider_pix_qr_code_id
+            )
+        elif checkout.provider_subscription_id:
+            await self.gateway.cancel_subscription(
+                checkout.provider_subscription_id
+            )
+        checkout.status = "expired"
+        checkout.pix_qr_payload = None
+        checkout.pix_qr_expires_at = None
+        await self.db.commit()
+        return "expired"
+
     async def create_checkout(
         self,
         *,
