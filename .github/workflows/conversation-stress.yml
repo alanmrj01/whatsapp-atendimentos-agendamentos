@@ -7,6 +7,8 @@ on:
     paths:
       - 'app/conversations/**'
       - 'tests/test_conversation_robustness.py'
+      - 'tests/conversation_stress/**'
+      - 'tests/conversation_stress/**'
       - 'tests/test_conversation_interpreter.py'
       - 'tests/test_conversation_engine.py'
       - 'AGENTS.md'
@@ -53,6 +55,7 @@ jobs:
           python -m compileall
           app/conversations
           tests/test_conversation_robustness.py
+          tests/conversation_stress
           tests/test_conversation_interpreter.py
           tests/test_conversation_engine.py
 
@@ -60,6 +63,7 @@ jobs:
         run: >-
           pytest
           tests/test_conversation_robustness.py
+          tests/conversation_stress
           tests/test_conversation_interpreter.py
           tests/test_conversation_engine.py
           -q -p no:cacheprovider

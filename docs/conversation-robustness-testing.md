@@ -86,6 +86,8 @@ Auditar tom: humano, educado, simples, levemente formal, sem gíria espelhada em
 
 Na descoberta, cada agente deve produzir um corpus fixo e revisável de aproximadamente 25 a 60 casos, conforme a amplitude da faixa. Priorizar diversidade sem inflar sinônimos equivalentes.
 
+Para evitar conflito entre agentes, cada agente deve criar seus casos em um arquivo exclusivo dentro de `tests/conversation_stress/` (por exemplo `test_a_openers.py`, `test_b_equipment.py`). Não editar o arquivo de outro agente durante a rodada de descoberta.
+
 Cada família deve incluir, quando aplicável:
 - forma canônica;
 - sem acento;
@@ -149,7 +151,7 @@ Evitar tocar em booking, billing, Meta, banco, migrations ou PWA para corrigir l
 Baseline rápido:
 
 ```bash
-pytest tests/test_conversation_robustness.py tests/test_conversation_interpreter.py tests/test_conversation_engine.py -q -p no:cacheprovider
+pytest tests/test_conversation_robustness.py tests/conversation_stress tests/test_conversation_interpreter.py tests/test_conversation_engine.py -q -p no:cacheprovider
 ```
 
 Workflow manual:
