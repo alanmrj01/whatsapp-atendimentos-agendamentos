@@ -30,6 +30,9 @@ _SAFE_EXTRA_FIELDS = (
     "refund_status",
     "failure_code",
     "provider_failure_code",
+    "event_name",
+    "events_received",
+    "message_count",
     "onboarding_state",
 )
 
