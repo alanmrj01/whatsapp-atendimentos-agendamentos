@@ -919,6 +919,14 @@ class BillingService:
         except AsaasGatewayTimeoutError:
             if payload.payment_method == "pix":
                 checkout.status = "creating"
+                try:
+                    recovered = await self._recover_dynamic_pix_payment(checkout)
+                except AsaasGatewayError:
+                    recovered = False
+                if recovered:
+                    await self.db.commit()
+                    await self._schedule_common_pix_expiry(checkout)
+                    return self._checkout_response(checkout)
                 await self.db.commit()
                 raise HTTPException(
                     502, "Pix payment is being reconciled"
@@ -1012,20 +1020,14 @@ class BillingService:
         checkout.provider_subscription_id = None
 
         external_reference = f"alovia:{checkout.id}"
-        try:
-            payment_id = await self.gateway.create_pix_payment(
-                customer_id=customer_id,
-                value=offer.amount_cents / 100,
-                due_date=datetime.now(BRAZIL_TZ).date().isoformat(),
-                description=f"ALOVIA {offer.plan_name}",
-                external_reference=external_reference,
-            )
-            checkout.provider_payment_id = payment_id
-        except AsaasGatewayTimeoutError:
-            recovered = await self._recover_dynamic_pix_payment(checkout)
-            if not recovered:
-                raise
-            return
+        payment_id = await self.gateway.create_pix_payment(
+            customer_id=customer_id,
+            value=offer.amount_cents / 100,
+            due_date=datetime.now(BRAZIL_TZ).date().isoformat(),
+            description=f"ALOVIA {offer.plan_name}",
+            external_reference=external_reference,
+        )
+        checkout.provider_payment_id = payment_id
 
         qr = await self.gateway.pix_qr_code(payment_id)
         checkout.pix_qr_payload = qr.payload
