@@ -1174,6 +1174,152 @@ async def test_common_pix_checkout_is_one_time_15_minutes_and_reused_while_activ
 
 
 @pytest.mark.asyncio
+async def test_dynamic_pix_timeout_recovers_existing_provider_payment(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+
+    class TimeoutAfterCreateGateway(_CheckoutGateway):
+        async def create_pix_payment(self, **kwargs):
+            self.common_pix_creates += 1
+            payment_id = f"pay_test_{self.common_pix_creates}"
+            self.payments[payment_id] = {
+                "id": payment_id,
+                "billingType": "PIX",
+                "status": "PENDING",
+                "value": kwargs["value"],
+                "externalReference": kwargs["external_reference"],
+                "customer": kwargs["customer_id"],
+            }
+            raise AsaasGatewayTimeoutError("timeout")
+
+    db = _CheckoutCreateDb()
+    gateway = TimeoutAfterCreateGateway()
+    service = BillingService(db, gateway)
+
+    checkout = await service.create_checkout(
+        business_id=uuid4(),
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert checkout.payment_method == "pix"
+    assert checkout.pix_payload == "pix-common-payload-1"
+    assert db.checkouts[0].provider_payment_id == "pay_test_1"
+    assert gateway.common_pix_creates == 1
+
+
+@pytest.mark.asyncio
+async def test_dynamic_pix_unresolved_timeout_blocks_second_financial_attempt(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+
+    class UnresolvedTimeoutGateway(_CheckoutGateway):
+        async def create_pix_payment(self, **kwargs):
+            self.common_pix_creates += 1
+            raise AsaasGatewayTimeoutError("timeout")
+
+    db = _CheckoutCreateDb()
+    gateway = UnresolvedTimeoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    with pytest.raises(HTTPException) as first_error:
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request("pix"),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+    assert first_error.value.status_code == 502
+    assert db.checkouts[0].status == "creating"
+
+    with pytest.raises(HTTPException) as second_error:
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request("pix"),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+    assert second_error.value.status_code == 409
+    assert "reconciled" in second_error.value.detail.lower() or "reconcil" in second_error.value.detail.lower()
+    assert gateway.common_pix_creates == 1
+
+
+@pytest.mark.asyncio
+async def test_dynamic_pix_expiry_deletes_pending_payment_before_allowing_new_one(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    first = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    db.checkouts[0].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.checkouts[0].pix_qr_expires_at = db.checkouts[0].expires_at
+
+    status = await service.checkout_status(
+        business_id=business_id,
+        checkout_id=first.checkout_id,
+    )
+    replacement = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert status.status == "expired"
+    assert gateway.payments["pay_test_1"]["status"] == "DELETED"
+    assert gateway.common_pix_cancels == 1
+    assert replacement.checkout_id != first.checkout_id
+    assert db.checkouts[-1].provider_payment_id == "pay_test_2"
+    assert gateway.common_pix_creates == 2
+
+
+@pytest.mark.asyncio
+async def test_dynamic_pix_expiry_never_deletes_payment_already_confirmed(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    first = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    gateway.payments["pay_test_1"]["status"] = "CONFIRMED"
+    db.checkouts[0].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.checkouts[0].pix_qr_expires_at = db.checkouts[0].expires_at
+
+    status = await service.checkout_status(
+        business_id=business_id,
+        checkout_id=first.checkout_id,
+    )
+
+    assert status.status == "paid"
+    assert db.checkouts[0].paid_at is not None
+    assert gateway.payments["pay_test_1"]["status"] == "CONFIRMED"
+    assert gateway.common_pix_cancels == 0
+
+
+@pytest.mark.asyncio
 async def test_common_pix_recovers_missing_expiry_from_created_at(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
