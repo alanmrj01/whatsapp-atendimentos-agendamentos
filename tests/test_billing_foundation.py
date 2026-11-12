@@ -37,7 +37,7 @@ def test_sandbox_price_override_is_isolated(monkeypatch) -> None:
 
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "100")
-    assert get_offer("basic", "monthly").amount_cents == 19_700
+    assert get_offer("basic", "monthly").amount_cents == 14_790
 
 
 def test_plus_is_fail_closed_until_explicitly_enabled(monkeypatch) -> None:
@@ -135,9 +135,9 @@ def test_sandbox_price_override_rejects_provider_invalid_amount(monkeypatch) -> 
 
 
 def test_server_side_catalog_uses_approved_prices_and_cycles() -> None:
-    assert get_offer("basic", "monthly").amount_cents == 19_700
-    assert get_offer("basic", "quarterly").amount_cents == 53_190
-    assert get_offer("basic", "annual").amount_cents == 200_940
+    assert get_offer("basic", "monthly").amount_cents == 14_790
+    assert get_offer("basic", "quarterly").amount_cents == 39_933
+    assert get_offer("basic", "annual").amount_cents == 150_858
     assert get_offer("plus", "monthly").amount_cents == 39_700
     assert get_offer("plus", "quarterly").amount_cents == 107_190
     assert get_offer("plus", "annual").amount_cents == 404_940
@@ -328,7 +328,7 @@ async def test_pix_automatic_sets_immediate_qr_expiration() -> None:
     )
 
     assert captured["immediateQrCode"] == {
-        "originalValue": 197.0,
+        "originalValue": 147.9,
         "expirationSeconds": 900,
     }
     assert checkout.provider_subscription_id == "sub_pix_test"

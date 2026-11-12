@@ -31,7 +31,7 @@ class Offer:
 _PLAN = {
     "basic": {
         "name": "Basic",
-        "monthly_cents": 19_700,
+        "monthly_cents": 14_790,
         "users": 1,
         "attendances": 500,
         "messages": 600,

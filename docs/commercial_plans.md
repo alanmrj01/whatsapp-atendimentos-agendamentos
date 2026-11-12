@@ -14,7 +14,7 @@ com dados reais, dados de demonstração jamais devem reaparecer.
 
 ## Basic — lançamento
 
-- R$ 197,00 por mês.
+- R$ 147,90 por mês.
 - 1 usuário.
 - Até 600 mensagens de serviço enviadas pela Alovia por mês.
 - Mensagens recebidas do cliente e reações não consomem a franquia.
