@@ -291,6 +291,21 @@ class BillingService:
         checkout.status = "active"
         return True
 
+    async def _reconcile_unknown_dynamic_pix_reference(
+        self,
+        checkout: BillingCheckout,
+    ) -> str:
+        if checkout.provider_payment_id:
+            return "dynamic"
+        if checkout.provider_pix_qr_code_id or checkout.provider_subscription_id:
+            return "legacy"
+        recovered = await self._recover_dynamic_pix_payment(checkout)
+        if recovered and (checkout.status == "paid" or checkout.paid_at is not None):
+            return "paid"
+        if checkout.provider_payment_id:
+            return "dynamic"
+        return "missing"
+
     async def _retire_dynamic_pix_payment(
         self,
         checkout: BillingCheckout,
@@ -388,6 +403,12 @@ class BillingService:
                 and expires_at <= datetime.now(UTC)
             ):
                 try:
+                    reference_kind = await self._reconcile_unknown_dynamic_pix_reference(
+                        checkout
+                    )
+                    if reference_kind == "paid":
+                        await self.db.commit()
+                        return self._checkout_response(checkout)
                     if checkout.provider_payment_id:
                         result = await self._retire_dynamic_pix_payment(
                             checkout,
@@ -466,6 +487,12 @@ class BillingService:
         if expires_at is not None and expires_at > datetime.now(UTC):
             return "active"
 
+        reference_kind = await self._reconcile_unknown_dynamic_pix_reference(
+            checkout
+        )
+        if reference_kind == "paid":
+            await self.db.commit()
+            return "paid"
         if checkout.provider_payment_id:
             result = await self._retire_dynamic_pix_payment(
                 checkout,
@@ -594,6 +621,12 @@ class BillingService:
                     and existing_pix_expiry <= datetime.now(UTC)
                 ):
                     try:
+                        reference_kind = await self._reconcile_unknown_dynamic_pix_reference(
+                            existing
+                        )
+                        if reference_kind == "paid":
+                            await self.db.commit()
+                            return self._checkout_response(existing)
                         if existing.provider_payment_id:
                             result = await self._retire_dynamic_pix_payment(
                                 existing,
@@ -720,6 +753,12 @@ class BillingService:
                 and common_pix_expiry <= datetime.now(UTC)
             ):
                 try:
+                    reference_kind = await self._reconcile_unknown_dynamic_pix_reference(
+                        blocking_checkout
+                    )
+                    if reference_kind == "paid":
+                        await self.db.commit()
+                        return self._checkout_response(blocking_checkout)
                     if blocking_checkout.provider_payment_id:
                         result = await self._retire_dynamic_pix_payment(
                             blocking_checkout,
