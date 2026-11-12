@@ -26,14 +26,16 @@ from app.core.config import (
 from app.main import app
 from app.repositories.automation import ConversationAutomationControl
 from app.repositories.cloud_tasks import StoredTaskEvent
-from app.schemas.cloud_tasks import WhatsAppEventTaskPayload
+from app.schemas.cloud_tasks import BillingPixExpiryTaskPayload, WhatsAppEventTaskPayload
 from app.tasks import auth as task_auth
 from app.tasks import cloud_tasks as cloud_tasks_module
 from app.tasks.auth import require_cloud_tasks_oidc, require_scheduled_job_oidc
 from app.tasks.cloud_tasks import (
+    CloudTasksBillingPixExpiryEnqueuer,
     CloudTasksEnqueueError,
     CloudTasksEventEnqueuer,
     close_cloud_tasks_client,
+    deterministic_billing_pix_expiry_task_id,
     deterministic_task_id,
 )
 from app.tasks.worker import process_cloud_task_event
@@ -132,6 +134,50 @@ async def test_enqueue_uses_deterministic_name_minimal_payload_and_oidc() -> Non
     assert task.http_request.oidc_token.service_account_email == INVOKER_EMAIL
     assert "provider-cloud-task" not in task.name
     assert task.schedule_time is not None
+
+
+@pytest.mark.asyncio
+async def test_billing_pix_expiry_task_uses_same_queue_oidc_and_delayed_internal_endpoint() -> None:
+    client = FakeCloudTasksClient()
+    checkout_id = uuid.uuid4()
+    enqueuer = CloudTasksBillingPixExpiryEnqueuer(
+        cloud_tasks_configuration(),
+        client=client,  # type: ignore[arg-type]
+    )
+
+    await enqueuer.enqueue(checkout_id, delay_seconds=900)
+
+    request = client.requests[0]
+    task = request.task
+    assert task.name.endswith(
+        f"/tasks/{deterministic_billing_pix_expiry_task_id(checkout_id)}"
+    )
+    assert json.loads(task.http_request.body) == {
+        "checkout_id": str(checkout_id)
+    }
+    assert task.http_request.url == (
+        "https://service.example.run.app/internal/tasks/billing-pix-expiry"
+    )
+    assert task.http_request.oidc_token.audience == (
+        "https://service.example.run.app"
+    )
+    assert task.http_request.oidc_token.service_account_email == INVOKER_EMAIL
+    assert task.schedule_time is not None
+
+
+def test_billing_pix_expiry_payload_forbids_extra_fields() -> None:
+    payload = BillingPixExpiryTaskPayload(
+        checkout_id=uuid.uuid4(),
+    )
+    assert payload.checkout_id
+
+    with pytest.raises(ValidationError):
+        BillingPixExpiryTaskPayload.model_validate(
+            {
+                "checkout_id": str(uuid.uuid4()),
+                "provider_payment_id": "pay_sensitive",
+            }
+        )
 
 
 @pytest.mark.asyncio
