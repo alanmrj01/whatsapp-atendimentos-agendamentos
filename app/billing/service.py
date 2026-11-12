@@ -125,7 +125,10 @@ class BillingService:
                     and_(
                         BillingCheckout.payment_method == "pix",
                         BillingCheckout.status == "expired",
-                        BillingCheckout.provider_subscription_id.is_not(None),
+                        or_(
+                            BillingCheckout.provider_payment_id.is_not(None),
+                            BillingCheckout.provider_subscription_id.is_not(None),
+                        ),
                     ),
                 ),
             )
