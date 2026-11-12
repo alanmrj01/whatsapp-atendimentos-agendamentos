@@ -1,0 +1,71 @@
+name: Conversation robustness - productivity
+
+on:
+  push:
+    branches:
+      - productivity-conversation-robustness
+    paths:
+      - 'app/conversations/**'
+      - 'tests/test_conversation_robustness.py'
+      - 'tests/test_conversation_interpreter.py'
+      - 'tests/test_conversation_engine.py'
+      - 'AGENTS.md'
+      - 'docs/conversation-robustness-testing.md'
+      - '.github/workflows/conversation-stress.yml'
+  pull_request:
+    branches:
+      - productivity-conversation-robustness
+    paths:
+      - 'app/conversations/**'
+      - 'tests/test_conversation_robustness.py'
+      - 'tests/test_conversation_interpreter.py'
+      - 'tests/test_conversation_engine.py'
+      - 'AGENTS.md'
+      - 'docs/conversation-robustness-testing.md'
+      - '.github/workflows/conversation-stress.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ENVIRONMENT: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Compile conversation code and tests
+        run: >-
+          python -m compileall
+          app/conversations
+          tests/test_conversation_robustness.py
+          tests/test_conversation_interpreter.py
+          tests/test_conversation_engine.py
+
+      - name: Robustness baseline
+        run: >-
+          pytest
+          tests/test_conversation_robustness.py
+          tests/test_conversation_interpreter.py
+          tests/test_conversation_engine.py
+          -q -p no:cacheprovider
+
+      - name: Dependency consistency
+        run: python -m pip check
+
+      - name: Diff hygiene
+        run: git diff --check
