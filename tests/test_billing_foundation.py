@@ -1359,6 +1359,55 @@ async def test_dynamic_pix_unresolved_timeout_blocks_second_financial_attempt(mo
 
 
 @pytest.mark.asyncio
+async def test_dynamic_pix_expiry_reconciles_late_provider_creation_before_retry(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+
+    class LateCreateGateway(_CheckoutGateway):
+        async def create_pix_payment(self, **kwargs):
+            self.common_pix_creates += 1
+            self.last_kwargs = kwargs
+            raise AsaasGatewayTimeoutError("timeout")
+
+    db = _CheckoutCreateDb()
+    gateway = LateCreateGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    with pytest.raises(HTTPException):
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=uuid4(),
+            payload=_checkout_request("pix"),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+
+    checkout = db.checkouts[0]
+    payment_id = "pay_late_test"
+    gateway.payments[payment_id] = {
+        "id": payment_id,
+        "billingType": "PIX",
+        "status": "PENDING",
+        "value": 5.0,
+        "externalReference": f"alovia:{checkout.id}",
+        "customer": "cus_test",
+    }
+    checkout.created_at = datetime.now(UTC) - timedelta(minutes=20)
+    checkout.expires_at = datetime.now(UTC) - timedelta(minutes=5)
+    checkout.pix_qr_expires_at = checkout.expires_at
+
+    result = await service.expire_common_pix_checkout(
+        checkout_id=checkout.id,
+    )
+
+    assert result == "expired"
+    assert checkout.provider_payment_id == payment_id
+    assert gateway.payments[payment_id]["status"] == "DELETED"
+    assert gateway.common_pix_cancels == 1
+
+
+@pytest.mark.asyncio
 async def test_dynamic_pix_expiry_deletes_pending_payment_before_allowing_new_one(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
