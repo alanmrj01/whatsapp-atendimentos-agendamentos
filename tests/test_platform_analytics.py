@@ -4,12 +4,14 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from app.analytics.meta_ads import MetaAdInsight, MetaAdsReport
+from app.core.config import Settings
 from app.platform_admin.analytics import (
     ActiveSubscriptionRow,
     AnalyticsEventRow,
     LeadContactRow,
     PaidCheckoutRow,
     RefundRow,
+    _effective_period_start,
     build_platform_analytics_summary,
 )
 
@@ -387,3 +389,24 @@ def test_lead_recovery_puts_requested_refund_above_other_opportunities() -> None
     assert summary.lead_recovery[0].stage_key == "refund_requested"
     assert summary.lead_recovery[0].stage_label == "Reembolso solicitado"
     assert summary.lead_recovery[0].needs_follow_up is True
+
+
+
+def test_platform_analytics_start_at_never_expands_requested_window() -> None:
+    configured = NOW - timedelta(days=2)
+    settings = Settings(
+        ENVIRONMENT="production",
+        PLATFORM_ANALYTICS_START_AT=configured.isoformat(),
+    )
+
+    assert _effective_period_start(settings, now=NOW, days=7) == configured
+    assert _effective_period_start(settings, now=NOW, days=1) == NOW - timedelta(days=1)
+
+
+def test_platform_analytics_start_at_ignores_naive_timestamp() -> None:
+    settings = Settings(
+        ENVIRONMENT="production",
+        PLATFORM_ANALYTICS_START_AT="2026-11-11T15:00:00",
+    )
+
+    assert _effective_period_start(settings, now=NOW, days=7) == NOW - timedelta(days=7)

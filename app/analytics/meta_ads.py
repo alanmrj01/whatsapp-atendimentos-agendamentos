@@ -93,6 +93,7 @@ async def fetch_meta_ads_report(
                 "impressions",
                 "reach",
                 "spend",
+                "account_currency",
                 "inline_link_clicks",
                 "inline_link_click_ctr",
                 "cost_per_inline_link_click",
@@ -149,6 +150,14 @@ async def fetch_meta_ads_report(
         campaign_name = str(row.get("campaign_name") or "").strip()
         if not campaign_name.casefold().startswith(prefix):
             continue
+        account_currency = str(row.get("account_currency") or "").strip().upper()
+        if account_currency != "BRL":
+            logger.warning("meta_ads_currency_not_brl")
+            return MetaAdsReport(
+                status="awaiting_integration",
+                note="A conta de anúncios precisa reportar os insights em BRL.",
+                ads=[],
+            )
         ad_id = str(row.get("ad_id") or "").strip()
         if not ad_id:
             continue
