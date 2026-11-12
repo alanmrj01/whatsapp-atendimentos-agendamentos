@@ -469,7 +469,7 @@ def _lead_recovery(
                 stage_label=stage_label,
                 purchased=purchased,
                 activated=activated,
-                needs_follow_up=(not purchased) or refunded,
+                needs_follow_up=(not purchased) or refund_requested or refunded,
                 angle=acquisition.get("angle"),
                 quiz_profile=acquisition.get("quiz_profile"),
                 ad_id=acquisition.get("ad_id"),
