@@ -210,6 +210,7 @@ class PlatformAnalyticsLeadRecoveryItem(BaseModel):
         "payment_failed",
         "purchase",
         "activated",
+        "refund_requested",
         "refunded",
     ]
     stage_label: str
