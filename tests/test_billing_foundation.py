@@ -446,6 +446,7 @@ async def test_dynamic_pix_gateway_creates_fetches_and_deletes_same_payment() ->
     )
 
 
+@pytest.mark.asyncio
 async def test_pix_gateway_reads_top_level_payload_from_asaas_response() -> None:
     gateway = AsaasGateway(
         settings(
@@ -498,6 +499,34 @@ class _BillingStateDb:
     async def scalar(self, statement):
         sql = str(statement)
         if "FROM billing_checkouts" in sql:
+            params = statement.compile().params
+            payment_method = next(
+                (
+                    value
+                    for name, value in params.items()
+                    if name.startswith("payment_method_")
+                ),
+                None,
+            )
+            if (
+                payment_method is not None
+                and self.checkout.payment_method != payment_method
+            ):
+                return None
+            provider_payment_id = next(
+                (
+                    value
+                    for name, value in params.items()
+                    if name.startswith("provider_payment_id_")
+                ),
+                None,
+            )
+            if (
+                provider_payment_id is not None
+                and getattr(self.checkout, "provider_payment_id", None)
+                != provider_payment_id
+            ):
+                return None
             return self.checkout
         if "FROM commercial_subscriptions" in sql:
             if self.subscription is None:
@@ -1632,6 +1661,7 @@ async def test_common_pix_with_stale_catalog_price_is_replaced_on_new_attempt(
         allowed_origins=("https://alovia.netlify.app",),
     )
     db.checkouts[0].amount_cents = 19_700
+    gateway.payments["pay_test_1"]["value"] = 197.0
 
     replacement = await service.create_checkout(
         business_id=business_id,
@@ -1669,6 +1699,7 @@ async def test_same_idempotency_key_never_reuses_pix_with_stale_catalog_price(
         allowed_origins=("https://alovia.netlify.app",),
     )
     db.checkouts[0].amount_cents = 19_700
+    gateway.payments["pay_test_1"]["value"] = 197.0
 
     with pytest.raises(HTTPException) as stale:
         await service.create_checkout(
