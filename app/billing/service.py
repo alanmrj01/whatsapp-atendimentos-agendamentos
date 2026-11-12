@@ -1987,7 +1987,12 @@ class BillingService:
         self, checkout: BillingCheckout
     ) -> str | None:
         try:
-            if checkout.payment_method == "pix" and checkout.provider_pix_qr_code_id:
+            if checkout.payment_method == "pix" and checkout.provider_payment_id:
+                payment = await self.gateway.payment_details(
+                    checkout.provider_payment_id
+                )
+                payments = [payment]
+            elif checkout.payment_method == "pix" and checkout.provider_pix_qr_code_id:
                 payments = await self.gateway.payments_for_static_pix(
                     checkout.provider_pix_qr_code_id
                 )
@@ -2096,7 +2101,11 @@ class BillingService:
         if (
             checkout.payment_method != "pix"
             or checkout.status != "paid"
-            or not (checkout.provider_pix_qr_code_id or checkout.provider_subscription_id)
+            or not (
+                checkout.provider_payment_id
+                or checkout.provider_pix_qr_code_id
+                or checkout.provider_subscription_id
+            )
         ):
             return None
 
@@ -2127,6 +2136,7 @@ class BillingService:
                 status="active",
                 provider_subscription_id=checkout.provider_subscription_id,
                 provider_pix_qr_code_id=checkout.provider_pix_qr_code_id,
+                provider_payment_id=checkout.provider_payment_id,
                 provider_customer_id=checkout.provider_customer_id,
                 access_until=access_until,
             )
@@ -2135,6 +2145,7 @@ class BillingService:
             subscription.status = "active"
             subscription.provider_subscription_id = checkout.provider_subscription_id
             subscription.provider_pix_qr_code_id = checkout.provider_pix_qr_code_id
+            subscription.provider_payment_id = checkout.provider_payment_id
             subscription.provider_customer_id = checkout.provider_customer_id
             subscription.access_until = max(subscription.access_until, access_until)
 
@@ -2469,10 +2480,27 @@ class BillingService:
         if event_type not in {"PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"}:
             return None
 
+        provider_payment_id = payload.get("id")
         pix_qr_code_id = payload.get("pixQrCodeId")
         provider_subscription_id = payload.get("subscription")
         checkout = None
-        if isinstance(pix_qr_code_id, str) and 0 < len(pix_qr_code_id) <= 100:
+        if (
+            isinstance(provider_payment_id, str)
+            and provider_payment_id.startswith("pay_")
+            and len(provider_payment_id) <= 100
+        ):
+            checkout = await self.db.scalar(
+                select(BillingCheckout).where(
+                    BillingCheckout.provider_payment_id == provider_payment_id,
+                    BillingCheckout.payment_method == "pix",
+                    BillingCheckout.provider_environment == self.provider_environment,
+                )
+            )
+        if (
+            checkout is None
+            and isinstance(pix_qr_code_id, str)
+            and 0 < len(pix_qr_code_id) <= 100
+        ):
             checkout = await self.db.scalar(
                 select(BillingCheckout).where(
                     BillingCheckout.provider_pix_qr_code_id == pix_qr_code_id,
@@ -2481,7 +2509,8 @@ class BillingService:
                 )
             )
         elif (
-            isinstance(provider_subscription_id, str)
+            checkout is None
+            and isinstance(provider_subscription_id, str)
             and 0 < len(provider_subscription_id) <= 80
         ):
             # Compatibility with legacy common-Pix subscriptions during rollout.
