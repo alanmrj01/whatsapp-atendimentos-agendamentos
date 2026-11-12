@@ -109,7 +109,7 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="commercial_subscription_status_allowed",
         ),
         CheckConstraint(
-            "provider_subscription_id IS NOT NULL OR provider_authorization_id IS NOT NULL OR provider_pix_qr_code_id IS NOT NULL OR provider_payment_id IS NOT NULL",
+            "provider_subscription_id IS NOT NULL OR provider_authorization_id IS NOT NULL OR provider_pix_qr_code_id IS NOT NULL",
             name="commercial_subscription_provider_reference_required",
         ),
         CheckConstraint(
@@ -120,12 +120,6 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_commercial_subscriptions_provider_subscription_id", "provider_subscription_id", unique=True),
         Index("ix_commercial_subscriptions_provider_authorization_id", "provider_authorization_id", unique=True),
         Index("ix_commercial_subscriptions_provider_pix_qr_code_id", "provider_pix_qr_code_id", unique=True),
-        Index(
-            "uq_commercial_subscriptions_env_provider_payment_id",
-            "provider_environment",
-            "provider_payment_id",
-            unique=True,
-        ),
     )
 
     business_id: Mapped[uuid.UUID] = mapped_column(
@@ -144,7 +138,6 @@ class CommercialSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     provider_subscription_id: Mapped[str | None] = mapped_column(String(80))
     provider_authorization_id: Mapped[str | None] = mapped_column(String(100))
     provider_pix_qr_code_id: Mapped[str | None] = mapped_column(String(100))
-    provider_payment_id: Mapped[str | None] = mapped_column(String(100))
     provider_customer_id: Mapped[str | None] = mapped_column(String(80))
     access_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
