@@ -349,7 +349,7 @@ def test_lead_recovery_puts_requested_refund_above_other_opportunities() -> None
     )
     summary = build_platform_analytics_summary(
         events=[],
-        paid_checkouts=[requested_refund],
+        paid_checkouts=[],
         refunds=[],
         active_subscriptions=[],
         acquisition_by_business={},
@@ -378,8 +378,11 @@ def test_lead_recovery_puts_requested_refund_above_other_opportunities() -> None
             ),
         ],
         connection_at_by_business={},
+        lead_recovery_checkouts=[requested_refund],
     )
 
+    assert next(item for item in summary.funnel if item.key == "subscriptions").value == 0
+    assert metric(summary, "revenue_received").value == 0.0
     assert summary.lead_recovery[0].business_id == BUSINESS
     assert summary.lead_recovery[0].stage_key == "refund_requested"
     assert summary.lead_recovery[0].stage_label == "Reembolso solicitado"
