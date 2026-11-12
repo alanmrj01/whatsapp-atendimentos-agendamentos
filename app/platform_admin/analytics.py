@@ -136,6 +136,19 @@ def _local_day(value: datetime) -> date:
     return value.astimezone(ANALYTICS_TZ).date()
 
 
+def _effective_period_start(
+    settings: Settings,
+    *,
+    now: datetime,
+    days: int,
+) -> datetime:
+    requested_start = now - timedelta(days=days)
+    configured_start = settings.platform_analytics_start_at_utc()
+    if configured_start is None:
+        return requested_start
+    return max(requested_start, configured_start)
+
+
 def _ratio(current: int | float | None, previous: int | float | None) -> float | None:
     if current is None or previous is None or previous <= 0:
         return None
@@ -613,11 +626,12 @@ def build_platform_analytics_summary(
     meta_report: MetaAdsReport,
     now: datetime,
     days: int,
+    period_start: datetime | None = None,
     lead_contacts: list[LeadContactRow] | None = None,
     connection_at_by_business: dict[UUID, datetime] | None = None,
     lead_recovery_checkouts: list[PaidCheckoutRow] | None = None,
 ) -> PlatformAnalyticsSummaryResponse:
-    period_start = now - timedelta(days=days)
+    period_start = period_start or (now - timedelta(days=days))
     lead_contacts = lead_contacts or []
     connection_at_by_business = connection_at_by_business or {}
     lead_recovery_checkouts = lead_recovery_checkouts or paid_checkouts
@@ -1175,7 +1189,11 @@ class PlatformAnalyticsService:
 
     async def summary(self, days: int) -> PlatformAnalyticsSummaryResponse:
         now = datetime.now(UTC)
-        period_start = now - timedelta(days=days)
+        period_start = _effective_period_start(
+            self.settings,
+            now=now,
+            days=days,
+        )
         provider_environment = billing_provider_environment()
 
         event_rows = await self.db.execute(
@@ -1280,6 +1298,10 @@ class PlatformAnalyticsService:
                 CommercialSubscription.refund_status.in_(
                     ("requested", "reconcile_required", "refunded")
                 ),
+                or_(
+                    CommercialSubscription.refund_requested_at >= period_start,
+                    CommercialSubscription.refunded_at >= period_start,
+                ),
             )
         )
         recovery_by_checkout = {checkout.checkout_id: checkout for checkout in paid_checkouts}
@@ -1328,6 +1350,7 @@ class PlatformAnalyticsService:
                 CommercialSubscription.refund_status == "refunded",
                 CommercialSubscription.refunded_at.is_not(None),
                 CommercialSubscription.refunded_at >= period_start,
+                BillingCheckout.paid_at >= period_start,
             )
         )
         refunds = [
@@ -1358,6 +1381,8 @@ class PlatformAnalyticsService:
                 CommercialSubscription.status == "active",
                 CommercialSubscription.refund_status != "refunded",
                 CommercialSubscription.access_until > now,
+                BillingCheckout.paid_at.is_not(None),
+                BillingCheckout.paid_at >= period_start,
             )
         )
         active_subscriptions = [
@@ -1469,6 +1494,7 @@ class PlatformAnalyticsService:
                 .where(
                     MarketingFunnelEvent.business_id.in_(missing_business_ids),
                     MarketingFunnelEvent.event_name == "signup_completed",
+                    MarketingFunnelEvent.occurred_at >= period_start,
                 )
                 .order_by(MarketingFunnelEvent.occurred_at.asc())
             )
@@ -1495,6 +1521,7 @@ class PlatformAnalyticsService:
             meta_report=meta_report,
             now=now,
             days=days,
+            period_start=period_start,
             lead_contacts=lead_contacts,
             connection_at_by_business=connection_at_by_business,
             lead_recovery_checkouts=lead_recovery_checkouts,
