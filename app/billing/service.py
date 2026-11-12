@@ -39,6 +39,7 @@ from app.billing.schemas import (
 from app.models import BillingCheckout, Business, BusinessAccess, CommercialSubscription, WebPushEvent
 from app.models.billing import billing_provider_environment
 from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
+from app.tasks.cloud_tasks import BillingPixExpiryTaskEnqueuer, CloudTasksEnqueueError
 from app.whatsapp.connections import WhatsAppConnectionStatus
 
 
@@ -48,9 +49,16 @@ logger = logging.getLogger(__name__)
 
 
 class BillingService:
-    def __init__(self, db: AsyncSession, gateway: AsaasGateway) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        gateway: AsaasGateway,
+        *,
+        pix_expiry_enqueuer: BillingPixExpiryTaskEnqueuer | None = None,
+    ) -> None:
         self.db = db
         self.gateway = gateway
+        self.pix_expiry_enqueuer = pix_expiry_enqueuer
         self.provider_environment = billing_provider_environment()
 
     async def _lock_business_checkout(self, business_id: UUID) -> None:
@@ -178,6 +186,163 @@ class BillingService:
             and expires_at is not None
             and expires_at > datetime.now(UTC)
         )
+
+    @staticmethod
+    def _recoverable_dynamic_pix_checkout(checkout: BillingCheckout) -> bool:
+        return bool(
+            checkout.status in {"creating", "active"}
+            and checkout.paid_at is None
+            and checkout.provider_payment_id
+            and checkout.expires_at is not None
+            and checkout.expires_at > datetime.now(UTC)
+        )
+
+    @staticmethod
+    def _provider_payment_matches_checkout(
+        checkout: BillingCheckout,
+        payment: dict,
+    ) -> bool:
+        payment_id = payment.get("id")
+        if (
+            not isinstance(payment_id, str)
+            or not payment_id.startswith("pay_")
+            or len(payment_id) > 100
+        ):
+            return False
+        if payment.get("billingType") not in {None, "PIX"}:
+            return False
+        if _payment_value_cents(payment.get("value")) != checkout.amount_cents:
+            return False
+        external_reference = payment.get("externalReference")
+        if external_reference != f"alovia:{checkout.id}":
+            return False
+        customer_id = payment.get("customer")
+        if (
+            checkout.provider_customer_id is not None
+            and customer_id != checkout.provider_customer_id
+        ):
+            return False
+        return True
+
+    async def _refresh_dynamic_pix_qr(self, checkout: BillingCheckout) -> None:
+        payment_id = checkout.provider_payment_id
+        if not payment_id:
+            raise AsaasGatewayError("Dynamic Pix payment is unavailable")
+        qr = await self.gateway.pix_qr_code(payment_id)
+        checkout.pix_qr_payload = qr.payload
+        # The provider QR remains valid for much longer. Alovia's 15-minute
+        # deadline is intentionally authoritative for this checkout.
+        checkout.pix_qr_expires_at = checkout.expires_at
+
+    async def _recover_dynamic_pix_payment(
+        self,
+        checkout: BillingCheckout,
+    ) -> bool:
+        payment: dict | None = None
+        if checkout.provider_payment_id:
+            payment = await self.gateway.payment_details(
+                checkout.provider_payment_id
+            )
+            if not self._provider_payment_matches_checkout(checkout, payment):
+                return False
+        else:
+            payments = await self.gateway.payments_for_external_reference(
+                f"alovia:{checkout.id}"
+            )
+            matches = [
+                row
+                for row in payments
+                if self._provider_payment_matches_checkout(checkout, row)
+            ]
+            if len(matches) != 1:
+                if len(matches) > 1:
+                    logger.error(
+                        "asaas_dynamic_pix_duplicate_payments",
+                        extra={"provider_environment": self.provider_environment},
+                    )
+                return False
+            payment = matches[0]
+            checkout.provider_payment_id = payment["id"]
+
+        status = payment.get("status") if payment is not None else None
+        if status in {"CONFIRMED", "RECEIVED"}:
+            event_type = (
+                "PAYMENT_RECEIVED" if status == "RECEIVED" else "PAYMENT_CONFIRMED"
+            )
+            captured = await self._capture_common_pix_payment(
+                event_type,
+                payment,
+            )
+            if captured is not None:
+                await self._activate_common_pix_subscription_if_ready(captured)
+            return True
+        if status in {"REFUNDED", "DELETED"}:
+            checkout.status = "canceled"
+            return False
+        if (
+            checkout.expires_at is None
+            or checkout.expires_at <= datetime.now(UTC)
+        ):
+            return False
+        await self._refresh_dynamic_pix_qr(checkout)
+        checkout.status = "active"
+        return True
+
+    async def _retire_dynamic_pix_payment(
+        self,
+        checkout: BillingCheckout,
+        *,
+        terminal_status: str,
+    ) -> str:
+        payment_id = checkout.provider_payment_id
+        if not payment_id:
+            checkout.status = terminal_status
+            checkout.pix_qr_payload = None
+            return terminal_status
+        payment = await self.gateway.payment_details(payment_id)
+        if not self._provider_payment_matches_checkout(checkout, payment):
+            raise AsaasGatewayError("Dynamic Pix payment does not match checkout")
+        status = payment.get("status")
+        if status in {"CONFIRMED", "RECEIVED"}:
+            event_type = (
+                "PAYMENT_RECEIVED" if status == "RECEIVED" else "PAYMENT_CONFIRMED"
+            )
+            captured = await self._capture_common_pix_payment(
+                event_type,
+                payment,
+            )
+            if captured is not None:
+                await self._activate_common_pix_subscription_if_ready(captured)
+            return "paid"
+        await self.gateway.delete_payment(payment_id)
+        checkout.status = terminal_status
+        checkout.pix_qr_payload = None
+        checkout.pix_qr_expires_at = None
+        return terminal_status
+
+    async def _schedule_common_pix_expiry(
+        self,
+        checkout: BillingCheckout,
+    ) -> None:
+        if self.pix_expiry_enqueuer is None or checkout.expires_at is None:
+            return
+        delay_seconds = max(
+            0.0,
+            (checkout.expires_at - datetime.now(UTC)).total_seconds(),
+        )
+        try:
+            await self.pix_expiry_enqueuer.enqueue(
+                checkout.id,
+                delay_seconds=delay_seconds,
+            )
+        except CloudTasksEnqueueError:
+            # Synchronous checkout validation remains authoritative. A task
+            # scheduling outage must not create a second payment or break the
+            # already-created Pix.
+            logger.warning(
+                "billing_pix_expiry_task_enqueue_failed",
+                extra={"provider_environment": self.provider_environment},
+            )
 
     async def recover_active_checkout(
         self,
