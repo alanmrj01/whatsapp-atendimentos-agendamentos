@@ -124,6 +124,7 @@ async def message_usage_snapshot(
                 Message.direction == "outbound",
                 Message.status.in_(_COUNTED_STATUSES),
                 Message.message_type != "reaction",
+                # Assistant-generated outbound messages carry an idempotency key.\n                # Manual business messages must not consume the virtual assistant quota.\n                Message.idempotency_key.is_not(None),
                 Message.sent_at.is_not(None),
                 Message.sent_at >= period_start,
                 Message.sent_at < resets_at,
