@@ -1408,20 +1408,27 @@ class BillingService:
         ):
             raise HTTPException(404, "Checkout not found")
         if (
-            checkout.status == "active"
+            checkout.status in {"creating", "active"}
             and checkout.expires_at is not None
             and checkout.expires_at <= datetime.now(UTC)
             and checkout.paid_at is None
-            and (
-                checkout.payment_method == "credit_card"
-                or (
-                    checkout.payment_method == "pix"
-                    and checkout.provider_pix_qr_code_id is not None
-                )
-            )
         ):
-            checkout.status = "expired"
-            await self.db.commit()
+            if checkout.payment_method == "pix":
+                try:
+                    await self.expire_common_pix_checkout(
+                        checkout_id=checkout.id
+                    )
+                except AsaasGatewayError:
+                    await self.db.rollback()
+                    raise HTTPException(
+                        502, "Pix expiration is being reconciled"
+                    ) from None
+                checkout = await self.db.get(BillingCheckout, checkout.id)
+                if checkout is None:
+                    raise HTTPException(404, "Checkout not found")
+            elif checkout.payment_method == "credit_card":
+                checkout.status = "expired"
+                await self.db.commit()
         return self._checkout_status_response(checkout)
 
     async def cancel_checkout(
@@ -1452,6 +1459,14 @@ class BillingService:
                 await self.gateway.cancel_pix_authorization(
                     checkout.provider_authorization_id
                 )
+            elif checkout.payment_method == "pix" and checkout.provider_payment_id:
+                result = await self._retire_dynamic_pix_payment(
+                    checkout,
+                    terminal_status="canceled",
+                )
+                await self.db.commit()
+                if result == "paid":
+                    return self._checkout_status_response(checkout)
             elif checkout.payment_method == "pix" and checkout.provider_pix_qr_code_id:
                 await self.gateway.delete_static_pix_qr_code(
                     checkout.provider_pix_qr_code_id
@@ -1466,6 +1481,8 @@ class BillingService:
                 502, "Pix cancellation is temporarily unavailable"
             ) from None
         checkout.status = "canceled"
+        checkout.pix_qr_payload = None
+        checkout.pix_qr_expires_at = None
         await self.db.commit()
         return self._checkout_status_response(checkout)
 
