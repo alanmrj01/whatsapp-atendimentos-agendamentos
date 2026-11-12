@@ -147,6 +147,54 @@ class BillingService:
             and checkout.expires_at > datetime.now(UTC)
         )
 
+    @staticmethod
+    def _recoverable_static_pix_checkout(checkout: BillingCheckout) -> bool:
+        expires_at = checkout.pix_qr_expires_at or checkout.expires_at
+        return bool(
+            checkout.status in {"creating", "active"}
+            and checkout.paid_at is None
+            and checkout.provider_pix_qr_code_id
+            and checkout.pix_qr_payload
+            and expires_at is not None
+            and expires_at > datetime.now(UTC)
+        )
+
+    async def recover_active_checkout(
+        self,
+        *,
+        business_id: UUID,
+        plan: str,
+        cycle: str,
+        payment_method: str,
+    ) -> CheckoutCreateResponse:
+        if payment_method not in {"pix", "pix_automatic"}:
+            raise HTTPException(404, "No recoverable Pix checkout")
+        if not plan_is_enabled(plan):
+            raise HTTPException(404, "No recoverable Pix checkout")
+        try:
+            offer = get_offer(plan, cycle)  # type: ignore[arg-type]
+        except BillingCatalogConfigurationError:
+            raise HTTPException(503, "Billing configuration is unavailable") from None
+
+        checkout = await self._blocking_checkout_for_business(business_id)
+        if (
+            checkout is None
+            or checkout.payment_method != payment_method
+            or checkout.plan_code != offer.plan
+            or checkout.billing_cycle != offer.cycle
+            or checkout.amount_cents != offer.amount_cents
+        ):
+            raise HTTPException(404, "No recoverable Pix checkout")
+
+        recoverable = (
+            self._recoverable_static_pix_checkout(checkout)
+            if payment_method == "pix"
+            else self._reusable_pix_checkout(checkout)
+        )
+        if not recoverable:
+            raise HTTPException(404, "No recoverable Pix checkout")
+        return self._checkout_response(checkout)
+
     async def create_checkout(
         self,
         *,
@@ -305,6 +353,15 @@ class BillingService:
                 ):
                     blocking_checkout.status = "expired"
                     blocking_checkout = None
+                elif (
+                    payload.payment_method == "pix"
+                    and blocking_checkout.plan_code == offer.plan
+                    and blocking_checkout.billing_cycle == offer.cycle
+                    and blocking_checkout.amount_cents == offer.amount_cents
+                    and self._recoverable_static_pix_checkout(blocking_checkout)
+                ):
+                    await self.db.commit()
+                    return self._checkout_response(blocking_checkout)
                 else:
                     await self.db.rollback()
                     raise HTTPException(
