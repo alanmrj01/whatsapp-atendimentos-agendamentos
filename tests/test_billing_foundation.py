@@ -20,6 +20,7 @@ from app.billing.schemas import (
     CreditCardCheckoutRequest,
 )
 from app.billing.service import BillingService, _cycle_end, _payment_value_cents
+from app.billing.usage import message_usage_snapshot
 from app.billing.webhooks import BillingWebhookService, SUPPORTED_EVENTS
 from app.core.config import AsaasConfigurationError, Environment, Settings
 from app.models import BillingCheckout, BillingWebhookEvent, BusinessAccess, CommercialSubscription, WebPushEvent
@@ -3124,3 +3125,51 @@ async def test_common_pix_upgrade_waits_for_renewal(monkeypatch) -> None:
     assert error.value.detail == "Upgrade is available at renewal for this payment method"
     assert gateway.updates == []
     assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_message_usage_counts_only_conversation_engine_outbounds(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "production")
+    business_id = uuid4()
+    subscription = CommercialSubscription(
+        id=uuid4(),
+        business_id=business_id,
+        checkout_id=uuid4(),
+        plan_code="basic",
+        billing_cycle="monthly",
+        payment_method="pix",
+        provider_environment="production",
+        status="active",
+        provider_subscription_id=None,
+        provider_authorization_id=None,
+        provider_pix_qr_code_id="pix_usage_test",
+        provider_customer_id=None,
+        access_until=datetime.now(UTC) + timedelta(days=30),
+        canceled_at=None,
+        cancellation_requested_at=None,
+        refund_status="none",
+        refund_requested_at=None,
+        refunded_at=None,
+    )
+
+    class Db:
+        async def get(self, model, identifier):
+            assert model is BusinessAccess
+            assert identifier == business_id
+            return SimpleNamespace(admin_full_access=False)
+
+        async def scalar(self, statement):
+            compiled = str(
+                statement.compile(compile_kwargs={"literal_binds": True})
+            )
+            if "commercial_subscriptions" in compiled:
+                return subscription
+            assert "count(messages.id)" in compiled
+            assert "messages.idempotency_key LIKE 'conversation:outbound:%'" in compiled
+            assert "manual:outbound" not in compiled
+            return 0
+
+    snapshot = await message_usage_snapshot(Db(), business_id)
+    assert snapshot.used == 0
+    assert snapshot.limit == 600
+    assert snapshot.quota_applies is True
