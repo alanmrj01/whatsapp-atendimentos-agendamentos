@@ -26,20 +26,23 @@ def upgrade() -> None:
         ["provider_environment", "provider_payment_id"],
         unique=True,
     )
-    op.drop_constraint(
-        "commercial_subscription_provider_reference_required",
-        "commercial_subscriptions",
-        type_="check",
+    op.execute(
+        """
+        ALTER TABLE commercial_subscriptions
+            DROP CONSTRAINT IF EXISTS commercial_subscription_provider_reference_required
+        """
     )
-    op.create_check_constraint(
-        "commercial_subscription_provider_reference_required",
-        "commercial_subscriptions",
-        (
-            "provider_subscription_id IS NOT NULL OR "
-            "provider_authorization_id IS NOT NULL OR "
-            "provider_pix_qr_code_id IS NOT NULL OR "
-            "provider_payment_id IS NOT NULL"
-        ),
+    op.execute(
+        """
+        ALTER TABLE commercial_subscriptions
+            ADD CONSTRAINT commercial_subscription_provider_reference_required
+            CHECK (
+                provider_subscription_id IS NOT NULL
+                OR provider_authorization_id IS NOT NULL
+                OR provider_pix_qr_code_id IS NOT NULL
+                OR provider_payment_id IS NOT NULL
+            )
+        """
     )
 
 
@@ -60,19 +63,22 @@ def downgrade() -> None:
             "Cannot drop provider_payment_id while dynamic Pix subscriptions exist"
         )
 
-    op.drop_constraint(
-        "commercial_subscription_provider_reference_required",
-        "commercial_subscriptions",
-        type_="check",
+    op.execute(
+        """
+        ALTER TABLE commercial_subscriptions
+            DROP CONSTRAINT IF EXISTS commercial_subscription_provider_reference_required
+        """
     )
-    op.create_check_constraint(
-        "commercial_subscription_provider_reference_required",
-        "commercial_subscriptions",
-        (
-            "provider_subscription_id IS NOT NULL OR "
-            "provider_authorization_id IS NOT NULL OR "
-            "provider_pix_qr_code_id IS NOT NULL"
-        ),
+    op.execute(
+        """
+        ALTER TABLE commercial_subscriptions
+            ADD CONSTRAINT commercial_subscription_provider_reference_required
+            CHECK (
+                provider_subscription_id IS NOT NULL
+                OR provider_authorization_id IS NOT NULL
+                OR provider_pix_qr_code_id IS NOT NULL
+            )
+        """
     )
     op.drop_index(
         "uq_commercial_subscriptions_env_provider_payment_id",
