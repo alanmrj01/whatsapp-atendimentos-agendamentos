@@ -203,6 +203,12 @@ class BillingService:
         if payment_method == "pix":
             expires_at = self._common_pix_effective_expiry(checkout)
             if (
+                checkout.pix_qr_expires_at is None
+                and checkout.expires_at is None
+                and expires_at is not None
+            ):
+                checkout.expires_at = expires_at
+            if (
                 checkout.paid_at is None
                 and expires_at is not None
                 and expires_at <= datetime.now(UTC)
@@ -211,6 +217,8 @@ class BillingService:
                 await self.db.commit()
                 raise HTTPException(404, "No recoverable Pix checkout")
             recoverable = self._recoverable_static_pix_checkout(checkout)
+            if recoverable and checkout.expires_at == expires_at:
+                await self.db.commit()
         else:
             recoverable = self._reusable_pix_checkout(checkout)
         if not recoverable:
@@ -374,6 +382,12 @@ class BillingService:
             and blocking_checkout.paid_at is None
         ):
             common_pix_expiry = self._common_pix_effective_expiry(blocking_checkout)
+            if (
+                blocking_checkout.pix_qr_expires_at is None
+                and blocking_checkout.expires_at is None
+                and common_pix_expiry is not None
+            ):
+                blocking_checkout.expires_at = common_pix_expiry
             if (
                 common_pix_expiry is not None
                 and common_pix_expiry <= datetime.now(UTC)
