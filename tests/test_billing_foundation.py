@@ -384,6 +384,68 @@ async def test_static_pix_gateway_enforces_15_minutes_and_single_payment() -> No
 
 
 @pytest.mark.asyncio
+async def test_dynamic_pix_gateway_creates_fetches_and_deletes_same_payment() -> None:
+    gateway = AsaasGateway(
+        settings(
+            ASAAS_API_KEY=SecretStr("$aact_hmlg_example")
+        ).require_asaas_configuration()
+    )
+    calls = []
+
+    async def fake_json_request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        if method == "POST" and path == "/payments":
+            return {"id": "pay_dynamic_gateway_test"}
+        if method == "GET" and path == "/payments/pay_dynamic_gateway_test/pixQrCode":
+            return {
+                "payload": "000201-dynamic-pix",
+                "expirationDate": "2026-11-13 12:00:00",
+            }
+        if method == "DELETE" and path == "/payments/pay_dynamic_gateway_test":
+            return {}
+        raise AssertionError((method, path, kwargs))
+
+    gateway._json_request = fake_json_request  # type: ignore[method-assign]
+
+    payment_id = await gateway.create_pix_payment(
+        customer_id="cus_dynamic_test",
+        value=5.0,
+        due_date="2026-11-12",
+        description="ALOVIA Basic",
+        external_reference="alovia:00000000-0000-0000-0000-000000000001",
+    )
+    qr = await gateway.pix_qr_code(payment_id)
+    await gateway.delete_payment(payment_id)
+
+    assert payment_id == "pay_dynamic_gateway_test"
+    assert qr.payload == "000201-dynamic-pix"
+    assert qr.expires_at is not None
+    assert calls[0] == (
+        "POST",
+        "/payments",
+        {
+            "json": {
+                "customer": "cus_dynamic_test",
+                "billingType": "PIX",
+                "value": 5.0,
+                "dueDate": "2026-11-12",
+                "description": "ALOVIA Basic",
+                "externalReference": "alovia:00000000-0000-0000-0000-000000000001",
+            },
+            "timeout_seconds": 20.0,
+        },
+    )
+    assert calls[1][0:2] == (
+        "GET",
+        "/payments/pay_dynamic_gateway_test/pixQrCode",
+    )
+    assert calls[2] == (
+        "DELETE",
+        "/payments/pay_dynamic_gateway_test",
+        {"allow_empty_response": True, "allow_not_found": True},
+    )
+
+
 async def test_pix_gateway_reads_top_level_payload_from_asaas_response() -> None:
     gateway = AsaasGateway(
         settings(
