@@ -573,6 +573,8 @@ def test_meta_capi_purchase_is_authoritative_and_uses_exact_checkout_value() -> 
     assert event is not None
     assert event.event_name == "Purchase"
     assert event.event_id == str(checkout.id)
+    assert event.custom_data is not None
+    assert event.custom_data["order_id"] == event.event_id
     assert event.custom_data == {
         "currency": "BRL",
         "value": 197.0,
