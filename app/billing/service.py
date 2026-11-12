@@ -189,6 +189,44 @@ class BillingService:
                 await self.db.rollback()
                 raise HTTPException(409, "Idempotency key already used")
             if (
+                existing.amount_cents != offer.amount_cents
+                and existing.paid_at is None
+                and existing.payment_method in {"pix", "pix_automatic"}
+            ):
+                try:
+                    if (
+                        existing.payment_method == "pix_automatic"
+                        and existing.provider_authorization_id
+                    ):
+                        await self.gateway.cancel_pix_authorization(
+                            existing.provider_authorization_id
+                        )
+                    elif (
+                        existing.payment_method == "pix"
+                        and existing.provider_pix_qr_code_id
+                    ):
+                        await self.gateway.delete_static_pix_qr_code(
+                            existing.provider_pix_qr_code_id
+                        )
+                    elif (
+                        existing.payment_method == "pix"
+                        and existing.provider_subscription_id
+                    ):
+                        await self.gateway.cancel_subscription(
+                            existing.provider_subscription_id
+                        )
+                except AsaasGatewayError:
+                    await self.db.rollback()
+                    raise HTTPException(
+                        502, "Stale Pix checkout could not be retired safely"
+                    ) from None
+                existing.status = "canceled"
+                await self.db.commit()
+                raise HTTPException(
+                    409, "Checkout price changed; start a new payment"
+                )
+
+            if (
                 existing.payment_method in {"pix", "pix_automatic"}
                 and existing.paid_at is not None
             ):
@@ -217,6 +255,44 @@ class BillingService:
         await self._require_whatsapp_before_first_activation(business_id)
 
         blocking_checkout = await self._blocking_checkout_for_business(business_id)
+        if (
+            blocking_checkout is not None
+            and blocking_checkout.paid_at is None
+            and blocking_checkout.payment_method in {"pix", "pix_automatic"}
+            and blocking_checkout.plan_code == offer.plan
+            and blocking_checkout.billing_cycle == offer.cycle
+            and blocking_checkout.amount_cents != offer.amount_cents
+        ):
+            try:
+                if (
+                    blocking_checkout.payment_method == "pix_automatic"
+                    and blocking_checkout.provider_authorization_id
+                ):
+                    await self.gateway.cancel_pix_authorization(
+                        blocking_checkout.provider_authorization_id
+                    )
+                elif (
+                    blocking_checkout.payment_method == "pix"
+                    and blocking_checkout.provider_pix_qr_code_id
+                ):
+                    await self.gateway.delete_static_pix_qr_code(
+                        blocking_checkout.provider_pix_qr_code_id
+                    )
+                elif (
+                    blocking_checkout.payment_method == "pix"
+                    and blocking_checkout.provider_subscription_id
+                ):
+                    await self.gateway.cancel_subscription(
+                        blocking_checkout.provider_subscription_id
+                    )
+            except AsaasGatewayError:
+                await self.db.rollback()
+                raise HTTPException(
+                    502, "Stale Pix checkout could not be retired safely"
+                ) from None
+            blocking_checkout.status = "canceled"
+            blocking_checkout = None
+
         if (
             blocking_checkout is not None
             and blocking_checkout.payment_method == "pix"

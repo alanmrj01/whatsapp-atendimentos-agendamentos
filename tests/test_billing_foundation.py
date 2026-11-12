@@ -1065,6 +1065,78 @@ async def test_common_pix_checkout_is_one_time_15_minutes_and_not_reused(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_common_pix_with_stale_catalog_price_is_replaced_on_new_attempt(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    first = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    db.checkouts[0].amount_cents = 19_700
+
+    replacement = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    assert db.checkouts[0].status == "canceled"
+    assert gateway.common_pix_cancels == 1
+    assert gateway.common_pix_creates == 2
+    assert replacement.checkout_id != first.checkout_id
+    assert replacement.amount_cents == 500
+    assert replacement.pix_payload == "pix-common-payload-2"
+
+
+@pytest.mark.asyncio
+async def test_same_idempotency_key_never_reuses_pix_with_stale_catalog_price(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+    idempotency_key = uuid4()
+
+    await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=idempotency_key,
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    db.checkouts[0].amount_cents = 19_700
+
+    with pytest.raises(HTTPException) as stale:
+        await service.create_checkout(
+            business_id=business_id,
+            payer_email="teste@example.com",
+            idempotency_key=idempotency_key,
+            payload=_checkout_request("pix"),
+            allowed_origins=("https://alovia.netlify.app",),
+        )
+
+    assert stale.value.status_code == 409
+    assert stale.value.detail == "Checkout price changed; start a new payment"
+    assert db.checkouts[0].status == "canceled"
+    assert gateway.common_pix_cancels == 1
+
+
+@pytest.mark.asyncio
 async def test_common_pix_can_be_canceled_before_payment(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
