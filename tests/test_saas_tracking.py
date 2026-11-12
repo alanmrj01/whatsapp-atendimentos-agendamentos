@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID
 
+from app.analytics.meta_ads import fetch_meta_ads_report
 from app.analytics.meta_conversions import (
     build_meta_payload,
     client_ip_address,
@@ -636,3 +637,88 @@ def test_meta_capi_derives_fbc_only_from_real_fbclid() -> None:
     assert organic is not None
     assert "fbc" not in organic.user_data
 
+
+
+
+class _MetaAdsResponse:
+    def __init__(self, payload: dict) -> None:
+        self.status_code = 200
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _MetaAdsClient:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def get(self, endpoint, params):
+        return _MetaAdsResponse(self.payload)
+
+
+async def _meta_ads_report_for_currency(monkeypatch, currency: str):
+    payload = {
+        "data": [
+            {
+                "campaign_id": "9001",
+                "campaign_name": "ALOVIA | SALES | TESTE",
+                "adset_id": "9002",
+                "adset_name": "BROAD",
+                "ad_id": "9003",
+                "ad_name": "C01",
+                "impressions": "1000",
+                "reach": "800",
+                "spend": "70.00",
+                "account_currency": currency,
+                "inline_link_clicks": "50",
+                "inline_link_click_ctr": "5.0",
+                "cost_per_inline_link_click": "1.40",
+                "cpm": "70.0",
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "app.analytics.meta_ads.httpx.AsyncClient",
+        lambda timeout: _MetaAdsClient(payload),
+    )
+    settings = Settings(
+        ENVIRONMENT="production",
+        META_ADS_ENABLED=True,
+        META_ADS_ACCOUNT_ID="1475560132551828",
+        META_ADS_ACCESS_TOKEN="ads-read-secret",
+        META_ADS_GRAPH_VERSION="v25.0",
+        META_ADS_CAMPAIGN_NAME_PREFIX="ALOVIA",
+    )
+    return await fetch_meta_ads_report(
+        settings,
+        since=datetime(2026, 11, 12, tzinfo=UTC).date(),
+        until=datetime(2026, 11, 12, tzinfo=UTC).date(),
+    )
+
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_meta_ads_accepts_brl_for_financial_kpis(monkeypatch) -> None:
+    report = await _meta_ads_report_for_currency(monkeypatch, "BRL")
+
+    assert report.status == "ready"
+    assert len(report.ads) == 1
+    assert report.ads[0].spend_brl == 70.0
+
+
+@pytest.mark.asyncio
+async def test_meta_ads_rejects_non_brl_before_financial_kpis(monkeypatch) -> None:
+    report = await _meta_ads_report_for_currency(monkeypatch, "USD")
+
+    assert report.status == "awaiting_integration"
+    assert report.ads == []
+    assert report.note == "A conta de anúncios precisa reportar os insights em BRL."
