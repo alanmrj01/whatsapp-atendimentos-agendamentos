@@ -819,23 +819,46 @@ class BillingService:
         payer_cpf_cnpj: str,
         payer_email: str,
     ) -> None:
-        # Common Pix is deliberately a one-time checkout, not an Asaas
-        # subscription. The provider enforces both the 15-minute expiry and
-        # single-payment rule; the local checkout mirrors the same deadline.
-        address_key = await self.gateway.active_pix_address_key()
-        qr = await self.gateway.create_static_pix_qr_code(
-            address_key=address_key,
-            description=f"ALOVIA {offer.plan_name}",
-            value=offer.amount_cents / 100,
-            external_reference=f"alovia:{checkout.id}",
-            expiration_seconds=PAYMENT_CHECKOUT_TTL_SECONDS,
+        # Common Pix is a one-time Asaas payment. Alovia keeps a strict local
+        # 15-minute TTL and always reuses the same provider payment/QR while it
+        # is valid.
+        customer_reference = f"alovia:{checkout.business_id}"
+        customer_id = await self.gateway.find_customer(
+            external_reference=customer_reference,
+            cpf_cnpj=payer_cpf_cnpj,
         )
-        checkout.provider_pix_qr_code_id = qr.qr_code_id
+        if customer_id is None:
+            customer_id = await self.gateway.create_customer(
+                name=payer_name,
+                cpf_cnpj=payer_cpf_cnpj,
+                email=payer_email,
+                external_reference=customer_reference,
+            )
+        checkout.provider_customer_id = customer_id
+        checkout.provider_pix_qr_code_id = None
         checkout.provider_subscription_id = None
-        checkout.provider_customer_id = None
+
+        external_reference = f"alovia:{checkout.id}"
+        try:
+            payment_id = await self.gateway.create_pix_payment(
+                customer_id=customer_id,
+                value=offer.amount_cents / 100,
+                due_date=datetime.now(BRAZIL_TZ).date().isoformat(),
+                description=f"ALOVIA {offer.plan_name}",
+                external_reference=external_reference,
+            )
+            checkout.provider_payment_id = payment_id
+        except AsaasGatewayTimeoutError:
+            recovered = await self._recover_dynamic_pix_payment(checkout)
+            if not recovered:
+                raise
+            return
+
+        qr = await self.gateway.pix_qr_code(payment_id)
         checkout.pix_qr_payload = qr.payload
-        checkout.pix_qr_expires_at = qr.expires_at
-        checkout.expires_at = qr.expires_at
+        # Provider validity is intentionally longer. The user-facing and local
+        # financial deadline is the checkout TTL.
+        checkout.pix_qr_expires_at = checkout.expires_at
 
     async def _prepare_pix_automatic(
         self,
