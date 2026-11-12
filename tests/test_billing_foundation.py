@@ -135,7 +135,7 @@ def test_sandbox_price_override_rejects_provider_invalid_amount(monkeypatch) -> 
 
 
 def test_server_side_catalog_uses_approved_prices_and_cycles() -> None:
-    assert get_offer("basic", "monthly").amount_cents == 19_700
+    assert get_offer("basic", "monthly").amount_cents == 14_790
     assert get_offer("basic", "quarterly").amount_cents == 39_933
     assert get_offer("basic", "annual").amount_cents == 150_858
     assert get_offer("plus", "monthly").amount_cents == 39_700
