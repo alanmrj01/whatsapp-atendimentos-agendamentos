@@ -1015,7 +1015,7 @@ async def test_pix_refresh_with_new_idempotency_key_reuses_authorization(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_common_pix_checkout_is_one_time_15_minutes_and_not_reused(monkeypatch) -> None:
+async def test_common_pix_checkout_is_one_time_15_minutes_and_reused_while_active(monkeypatch) -> None:
     monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
     db = _CheckoutCreateDb()
@@ -1038,6 +1038,19 @@ async def test_common_pix_checkout_is_one_time_15_minutes_and_not_reused(monkeyp
         payload=_checkout_request("pix"),
         allowed_origins=("https://alovia.netlify.app",),
     )
+    refreshed_request = await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    recovered = await service.recover_active_checkout(
+        business_id=business_id,
+        plan="basic",
+        cycle="monthly",
+        payment_method="pix",
+    )
 
     assert db.checkouts[0].payer_name == "Empresa Teste"
     assert db.checkouts[0].payer_email == "teste@example.com"
@@ -1049,19 +1062,66 @@ async def test_common_pix_checkout_is_one_time_15_minutes_and_not_reused(monkeyp
     remaining = (first.pix_expires_at - datetime.now(UTC)).total_seconds()
     assert 890 <= remaining <= 900
     assert same_request.checkout_id == first.checkout_id
-    assert same_request.pix_payload == first.pix_payload
+    assert refreshed_request.checkout_id == first.checkout_id
+    assert recovered.checkout_id == first.checkout_id
+    assert recovered.pix_payload == first.pix_payload
+    assert recovered.pix_expires_at == first.pix_expires_at
     assert gateway.common_pix_creates == 1
 
+
+@pytest.mark.asyncio
+async def test_active_pix_recovery_is_scoped_to_offer_and_business(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+
+    for kwargs in (
+        {"business_id": uuid4(), "plan": "basic", "cycle": "monthly", "payment_method": "pix"},
+        {"business_id": business_id, "plan": "basic", "cycle": "quarterly", "payment_method": "pix"},
+        {"business_id": business_id, "plan": "basic", "cycle": "monthly", "payment_method": "pix_automatic"},
+    ):
+        with pytest.raises(HTTPException) as error:
+            await service.recover_active_checkout(**kwargs)
+        assert error.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_stale_price_pix_is_not_recovered(monkeypatch) -> None:
+    monkeypatch.setenv("BILLING_PROVIDER_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("BILLING_TEST_AMOUNT_CENTS", "500")
+    db = _CheckoutCreateDb()
+    gateway = _CheckoutGateway()
+    service = BillingService(db, gateway)
+    business_id = uuid4()
+
+    await service.create_checkout(
+        business_id=business_id,
+        payer_email="teste@example.com",
+        idempotency_key=uuid4(),
+        payload=_checkout_request("pix"),
+        allowed_origins=("https://alovia.netlify.app",),
+    )
+    db.checkouts[0].amount_cents = 19_700
+
     with pytest.raises(HTTPException) as error:
-        await service.create_checkout(
+        await service.recover_active_checkout(
             business_id=business_id,
-            payer_email="teste@example.com",
-            idempotency_key=uuid4(),
-            payload=_checkout_request("pix"),
-            allowed_origins=("https://alovia.netlify.app",),
+            plan="basic",
+            cycle="monthly",
+            payment_method="pix",
         )
-    assert error.value.status_code == 409
-    assert gateway.common_pix_creates == 1
+    assert error.value.status_code == 404
 
 
 @pytest.mark.asyncio

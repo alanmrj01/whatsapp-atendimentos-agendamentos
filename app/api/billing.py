@@ -12,6 +12,7 @@ from app.auth.schemas import MembershipRole
 from app.auth.service import Principal
 from app.billing.asaas import AsaasGateway
 from app.billing.schemas import (
+    BillingCycle,
     CheckoutCreateRequest,
     CheckoutCreateResponse,
     CheckoutProfileResponse,
@@ -19,6 +20,8 @@ from app.billing.schemas import (
     CreditCardCheckoutRequest,
     CreditCardCheckoutResponse,
     MessageUsageResponse,
+    PaymentMethod,
+    PlanCode,
     PlanUpgradeRequest,
     SubscriptionStatusResponse,
 )
@@ -93,6 +96,24 @@ async def checkout_profile(
     return await _service(settings, db).checkout_profile(
         business_id=membership.business_id,
         payer_email=principal.user.email,
+    )
+
+
+@router.get("/checkouts/active", response_model=CheckoutCreateResponse)
+async def active_checkout(
+    plan: PlanCode,
+    cycle: BillingCycle,
+    payment_method: PaymentMethod,
+    principal: Identity,
+    settings: Config,
+    db: Db,
+):
+    membership = _billing_business(principal)
+    return await _service(settings, db).recover_active_checkout(
+        business_id=membership.business_id,
+        plan=plan,
+        cycle=cycle,
+        payment_method=payment_method,
     )
 
 
