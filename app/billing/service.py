@@ -384,9 +384,51 @@ class BillingService:
                 and expires_at is not None
                 and expires_at <= datetime.now(UTC)
             ):
-                checkout.status = "expired"
+                try:
+                    if checkout.provider_payment_id:
+                        result = await self._retire_dynamic_pix_payment(
+                            checkout,
+                            terminal_status="expired",
+                        )
+                        await self.db.commit()
+                        if result == "paid":
+                            return self._checkout_response(checkout)
+                    elif checkout.provider_pix_qr_code_id:
+                        await self.gateway.delete_static_pix_qr_code(
+                            checkout.provider_pix_qr_code_id
+                        )
+                        checkout.status = "expired"
+                        checkout.pix_qr_payload = None
+                        checkout.pix_qr_expires_at = None
+                        await self.db.commit()
+                    else:
+                        checkout.status = "expired"
+                        await self.db.commit()
+                except AsaasGatewayError:
+                    await self.db.rollback()
+                    raise HTTPException(
+                        502, "Pix expiration is being reconciled"
+                    ) from None
+                raise HTTPException(404, "No recoverable Pix checkout")
+
+            if checkout.provider_payment_id or (
+                checkout.provider_pix_qr_code_id is None
+                and checkout.provider_subscription_id is None
+            ):
+                try:
+                    recoverable = await self._recover_dynamic_pix_payment(checkout)
+                except AsaasGatewayError:
+                    await self.db.rollback()
+                    raise HTTPException(
+                        502, "Pix recovery is temporarily unavailable"
+                    ) from None
+                if recoverable:
+                    await self.db.commit()
+                    await self._schedule_common_pix_expiry(checkout)
+                    return self._checkout_response(checkout)
                 await self.db.commit()
                 raise HTTPException(404, "No recoverable Pix checkout")
+
             recoverable = self._recoverable_static_pix_checkout(checkout)
             if recoverable and checkout.expires_at == expires_at:
                 await self.db.commit()
