@@ -148,8 +148,22 @@ class BillingService:
         )
 
     @staticmethod
-    def _recoverable_static_pix_checkout(checkout: BillingCheckout) -> bool:
+    def _common_pix_effective_expiry(
+        checkout: BillingCheckout,
+    ) -> datetime | None:
         expires_at = checkout.pix_qr_expires_at or checkout.expires_at
+        if expires_at is not None:
+            return expires_at
+        created_at = getattr(checkout, "created_at", None)
+        if created_at is None:
+            return None
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        return created_at + timedelta(seconds=PAYMENT_CHECKOUT_TTL_SECONDS)
+
+    @classmethod
+    def _recoverable_static_pix_checkout(cls, checkout: BillingCheckout) -> bool:
+        expires_at = cls._common_pix_effective_expiry(checkout)
         return bool(
             checkout.status in {"creating", "active"}
             and checkout.paid_at is None
@@ -186,11 +200,19 @@ class BillingService:
         ):
             raise HTTPException(404, "No recoverable Pix checkout")
 
-        recoverable = (
-            self._recoverable_static_pix_checkout(checkout)
-            if payment_method == "pix"
-            else self._reusable_pix_checkout(checkout)
-        )
+        if payment_method == "pix":
+            expires_at = self._common_pix_effective_expiry(checkout)
+            if (
+                checkout.paid_at is None
+                and expires_at is not None
+                and expires_at <= datetime.now(UTC)
+            ):
+                checkout.status = "expired"
+                await self.db.commit()
+                raise HTTPException(404, "No recoverable Pix checkout")
+            recoverable = self._recoverable_static_pix_checkout(checkout)
+        else:
+            recoverable = self._reusable_pix_checkout(checkout)
         if not recoverable:
             raise HTTPException(404, "No recoverable Pix checkout")
         return self._checkout_response(checkout)
@@ -282,14 +304,19 @@ class BillingService:
                 return self._checkout_response(existing)
             if (
                 existing.payment_method == "pix"
-                and existing.status == "active"
-                and existing.expires_at is not None
-                and existing.expires_at <= datetime.now(UTC)
+                and existing.status in {"creating", "active"}
                 and existing.paid_at is None
             ):
-                existing.status = "expired"
-                await self.db.commit()
-                raise HTTPException(409, "Pix checkout expired; start a new payment")
+                existing_pix_expiry = self._common_pix_effective_expiry(existing)
+                if (
+                    existing_pix_expiry is not None
+                    and existing_pix_expiry <= datetime.now(UTC)
+                ):
+                    existing.status = "expired"
+                    await self.db.commit()
+                    raise HTTPException(
+                        409, "Pix checkout expired; start a new payment"
+                    )
             if existing.status in {"active", "paid"}:
                 await self.db.commit()
                 return self._checkout_response(existing)
@@ -346,14 +373,15 @@ class BillingService:
             and blocking_checkout.payment_method == "pix"
             and blocking_checkout.paid_at is None
         ):
-            if blocking_checkout.provider_pix_qr_code_id:
+            common_pix_expiry = self._common_pix_effective_expiry(blocking_checkout)
+            if (
+                common_pix_expiry is not None
+                and common_pix_expiry <= datetime.now(UTC)
+            ):
+                blocking_checkout.status = "expired"
+                blocking_checkout = None
+            elif blocking_checkout.provider_pix_qr_code_id:
                 if (
-                    blocking_checkout.expires_at is not None
-                    and blocking_checkout.expires_at <= datetime.now(UTC)
-                ):
-                    blocking_checkout.status = "expired"
-                    blocking_checkout = None
-                elif (
                     payload.payment_method == "pix"
                     and blocking_checkout.plan_code == offer.plan
                     and blocking_checkout.billing_cycle == offer.cycle
