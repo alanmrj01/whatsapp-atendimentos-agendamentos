@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.meta_ads import MetaAdsReport, fetch_meta_ads_report
@@ -112,6 +112,7 @@ class PaidCheckoutRow:
     amount_cents: int
     paid_at: datetime
     refund_status: str | None
+    refund_requested_at: datetime | None
     refunded_at: datetime | None
 
 
@@ -401,11 +402,17 @@ def _lead_recovery(
         event_names = {event.event_name for event in business_events}
         checkouts = paid_by_business.get(contact.business_id, [])
         purchased = bool(checkouts)
+        refund_requested = any(
+            checkout.refund_status in {"requested", "reconcile_required"}
+            for checkout in checkouts
+        )
         refunded = any(checkout.refund_status == "refunded" for checkout in checkouts)
         activated = contact.business_id in activation_at_by_business
         connected = contact.business_id in connection_at_by_business
 
-        if refunded:
+        if refund_requested:
+            stage_key, stage_label = "refund_requested", "Reembolso solicitado"
+        elif refunded:
             stage_key, stage_label = "refunded", "Reembolsado"
         elif activated:
             stage_key, stage_label = "activated", "Ativado"
@@ -434,6 +441,16 @@ def _lead_recovery(
         activity_candidates = [contact.created_at]
         activity_candidates.extend(event.occurred_at for event in business_events)
         activity_candidates.extend(checkout.paid_at for checkout in checkouts)
+        activity_candidates.extend(
+            checkout.refund_requested_at
+            for checkout in checkouts
+            if checkout.refund_requested_at is not None
+        )
+        activity_candidates.extend(
+            checkout.refunded_at
+            for checkout in checkouts
+            if checkout.refunded_at is not None
+        )
         if contact.business_id in connection_at_by_business:
             activity_candidates.append(connection_at_by_business[contact.business_id])
         if contact.business_id in activation_at_by_business:
@@ -452,7 +469,7 @@ def _lead_recovery(
                 stage_label=stage_label,
                 purchased=purchased,
                 activated=activated,
-                needs_follow_up=(not purchased) or refunded,
+                needs_follow_up=(not purchased) or refund_requested or refunded,
                 angle=acquisition.get("angle"),
                 quiz_profile=acquisition.get("quiz_profile"),
                 ad_id=acquisition.get("ad_id"),
@@ -463,6 +480,11 @@ def _lead_recovery(
     return sorted(
         result,
         key=lambda item: (
+            2
+            if item.stage_key == "refund_requested"
+            else 1
+            if item.stage_key == "refunded"
+            else 0,
             item.needs_follow_up,
             item.last_activity_at,
             item.created_at,
@@ -593,10 +615,12 @@ def build_platform_analytics_summary(
     days: int,
     lead_contacts: list[LeadContactRow] | None = None,
     connection_at_by_business: dict[UUID, datetime] | None = None,
+    lead_recovery_checkouts: list[PaidCheckoutRow] | None = None,
 ) -> PlatformAnalyticsSummaryResponse:
     period_start = now - timedelta(days=days)
     lead_contacts = lead_contacts or []
     connection_at_by_business = connection_at_by_business or {}
+    lead_recovery_checkouts = lead_recovery_checkouts or paid_checkouts
 
     quiz_visitors = _visitor_ids(events, "quiz_viewed")
     quiz_completed_visitors = _visitor_ids(events, "quiz_completed")
@@ -1005,7 +1029,7 @@ def build_platform_analytics_summary(
     lead_recovery = _lead_recovery(
         contacts=lead_contacts,
         events=events,
-        paid_checkouts=paid_checkouts,
+        paid_checkouts=lead_recovery_checkouts,
         activation_at_by_business=activation_at_by_business,
         connection_at_by_business=connection_at_by_business,
         acquisition_by_business=acquisition_by_business,
@@ -1189,6 +1213,7 @@ class PlatformAnalyticsService:
                 BillingCheckout.amount_cents,
                 BillingCheckout.paid_at,
                 CommercialSubscription.refund_status,
+                CommercialSubscription.refund_requested_at,
                 CommercialSubscription.refunded_at,
             )
             .outerjoin(
@@ -1212,6 +1237,7 @@ class PlatformAnalyticsService:
                 amount_cents=amount_cents,
                 paid_at=paid_at,
                 refund_status=refund_status,
+                refund_requested_at=refund_requested_at,
                 refunded_at=refunded_at,
             )
             for (
@@ -1223,10 +1249,67 @@ class PlatformAnalyticsService:
                 amount_cents,
                 paid_at,
                 refund_status,
+                refund_requested_at,
                 refunded_at,
             ) in paid_rows
             if paid_at is not None
         ]
+
+        recovery_rows = await self.db.execute(
+            select(
+                BillingCheckout.id,
+                BillingCheckout.business_id,
+                BillingCheckout.plan_code,
+                BillingCheckout.billing_cycle,
+                BillingCheckout.payment_method,
+                BillingCheckout.amount_cents,
+                BillingCheckout.paid_at,
+                CommercialSubscription.refund_status,
+                CommercialSubscription.refund_requested_at,
+                CommercialSubscription.refunded_at,
+            )
+            .join(
+                CommercialSubscription,
+                CommercialSubscription.checkout_id == BillingCheckout.id,
+            )
+            .where(
+                BillingCheckout.provider_environment == provider_environment,
+                CommercialSubscription.provider_environment == provider_environment,
+                BillingCheckout.status == "paid",
+                BillingCheckout.paid_at.is_not(None),
+                CommercialSubscription.refund_status.in_(
+                    ("requested", "reconcile_required", "refunded")
+                ),
+            )
+        )
+        recovery_by_checkout = {checkout.checkout_id: checkout for checkout in paid_checkouts}
+        for (
+            checkout_id,
+            business_id,
+            plan_code,
+            billing_cycle,
+            payment_method,
+            amount_cents,
+            paid_at,
+            refund_status,
+            refund_requested_at,
+            refunded_at,
+        ) in recovery_rows:
+            if paid_at is None:
+                continue
+            recovery_by_checkout[checkout_id] = PaidCheckoutRow(
+                checkout_id=checkout_id,
+                business_id=business_id,
+                plan_code=plan_code,
+                billing_cycle=billing_cycle,
+                payment_method=payment_method,
+                amount_cents=amount_cents,
+                paid_at=paid_at,
+                refund_status=refund_status,
+                refund_requested_at=refund_requested_at,
+                refunded_at=refunded_at,
+            )
+        lead_recovery_checkouts = list(recovery_by_checkout.values())
 
         refund_rows = await self.db.execute(
             select(
@@ -1287,6 +1370,12 @@ class PlatformAnalyticsService:
             for billing_cycle, amount_cents, status, access_until in active_rows
         ]
 
+        refund_recovery_business_ids = {
+            checkout.business_id
+            for checkout in lead_recovery_checkouts
+            if checkout.refund_status in {"requested", "reconcile_required", "refunded"}
+        }
+
         lead_contacts: list[LeadContactRow] = []
         lead_table_ready = await self.db.scalar(
             select(func.to_regclass("public.marketing_lead_contacts"))
@@ -1301,7 +1390,16 @@ class PlatformAnalyticsService:
                     MarketingLeadContact.created_at,
                 )
                 .join(Business, Business.id == MarketingLeadContact.business_id)
-                .where(MarketingLeadContact.created_at >= period_start)
+                .where(
+                    or_(
+                        MarketingLeadContact.created_at >= period_start,
+                        MarketingLeadContact.business_id.in_(
+                            refund_recovery_business_ids
+                        ),
+                    )
+                    if refund_recovery_business_ids
+                    else MarketingLeadContact.created_at >= period_start
+                )
                 .order_by(MarketingLeadContact.created_at.desc())
             )
             lead_contacts = [
@@ -1399,4 +1497,5 @@ class PlatformAnalyticsService:
             days=days,
             lead_contacts=lead_contacts,
             connection_at_by_business=connection_at_by_business,
+            lead_recovery_checkouts=lead_recovery_checkouts,
         )

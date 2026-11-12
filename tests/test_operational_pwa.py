@@ -837,6 +837,7 @@ def test_platform_tracking_summary_uses_current_quiz_funnel_and_real_revenue() -
         amount_cents=19_700,
         paid_at=now - timedelta(hours=1),
         refund_status="none",
+        refund_requested_at=None,
         refunded_at=None,
     )
     summary = build_platform_analytics_summary(

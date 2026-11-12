@@ -139,6 +139,7 @@ def paid_checkout(*, refunded: bool = False) -> PaidCheckoutRow:
         amount_cents=14_700,
         paid_at=NOW - timedelta(minutes=5),
         refund_status="refunded" if refunded else "none",
+        refund_requested_at=NOW - timedelta(minutes=3) if refunded else None,
         refunded_at=NOW - timedelta(minutes=2) if refunded else None,
     )
 
@@ -330,3 +331,59 @@ def test_meta_metrics_remain_explicit_when_integration_is_not_configured() -> No
     assert metric(summary, "ad_spend").status == "awaiting_integration"
     assert summary.funnel[0].value is None
     assert summary.funnel[0].status == "awaiting_integration"
+
+
+def test_lead_recovery_puts_requested_refund_above_other_opportunities() -> None:
+    other_business = UUID("00000000-0000-0000-0000-000000000105")
+    requested_refund = PaidCheckoutRow(
+        checkout_id=CHECKOUT,
+        business_id=BUSINESS,
+        plan_code="basic",
+        billing_cycle="monthly",
+        payment_method="pix",
+        amount_cents=14_700,
+        paid_at=NOW - timedelta(days=20),
+        refund_status="requested",
+        refund_requested_at=NOW - timedelta(minutes=1),
+        refunded_at=None,
+    )
+    summary = build_platform_analytics_summary(
+        events=[],
+        paid_checkouts=[],
+        refunds=[],
+        active_subscriptions=[],
+        acquisition_by_business={},
+        activation_at_by_business={},
+        meta_report=MetaAdsReport(
+            status="awaiting_integration",
+            note="Aguardando credencial de leitura da Meta Ads.",
+            ads=[],
+        ),
+        now=NOW,
+        days=1,
+        lead_contacts=[
+            LeadContactRow(
+                business_id=other_business,
+                lead_name="Lead recente",
+                whatsapp_e164="+5511999990001",
+                business_name="Lead Recente Refrigeração",
+                created_at=NOW,
+            ),
+            LeadContactRow(
+                business_id=BUSINESS,
+                lead_name="Cliente com reembolso",
+                whatsapp_e164="+5511999990002",
+                business_name="Cliente Reembolso Refrigeração",
+                created_at=NOW - timedelta(days=30),
+            ),
+        ],
+        connection_at_by_business={},
+        lead_recovery_checkouts=[requested_refund],
+    )
+
+    assert next(item for item in summary.funnel if item.key == "subscriptions").value == 0
+    assert metric(summary, "revenue_received").value == 0.0
+    assert summary.lead_recovery[0].business_id == BUSINESS
+    assert summary.lead_recovery[0].stage_key == "refund_requested"
+    assert summary.lead_recovery[0].stage_label == "Reembolso solicitado"
+    assert summary.lead_recovery[0].needs_follow_up is True
