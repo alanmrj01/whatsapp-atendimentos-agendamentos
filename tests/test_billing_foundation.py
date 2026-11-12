@@ -899,9 +899,12 @@ class _CheckoutGateway:
     def __init__(self) -> None:
         self.pix_creates = 0
         self.common_pix_creates = 0
+        self.common_pix_qr_reads = 0
         self.card_creates = 0
         self.pix_cancels = 0
         self.common_pix_cancels = 0
+        self.static_pix_creates = 0
+        self.payments: dict[str, dict] = {}
 
     async def find_customer(self, **kwargs):
         return "cus_test"
@@ -923,16 +926,58 @@ class _CheckoutGateway:
         assert authorization_id.startswith("auth_test_")
         self.pix_cancels += 1
 
+    async def create_pix_payment(self, **kwargs):
+        self.common_pix_creates += 1
+        payment_id = f"pay_test_{self.common_pix_creates}"
+        self.payments[payment_id] = {
+            "id": payment_id,
+            "billingType": "PIX",
+            "status": "PENDING",
+            "value": kwargs["value"],
+            "externalReference": kwargs["external_reference"],
+            "customer": kwargs["customer_id"],
+        }
+        return payment_id
+
+    async def payments_for_external_reference(self, external_reference):
+        return [
+            payment
+            for payment in self.payments.values()
+            if payment.get("externalReference") == external_reference
+            and payment.get("status") != "DELETED"
+        ]
+
+    async def payment_details(self, payment_id):
+        payment = self.payments.get(payment_id)
+        if payment is None:
+            raise AsaasGatewayError("payment missing")
+        return dict(payment)
+
+    async def pix_qr_code(self, payment_id):
+        self.common_pix_qr_reads += 1
+        if payment_id not in self.payments:
+            raise AsaasGatewayError("payment missing")
+        sequence = payment_id.rsplit("_", 1)[-1]
+        return SimpleNamespace(
+            payload=f"pix-common-payload-{sequence}",
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+        )
+
+    async def delete_payment(self, payment_id):
+        payment = self.payments.get(payment_id)
+        if payment is None:
+            return
+        payment["status"] = "DELETED"
+        self.common_pix_cancels += 1
+
     async def active_pix_address_key(self):
         return "pix-key-test"
 
     async def create_static_pix_qr_code(self, **kwargs):
-        self.common_pix_creates += 1
-        assert kwargs["expiration_seconds"] == 900
-        assert kwargs["external_reference"].startswith("alovia:")
+        self.static_pix_creates += 1
         return SimpleNamespace(
-            qr_code_id=f"qr_pix_{self.common_pix_creates}",
-            payload=f"pix-common-payload-{self.common_pix_creates}",
+            qr_code_id=f"qr_pix_{self.static_pix_creates}",
+            payload=f"pix-static-payload-{self.static_pix_creates}",
             expires_at=datetime.now(UTC) + timedelta(minutes=15),
         )
 
@@ -948,9 +993,6 @@ class _CheckoutGateway:
 
     async def payments_for_subscription(self, subscription_id):
         return []
-
-    async def pix_qr_code(self, payment_id):
-        raise AssertionError("Common Pix must not use dynamic payment QR codes")
 
     async def cancel_subscription(self, subscription_id):
         self.common_pix_cancels += 1
