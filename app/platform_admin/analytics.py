@@ -615,10 +615,12 @@ def build_platform_analytics_summary(
     days: int,
     lead_contacts: list[LeadContactRow] | None = None,
     connection_at_by_business: dict[UUID, datetime] | None = None,
+    lead_recovery_checkouts: list[PaidCheckoutRow] | None = None,
 ) -> PlatformAnalyticsSummaryResponse:
     period_start = now - timedelta(days=days)
     lead_contacts = lead_contacts or []
     connection_at_by_business = connection_at_by_business or {}
+    lead_recovery_checkouts = lead_recovery_checkouts or paid_checkouts
 
     quiz_visitors = _visitor_ids(events, "quiz_viewed")
     quiz_completed_visitors = _visitor_ids(events, "quiz_completed")
@@ -1027,7 +1029,7 @@ def build_platform_analytics_summary(
     lead_recovery = _lead_recovery(
         contacts=lead_contacts,
         events=events,
-        paid_checkouts=paid_checkouts,
+        paid_checkouts=lead_recovery_checkouts,
         activation_at_by_business=activation_at_by_business,
         connection_at_by_business=connection_at_by_business,
         acquisition_by_business=acquisition_by_business,
@@ -1222,12 +1224,7 @@ class PlatformAnalyticsService:
                 BillingCheckout.provider_environment == provider_environment,
                 BillingCheckout.status == "paid",
                 BillingCheckout.paid_at.is_not(None),
-                or_(
-                    BillingCheckout.paid_at >= period_start,
-                    CommercialSubscription.refund_status.in_(
-                        ("requested", "reconcile_required", "refunded")
-                    ),
-                ),
+                BillingCheckout.paid_at >= period_start,
             )
         )
         paid_checkouts = [
@@ -1257,6 +1254,62 @@ class PlatformAnalyticsService:
             ) in paid_rows
             if paid_at is not None
         ]
+
+        recovery_rows = await self.db.execute(
+            select(
+                BillingCheckout.id,
+                BillingCheckout.business_id,
+                BillingCheckout.plan_code,
+                BillingCheckout.billing_cycle,
+                BillingCheckout.payment_method,
+                BillingCheckout.amount_cents,
+                BillingCheckout.paid_at,
+                CommercialSubscription.refund_status,
+                CommercialSubscription.refund_requested_at,
+                CommercialSubscription.refunded_at,
+            )
+            .join(
+                CommercialSubscription,
+                CommercialSubscription.checkout_id == BillingCheckout.id,
+            )
+            .where(
+                BillingCheckout.provider_environment == provider_environment,
+                CommercialSubscription.provider_environment == provider_environment,
+                BillingCheckout.status == "paid",
+                BillingCheckout.paid_at.is_not(None),
+                CommercialSubscription.refund_status.in_(
+                    ("requested", "reconcile_required", "refunded")
+                ),
+            )
+        )
+        recovery_by_checkout = {checkout.checkout_id: checkout for checkout in paid_checkouts}
+        for (
+            checkout_id,
+            business_id,
+            plan_code,
+            billing_cycle,
+            payment_method,
+            amount_cents,
+            paid_at,
+            refund_status,
+            refund_requested_at,
+            refunded_at,
+        ) in recovery_rows:
+            if paid_at is None:
+                continue
+            recovery_by_checkout[checkout_id] = PaidCheckoutRow(
+                checkout_id=checkout_id,
+                business_id=business_id,
+                plan_code=plan_code,
+                billing_cycle=billing_cycle,
+                payment_method=payment_method,
+                amount_cents=amount_cents,
+                paid_at=paid_at,
+                refund_status=refund_status,
+                refund_requested_at=refund_requested_at,
+                refunded_at=refunded_at,
+            )
+        lead_recovery_checkouts = list(recovery_by_checkout.values())
 
         refund_rows = await self.db.execute(
             select(
@@ -1319,7 +1372,7 @@ class PlatformAnalyticsService:
 
         refund_recovery_business_ids = {
             checkout.business_id
-            for checkout in paid_checkouts
+            for checkout in lead_recovery_checkouts
             if checkout.refund_status in {"requested", "reconcile_required", "refunded"}
         }
 
@@ -1444,4 +1497,5 @@ class PlatformAnalyticsService:
             days=days,
             lead_contacts=lead_contacts,
             connection_at_by_business=connection_at_by_business,
+            lead_recovery_checkouts=lead_recovery_checkouts,
         )
