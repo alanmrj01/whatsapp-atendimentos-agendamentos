@@ -494,6 +494,17 @@ class BillingService:
                         )
                     elif (
                         existing.payment_method == "pix"
+                        and existing.provider_payment_id
+                    ):
+                        result = await self._retire_dynamic_pix_payment(
+                            existing,
+                            terminal_status="canceled",
+                        )
+                        if result == "paid":
+                            await self.db.commit()
+                            return self._checkout_response(existing)
+                    elif (
+                        existing.payment_method == "pix"
                         and existing.provider_pix_qr_code_id
                     ):
                         await self.gateway.delete_static_pix_qr_code(
@@ -533,10 +544,53 @@ class BillingService:
                     existing_pix_expiry is not None
                     and existing_pix_expiry <= datetime.now(UTC)
                 ):
-                    existing.status = "expired"
-                    await self.db.commit()
+                    try:
+                        if existing.provider_payment_id:
+                            result = await self._retire_dynamic_pix_payment(
+                                existing,
+                                terminal_status="expired",
+                            )
+                            await self.db.commit()
+                            if result == "paid":
+                                return self._checkout_response(existing)
+                        elif existing.provider_pix_qr_code_id:
+                            await self.gateway.delete_static_pix_qr_code(
+                                existing.provider_pix_qr_code_id
+                            )
+                            existing.status = "expired"
+                            existing.pix_qr_payload = None
+                            existing.pix_qr_expires_at = None
+                            await self.db.commit()
+                        else:
+                            existing.status = "expired"
+                            await self.db.commit()
+                    except AsaasGatewayError:
+                        await self.db.rollback()
+                        raise HTTPException(
+                            502, "Pix expiration is being reconciled"
+                        ) from None
                     raise HTTPException(
                         409, "Pix checkout expired; start a new payment"
+                    )
+
+                if existing.provider_payment_id or (
+                    existing.provider_pix_qr_code_id is None
+                    and existing.provider_subscription_id is None
+                ):
+                    try:
+                        recovered = await self._recover_dynamic_pix_payment(existing)
+                    except AsaasGatewayError:
+                        await self.db.rollback()
+                        raise HTTPException(
+                            502, "Pix payment is being reconciled"
+                        ) from None
+                    if recovered:
+                        await self.db.commit()
+                        await self._schedule_common_pix_expiry(existing)
+                        return self._checkout_response(existing)
+                    await self.db.commit()
+                    raise HTTPException(
+                        409, "Pix payment is being reconciled"
                     )
             if existing.status in {"active", "paid"}:
                 await self.db.commit()
@@ -567,6 +621,17 @@ class BillingService:
                     await self.gateway.cancel_pix_authorization(
                         blocking_checkout.provider_authorization_id
                     )
+                elif (
+                    blocking_checkout.payment_method == "pix"
+                    and blocking_checkout.provider_payment_id
+                ):
+                    result = await self._retire_dynamic_pix_payment(
+                        blocking_checkout,
+                        terminal_status="canceled",
+                    )
+                    if result == "paid":
+                        await self.db.commit()
+                        return self._checkout_response(blocking_checkout)
                 elif (
                     blocking_checkout.payment_method == "pix"
                     and blocking_checkout.provider_pix_qr_code_id
@@ -605,8 +670,59 @@ class BillingService:
                 common_pix_expiry is not None
                 and common_pix_expiry <= datetime.now(UTC)
             ):
-                blocking_checkout.status = "expired"
+                try:
+                    if blocking_checkout.provider_payment_id:
+                        result = await self._retire_dynamic_pix_payment(
+                            blocking_checkout,
+                            terminal_status="expired",
+                        )
+                        await self.db.commit()
+                        if result == "paid":
+                            return self._checkout_response(blocking_checkout)
+                    elif blocking_checkout.provider_pix_qr_code_id:
+                        await self.gateway.delete_static_pix_qr_code(
+                            blocking_checkout.provider_pix_qr_code_id
+                        )
+                        blocking_checkout.status = "expired"
+                        blocking_checkout.pix_qr_payload = None
+                        blocking_checkout.pix_qr_expires_at = None
+                    else:
+                        blocking_checkout.status = "expired"
+                except AsaasGatewayError:
+                    await self.db.rollback()
+                    raise HTTPException(
+                        502, "Pix expiration is being reconciled"
+                    ) from None
                 blocking_checkout = None
+            elif blocking_checkout.provider_payment_id or (
+                blocking_checkout.provider_pix_qr_code_id is None
+                and blocking_checkout.provider_subscription_id is None
+            ):
+                if (
+                    payload.payment_method != "pix"
+                    or blocking_checkout.plan_code != offer.plan
+                    or blocking_checkout.billing_cycle != offer.cycle
+                    or blocking_checkout.amount_cents != offer.amount_cents
+                ):
+                    await self.db.rollback()
+                    raise HTTPException(
+                        409, "Another Pix checkout is already active"
+                    )
+                try:
+                    recovered = await self._recover_dynamic_pix_payment(
+                        blocking_checkout
+                    )
+                except AsaasGatewayError:
+                    await self.db.rollback()
+                    raise HTTPException(
+                        502, "Pix payment is being reconciled"
+                    ) from None
+                if recovered:
+                    await self.db.commit()
+                    await self._schedule_common_pix_expiry(blocking_checkout)
+                    return self._checkout_response(blocking_checkout)
+                await self.db.commit()
+                raise HTTPException(409, "Pix payment is being reconciled")
             elif blocking_checkout.provider_pix_qr_code_id:
                 if (
                     payload.payment_method == "pix"
@@ -617,16 +733,13 @@ class BillingService:
                 ):
                     await self.db.commit()
                     return self._checkout_response(blocking_checkout)
-                else:
-                    await self.db.rollback()
-                    raise HTTPException(
-                        409,
-                        "An active Pix checkout already exists; cancel it or wait for expiration",
-                    )
+                await self.db.rollback()
+                raise HTTPException(
+                    409,
+                    "An active Pix checkout already exists; cancel it or wait for expiration",
+                )
             elif blocking_checkout.provider_subscription_id:
-                # Legacy common-Pix checkouts created recurring provider subscriptions.
-                # Retire them before creating the new one-time checkout so stale QR
-                # payloads can never be reused.
+                # Compatibility with legacy common-Pix subscriptions.
                 try:
                     await self.gateway.cancel_subscription(
                         blocking_checkout.provider_subscription_id
@@ -735,6 +848,12 @@ class BillingService:
             return self._checkout_response(checkout)
 
         try:
+            if payload.payment_method == "pix":
+                checkout.status = "creating"
+                await self.db.commit()
+                raise HTTPException(
+                    502, "Pix payment is being reconciled"
+                ) from None
             if payload.payment_method == "pix_automatic":
                 await self._prepare_pix_automatic(
                     checkout=checkout,
@@ -772,12 +891,20 @@ class BillingService:
             await self.db.commit()
             raise HTTPException(502, "Payment checkout is temporarily unavailable") from None
         except AsaasGatewayError:
+            if payload.payment_method == "pix" and checkout.provider_payment_id:
+                checkout.status = "creating"
+                await self.db.commit()
+                raise HTTPException(
+                    502, "Pix payment is being reconciled"
+                ) from None
             checkout.status = "failed"
             await self.db.commit()
             raise HTTPException(502, "Payment checkout is temporarily unavailable") from None
 
         checkout.status = "active"
         await self.db.commit()
+        if payload.payment_method == "pix":
+            await self._schedule_common_pix_expiry(checkout)
         return self._checkout_response(checkout)
 
     async def _prepare_credit_card(self, *, checkout, offer, return_origin: str) -> None:
