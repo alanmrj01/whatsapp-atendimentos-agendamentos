@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
 from functools import lru_cache
 import re
@@ -143,6 +144,9 @@ class Settings(BaseSettings):
         return origins
 
     app_commit_sha: str | None = Field(default=None, validation_alias="APP_COMMIT_SHA")
+    platform_analytics_start_at: datetime | None = Field(
+        default=None, validation_alias="PLATFORM_ANALYTICS_START_AT"
+    )
     diagnostics_oidc_audience: str | None = Field(
         default=None, validation_alias="DIAGNOSTICS_OIDC_AUDIENCE"
     )
@@ -329,6 +333,12 @@ class Settings(BaseSettings):
         if self.alembic_database_url is not None:
             return self.alembic_database_url.get_secret_value()
         return self.require_database_url()
+
+    def platform_analytics_start_at_utc(self) -> datetime | None:
+        value = self.platform_analytics_start_at
+        if value is None or value.tzinfo is None:
+            return None
+        return value.astimezone(UTC)
 
     def require_meta_app_secret(self) -> str:
         return self._require_meta_secret(self.meta_app_secret)
