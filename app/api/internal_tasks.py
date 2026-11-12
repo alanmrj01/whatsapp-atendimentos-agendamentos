@@ -6,6 +6,8 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.billing.asaas import AsaasGateway
+from app.billing.service import BillingService
 from app.analytics.posthog import (
     automatic_booking_events,
     capture_posthog_event,
@@ -17,6 +19,7 @@ from app.conversations.ports import BookingAvailabilityPort
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.schemas.cloud_tasks import (
+    BillingPixExpiryTaskPayload,
     LifecycleOutreachSweepPayload,
     ReengagementSweepPayload,
     TaskAcknowledgement,
@@ -109,6 +112,40 @@ async def process_whatsapp_event_task(
             background_tasks.add_task(
                 capture_posthog_event, settings, analytics_event
             )
+    return TaskAcknowledgement(status="accepted")
+
+
+@router.post(
+    "/billing-pix-expiry",
+    response_model=TaskAcknowledgement,
+    dependencies=[Depends(require_cloud_tasks_oidc)],
+)
+async def process_billing_pix_expiry_task(
+    payload: BillingPixExpiryTaskPayload,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TaskAcknowledgement:
+    try:
+        configuration = settings.require_asaas_configuration()
+        result = await BillingService(
+            session,
+            AsaasGateway(configuration),
+        ).expire_common_pix_checkout(
+            checkout_id=payload.checkout_id,
+        )
+        logger.info(
+            "billing_pix_expiry_task_completed",
+            extra={"result": result},
+        )
+    except Exception as exc:
+        logger.warning(
+            "billing_pix_expiry_task_failed",
+            extra={"error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Billing Pix expiry task failed",
+        ) from None
     return TaskAcknowledgement(status="accepted")
 
 
