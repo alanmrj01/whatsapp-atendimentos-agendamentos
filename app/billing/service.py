@@ -848,12 +848,6 @@ class BillingService:
             return self._checkout_response(checkout)
 
         try:
-            if payload.payment_method == "pix":
-                checkout.status = "creating"
-                await self.db.commit()
-                raise HTTPException(
-                    502, "Pix payment is being reconciled"
-                ) from None
             if payload.payment_method == "pix_automatic":
                 await self._prepare_pix_automatic(
                     checkout=checkout,
@@ -877,6 +871,12 @@ class BillingService:
                     return_origin=payload.return_origin,
                 )
         except AsaasGatewayTimeoutError:
+            if payload.payment_method == "pix":
+                checkout.status = "creating"
+                await self.db.commit()
+                raise HTTPException(
+                    502, "Pix payment is being reconciled"
+                ) from None
             if payload.payment_method == "pix_automatic":
                 # The provider may have created the authorization even when its
                 # response did not reach us. Keep this checkout blocking until
