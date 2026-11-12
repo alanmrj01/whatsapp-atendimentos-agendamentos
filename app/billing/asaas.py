@@ -137,6 +137,61 @@ class AsaasGateway:
             raise AsaasGatewayError("Asaas customer response is invalid")
         return customer_id
 
+    async def create_pix_payment(
+        self,
+        *,
+        customer_id: str,
+        value: float,
+        due_date: str,
+        description: str,
+        external_reference: str,
+    ) -> str:
+        if not customer_id.startswith("cus_") or len(customer_id) > 80:
+            raise AsaasGatewayError("Asaas customer identifier is invalid")
+        data = await self._json_request(
+            "POST",
+            "/payments",
+            json={
+                "customer": customer_id,
+                "billingType": "PIX",
+                "value": value,
+                "dueDate": due_date,
+                "description": description,
+                "externalReference": external_reference,
+            },
+            timeout_seconds=20.0,
+        )
+        payment_id = data.get("id") if isinstance(data, dict) else None
+        if (
+            not isinstance(payment_id, str)
+            or not payment_id.startswith("pay_")
+            or len(payment_id) > 100
+        ):
+            raise AsaasGatewayError("Asaas Pix payment response is invalid")
+        return payment_id
+
+    async def payments_for_external_reference(
+        self, external_reference: str
+    ) -> list[dict[str, Any]]:
+        payload = await self._json_request(
+            "GET",
+            "/payments",
+            params={"externalReference": external_reference, "limit": 20},
+        )
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise AsaasGatewayError("Asaas payments response is invalid")
+        return [row for row in rows if isinstance(row, dict)]
+
+    async def delete_payment(self, payment_id: str) -> None:
+        self._validate_payment_id(payment_id)
+        await self._json_request(
+            "DELETE",
+            f"/payments/{payment_id}",
+            allow_empty_response=True,
+            allow_not_found=True,
+        )
+
     async def active_pix_address_key(self) -> str:
         payload = await self._json_request(
             "GET",

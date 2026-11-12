@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 from google.api_core.exceptions import AlreadyExists
 from google.cloud import tasks_v2
@@ -28,6 +29,10 @@ class EventTaskEnqueuer(Protocol):
 
 class OutboundTaskEnqueuer(Protocol):
     async def enqueue(self, message_id: uuid.UUID) -> None: ...
+
+
+class BillingPixExpiryTaskEnqueuer(Protocol):
+    async def enqueue(self, checkout_id: uuid.UUID, *, delay_seconds: float) -> None: ...
 
 
 _cloud_tasks_client: tasks_v2.CloudTasksAsyncClient | None = None
@@ -62,6 +67,46 @@ class CloudTasksEventEnqueuer:
             payload={"event_key": event_key},
             error_message="WhatsApp event could not be enqueued",
             delay_seconds=EVENT_TURN_DEBOUNCE_SECONDS,
+        )
+
+
+class CloudTasksBillingPixExpiryEnqueuer:
+    def __init__(
+        self,
+        configuration: CloudTasksConfiguration,
+        client: tasks_v2.CloudTasksAsyncClient | None = None,
+    ) -> None:
+        self.configuration = configuration
+        self.client = client
+
+    async def enqueue(
+        self,
+        checkout_id: uuid.UUID,
+        *,
+        delay_seconds: float,
+    ) -> None:
+        client = _resolve_client(
+            self.client,
+            "Billing Pix expiry could not be enqueued",
+        )
+        parsed = urlsplit(self.configuration.target_url)
+        target_url = urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                "/internal/tasks/billing-pix-expiry",
+                "",
+                "",
+            )
+        )
+        await _create_task(
+            client,
+            self.configuration,
+            task_id=deterministic_billing_pix_expiry_task_id(checkout_id),
+            payload={"checkout_id": str(checkout_id)},
+            error_message="Billing Pix expiry could not be enqueued",
+            delay_seconds=delay_seconds,
+            target_url=target_url,
         )
 
 
@@ -118,6 +163,11 @@ def deterministic_task_id(event_key: str) -> str:
     return f"whatsapp-event-{fingerprint}"
 
 
+def deterministic_billing_pix_expiry_task_id(checkout_id: uuid.UUID) -> str:
+    fingerprint = hashlib.sha256(str(checkout_id).encode("ascii")).hexdigest()
+    return f"billing-pix-expiry-{fingerprint}"
+
+
 def deterministic_outbound_task_id(message_id: uuid.UUID) -> str:
     fingerprint = hashlib.sha256(str(message_id).encode("ascii")).hexdigest()
     return f"whatsapp-outbound-{fingerprint}"
@@ -153,6 +203,7 @@ async def _create_task(
     payload: dict[str, str],
     error_message: str,
     delay_seconds: float = 0,
+    target_url: str | None = None,
 ) -> None:
     parent = (
         f"projects/{configuration.project_id}/locations/"
@@ -168,7 +219,7 @@ async def _create_task(
         name=f"{parent}/tasks/{task_id}",
         http_request=tasks_v2.HttpRequest(
             http_method=tasks_v2.HttpMethod.POST,
-            url=configuration.target_url,
+            url=target_url or configuration.target_url,
             headers={"Content-Type": "application/json"},
             oidc_token=tasks_v2.OidcToken(
                 service_account_email=configuration.invoker_email,

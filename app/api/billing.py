@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 from typing import Annotated
 from uuid import UUID
 
@@ -27,9 +28,15 @@ from app.billing.schemas import (
 )
 from app.billing.service import BillingService
 from app.billing.usage import message_usage_snapshot
-from app.core.config import AsaasConfigurationError, Settings
+from app.core.config import (
+    AsaasConfigurationError,
+    CloudTasksConfigurationError,
+    Settings,
+)
 from app.core.database import get_db
+from app.tasks.cloud_tasks import CloudTasksBillingPixExpiryEnqueuer
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 Db = Annotated[AsyncSession, Depends(get_db)]
 Config = Annotated[Settings, Depends(require_auth_config)]
@@ -41,7 +48,21 @@ def _service(settings: Settings, db: AsyncSession) -> BillingService:
         configuration = settings.require_asaas_configuration()
     except AsaasConfigurationError:
         raise HTTPException(503, "Billing is temporarily unavailable") from None
-    return BillingService(db, AsaasGateway(configuration))
+
+    pix_expiry_enqueuer = None
+    if settings.cloud_tasks_enabled:
+        try:
+            pix_expiry_enqueuer = CloudTasksBillingPixExpiryEnqueuer(
+                settings.require_cloud_tasks_configuration()
+            )
+        except CloudTasksConfigurationError:
+            logger.warning("billing_pix_expiry_tasks_unavailable")
+
+    return BillingService(
+        db,
+        AsaasGateway(configuration),
+        pix_expiry_enqueuer=pix_expiry_enqueuer,
+    )
 
 
 def _billing_business(principal: Principal):
