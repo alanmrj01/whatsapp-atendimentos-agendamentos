@@ -401,6 +401,20 @@ def _equipment_quantity(normalized: str) -> int | None:
             if not _is_compact_number_answer(candidate):
                 continue
             value = parse_number_answer(candidate)
+            if (
+                value is not None
+                and value.is_integer()
+                and int(value) == 1
+                and candidate in {"um", "uma"}
+                and re.search(
+                    r"\b(?:comprar|adquirir|cotar|quero|queria|preciso)\b",
+                    " ".join(prefix_tokens[:-width]),
+                )
+            ):
+                # Em pedidos como "quero comprar um ar-condicionado", "um" é
+                # normalmente artigo indefinido. A quantidade será confirmada
+                # no checkpoint próprio; números explícitos continuam valendo.
+                continue
             if value is not None and value.is_integer() and 1 <= value <= 99:
                 return int(value)
     return None
@@ -653,6 +667,7 @@ def _height_over_three_meters(normalized: str) -> bool | None:
             "condensadora",
             "unidade interna",
             "unidade externa",
+            "escada",
         )
     )
     if not relevant:
@@ -677,7 +692,7 @@ def _height_over_three_meters(normalized: str) -> bool | None:
         )
     ):
         return False
-    match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:m|metro|metros)\b", normalized)
+    match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:m|mts?|mtrs?|metro|metros)\b", normalized)
     if match:
         return float(match.group(1).replace(",", ".")) > 3
     return None

@@ -31,7 +31,160 @@ from app.conversation_lab.corpus import (
 )
 from app.conversations.constants import ConversationState
 from app.conversations.engine import ConversationEngine
+from app.conversations.facts import (
+    enrich_context_from_message,
+    missing_equipment_profile_fields,
+)
 from app.conversations.interpreter import DeterministicConversationInterpreter
+
+
+def _repair_attempts_snapshot(context: dict[str, object]) -> dict[str, int]:
+    raw = context.get("repair_attempts")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(key): value
+        for key, value in raw.items()
+        if isinstance(value, int)
+        and not isinstance(value, bool)
+        and value >= 0
+    }
+
+
+def _recognized_future_fact(text: str | None) -> bool:
+    if not text:
+        return False
+    facts = enrich_context_from_message({}, text)
+    return (
+        "installation_height_over_3m" in facts
+        or facts.get("property_type") in {"house", "building", "condominium"}
+        or (
+            facts.get("building_hours_start") is not None
+            and facts.get("building_hours_end") is not None
+        )
+    )
+
+
+def _coherence_violations(
+    state: str,
+    context: dict[str, object],
+    *,
+    input_body: str | None = None,
+    prior_context: dict[str, object] | None = None,
+) -> list[str]:
+    violations: list[str] = []
+    state_value = str(state)
+
+    quantity = context.get("quantity")
+    if (
+        state_value == ConversationState.BOOKING_QUANTITY
+        and isinstance(quantity, int)
+        and not isinstance(quantity, bool)
+        and quantity > 0
+    ):
+        violations.append("quantity_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_ACCESS
+        and context.get("access_condition") is not None
+    ):
+        violations.append("access_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_EQUIPMENT_OWNERSHIP
+        and context.get("equipment_ownership") in {"has_equipment", "needs_equipment"}
+    ):
+        violations.append("equipment_ownership_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_EQUIPMENT_MODEL
+        and isinstance(context.get("equipment_model"), str)
+        and bool(context.get("equipment_model"))
+        and context.get("equipment_model_known") is True
+    ):
+        violations.append("equipment_model_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_EQUIPMENT_PROFILE
+        and not missing_equipment_profile_fields(context)
+    ):
+        violations.append("equipment_profile_complete_but_reasked")
+
+    if (
+        state_value == ConversationState.BOOKING_INSTALLATION_HEIGHT
+        and "installation_height_over_3m" in context
+    ):
+        violations.append("installation_height_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_PROPERTY
+        and context.get("property_type") in {"house", "building", "condominium"}
+    ):
+        violations.append("property_type_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_BUILDING_HOURS
+        and context.get("building_hours_start") is not None
+        and context.get("building_hours_end") is not None
+    ):
+        violations.append("building_hours_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_GATE_DETAILS
+        and isinstance(context.get("gate_instructions"), str)
+        and bool(context.get("gate_instructions"))
+    ):
+        violations.append("gate_details_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_TUBING
+        and context.get("tubing_length_answered") is True
+    ):
+        violations.append("tubing_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_SITE_LIMIT
+        and context.get("site_limit_answered") is True
+    ):
+        violations.append("site_limit_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_ATTENDEE
+        and context.get("onsite_contact_mode") in {"customer", "other"}
+    ):
+        violations.append("attendee_mode_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_ATTENDEE_NAME
+        and isinstance(context.get("onsite_contact_name"), str)
+        and bool(context.get("onsite_contact_name"))
+    ):
+        violations.append("attendee_name_already_known")
+
+    if (
+        state_value == ConversationState.BOOKING_PHONE_CONFIRM
+        and context.get("contact_phone_confirmed") is True
+    ):
+        violations.append("contact_phone_already_confirmed")
+
+    if (
+        state_value
+        in {
+            ConversationState.BOOKING_BUILDING_HOURS,
+            ConversationState.BOOKING_GATE_DETAILS,
+        }
+        and context.get("request_mode") == "quote"
+        and context.get("quote_presented") is not True
+    ):
+        violations.append("building_rules_before_quote_decision")
+
+    if _recognized_future_fact(input_body):
+        before = _repair_attempts_snapshot(prior_context or {})
+        after = _repair_attempts_snapshot(context)
+        if any(after.get(key, 0) > before.get(key, 0) for key in after):
+            violations.append("recognized_future_fact_penalized")
+
+    return violations
 
 
 def _strip_accents(text: str) -> str:
@@ -133,6 +286,7 @@ def _semantic_result(case: SemanticCase, text: str) -> dict[str, object]:
 
 async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[str, object]:
     context: dict[str, object] = {"service_id": str(SERVICE_ID)}
+    context.update(dict(case.context_items))
     port = DryRunBookingPort()
     if case.state == ConversationState.BOOKING_TIME:
         context.update({
@@ -146,14 +300,25 @@ async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[s
         port.intake = replace(port.intake, requires_quantity=True, pricing_type=PricingType.ESTIMATED)
 
     repository = LabConversationRepository(state=case.state, context=context)
+    prior_context = dict(repository.context)
     await ConversationEngine(repository, port).process(inbound(sequence, body=text))
+    coherence_violations = _coherence_violations(
+        repository.state,
+        repository.context,
+        input_body=text,
+        prior_context=prior_context,
+    )
     forbidden_present = [key for key in case.forbidden_context_keys if key in repository.context]
     forbidden_calls_present = [
         call for call in case.forbidden_calls if call in port.calls
     ]
     outbound = ""
     if repository.outbounds:
-        outbound = repository.outbounds[-1].transition.outbound.body or ""
+        transition = repository.outbounds[-1].transition
+        outbound = " ".join(
+            message.body or ""
+            for message in (transition.outbound, *transition.follow_ups)
+        )
     missing_outbound_terms = [
         term
         for term in case.required_outbound_terms
@@ -173,6 +338,7 @@ async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[s
         and not missing_outbound_terms
         and automation_ok
         and handoff_ok
+        and not coherence_violations
         and (case.expected_state is None or repository.state == case.expected_state)
     )
     return {
@@ -191,6 +357,7 @@ async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[s
         "automation_enabled": repository.automation_enabled,
         "outbound": outbound,
         "dry_run_calls": port.calls,
+        "coherence_violations": coherence_violations,
         "pass": passed,
     }
 
@@ -201,8 +368,15 @@ async def _flow_result(case: FlowCase, text: str, sequence: int) -> dict[str, ob
     repository = LabConversationRepository(state=case.state, context=context)
     engine = ConversationEngine(repository, port)
 
+    side_prior_context = dict(repository.context)
     await engine.process(inbound(sequence, body=text))
     side_state = repository.state
+    side_coherence_violations = _coherence_violations(
+        repository.state,
+        repository.context,
+        input_body=text,
+        prior_context=side_prior_context,
+    )
     side_outbound = ""
     if repository.outbounds:
         side_outbound = repository.outbounds[-1].transition.outbound.body or ""
@@ -217,12 +391,20 @@ async def _flow_result(case: FlowCase, text: str, sequence: int) -> dict[str, ob
         (case.side_expected_state is None or side_state == case.side_expected_state)
         and not missing_side_terms
         and not side_forbidden_calls
+        and not side_coherence_violations
         and repository.automation_enabled
         and repository.handoff_status == "none"
     )
 
+    followup_prior_context = dict(repository.context)
     await engine.process(inbound(sequence + 1, body=case.followup_text))
     final_state = repository.state
+    followup_coherence_violations = _coherence_violations(
+        repository.state,
+        repository.context,
+        input_body=case.followup_text,
+        prior_context=followup_prior_context,
+    )
     missing_context_keys = [
         key for key in case.followup_context_keys if key not in repository.context
     ]
@@ -238,6 +420,7 @@ async def _flow_result(case: FlowCase, text: str, sequence: int) -> dict[str, ob
         and not missing_context_keys
         and not missing_required_calls
         and not forbidden_calls_present
+        and not followup_coherence_violations
         and repository.automation_enabled
         and repository.handoff_status == "none"
     )
@@ -262,6 +445,8 @@ async def _flow_result(case: FlowCase, text: str, sequence: int) -> dict[str, ob
         "forbidden_calls_present": forbidden_calls_present,
         "side_outbound": side_outbound,
         "final_outbound": final_outbound,
+        "side_coherence_violations": side_coherence_violations,
+        "followup_coherence_violations": followup_coherence_violations,
         "dry_run_calls": port.calls,
         "pass": passed,
     }
@@ -302,6 +487,7 @@ async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]
     saw_handoff = False
 
     for index, step in enumerate(case.steps, start=1):
+        prior_context = dict(repository.context)
         await engine.process(
             inbound(
                 sequence,
@@ -329,6 +515,12 @@ async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]
             for key in step.required_context_keys
             if key not in repository.context
         ]
+        coherence_violations = _coherence_violations(
+            repository.state,
+            repository.context,
+            input_body=step.body,
+            prior_context=prior_context,
+        )
         state_ok = (
             step.expected_state is None
             or repository.state == step.expected_state
@@ -349,8 +541,14 @@ async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]
                 "actual_state": repository.state,
                 "missing_terms": missing_terms,
                 "missing_context_keys": missing_context_keys,
+                "coherence_violations": coherence_violations,
                 "outbound": outbound,
-                "pass": state_ok and not missing_terms and not missing_context_keys,
+                "pass": (
+                    state_ok
+                    and not missing_terms
+                    and not missing_context_keys
+                    and not coherence_violations
+                ),
             }
         )
 

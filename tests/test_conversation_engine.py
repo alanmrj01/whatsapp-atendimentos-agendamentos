@@ -2398,7 +2398,6 @@ async def test_purchase_request_is_clarified_instead_of_generic_service_list() -
     assert "como posso" not in body
     buttons = [button["id"] for button in outbound.outbound_payload["buttons"]]
     assert buttons == [
-        "equipment.installation",
         "equipment.purchase",
         "equipment.both",
     ]
@@ -2594,7 +2593,8 @@ async def test_installation_quote_collects_tubing_length_after_height_before_pri
     ).casefold()
     assert repository.state == ConversationState.BOOKING_TUBING
     assert "tubulação" in combined
-    assert "r$ 20,00" in combined
+    assert "r$ 20,00" not in combined
+    assert "adicional no orçamento" in combined
     assert "quantos metros" in combined
     assert "tubing_length_answered" not in repository.context
 
@@ -4778,7 +4778,8 @@ async def test_generic_equipment_quote_never_recommends_model_before_sizing() ->
     assert "gree" not in normalized
     assert "9.000 btu" not in normalized
     assert "uma opção compatível" not in normalized
-    assert body.find("boa noite") < body.find("Você quer")
+    assert normalized.find("boa noite") < normalized.find("entendi que")
+    assert "você também gostaria de contratar a instalação" in normalized
 
 
 @mark.asyncio

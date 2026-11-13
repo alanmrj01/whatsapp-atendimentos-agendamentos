@@ -154,8 +154,8 @@ async def create_session() -> dict[str, Any]:
     _cleanup_sessions()
     session_id = secrets.token_urlsafe(18)
     session = ManualSession(
-        repository=LabConversationRepository(),
-        port=DryRunBookingPort(),
+        repository=LabConversationRepository(customer_name=None),
+        port=DryRunBookingPort(include_equipment_catalog=True),
     )
     _SESSIONS[session_id] = session
     return _snapshot(session_id, session)
@@ -260,6 +260,7 @@ pre{background:#0f172a;color:#dbeafe;border-radius:10px;padding:10px;overflow:au
 <button onclick="sendMedia('image')">📷 Foto sintética</button>
 <button onclick="sendMedia('video')">🎥 Vídeo sintético</button>
 <button onclick="sendMedia('audio')">🎙️ Áudio sintético</button>
+<button id="copyButton" onclick="copyConversation()">📋 Copiar conversa</button>
 <button onclick="resetSession()">Nova conversa</button>
 </div>
 <div class="composer"><input id="input" autocomplete="off" placeholder="Digite como um cliente..." onkeydown="if(event.key==='Enter')sendText()"><button class="primary" onclick="sendText()">Enviar</button></div>
@@ -280,6 +281,7 @@ pre{background:#0f172a;color:#dbeafe;border-radius:10px;padding:10px;overflow:au
 </main>
 <script>
 let sessionId=null;
+let lastSnapshot=null;
 async function api(path,options={}){const r=await fetch(path,{headers:{'Content-Type':'application/json'},...options});if(!r.ok){throw new Error(await r.text())}return r.json()}
 async function start(){const d=await api('/api/session',{method:'POST'});sessionId=d.session_id;render(d)}
 async function resetSession(){if(sessionId)await fetch('/api/session/'+sessionId,{method:'DELETE'});await start()}
@@ -287,7 +289,32 @@ async function sendText(){const input=document.getElementById('input');const tex
 async function sendAction(id,title){await send({text:title,action:id,message_type:'text'})}
 async function sendMedia(type){await send({message_type:type})}
 async function send(payload){try{const d=await api('/api/session/'+sessionId+'/message',{method:'POST',body:JSON.stringify(payload)});render(d)}catch(e){alert('Falha no laboratório: '+e.message)}}
+async function copyConversation(){
+ const history=(lastSnapshot&&lastSnapshot.history)||[];
+ const text=history.map(item=>{
+   const who=item.role==='user'?'Cliente':'Alovia';
+   const body=item.body||'';
+   const options=(item.role==='assistant'&&item.options&&item.options.length)
+     ? '\nOpções: '+item.options.map(op=>op.title).join(' | ')
+     : '';
+   return who+': '+body+options;
+ }).join('\n\n');
+ if(!text){alert('Ainda não há mensagens para copiar.');return}
+ try{
+   if(navigator.clipboard&&window.isSecureContext){
+     await navigator.clipboard.writeText(text);
+   }else{
+     const area=document.createElement('textarea');
+     area.value=text;area.style.position='fixed';area.style.opacity='0';
+     document.body.appendChild(area);area.focus();area.select();
+     document.execCommand('copy');area.remove();
+   }
+   const button=document.getElementById('copyButton');
+   if(button){const original=button.textContent;button.textContent='✓ Copiado';setTimeout(()=>{button.textContent=original},1400)}
+ }catch(e){alert('Não consegui copiar automaticamente. Selecione a conversa manualmente.')}
+}
 function render(d){
+ lastSnapshot=d;
  const box=document.getElementById('messages');box.innerHTML='';
  for(const item of d.history||[]){
    const wrap=document.createElement('div');wrap.className='msg '+(item.role==='user'?'user':'assistant');
