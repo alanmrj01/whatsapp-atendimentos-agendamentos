@@ -17,6 +17,7 @@ from app.conversation_lab.corpus import (
     DISCOVERY_CONTEXT_SEEDS,
     DISCOVERY_FLOW_CASES,
     DISCOVERY_JOURNEY_CASES,
+    DISCOVERY_LANGUAGE_SEEDS,
     DISCOVERY_SEEDS,
     PREFIXES,
     REGRESSION_CONTEXT,
@@ -396,6 +397,7 @@ async def run(mode: str, per_seed: int) -> int:
     journey_cases: list[JourneyCase] = []
     if mode in {"discovery", "all"}:
         semantic_cases.extend(DISCOVERY_SEEDS)
+        semantic_cases.extend(DISCOVERY_LANGUAGE_SEEDS)
         context_cases.extend(DISCOVERY_CONTEXT_SEEDS)
         flow_cases.extend(DISCOVERY_FLOW_CASES)
         journey_cases.extend(DISCOVERY_JOURNEY_CASES)
