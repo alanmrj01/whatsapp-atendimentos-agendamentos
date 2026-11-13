@@ -552,6 +552,7 @@ class DeterministicConversationInterpreter:
             "reagendar",
             "reagendamento",
             "mudar horario",
+            "mudar o horario",
             "trocar horario",
             "trocar o horario",
             "alterar horario",
