@@ -330,6 +330,7 @@ def test_catalog_semantics_cover_common_refrigeration_service_synonyms() -> None
             "meu ar não liga",
             "preciso de assistência técnica",
             "o aparelho não resfria",
+            "meu ar condicionado não está gelando e preciso de manutenção",
         ),
         "gas": (
             "preciso repor gás",
