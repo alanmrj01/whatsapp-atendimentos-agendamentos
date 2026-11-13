@@ -9822,9 +9822,9 @@ def _service_candidates_for_interpretation(
     direct: tuple[BookingOption, ...] = ()
     explicit_relocation_request = bool(
         re.search(
-            r"\\b(?:mudar|trocar)\\b.{0,30}\\b"
-            r"(?:ar condicionado|ar|split|aparelho|evaporadora|condensadora)\\b"
-            r".{0,30}\\bde lugar\\b",
+            r"\b(?:mudar|trocar)\b.{0,30}\b"
+            r"(?:ar condicionado|ar|split|aparelho|evaporadora|condensadora)\b"
+            r".{0,30}\bde lugar\b",
             text,
         )
     )
