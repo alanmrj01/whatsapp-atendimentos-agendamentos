@@ -648,6 +648,12 @@ async def _route_named_conversation(
         )
     )
     if (
+        state is ConversationState.BOOKING_EQUIPMENT_MODEL
+        and _equipment_model_checkpoint_answer(inbound.body)
+    ):
+        equipment_question_answer = None
+        question_answer = None
+    if (
         question_answer is not None
         and state is ConversationState.COMPLETED
         and not interpretation.has(ConversationIntent.BOOK)
@@ -2817,6 +2823,25 @@ def _is_site_limit_availability_question(
     )
 
 
+def _equipment_model_checkpoint_answer(value: str | None) -> bool:
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return False
+    compact = normalize_portuguese(raw)
+    compact = re.sub(
+        r"^(?:(?:oi|ola|opa|blz|e ai|amigo|moco|seguinte|bom dia|boa tarde|boa noite)\s*[,;:-]?\s+)+",
+        "",
+        compact,
+    ).strip()
+    if re.search(
+        r"\b(?:qual|quais|quanto|como|porque|por que|tem|possui|usa|"
+        r"voltagem|tensao|garantia|pressao|consumo|amperagem|corrente|wifi|bluetooth)\b",
+        compact,
+    ):
+        return False
+    return _looks_like_specific_equipment_request(compact)
+
+
 def _message_can_answer_pending_state(
     state: ConversationState,
     inbound: ConversationInput,
@@ -3095,7 +3120,10 @@ def _message_can_answer_pending_state(
     if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
         if interpretation.has_act(ConversationAct.SIDE_QUESTION):
             model_fact = enrich_context_from_message({}, body).get("equipment_model")
-            if not isinstance(model_fact, str):
+            if (
+                not isinstance(model_fact, str)
+                and not _equipment_model_checkpoint_answer(body)
+            ):
                 return False
         if normalized in {
             "nao",
@@ -5868,6 +5896,13 @@ async def _handle_equipment_model(
         )
 
     raw = " ".join((inbound.body or "").strip().split())
+    model_value = re.sub(
+        r"^(?:(?:oi|ola|opa|blz|e ai|amigo|moco|seguinte|bom dia|boa tarde|boa noite)\s*[,;:-]?\s+)+",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    ).strip()
+    model_value = re.sub(r"[?!.,]+$", "", model_value).strip()
     if (
         raw
         and _context_string(context, "equipment_ownership") == "needs_equipment"
@@ -5983,7 +6018,7 @@ async def _handle_equipment_model(
         updated = {
             **_clear_repair_attempt(context, "equipment_model"),
             "equipment_model_known": True,
-            "equipment_model": raw,
+            "equipment_model": model_value or raw,
         }
         updated.pop("equipment_photo_requested", None)
         return await _advance_intake(
