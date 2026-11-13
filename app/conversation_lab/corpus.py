@@ -77,7 +77,7 @@ DISCOVERY_CONTEXT_SEEDS = (
     ContextCase("time_guard", ConversationState.BOOKING_TIME, "essa visita tem garantia de 2 anos?", ("selected_time",), ConversationState.BOOKING_TIME),
     ContextCase("time_guard", ConversationState.BOOKING_TIME, "tem 5 metros de tubulação?", ("selected_time",), ConversationState.BOOKING_TIME),
     ContextCase("time_guard", ConversationState.BOOKING_TIME, "o endereço é número 9?", ("selected_time",), ConversationState.BOOKING_TIME),
-    ContextCase("time_guard", ConversationState.BOOKING_TIME, "meu aparelho é de 18 mil BTUs", ("selected_time",), ConversationState.BOOKING_TIME),
+    ContextCase("time_guard", ConversationState.BOOKING_TIME, "meu aparelho é de 18 mil BTUs", ("selected_time", "candidate_booking"), None, ("confirm_dry_run",)),
     ContextCase("time_guard", ConversationState.BOOKING_TIME, "o serviço leva 3 horas?", ("selected_time",), ConversationState.BOOKING_TIME),
     ContextCase("quantity_guard", ConversationState.BOOKING_QUANTITY, "quanto custa? meu limite é 500 reais", ("quantity", "equipment_quantity"), ConversationState.BOOKING_QUANTITY),
     ContextCase("quantity_guard", ConversationState.BOOKING_QUANTITY, "a tubulação tem até 3 metros", ("quantity", "equipment_quantity"), ConversationState.BOOKING_QUANTITY),
