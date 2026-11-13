@@ -268,9 +268,7 @@ _PERSONAL_NON_SERVICE_PHRASES = (
 _SEMANTIC_STOPWORDS = {
     "a",
     "ao",
-    "ar",
-    "condicionado",
-    "aparelho",
+     "aparelho",
     "de",
     "do",
     "e",
@@ -288,8 +286,7 @@ _SEMANTIC_STOPWORDS = {
     "orcamento",
     "cotacao",
     "servico",
-    "split",
-    "um",
+     "um",
     "uma",
     "voces",
 }
