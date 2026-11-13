@@ -918,6 +918,24 @@ async def _route_named_conversation(
             prefix=question_answer,
         )
 
+    if (
+        state is ConversationState.BOOKING_TIME
+        and action is None
+        and "?" in (inbound.body or "")
+        and re.search(r"\b\d+\b", normalize_portuguese(inbound.body or ""))
+        and not _is_plausible_time_answer(inbound.body)
+    ):
+        return await _resume_pending_question(
+            conversation,
+            inbound,
+            context,
+            booking_port,
+            prefix=(
+                "Não tenho essa informação cadastrada com segurança e prefiro não "
+                "inventar. Seu atendimento continua exatamente de onde parou."
+            ),
+        )
+
     daypart = _daypart_preference(inbound.body)
     if (
         daypart is not None
@@ -2750,19 +2768,7 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_TIME:
-        parsed_hour = parse_number_answer(body)
-        return bool(
-            _has_explicit_time_reference(body)
-            or re.search(
-                r"\b(?:[01]?\d|2[0-3])(?::[0-5]\d|h)\b",
-                body.casefold(),
-            )
-            or (
-                parsed_hour is not None
-                and parsed_hour.is_integer()
-                and 0 <= parsed_hour <= 23
-            )
-        )
+        return _is_plausible_time_answer(body)
     if state is ConversationState.BOOKING_PROPERTY:
         focused = correction_focus(body)
         return any(
@@ -8539,6 +8545,24 @@ def _has_explicit_time_reference(body: str | None) -> bool:
     )
 
 
+def _is_plausible_time_answer(body: str | None) -> bool:
+    raw = (body or "").strip()
+    normalized = normalize_portuguese(raw)
+    if not normalized:
+        return False
+    if re.fullmatch(r"(?:[01]?\d|2[0-3])", normalized):
+        return True
+    if _has_explicit_time_reference(raw):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:[01]?\d|2[0-3])(?:"
+            r":[0-5]\d|h(?:[0-5]\d)?|\s+horas?)\b",
+            raw.casefold(),
+        )
+    )
+
+
 async def _handle_attendee(
     inbound: ConversationInput,
     context: dict[str, Any],
@@ -9743,6 +9767,7 @@ def _time_from_text(
     if not normalized:
         return None
     padded = f" {normalized} "
+    numeric_time_evidence = _is_plausible_time_answer(body)
     twelve_hour_words = {
         0: "doze",
         1: "uma",
@@ -9796,19 +9821,25 @@ def _time_from_text(
         candidates = {
             normalize_portuguese(option.label),
             normalize_portuguese(option.id),
-            str(hour),
-            f"{hour}h",
-            f"{hour:02d}",
-            f"{hour:02d}h",
         }
-        if minute:
+        if numeric_time_evidence:
             candidates.update(
                 {
-                    f"{hour} {minute:02d}",
-                    f"{hour}h{minute:02d}",
-                    f"{hour} e {minute}",
+                    str(hour),
+                    f"{hour}h",
+                    f"{hour:02d}",
+                    f"{hour:02d}h",
                 }
             )
+        if minute:
+            if numeric_time_evidence:
+                candidates.update(
+                    {
+                        f"{hour} {minute:02d}",
+                        f"{hour}h{minute:02d}",
+                        f"{hour} e {minute}",
+                    }
+                )
         else:
             word = twenty_four_hour_words[hour]
             candidates.update({f"{word} hora", f"{word} horas"})
