@@ -921,6 +921,7 @@ async def _route_named_conversation(
     daypart = _daypart_preference(inbound.body)
     if (
         daypart is not None
+        and not _has_explicit_time_reference(inbound.body)
         and action is None
         and state in {
             ConversationState.BOOKING_WEEKDAY,
@@ -2742,11 +2743,17 @@ def _message_can_answer_pending_state(
                 r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b",
                 body,
             )
+            or re.search(
+                r"\b(?:dia\s+(?:0?[1-9]|[12]\d|3[01])|"
+                r"(?:0?[1-9]|[12]\d|3[01])\s+de\s+[a-z]+)\b",
+                normalized,
+            )
         )
     if state is ConversationState.BOOKING_TIME:
         parsed_hour = parse_number_answer(body)
         return bool(
-            re.search(
+            _has_explicit_time_reference(body)
+            or re.search(
                 r"\b(?:[01]?\d|2[0-3])(?::[0-5]\d|h)\b",
                 body.casefold(),
             )
@@ -8508,7 +8515,7 @@ def _has_explicit_time_reference(body: str | None) -> bool:
         return True
     if re.search(r"\b(?:as|a)\s+(?:[01]?\d|2[0-3])(?:h|\s*horas?)?\b", normalized):
         return True
-    return any(
+    if any(
         phrase in normalized
         for phrase in (
             "da manha",
@@ -8517,7 +8524,19 @@ def _has_explicit_time_reference(body: str | None) -> bool:
             "meio dia",
             "meia noite",
         )
-    ) and bool(re.search(r"\b\d{1,2}\b", normalized))
+    ) and bool(re.search(r"\b\d{1,2}\b", normalized)):
+        return True
+    hour_word = (
+        r"(?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)"
+    )
+    return bool(
+        re.search(
+            rf"\b{hour_word}(?:\s+e\s+meia(?:\s+da\s+(?:manha|tarde|noite))?|"
+            rf"\s+da\s+(?:manha|tarde|noite)|\s+horas?)\b",
+            normalized,
+        )
+        or re.search(r"\b(?:meio\s+dia|meia\s+noite)\b", normalized)
+    )
 
 
 async def _handle_attendee(
@@ -9630,24 +9649,65 @@ def _date_from_text(
     if not normalized:
         return None
     padded = f" {normalized} "
+    parsed_dates = tuple((option, date.fromisoformat(option.id)) for option in dates)
+    month_numbers = {
+        "janeiro": 1,
+        "fevereiro": 2,
+        "marco": 3,
+        "abril": 4,
+        "maio": 5,
+        "junho": 6,
+        "julho": 7,
+        "agosto": 8,
+        "setembro": 9,
+        "outubro": 10,
+        "novembro": 11,
+        "dezembro": 12,
+    }
+    month_pattern = "|".join(month_numbers)
+    explicit_date = re.search(
+        rf"\b(?:dia\s+)?(0?[1-9]|[12]\d|3[01])\s+(?:de\s+)?({month_pattern}|0?[1-9]|1[0-2])\b",
+        normalized,
+    )
+    if explicit_date is not None:
+        requested_day = int(explicit_date.group(1))
+        month_token = explicit_date.group(2)
+        requested_month = month_numbers.get(
+            month_token,
+            int(month_token) if month_token.isdigit() else 0,
+        )
+        matches = {
+            option.id
+            for option, parsed in parsed_dates
+            if parsed.day == requested_day and parsed.month == requested_month
+        }
+        return next(iter(matches)) if len(matches) == 1 else None
 
-    exact_matches: list[str] = []
-    for option in dates:
-        parsed = date.fromisoformat(option.id)
-        label = normalize_portuguese(option.label)
-        day_month = normalize_portuguese(parsed.strftime("%d/%m"))
-        day_number = str(parsed.day)
-        if (
-            f" {label} " in padded
-            or f" {day_month} " in padded
-            or re.search(rf"\bdia\s+0?{parsed.day}\b", normalized)
-        ):
-            exact_matches.append(option.id)
-            continue
-        if re.search(rf"\b0?{parsed.day}\b", normalized):
-            exact_matches.append(option.id)
-    if len(set(exact_matches)) == 1:
-        return exact_matches[0]
+    label_matches = {
+        option.id
+        for option, _ in parsed_dates
+        if f" {normalize_portuguese(option.label)} " in padded
+    }
+    if len(label_matches) == 1:
+        return next(iter(label_matches))
+
+    day_match = re.search(r"\bdia\s+(0?[1-9]|[12]\d|3[01])\b", normalized)
+    if day_match is not None:
+        requested_day = int(day_match.group(1))
+        matches = {
+            option.id
+            for option, parsed in parsed_dates
+            if parsed.day == requested_day
+        }
+        return next(iter(matches)) if len(matches) == 1 else None
+
+    bare_matches = {
+        option.id
+        for option, parsed in parsed_dates
+        if re.search(rf"\b0?{parsed.day}\b", normalized)
+    }
+    if len(bare_matches) == 1:
+        return next(iter(bare_matches))
 
     relative_days = {
         "amanha": 1,
@@ -9683,44 +9743,63 @@ def _time_from_text(
     if not normalized:
         return None
     padded = f" {normalized} "
-    hour_words = {
-        0: ("meia noite",),
-        1: ("uma",),
-        2: ("duas",),
-        3: ("tres",),
-        4: ("quatro",),
-        5: ("cinco",),
-        6: ("seis",),
-        7: ("sete",),
-        8: ("oito",),
-        9: ("nove",),
-        10: ("dez",),
-        11: ("onze",),
-        12: ("doze", "meio dia"),
-        13: ("treze", "uma da tarde"),
-        14: ("quatorze", "duas da tarde"),
-        15: ("quinze", "tres da tarde"),
-        16: ("dezesseis", "quatro da tarde"),
-        17: ("dezessete", "cinco da tarde"),
-        18: ("dezoito", "seis da tarde"),
-        19: ("dezenove", "sete da noite"),
-        20: ("vinte", "oito da noite"),
-        21: ("vinte e uma", "nove da noite"),
-        22: ("vinte e duas", "dez da noite"),
-        23: ("vinte e tres", "onze da noite"),
+    twelve_hour_words = {
+        0: "doze",
+        1: "uma",
+        2: "duas",
+        3: "tres",
+        4: "quatro",
+        5: "cinco",
+        6: "seis",
+        7: "sete",
+        8: "oito",
+        9: "nove",
+        10: "dez",
+        11: "onze",
     }
+    twenty_four_hour_words = {
+        0: "zero",
+        1: "uma",
+        2: "duas",
+        3: "tres",
+        4: "quatro",
+        5: "cinco",
+        6: "seis",
+        7: "sete",
+        8: "oito",
+        9: "nove",
+        10: "dez",
+        11: "onze",
+        12: "doze",
+        13: "treze",
+        14: "quatorze",
+        15: "quinze",
+        16: "dezesseis",
+        17: "dezessete",
+        18: "dezoito",
+        19: "dezenove",
+        20: "vinte",
+        21: "vinte e uma",
+        22: "vinte e duas",
+        23: "vinte e tres",
+    }
+    matches: set[str] = set()
     for option in times:
         try:
-            hour_text, minute_text = option.label.split(":", 1)
+            hour_text, minute_text = option.id.split(":", 1)
             hour = int(hour_text)
             minute = int(minute_text)
         except (ValueError, AttributeError):
             continue
-        label_phrase = normalize_portuguese(option.label)
+        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+            continue
         candidates = {
-            label_phrase,
+            normalize_portuguese(option.label),
+            normalize_portuguese(option.id),
             str(hour),
             f"{hour}h",
+            f"{hour:02d}",
+            f"{hour:02d}h",
         }
         if minute:
             candidates.update(
@@ -9730,11 +9809,42 @@ def _time_from_text(
                     f"{hour} e {minute}",
                 }
             )
-        elif hour in hour_words:
-            candidates.update(hour_words[hour])
+        else:
+            word = twenty_four_hour_words[hour]
+            candidates.update({f"{word} hora", f"{word} horas"})
+
+        twelve_hour = hour % 12
+        natural_word = twelve_hour_words[twelve_hour]
+        if hour == 0:
+            daypart = "da madrugada"
+        elif hour < 12:
+            daypart = "da manha"
+        elif hour == 12:
+            daypart = "da tarde"
+        elif hour < 18:
+            daypart = "da tarde"
+        else:
+            daypart = "da noite"
+        if minute == 0:
+            candidates.add(f"{natural_word} {daypart}")
+            if hour == 0:
+                candidates.add("meia noite")
+            elif hour == 12:
+                candidates.add("meio dia")
+        elif minute == 30:
+            candidates.add(f"{natural_word} e meia {daypart}")
+            if not re.search(r"\bda\s+(?:manha|tarde|noite)\b", normalized):
+                candidates.add(f"{natural_word} e meia")
+        if normalized in {
+            natural_word,
+            f"as {natural_word}",
+            twenty_four_hour_words[hour],
+            f"as {twenty_four_hour_words[hour]}",
+        }:
+            candidates.add(normalized)
         if any(f" {normalize_portuguese(candidate)} " in padded for candidate in candidates):
-            return option.id
-    return None
+            matches.add(option.id)
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 def _text_message(body: str) -> OutboundMessage:

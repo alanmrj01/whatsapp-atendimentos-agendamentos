@@ -574,25 +574,7 @@ class DeterministicConversationInterpreter:
         ):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
 
-        if _contains_any(
-            normalized,
-            (
-                "tem horario",
-                "tem horarios",
-                "tem vaga",
-                "tem vagas",
-                "disponibilidade",
-                "quando pode",
-                "quando voces podem",
-                "quando conseguem",
-                "quando voces conseguem",
-                "quando voces conseguem vir",
-                "qual horario",
-                "quais horarios",
-                "horario disponivel",
-                "agenda disponivel",
-            ),
-        ):
+        if _contains_availability_request(normalized):
             intents.add(ConversationIntent.AVAILABILITY)
         if _contains_any(
             normalized,
@@ -1158,3 +1140,35 @@ def _service_alias_matches(
 def _contains_any(value: str, aliases: tuple[str, ...]) -> bool:
     padded = f" {value} "
     return any(f" {alias} " in padded for alias in aliases)
+
+
+def _contains_availability_request(value: str) -> bool:
+    if _contains_any(
+        value,
+        (
+            "tem horario",
+            "tem horarios",
+            "tem vaga",
+            "tem vagas",
+            "disponibilidade",
+            "quando pode",
+            "quando voces podem",
+            "quando conseguem",
+            "quando voces conseguem",
+            "quando voces conseguem vir",
+            "qual horario",
+            "quais horarios",
+            "horario disponivel",
+            "agenda disponivel",
+        ),
+    ):
+        return True
+    return any(
+        re.search(pattern, value)
+        for pattern in (
+            r"\b(?:qnd|quando)\s+(?:(?:vcs|voces|ces)\s+)?(?:conseguem|podem)(?:\s+vir)?\b",
+            r"\bqual(?:\s+o)?\s+(?:dia\s+da\s+pra\s+atender|proximo\s+horario)\b",
+            r"\btem\s+(?:algum\s+)?(?:horario|hr)\s+livre\b",
+            r"\bagenda\s+como\s+ta\b",
+        )
+    )
