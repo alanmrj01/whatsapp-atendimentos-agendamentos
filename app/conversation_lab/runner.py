@@ -388,7 +388,13 @@ async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]
     }
 
 
-async def run(\n    mode: str,\n    per_seed: int,\n    stage: str = "all",\n    shard_index: int = 0,\n    shard_count: int = 1,\n) -> int:
+async def run(
+    mode: str,
+    per_seed: int,
+    stage: str = "all",
+    shard_index: int = 0,
+    shard_count: int = 1,
+) -> int:
     if os.getenv("CONVERSATION_LAB_ALLOW_EXTERNAL_IO", "false").lower() == "true":
         raise RuntimeError("conversation_lab_external_io_must_remain_disabled")
 
