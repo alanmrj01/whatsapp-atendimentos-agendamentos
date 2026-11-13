@@ -421,17 +421,37 @@ def service_domain_compatible(
     }
 
     query_expanded = _expanded_tokens(query)
+    query_tokens = set(query.split())
+    explicit_hvac_request = (
+        _contains_phrase(query, "ar condicionado")
+        or bool(query_tokens & {"split", "condensadora", "evaporadora"})
+    )
+
     required_groups: list[set[str]] = []
     if query_expanded & cold_appliance_signals:
         required_groups.append(cold_appliance_signals)
     if query_expanded & electrical_signals:
         required_groups.append(electrical_signals)
-    if not required_groups:
+    if not required_groups and not explicit_hvac_request:
         return True
 
     candidate_expanded = _expanded_tokens(service_name)
+    candidate_text = normalize_service_text(service_name)
     for example in examples:
         candidate_expanded.update(_expanded_tokens(example))
+        candidate_text += f" {normalize_service_text(example)}"
+
+    candidate_tokens = set(candidate_text.split())
+    candidate_has_explicit_hvac = (
+        _contains_phrase(candidate_text, "ar condicionado")
+        or bool(candidate_tokens & {"split", "condensadora", "evaporadora"})
+    )
+    if (
+        explicit_hvac_request
+        and candidate_expanded & (cold_appliance_signals | electrical_signals)
+        and not candidate_has_explicit_hvac
+    ):
+        return False
 
     return all(
         bool(candidate_expanded & group)
