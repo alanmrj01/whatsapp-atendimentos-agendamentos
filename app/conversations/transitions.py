@@ -6456,6 +6456,34 @@ async def _handle_equipment_profile(
     raw_text = (inbound.body or "").strip()
     message_facts = enrich_context_from_message({}, raw_text)
     accepted_answer = _has_profile_fact(message_facts)
+    future_fact_prefix: str | None = None
+    if message_facts.get("installation_height_over_3m") is True:
+        future_fact_prefix = (
+            "Entendi. Vou considerar que será necessário trabalho acima de 3 metros "
+            "e não vou perguntar essa altura novamente."
+        )
+    elif message_facts.get("installation_height_over_3m") is False:
+        future_fact_prefix = (
+            "Entendi. Vou considerar que a instalação fica em até 3 metros "
+            "e não vou perguntar essa altura novamente."
+        )
+    elif message_facts.get("property_type") in {
+        "house",
+        "building",
+        "condominium",
+    }:
+        future_fact_prefix = (
+            "Entendi. Já guardei essa informação sobre o tipo de imóvel para "
+            "não precisar perguntar novamente."
+        )
+    elif (
+        message_facts.get("building_hours_start") is not None
+        and message_facts.get("building_hours_end") is not None
+    ):
+        future_fact_prefix = (
+            "Entendi. Já guardei esse horário permitido para considerar mais adiante "
+            "na agenda."
+        )
 
     preference_by_action = {
         EQUIPMENT_PREF_MODERN: "modern",
@@ -6502,6 +6530,15 @@ async def _handle_equipment_profile(
 
     if missing:
         current_field = missing[0]
+        if not accepted_answer and raw_text and future_fact_prefix is not None:
+            return _prepend_transition_body(
+                _transition(
+                    ConversationState.BOOKING_EQUIPMENT_PROFILE,
+                    updated,
+                    _equipment_profile_prompt(missing),
+                ),
+                future_fact_prefix,
+            )
         if not accepted_answer and raw_text:
             return _retry_or_handoff(
                 ConversationState.BOOKING_EQUIPMENT_PROFILE,
