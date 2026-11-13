@@ -211,14 +211,17 @@ class DryRunBookingPort:
             (item for item in self.services if item.id == str(service_id)),
             BookingOption(str(service_id), "Serviço sintético"),
         )
-        installation = service_id == INSTALLATION_SERVICE_ID
+        has_tubing_details = service_id in {
+            SERVICE_ID,
+            INSTALLATION_SERVICE_ID,
+        }
         return ServiceDetails(
             id=service_id,
             name=service.label,
             description=f"{service.label} configurado no laboratório.",
-            included_tubing_meters=Decimal("3") if installation else None,
-            extra_tubing_price=Decimal("50") if installation else None,
-            extra_tubing_unit_label="metro" if installation else None,
+            included_tubing_meters=Decimal("3") if has_tubing_details else None,
+            extra_tubing_price=Decimal("50") if has_tubing_details else None,
+            extra_tubing_unit_label="metro" if has_tubing_details else None,
             business_city="São José dos Campos",
             business_state="SP",
             business_address=None,
