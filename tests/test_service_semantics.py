@@ -365,3 +365,69 @@ def test_catalog_semantics_keep_generic_request_ambiguous_instead_of_guessing() 
         (preventive, corrective),
         interpretation,
     ) is None
+
+
+def test_catalog_semantics_support_refrigerator_only_when_catalog_has_it() -> None:
+    refrigerator = BookingOption(
+        "1",
+        "Conserto e manutenção de geladeira e freezer",
+        generate_service_intent_examples(
+            "Conserto e manutenção de geladeira e freezer"
+        ),
+    )
+    hvac = BookingOption(
+        "2",
+        "Diagnóstico e manutenção corretiva de ar condicionado",
+        generate_service_intent_examples(
+            "Diagnóstico e manutenção corretiva de ar condicionado"
+        ),
+    )
+    interpreter = DeterministicConversationInterpreter()
+
+    for phrase in (
+        "minha geladeira não está gelando",
+        "a geladeira parou de gelar",
+        "meu freezer não congela",
+        "preciso consertar a geladeira",
+    ):
+        interpretation = interpreter.interpret(phrase)
+        assert _service_for_interpretation(
+            (refrigerator, hvac),
+            interpretation,
+        ) == refrigerator
+
+    assert _service_for_interpretation(
+        (hvac,),
+        interpreter.interpret("minha geladeira não está gelando"),
+    ) is None
+
+
+def test_catalog_semantics_support_residential_electrical_only_when_catalog_has_it() -> None:
+    electrical = BookingOption(
+        "1",
+        "Elétrica residencial",
+        generate_service_intent_examples("Elétrica residencial"),
+    )
+    hvac = BookingOption(
+        "2",
+        "Manutenção corretiva de ar condicionado",
+        generate_service_intent_examples("Manutenção corretiva de ar condicionado"),
+    )
+    interpreter = DeterministicConversationInterpreter()
+
+    for phrase in (
+        "a tomada da cozinha queimou",
+        "meu disjuntor fica desarmando",
+        "o chuveiro não liga",
+        "preciso de um eletricista",
+    ):
+        interpretation = interpreter.interpret(phrase)
+        assert _service_for_interpretation(
+            (electrical, hvac),
+            interpretation,
+        ) == electrical
+
+    assert _service_for_interpretation(
+        (hvac,),
+        interpreter.interpret("o chuveiro não liga"),
+    ) is None
