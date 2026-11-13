@@ -33,6 +33,13 @@ REGRESSION_SEMANTIC = (
     SemanticCase("availability", "qnd vcs conseguem vir?", ConversationIntent.AVAILABILITY),
     SemanticCase("availability", "qual dia dá pra atender?", ConversationIntent.AVAILABILITY),
     SemanticCase("reschedule", "quero trocar o horário", ConversationIntent.RESCHEDULE),
+    SemanticCase("reschedule", "quero trocar o horaro", ConversationIntent.RESCHEDULE),
+    SemanticCase("duration", "esse serviço demroa 2 horas?", ConversationIntent.DURATION_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("duration", "esse serviço demorra 2 horas?", ConversationIntent.DURATION_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("duration", "qnto tempo leva esse serviço?", ConversationIntent.DURATION_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("duration", "qto tempo leva esse serviço?", ConversationIntent.DURATION_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("availability", "tem horaro livre hoje?", ConversationIntent.AVAILABILITY),
+    SemanticCase("availability", "quando vcês conseguem vir?", ConversationIntent.AVAILABILITY),
 )
 
 REGRESSION_CONTEXT = (
@@ -43,6 +50,10 @@ REGRESSION_CONTEXT = (
     ContextCase("quantity_guard", ConversationState.BOOKING_QUANTITY, "o modelo é de 12 mil BTUs", ("quantity", "equipment_quantity"), ConversationState.BOOKING_QUANTITY),
     ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "valeu viu", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
     ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "pera aí um minutinho", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
+    ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "blz, valeu viu", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
+    ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "valeu viu pfv", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
+    ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "opa, pera ai um minutinho", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
+    ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "rapidinho: pera ai um minutinho por favor", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
 )
 
 # Seeds de discovery. O runner gera variações adicionais de forma controlada.
