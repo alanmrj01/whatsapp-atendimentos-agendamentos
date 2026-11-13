@@ -3172,7 +3172,21 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
-        if _has_profile_fact(enrich_context_from_message({}, body)):
+        message_facts = enrich_context_from_message({}, body)
+        if _has_profile_fact(message_facts):
+            return True
+        if (
+            "installation_height_over_3m" in message_facts
+            or message_facts.get("property_type") in {
+                "house",
+                "building",
+                "condominium",
+            }
+            or (
+                message_facts.get("building_hours_start") is not None
+                and message_facts.get("building_hours_end") is not None
+            )
+        ):
             return True
         missing = missing_equipment_profile_fields(context)
         if _apply_expected_profile_answer(context, missing, body)[1]:
