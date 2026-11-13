@@ -538,7 +538,7 @@ DISCOVERY_JOURNEY_CASES = (
         ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
-    ),,
+    ),
     JourneyCase(
         "journey_cleaning_quantity_pricing",
         (
