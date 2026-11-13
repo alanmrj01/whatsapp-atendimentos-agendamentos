@@ -3994,9 +3994,16 @@ def _city_alias_from_text(value: str) -> tuple[str, str] | None:
     ]
     candidates = segments[-2:] if segments else [normalize_portuguese(value)]
     for segment in reversed(candidates):
+        alias_segment = re.sub(
+            r"\s*(?:-|/)\s*([a-z]{2})\s*$",
+            "",
+            segment,
+        ).strip()
+        if re.fullmatch(r"s\.?\s*j\.?\s*dos\s+campos", alias_segment):
+            return _CITY_ABBREVIATIONS["sjc"]
         tokens = [
             token
-            for token in segment.split()
+            for token in alias_segment.split()
             if token not in _BRAZIL_STATE_CODES
         ]
         if len(tokens) == 1 and tokens[0] in _CITY_ABBREVIATIONS:
@@ -4050,10 +4057,19 @@ def _state_code_from_segment(value: str) -> str | None:
 
 def _split_city_state_label(value: str) -> tuple[str, str | None]:
     raw = " ".join(value.split()).strip(" ,-")
-    match = re.match(r"^(.*?)\s*(?:-|/|,)\s*([A-Za-z]{2})\s*$", raw)
+    match = re.match(r"^(.*?)\s*(?:(?:-|/|,)\s*|\s+)([A-Za-z]{2})\s*$", raw)
     if match and normalize_portuguese(match.group(2)) in _BRAZIL_STATE_CODES:
         city = match.group(1).strip(" ,-")
+        alias = _city_alias_from_text(city)
+        if alias is not None:
+            return alias
         return city, match.group(2).upper()
+    dotted_sjc = re.fullmatch(
+        r"s\.?\s*j\.?\s*dos\s+campos",
+        normalize_portuguese(raw),
+    )
+    if dotted_sjc:
+        return _CITY_ABBREVIATIONS["sjc"]
     alias = _CITY_ABBREVIATIONS.get(normalize_portuguese(raw))
     if alias is not None:
         return alias
@@ -4088,12 +4104,7 @@ def _service_address_from_text(
         city, alias_state = alias
         state = alias_state
         if city_index >= 1:
-            candidate = normalize_portuguese(raw_segments[city_index])
-            candidate_tokens = [
-                token for token in candidate.split()
-                if token not in _BRAZIL_STATE_CODES
-            ]
-            if len(candidate_tokens) == 1 and candidate_tokens[0] in _CITY_ABBREVIATIONS:
+            if _city_alias_from_text(raw_segments[city_index]) is not None:
                 remove_count += 1
     elif (
         isinstance(business_city, str)
@@ -4395,12 +4406,21 @@ def _time_window_from_text(
     value: str | None,
 ) -> tuple[str, str] | None:
     raw = value or ""
-    match = re.search(
+    patterns = (
         r"\b(?:das?\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:h|hs|hr|hrs|hora|horas)?"
         r"\s*(?:às|as|até|ate|a|-|–|—)\s*(\d{1,2})(?::(\d{2}))?"
         r"\s*(?:h|hs|hr|hrs|hora|horas)?\b",
-        raw.casefold(),
-        flags=re.IGNORECASE,
+        r"\bentre\s+(\d{1,2})(?::(\d{2}))?\s*(?:h|hs|hr|hrs|hora|horas)?"
+        r"\s+e\s+(\d{1,2})(?::(\d{2}))?"
+        r"\s*(?:h|hs|hr|hrs|hora|horas)?\b",
+    )
+    match = next(
+        (
+            candidate
+            for pattern in patterns
+            if (candidate := re.search(pattern, raw.casefold(), flags=re.IGNORECASE))
+        ),
+        None,
     )
     if match is None:
         return None
@@ -10010,6 +10030,19 @@ def _site_limit(
         return None
     mapped = {SITE_LIMIT_17: "17:00", SITE_LIMIT_18: "18:00"}.get(action)
     raw_value = mapped or (body or "").strip()
+    if mapped is None:
+        explicit_limit = re.search(
+            r"(?:\bate\s+|\blimite\s*(?:e|de|:)\s*|"
+            r"\bnao\s+pode\s+depois\s+das?\s+|\bservico\s+so\s+ate\s+)"
+            r"(\d{1,2})(?::(\d{2}))?\s*(?:h|hs|hora|horas)?\b",
+            normalized,
+        )
+        if explicit_limit is not None:
+            hour = int(explicit_limit.group(1))
+            minute = int(explicit_limit.group(2) or 0)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                return False
+            raw_value = f"{hour:02d}:{minute:02d}"
     try:
         parsed = time.fromisoformat(raw_value)
     except ValueError:
