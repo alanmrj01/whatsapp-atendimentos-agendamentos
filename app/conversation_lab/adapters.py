@@ -41,6 +41,53 @@ ELECTRICAL_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000011")
 APPOINTMENT_ID = uuid.UUID("95000000-0000-0000-0000-000000000005")
 EMPLOYEE_ID = uuid.UUID("96000000-0000-0000-0000-000000000006")
 
+_MANUAL_EQUIPMENT_CATALOG = (
+    EquipmentCatalogEntry(
+        item_id="lab-agratto-9000-cold",
+        brand="Agratto",
+        line="LIV Top Inverter",
+        capacity_btu=9000,
+        segment="economy",
+        cycles=("cold",),
+        features=("inverter",),
+        source_url="lab://equipment/agratto-9000",
+        price=1899.0,
+    ),
+    EquipmentCatalogEntry(
+        item_id="lab-agratto-12000-cold",
+        brand="Agratto",
+        line="LIV Top Inverter",
+        capacity_btu=12000,
+        segment="economy",
+        cycles=("cold",),
+        features=("inverter",),
+        source_url="lab://equipment/agratto-12000",
+        price=2299.0,
+    ),
+    EquipmentCatalogEntry(
+        item_id="lab-midea-12000-heat-cool",
+        brand="Midea",
+        line="Xtreme Save Connect",
+        capacity_btu=12000,
+        segment="cost_benefit",
+        cycles=("cold", "heat_cool"),
+        features=("inverter", "wifi"),
+        source_url="lab://equipment/midea-12000",
+        price=2799.0,
+    ),
+    EquipmentCatalogEntry(
+        item_id="lab-lg-18000-cold",
+        brand="LG",
+        line="Dual Inverter Voice",
+        capacity_btu=18000,
+        segment="modern",
+        cycles=("cold",),
+        features=("inverter", "wifi"),
+        source_url="lab://equipment/lg-18000",
+        price=3899.0,
+    ),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class StoredOutbound:
@@ -115,8 +162,13 @@ class LabConversationRepository:
 class DryRunBookingPort:
     """Adapter sintético. Toda ação destrutiva é registrada, nunca executada externamente."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, include_equipment_catalog: bool = False) -> None:
         self.calls: list[str] = []
+        self.equipment_catalog = (
+            _MANUAL_EQUIPMENT_CATALOG
+            if include_equipment_catalog
+            else ()
+        )
         self.services = [
             BookingOption(
                 str(SERVICE_ID),
@@ -287,7 +339,7 @@ class DryRunBookingPort:
         return self.service_intakes.get(service_id, self.intake)
 
     async def list_equipment_catalog(self, _: uuid.UUID):
-        return tuple[EquipmentCatalogEntry]()
+        return tuple(self.equipment_catalog)
 
     async def estimate(
         self,
