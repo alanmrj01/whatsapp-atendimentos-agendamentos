@@ -2555,24 +2555,7 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
-        return any(
-            phrase in normalized
-            for phrase in (
-                "ja tenho",
-                "tenho o aparelho",
-                "ja possuo",
-                "possuo o aparelho",
-                "so instalacao",
-                "somente instalacao",
-                "apenas instalar",
-                "quero cotar",
-                "quero comprar",
-                "preciso comprar",
-                "preciso de um aparelho",
-                "preciso de um ar",
-                "nao tenho",
-            )
-        )
+        return _equipment_ownership_from_text(normalized) is not None
     if state is ConversationState.BOOKING_EQUIPMENT_DELIVERY:
         return normalized in {
             "retirar",
@@ -5252,34 +5235,10 @@ async def _handle_equipment_ownership(
         return _handoff_for_reason(str(exc))
 
     normalized = normalize_portuguese(inbound.body or "")
-    ownership: str | None = None
-    if action == EQUIPMENT_HAS or any(
-        phrase in normalized
-        for phrase in (
-            "ja tenho",
-            "tenho",
-            "tenho o aparelho",
-            "ja possuo",
-            "possuo o aparelho",
-            "so instalacao",
-            "somente instalacao",
-            "apenas instalar",
-        )
-    ):
+    ownership = _equipment_ownership_from_text(normalized)
+    if action == EQUIPMENT_HAS:
         ownership = "has_equipment"
-    elif action == EQUIPMENT_NEEDS or any(
-        phrase in normalized
-        for phrase in (
-            "quero cotar",
-            "quero comprar",
-            "preciso comprar",
-            "preciso de um aparelho",
-            "preciso de um ar",
-            "nao tenho",
-            "nao tenho aparelho",
-            "nao tenho o ar",
-        )
-    ):
+    elif action == EQUIPMENT_NEEDS:
         ownership = "needs_equipment"
 
     if ownership is None:
@@ -5310,6 +5269,38 @@ async def _handle_equipment_ownership(
         updated,
         customer_name=customer_name,
     )
+
+
+def _equipment_ownership_from_text(normalized: str) -> str | None:
+    if re.search(
+        r"\bnao tenho (?:o |um |nenhum )?"
+        r"(?:aparelho|ar|equipamento|split)\b",
+        normalized,
+    ) or any(
+        phrase in normalized
+        for phrase in (
+            "quero cotar",
+            "quero comprar",
+            "preciso comprar",
+            "preciso de um aparelho",
+            "preciso de um ar",
+        )
+    ):
+        return "needs_equipment"
+    if re.search(
+        r"\b(?:ja tenho|tenho|ja possuo|possuo) "
+        r"(?:o |um |meu )?(?:aparelho|ar|equipamento|split)\b",
+        normalized,
+    ) or any(
+        phrase in normalized
+        for phrase in (
+            "so instalacao",
+            "somente instalacao",
+            "apenas instalar",
+        )
+    ):
+        return "has_equipment"
+    return None
 
 
 async def _handle_equipment_model(

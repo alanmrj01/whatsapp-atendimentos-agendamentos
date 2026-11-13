@@ -444,11 +444,28 @@ class DeterministicConversationInterpreter:
             acts.add(ConversationAct.CORRECTION)
         if re.search(r"\b(?:tambem|alem disso)\s+(?:quero|preciso|gostaria)\b", normalized):
             acts.add(ConversationAct.ADDITIONAL_REQUEST)
-        if re.search(
+        negatable_actions = (
+            "cancelar",
+            "cancelamento",
+            "cancela",
+            "desmarcar",
+            "remarcar",
+            "reagendar",
+            "reagendamento",
+            "comprar",
+            "falar com atendente",
+            "falar com um atendente",
+            "atendente",
+        )
+        existing_negated_action = re.search(
             r"\bnao\s+(?:quero\s+|vou\s+|pretendo\s+|desejo\s+)?"
             r"(?:cancelar|cancelamento|desmarcar|remarcar|reagendar|"
             r"reagendamento|comprar|falar\s+com|(?:um\s+)?atendente)\b",
             normalized,
+        )
+        if existing_negated_action or any(
+            _phrase_is_negated(normalized, alias)
+            for alias in negatable_actions
         ):
             acts.add(ConversationAct.NEGATED_ACTION)
 
@@ -481,6 +498,7 @@ class DeterministicConversationInterpreter:
                 "reagendamento",
                 "mudar horario",
                 "trocar horario",
+                "trocar o horario",
                 "alterar horario",
                 "alterar o horario",
                 "mudar a data",
@@ -499,6 +517,7 @@ class DeterministicConversationInterpreter:
             "reagendamento",
             "mudar horario",
             "trocar horario",
+            "trocar o horario",
             "alterar horario",
             "alterar o horario",
             "mudar a data",
@@ -817,12 +836,13 @@ def correction_focus(value: str) -> str:
 
 def _phrase_is_negated(value: str, phrase: str) -> bool:
     escaped = r"\s+".join(re.escape(token) for token in phrase.split())
-    return bool(
-        re.search(
-            rf"\bnao(?:\s+(?:quero|vou|pretendo|desejo|preciso|e|eh))?\s+{escaped}\b",
-            value,
-        )
+    patterns = (
+        rf"\bnao\s+(?:(?:quero|vou|pretendo|desejo|preciso|precisa)"
+        rf"(?:\s+(?:de|para))?\s+|(?:e|eh)\s+para\s+)?{escaped}\b",
+        rf"\bdesisti\s+de\s+{escaped}\b",
+        rf"\bnao\s+{escaped}\s+nao\b",
     )
+    return any(re.search(pattern, value) for pattern in patterns)
 
 
 def _purchase_is_negated(value: str) -> bool:
@@ -837,19 +857,31 @@ def _purchase_is_negated(value: str) -> bool:
 def _is_action_request(value: str, aliases: tuple[str, ...]) -> bool:
     if any(_phrase_is_negated(value, alias) for alias in aliases):
         return False
-    question_leads = (
-        "como funciona",
-        "posso",
-        "pode",
-        "e possivel",
-        "depois posso",
-        "se eu quiser",
-        "quando posso",
+    escaped_aliases = tuple(
+        r"\s+".join(re.escape(token) for token in alias.split())
+        for alias in aliases
     )
-    if any(lead in value for lead in question_leads) and not any(
-        token in value
-        for token in ("quero", "preciso", "gostaria", "vou", "pode cancelar", "pode remarcar")
+    if any(
+        re.search(rf"\bpode\s+{escaped}\b", value)
+        for escaped in escaped_aliases
     ):
+        return True
+    question_patterns = (
+        r"\bcomo funciona\b",
+        r"\bposso\b",
+        r"\btem como\b",
+        r"\be possivel\b",
+        r"\bdepois posso\b",
+        r"\bse eu\b",
+        r"\bse eu quiser\b",
+        r"\bquando posso\b",
+        r"\bqual(?: e)? o prazo\b",
+        r"\bqueria saber\b",
+        r"\bquero saber\b",
+        r"\bvoces conseguem\b",
+        r"\bda para\b",
+    )
+    if any(re.search(pattern, value) for pattern in question_patterns):
         return False
     return True
 
