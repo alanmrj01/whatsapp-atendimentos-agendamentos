@@ -789,6 +789,14 @@ async def _route_named_conversation(
             booking_port,
             prefix="Tudo certo.",
         )
+    if state in booking_states and interpretation.has_act(ConversationAct.PAUSE):
+        return await _resume_pending_question(
+            conversation,
+            inbound,
+            context,
+            booking_port,
+            prefix="Sem problema. Continuamos daqui quando você estiver pronto.",
+        )
     if state in booking_states and interpretation.has_act(
         ConversationAct.NEGATED_ACTION
     ) and not interpretation.has_act(ConversationAct.CORRECTION):
@@ -7467,6 +7475,12 @@ async def _handle_post_booking_help(
 
     no_more_help = (
         action == POST_BOOKING_HELP_NO
+        or bool(
+            re.fullmatch(
+                r"(?:nao\s+)?(?:obrigad[oa]\s+)?era\s+so\s+isso",
+                normalized,
+            )
+        )
         or normalized in {
             "nao",
             "nao obrigado",

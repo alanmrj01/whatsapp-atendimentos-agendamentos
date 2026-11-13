@@ -30,6 +30,7 @@ class ConversationAct(StrEnum):
     SIDE_QUESTION = "side_question"
     ADDITIONAL_REQUEST = "additional_request"
     NEGATED_ACTION = "negated_action"
+    PAUSE = "pause"
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,8 +446,10 @@ class DeterministicConversationInterpreter:
         assertion = correction_focus(original)
         service_assertion = _normalize_service_language(assertion)
 
-        if normalized in _SOCIAL_ONLY:
+        if _is_social_acknowledgement(normalized):
             acts.add(ConversationAct.SOCIAL)
+        if _is_pause_message(normalized):
+            acts.add(ConversationAct.PAUSE)
         if assertion != normalized or any(
             marker in normalized for marker in _CORRECTION_MARKERS
         ):
@@ -1152,6 +1155,29 @@ def _contains_equipment_purchase(value: str) -> bool:
         return False
 
     return not _contains_any(value, installation_phrases)
+
+
+def _is_social_acknowledgement(value: str) -> bool:
+    if value in _SOCIAL_ONLY:
+        return True
+    return bool(
+        re.fullmatch(
+            r"(?:valeu(?: viu)?|show de bola|beleza entao|"
+            r"perfeito obrigad[oa]|ok entendido|tmj|top demais|"
+            r"tranquilo entao|boa obrigad[oa]|fechou(?: entao)?)",
+            value,
+        )
+    )
+
+
+def _is_pause_message(value: str) -> bool:
+    return bool(
+        re.fullmatch(
+            r"(?:pera ai(?: um minutinho| um minuto)?|ja volto|"
+            r"deixa eu ver(?: aqui)?|so um instante|um minutinho)",
+            value,
+        )
+    )
 
 
 def _contains_greeting(value: str) -> bool:
