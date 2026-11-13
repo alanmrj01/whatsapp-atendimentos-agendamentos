@@ -77,7 +77,7 @@ def _semantic_result(case: SemanticCase, text: str) -> dict[str, object]:
         act.value for act in case.forbidden_acts if result.has_act(act)
     ]
     passed = (
-        result.has(case.intent)
+        (case.intent is None or result.has(case.intent))
         and (case.act is None or result.has_act(case.act))
         and not forbidden_intents_present
         and not forbidden_acts_present
@@ -86,7 +86,7 @@ def _semantic_result(case: SemanticCase, text: str) -> dict[str, object]:
         "kind": "semantic",
         "family": case.family,
         "input": text,
-        "expected_intent": case.intent.value,
+        "expected_intent": case.intent.value if case.intent else None,
         "expected_act": case.act.value if case.act else None,
         "pass": passed,
         "actual_intents": sorted(intent.value for intent in result.intents),
