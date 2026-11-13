@@ -43,6 +43,8 @@ class JourneyCase:
     required_calls: tuple[str, ...] = ()
     forbidden_calls: tuple[str, ...] = ()
     allow_handoff: bool = False
+    mutate_steps: tuple[int, ...] = ()
+    variants_per_step: int = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,7 +358,46 @@ DISCOVERY_FLOW_CASES = (
         (),
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
+    ),,
+    FlowCase(
+        "resume_service_details_time",
+        ConversationState.BOOKING_TIME,
+        "o que inclui esse serviço?",
+        "14:30",
+        (
+            ("service_id", "94000000-0000-0000-0000-000000000007"),
+            ("selected_date", "2026-11-16"),
+            ("quantity", 1),
+            ("equipment_ownership", "has_equipment"),
+            ("equipment_model", "Midea 12000 BTU"),
+            ("installation_height_over_3m", False),
+            ("tubing_meters", 5),
+            ("property_type", "house"),
+        ),
+        ConversationState.BOOKING_TIME,
+        ("Instalação de ar-condicionado split configurado no laboratório.",),
+        ConversationState.BOOKING_ATTENDEE,
+        ("selected_time",),
+        (),
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
     ),
+    FlowCase(
+        "resume_unstructured_technical_time",
+        ConversationState.BOOKING_TIME,
+        "qual a pressão exata do gás nesse aparelho?",
+        "09:00",
+        (
+            ("service_id", "94000000-0000-0000-0000-000000000009"),
+            ("selected_date", "2026-11-16"),
+            ("equipment_model", "LG 12000 BTU"),
+        ),
+        ConversationState.BOOKING_TIME,
+        ("não está estruturado", "não inventar"),
+        ConversationState.BOOKING_ATTENDEE,
+        ("selected_time",),
+        (),
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+    )
 )
 
 
@@ -429,6 +470,9 @@ DISCOVERY_JOURNEY_CASES = (
         ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0, 1, 2, 5, 10, 11,),
+        12,
     ),
     JourneyCase(
         "journey_cleaning_informal_alt",
@@ -483,6 +527,9 @@ DISCOVERY_JOURNEY_CASES = (
         ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0, 1, 4, 9,),
+        12,
     ),
     JourneyCase(
         "journey_generic_book_then_select",
@@ -538,6 +585,9 @@ DISCOVERY_JOURNEY_CASES = (
         ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0, 2, 9, 10,),
+        12,
     ),
     JourneyCase(
         "journey_cleaning_quantity_pricing",
@@ -583,6 +633,9 @@ DISCOVERY_JOURNEY_CASES = (
         ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0, 7,),
+        12,
     ),
     JourneyCase(
         "journey_installation_extra_tubing",
@@ -653,6 +706,9 @@ DISCOVERY_JOURNEY_CASES = (
         ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0, 1, 4, 5, 6, 7, 12,),
+        12,
     ),
     JourneyCase(
         "journey_diagnostics_complete",
@@ -703,6 +759,9 @@ DISCOVERY_JOURNEY_CASES = (
         ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0, 3, 8,),
+        12,
     ),
     JourneyCase(
         "journey_gas_recharge_complete",
@@ -748,5 +807,8 @@ DISCOVERY_JOURNEY_CASES = (
         ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0, 2, 7,),
+        12,
     )
 )
