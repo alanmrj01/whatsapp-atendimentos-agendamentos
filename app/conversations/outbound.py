@@ -130,7 +130,7 @@ def equipment_purchase_clarification_message(
         )
         options = (
             BookingOption(EQUIPMENT_PURCHASE, "Só o aparelho"),
-            BookingOption(EQUIPMENT_BOTH, "Aparelho + instalação"),
+            BookingOption(EQUIPMENT_BOTH, "Compra + instalação"),
         )
     else:
         body = (
