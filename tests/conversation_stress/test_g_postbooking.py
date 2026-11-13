@@ -386,4 +386,3 @@ async def test_natural_time_correction_does_not_confirm_the_old_booking() -> Non
     assert repository.context["selected_time"] == "10:00"
     assert repository.context["candidate_booking"]["selected_time"] == "10:00"
     assert "confirm" not in port.calls
-
