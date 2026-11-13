@@ -746,6 +746,17 @@ async def _route_named_conversation(
         ConversationState.BOOKING_CONFIRM,
         ConversationState.QUOTE_DECISION,
     }
+    late_correction = await _handle_late_booking_correction(
+        conversation,
+        inbound,
+        state,
+        context,
+        interpretation,
+        booking_port,
+        booking_states=booking_states,
+    )
+    if late_correction is not None:
+        return late_correction
     if state in booking_states and interpretation.has_act(ConversationAct.SOCIAL):
         return await _resume_pending_question(
             conversation,
@@ -756,7 +767,7 @@ async def _route_named_conversation(
         )
     if state in booking_states and interpretation.has_act(
         ConversationAct.NEGATED_ACTION
-    ):
+    ) and not interpretation.has_act(ConversationAct.CORRECTION):
         if (
             interpretation.has(ConversationIntent.SERVICE_INTENT)
             and interpretation.service_key == "split-installation"
@@ -825,10 +836,15 @@ async def _route_named_conversation(
                     fallback_message=conversation.fallback_message,
                     customer_name=customer_name,
                 )
+        service_interpretation = interpretation
+        if interpretation.has_act(ConversationAct.CORRECTION):
+            service_interpretation = DeterministicConversationInterpreter().interpret(
+                _correction_clause(inbound.body or "")
+            )
         try:
             port = _require_booking_port(booking_port)
             services = _snapshot_options(await port.list_services(inbound.business_id))
-            matched = _service_for_interpretation(services, interpretation)
+            matched = _service_for_interpretation(services, service_interpretation)
         except BookingPortUnavailable:
             matched = None
             services = ()
@@ -855,10 +871,10 @@ async def _route_named_conversation(
         ):
             return await _handle_service(
                 inbound,
-                {},
+                context_for_service_change(context),
                 f"service:{matched.id}",
                 booking_port,
-                interpretation=interpretation,
+                interpretation=service_interpretation,
                 fallback_message=conversation.fallback_message,
                 customer_name=customer_name,
             )
@@ -1180,6 +1196,172 @@ async def _route_named_conversation(
     if greeting_prefix is not None:
         transition = _prepend_transition_body(transition, greeting_prefix)
     return transition
+
+
+async def _handle_late_booking_correction(
+    conversation: ConversationSnapshot,
+    inbound: ConversationInput,
+    state: ConversationState,
+    context: dict[str, Any],
+    interpretation: Interpretation,
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    booking_states: set[ConversationState],
+) -> ConversationTransition | None:
+    """Apply an explicit correction before the current checkpoint consumes it."""
+
+    if state not in booking_states or inbound.interactive_id is not None:
+        return None
+
+    raw_body = inbound.body or ""
+    normalized = normalize_portuguese(raw_body)
+    focused = correction_focus(raw_body)
+    correction_clause = _correction_clause(raw_body)
+    explicit_correction = interpretation.has_act(ConversationAct.CORRECTION)
+    address_correction = (
+        context.get("service_address") is not None
+        and _looks_like_address(focused)
+        and (
+            explicit_correction
+            or "endereco nao" in normalized
+            or "endereço não" in raw_body.casefold()
+        )
+    )
+    previous = _clean_context(conversation.context)
+    quantity_changed = (
+        isinstance(context.get("quantity"), int)
+        and not isinstance(context.get("quantity"), bool)
+        and previous.get("quantity") != context.get("quantity")
+    )
+    if not (explicit_correction or address_correction or quantity_changed):
+        return None
+
+    corrected_inbound = replace(inbound, body=correction_clause)
+    schedule_states = {
+        ConversationState.BOOKING_TIME,
+        ConversationState.BOOKING_ATTENDEE,
+        ConversationState.BOOKING_ATTENDEE_NAME,
+        ConversationState.BOOKING_PHONE_CONFIRM,
+        ConversationState.BOOKING_CONFIRM,
+    }
+    if (
+        explicit_correction
+        and state in schedule_states
+        and _has_explicit_date_reference(correction_clause)
+    ):
+        return await _handle_date(
+            corrected_inbound,
+            context,
+            None,
+            booking_port,
+            customer_name=conversation.customer_name,
+        )
+    if (
+        explicit_correction
+        and state in schedule_states
+        and _has_explicit_time_reference(correction_clause)
+        and _context_string(context, "selected_date") is not None
+    ):
+        return await _handle_time(
+            corrected_inbound,
+            _booking_time_context(context),
+            None,
+            booking_port,
+            customer_name=conversation.customer_name,
+            resume_confirmation=state is ConversationState.BOOKING_CONFIRM,
+        )
+    if address_correction:
+        address_context = dict(context)
+        address_context.pop("service_address", None)
+        address_context = invalidate_changed_facts(context, address_context)
+        return await _handle_address(
+            replace(inbound, body=_address_correction_value(raw_body)),
+            address_context,
+            booking_port,
+            customer_name=conversation.customer_name,
+        )
+    if quantity_changed:
+        try:
+            port = _require_booking_port(booking_port)
+            _, intake = await _context_intake(inbound, context, port)
+        except BookingPortUnavailable:
+            return _transition(state, context, booking_unavailable_message())
+        except BookingRequiresHandoff as exc:
+            return _handoff_for_reason(str(exc))
+        return await _advance_intake(
+            inbound,
+            port,
+            intake,
+            context,
+            customer_name=conversation.customer_name,
+        )
+    return None
+
+
+def _has_explicit_date_reference(body: str | None) -> bool:
+    raw = body or ""
+    if re.search(
+        r"\b(?:dia\s+)?\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b",
+        raw,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    normalized = normalize_portuguese(raw)
+    return bool(
+        re.search(
+            r"\b(?:dia\s+)?\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b",
+            normalized,
+        )
+        or re.search(r"\bdia\s+\d{1,2}\b", normalized)
+    )
+
+
+def _correction_clause(body: str) -> str:
+    candidate = body.strip()
+    for marker in ("na verdade", "quis dizer", "corrigindo", "melhor dizendo"):
+        matches = list(re.finditer(rf"\b{marker}\b", candidate, flags=re.IGNORECASE))
+        if matches:
+            candidate = candidate[matches[-1].end():]
+            break
+    else:
+        parts = re.split(r"[,;]", candidate)
+        if len(parts) > 1 and normalize_portuguese(parts[0]).startswith("nao "):
+            candidate = parts[-1]
+    candidate = re.sub(
+        r"^\s*[:,-]?\s*(?:mas\s+)?(?:é|e|eh)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(
+        r"^\s*(?:quero|prefiro|são|sao)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    return candidate.strip()
+
+
+def _address_correction_value(body: str) -> str:
+    candidate = body.strip()
+    marker_match = list(
+        re.finditer(
+            r"\b(?:na verdade|quis dizer|corrigindo|melhor dizendo)\b",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+    )
+    if marker_match:
+        candidate = candidate[marker_match[-1].end():]
+    if ";" in candidate:
+        candidate = candidate.rsplit(";", maxsplit=1)[-1]
+    candidate = re.sub(
+        r"^\s*[:,-]?\s*(?:o\s+endere[cç]o\s+)?(?:é|e|eh)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    return candidate.strip()
 
 
 async def _handle_customer_name(
@@ -6828,6 +7010,7 @@ async def _handle_time(
     booking_port: BookingAvailabilityPort | None,
     *,
     customer_name: str | None = None,
+    resume_confirmation: bool = False,
 ) -> ConversationTransition:
     try:
         port = _require_booking_port(booking_port)
@@ -6905,6 +7088,17 @@ async def _handle_time(
         "selected_date": selected_date,
         "selected_time": selected_time,
     }
+    if resume_confirmation:
+        return await _booking_confirm_transition(
+            inbound,
+            port,
+            context,
+            service_id,
+            selected_date,
+            selected_time,
+            requirements,
+            customer_name=customer_name,
+        )
     return await _advance_preconfirmation(
         inbound,
         port,
@@ -8209,7 +8403,10 @@ def _daypart_preference(
 
 
 def _has_explicit_time_reference(body: str | None) -> bool:
-    normalized = normalize_portuguese(body or "")
+    raw = body or ""
+    if re.search(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", raw):
+        return True
+    normalized = normalize_portuguese(raw)
     if not normalized:
         return False
     if re.search(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", normalized):

@@ -43,6 +43,7 @@ _SCHEDULING_FIELDS = frozenset(
 _PLANNING_INPUTS = frozenset(
     {
         "quantity",
+        "equipment_quantity",
         "access_condition",
         "service_address",
         "delivery_address",

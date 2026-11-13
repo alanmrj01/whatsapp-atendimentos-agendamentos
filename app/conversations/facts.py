@@ -171,7 +171,7 @@ def enrich_context_from_message(
     quantity = _equipment_quantity(assertion)
     if quantity is not None:
         _assign_fact(updated, "equipment_quantity", quantity, is_correction)
-        if "quantity" not in updated:
+        if "quantity" not in updated or is_correction:
             updated["quantity"] = quantity
 
     area = _room_area(assertion)
@@ -366,6 +366,10 @@ def _equipment_quantity(normalized: str) -> int | None:
     )
     if match:
         return int(match.group(1))
+    if re.search(r"\b(?:ares|aparelhos|equipamentos|splits|unidades)\b", normalized):
+        value = parse_number_answer(normalized)
+        if value is not None and value.is_integer() and 1 <= value <= 99:
+            return int(value)
     return None
 
 
