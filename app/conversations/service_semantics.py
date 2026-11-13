@@ -42,6 +42,10 @@ _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
         "suja",
         "mau cheiro",
         "cheiro ruim",
+        "limpeza de ar condicionado",
+        "higienizacao de ar condicionado",
+        "limpeza de split",
+        "higienizacao de split",
     ),
     "higienizacao": ("limpeza", "higienizar", "limpar", "lavagem"),
     "instalacao": (
@@ -347,17 +351,34 @@ def generate_service_intent_examples(name: str) -> tuple[str, ...]:
 
     examples: list[str] = []
     seen: set[str] = set()
-    # Distribui primeiro as raízes lexicais entre os templates. Assim um
-    # domínio configurado como elétrica/geladeira não perde sinônimos tardios
-    # porque as primeiras variações consumiram todo o limite.
+
+    def add_example(sentence: str) -> None:
+        key = normalize_service_text(sentence)
+        if key and key not in seen:
+            seen.add(key)
+            examples.append(sentence)
+
+    # Primeiro garante diversidade de atos para o nome configurado:
+    # pergunta, orçamento, agendamento, disponibilidade etc.
     for template in _GENERIC_TEMPLATES:
-        for variant in variants:
-            sentence = template.format(service=variant)
-            key = normalize_service_text(sentence)
-            if key and key not in seen:
-                seen.add(key)
-                examples.append(sentence)
-            if len(examples) >= 48:
+        add_example(template.format(service=service))
+
+    # Depois garante que TODAS as raízes lexicais tenham pelo menos uma
+    # formulação natural antes de multiplicar templates.
+    for variant in variants[1:]:
+        add_example(f"quero {variant}")
+        if len(examples) >= 64:
+            return tuple(examples)
+
+    for template in (
+        "preciso de {service}",
+        "vocês fazem {service}",
+        "quanto custa {service}",
+        "quero agendar {service}",
+    ):
+        for variant in variants[1:]:
+            add_example(template.format(service=variant))
+            if len(examples) >= 64:
                 return tuple(examples)
     return tuple(examples)
 
@@ -370,6 +391,54 @@ def configured_service_name_matches(message: str, service_name: str) -> bool:
     return len(service_tokens) >= 2 and service_tokens.issubset(query_tokens)
 
 
+def service_domain_compatible(
+    message: str,
+    service_name: str,
+    examples: Iterable[str],
+) -> bool:
+    """Prevent symptom overlap from crossing an explicit configured domain."""
+
+    query = normalize_service_text(message)
+    if not query:
+        return True
+
+    cold_appliance_signals = {
+        "geladeira",
+        "refrigerador",
+        "freezer",
+        "frigobar",
+        "cervejeira",
+    }
+    electrical_signals = {
+        "eletrica",
+        "eletricista",
+        "tomada",
+        "disjuntor",
+        "chuveiro",
+        "interruptor",
+        "luminaria",
+        "fiacao",
+    }
+
+    query_expanded = _expanded_tokens(query)
+    required_groups: list[set[str]] = []
+    if query_expanded & cold_appliance_signals:
+        required_groups.append(cold_appliance_signals)
+    if query_expanded & electrical_signals:
+        required_groups.append(electrical_signals)
+    if not required_groups:
+        return True
+
+    candidate_expanded = _expanded_tokens(service_name)
+    for example in examples:
+        candidate_expanded.update(_expanded_tokens(example))
+
+    return all(
+        bool(candidate_expanded & group)
+        for group in required_groups
+    )
+
+
 def semantic_service_score(
     message: str,
     service_name: str,
@@ -377,6 +446,8 @@ def semantic_service_score(
 ) -> float:
     query = normalize_service_text(message)
     if not query:
+        return 0.0
+    if not service_domain_compatible(message, service_name, examples):
         return 0.0
     personal_domain_tokens = {
         "carro",
@@ -459,9 +530,32 @@ def semantic_service_score(
     )
     domain_bonus = 0.28 if shared_domain else 0.0
 
+    action_signals = {
+        "instal",
+        "desinstal",
+        "remov",
+        "retir",
+        "realoc",
+        "remanej",
+        "limp",
+        "higien",
+        "lav",
+        "consert",
+        "repar",
+        "recarg",
+        "vaz",
+        "eletric",
+    }
+    shared_action = (
+        query_expanded
+        & candidate_expanded
+        & action_signals
+    )
+    action_bonus = 0.22 if shared_action else 0.0
+
     return min(
         1.0,
-        base_score + capacity_bonus + domain_bonus,
+        base_score + capacity_bonus + domain_bonus + action_bonus,
     )
 
 
