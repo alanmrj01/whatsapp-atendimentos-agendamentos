@@ -117,6 +117,7 @@ def _semantic_result(case: SemanticCase, text: str) -> dict[str, object]:
     return {
         "kind": "semantic",
         "family": case.family,
+        "root": case.text,
         "input": text,
         "expected_intent": case.intent.value if case.intent else None,
         "expected_act": case.act.value if case.act else None,
@@ -148,22 +149,42 @@ async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[s
     forbidden_calls_present = [
         call for call in case.forbidden_calls if call in port.calls
     ]
-    passed = (
-        not forbidden_present
-        and not forbidden_calls_present
-        and (case.expected_state is None or repository.state == case.expected_state)
-    )
     outbound = ""
     if repository.outbounds:
         outbound = repository.outbounds[-1].transition.outbound.body or ""
+    missing_outbound_terms = [
+        term
+        for term in case.required_outbound_terms
+        if term.casefold() not in outbound.casefold()
+    ]
+    automation_ok = (
+        case.expected_automation_enabled is None
+        or repository.automation_enabled == case.expected_automation_enabled
+    )
+    handoff_ok = (
+        case.expected_handoff_status is None
+        or repository.handoff_status == case.expected_handoff_status
+    )
+    passed = (
+        not forbidden_present
+        and not forbidden_calls_present
+        and not missing_outbound_terms
+        and automation_ok
+        and handoff_ok
+        and (case.expected_state is None or repository.state == case.expected_state)
+    )
     return {
         "kind": "context",
         "family": case.family,
+        "root": case.text,
         "input": text,
         "expected_state": case.expected_state,
         "actual_state": repository.state,
         "forbidden_present": forbidden_present,
         "forbidden_calls_present": forbidden_calls_present,
+        "missing_outbound_terms": missing_outbound_terms,
+        "expected_automation_enabled": case.expected_automation_enabled,
+        "expected_handoff_status": case.expected_handoff_status,
         "handoff_status": repository.handoff_status,
         "automation_enabled": repository.automation_enabled,
         "outbound": outbound,
@@ -225,6 +246,7 @@ async def _flow_result(case: FlowCase, text: str, sequence: int) -> dict[str, ob
     return {
         "kind": "flow",
         "family": case.family,
+        "root": f"{case.side_text} -> {case.followup_text}",
         "input": f"{text} -> {case.followup_text}",
         "side_input": text,
         "followup_input": case.followup_text,
@@ -348,6 +370,7 @@ async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]
     return {
         "kind": "journey",
         "family": case.family,
+        "root": case.family,
         "input": " -> ".join(
             step.body or step.action or ""
             for step in case.steps
@@ -412,12 +435,54 @@ async def run(mode: str, per_seed: int) -> int:
             for item in results
         )
     )
+    semantic_roots = {
+        str(item.get("root"))
+        for item in results
+        if item.get("kind") == "semantic"
+    }
+    context_roots = {
+        str(item.get("root"))
+        for item in results
+        if item.get("kind") == "context"
+    }
+    flow_roots = {
+        str(item.get("root"))
+        for item in results
+        if item.get("kind") == "flow"
+    }
+    journey_roots = {
+        str(item.get("root"))
+        for item in results
+        if item.get("kind") == "journey"
+    }
+    states_covered = sorted(
+        {
+            str(item.get(key))
+            for item in results
+            for key in (
+                "expected_state",
+                "actual_state",
+                "side_expected_state",
+                "side_actual_state",
+                "followup_expected_state",
+                "followup_actual_state",
+                "expected_final_state",
+                "actual_final_state",
+            )
+            if item.get(key) is not None
+        }
+    )
     summary = {
         "mode": mode,
         "total": len(results),
         "passed": len(passed),
         "gaps": len(gaps),
         "families": sorted(family_totals),
+        "semantic_roots": len(semantic_roots),
+        "context_roots": len(context_roots),
+        "flow_roots": len(flow_roots),
+        "journey_roots": len(journey_roots),
+        "states_covered": states_covered,
         "fingerprint": hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest(),
     }
     print("CONVERSATION_LAB_SUMMARY " + json.dumps(summary, ensure_ascii=False, sort_keys=True))
