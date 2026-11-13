@@ -88,6 +88,12 @@ REGRESSION_SEMANTIC = (
         ConversationIntent.TECHNICAL_QUESTION,
         ConversationAct.SIDE_QUESTION,
     ),
+    SemanticCase(
+        "price_language_root",
+        "quanto você cobra?",
+        ConversationIntent.PRICE_QUESTION,
+        ConversationAct.SIDE_QUESTION,
+    ),
 )
 
 REGRESSION_CONTEXT = (
@@ -110,6 +116,28 @@ REGRESSION_CONTEXT = (
     ContextCase("social_pause", ConversationState.BOOKING_TIME, "amigo, pera aí um minutinho", ("repair_attempts",), ConversationState.BOOKING_TIME),
     ContextCase("social_pause", ConversationState.BOOKING_SERVICE, "moço, valeu", ("repair_attempts",), ConversationState.BOOKING_SERVICE),
     ContextCase("social_pause", ConversationState.BOOKING_CONFIRM, "seguinte, pera aí um minutinho", ("repair_attempts",), ConversationState.BOOKING_CONFIRM),
+    ContextCase(
+        "commercial_negotiation",
+        ConversationState.BOOKING_ADDRESS,
+        "consegue baixar esse valor?",
+        (),
+        ConversationState.HUMAN_HANDOFF,
+        (),
+        False,
+        "waiting",
+        ("equipe",),
+    ),
+    ContextCase(
+        "commercial_negotiation",
+        ConversationState.BOOKING_CONFIRM,
+        "faz por 150?",
+        (),
+        ConversationState.HUMAN_HANDOFF,
+        (),
+        False,
+        "waiting",
+        ("equipe",),
+    ),
 )
 
 # Seeds de discovery. O runner gera variações adicionais de forma controlada.
@@ -557,6 +585,25 @@ DISCOVERY_CONTEXT_SEEDS = (
         ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
     )
     for state in _SOCIAL_PAUSE_CHECKPOINTS
+)
+ + tuple(
+    ContextCase(
+        "commercial_negotiation",
+        state,
+        phrase,
+        (),
+        ConversationState.HUMAN_HANDOFF,
+        (),
+        False,
+        "waiting",
+        ("equipe",),
+    )
+    for state in (
+        ConversationState.BOOKING_ADDRESS,
+        ConversationState.BOOKING_DATE,
+        ConversationState.BOOKING_CONFIRM,
+    )
+    for phrase in NEGOTIATION_LANGUAGE_ROOTS
 )
 
 TYPO_REPLACEMENTS = {
