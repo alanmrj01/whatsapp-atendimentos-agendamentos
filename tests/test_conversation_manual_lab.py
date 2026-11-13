@@ -211,7 +211,7 @@ async def test_purchase_intent_only_asks_whether_installation_is_also_wanted() -
 
     assert snapshot["state"] == ConversationState.BOOKING_SERVICE.value
     assert "você também gostaria de contratar a instalação" in joined
-    assert option_titles == ["Só o aparelho", "Aparelho + instalação"]
+    assert option_titles == ["Só o aparelho", "Compra + instalação"]
 
 
 @pytest.mark.asyncio
