@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -189,8 +189,10 @@ async def send_message(session_id: str, payload: ManualInput) -> dict[str, Any]:
         event = inbound(session.sequence, body=text, action=action)
         user_label = text or action or ""
     else:
-        event = inbound(session.sequence, body=None)
-        object.__setattr__(event, "message_type", payload.message_type)
+        event = replace(
+            inbound(session.sequence, body=None),
+            message_type=payload.message_type,
+        )
         user_label = {
             "image": "[foto sintética]",
             "video": "[vídeo sintético]",
