@@ -66,6 +66,22 @@ _PLANNING_INPUTS = frozenset(
     }
 ) | _RECOMMENDATION_INPUTS
 
+# Estes campos afetam a agenda/operação, mas não o preço já apresentado.
+# Depois que o cliente decide agendar, preenchê-los não pode reabrir a cotação.
+_POST_QUOTE_SCHEDULING_INPUTS = frozenset(
+    {
+        "building_hours_start",
+        "building_hours_end",
+        "gate_instructions",
+        "site_allowed_end",
+        "site_limit_answered",
+    }
+)
+
+_QUOTE_INVALIDATING_INPUTS = (
+    _PLANNING_INPUTS - _POST_QUOTE_SCHEDULING_INPUTS
+)
+
 _SERVICE_REUSABLE_FIELDS = frozenset(
     {
         "service_address",
@@ -100,8 +116,10 @@ def invalidate_changed_facts(
         updated.pop("recommendation_presented", None)
         updated.pop("quote_presented", None)
 
-    if changed & _PLANNING_INPUTS:
+    if changed & _QUOTE_INVALIDATING_INPUTS:
         updated.pop("quote_presented", None)
+
+    if changed & _PLANNING_INPUTS:
         for field in _SCHEDULING_FIELDS:
             updated.pop(field, None)
 
