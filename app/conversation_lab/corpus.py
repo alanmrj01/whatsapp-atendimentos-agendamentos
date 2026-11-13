@@ -637,7 +637,7 @@ DISCOVERY_CONTEXT_SEEDS = (
         text="5 mts",
         forbidden_context_keys=("repair_attempts",),
         expected_state=ConversationState.QUOTE_DECISION,
-        required_outbound_terms=("cotação",),
+        required_outbound_terms=("gostaria de já agendar a instalação",),
         context_items=(
             ("service_id", "94000000-0000-0000-0000-000000000007"),
             ("request_mode", "quote"),
