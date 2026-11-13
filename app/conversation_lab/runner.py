@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import unicodedata
+from collections import Counter
 from dataclasses import asdict, replace
 from itertools import islice
 
@@ -165,17 +167,44 @@ async def run(mode: str, per_seed: int) -> int:
 
     gaps = [item for item in results if not item["pass"]]
     passed = [item for item in results if item["pass"]]
+    family_totals = Counter(str(item["family"]) for item in results)
+    family_passed = Counter(str(item["family"]) for item in passed)
+    family_gaps = Counter(str(item["family"]) for item in gaps)
+    fingerprint_payload = "\n".join(
+        sorted(
+            f'{item["kind"]}|{item["family"]}|{item["input"]}|{item["pass"]}'
+            for item in results
+        )
+    )
     summary = {
         "mode": mode,
         "total": len(results),
         "passed": len(passed),
         "gaps": len(gaps),
-        "families": sorted({str(item["family"]) for item in results}),
+        "families": sorted(family_totals),
+        "fingerprint": hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest(),
     }
     print("CONVERSATION_LAB_SUMMARY " + json.dumps(summary, ensure_ascii=False, sort_keys=True))
+    for family in sorted(family_totals):
+        print(
+            "CONVERSATION_LAB_FAMILY "
+            + json.dumps(
+                {
+                    "family": family,
+                    "total": family_totals[family],
+                    "passed": family_passed[family],
+                    "gaps": family_gaps[family],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
     for item in gaps:
         print("CONVERSATION_LAB_GAP " + json.dumps(item, ensure_ascii=False, sort_keys=True))
-    if mode in {"discovery", "all"}:
+    if (
+        mode in {"discovery", "all"}
+        and os.getenv("CONVERSATION_LAB_EMIT_CANDIDATES", "false").lower() == "true"
+    ):
         for item in passed:
             print("CONVERSATION_LAB_REGRESSION_CANDIDATE " + json.dumps(item, ensure_ascii=False, sort_keys=True))
     return 1 if mode == "regression" and gaps else 0
