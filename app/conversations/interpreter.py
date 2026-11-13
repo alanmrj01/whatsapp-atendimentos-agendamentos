@@ -563,7 +563,9 @@ class DeterministicConversationInterpreter:
             "troca meu horario",
             "altera meu horario",
             "passa pra outro dia",
+            "passar pra outro dia",
             "joga pra outro horario",
+            "mudar o dia",
             "mudar minha visita",
         )
         reschedule_signal = _contains_any(assertion, reschedule_aliases)
@@ -588,6 +590,16 @@ class DeterministicConversationInterpreter:
             "nao quero mais o agendamento",
         )
         cancel_signal = _contains_any(assertion, cancel_aliases)
+        cancel_question_signal = bool(
+            re.search(
+                r"\bse\s+eu\s+desistir\b.{0,40}\b"
+                r"(?:como\s+funciona|o\s+que\s+acontece|posso)\b",
+                assertion,
+            )
+        )
+        if cancel_question_signal:
+            intents.add(ConversationIntent.CANCEL_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
         if cancel_signal and not any(
             _phrase_is_negated(assertion, alias) for alias in cancel_aliases
         ):
@@ -891,6 +903,23 @@ def correction_focus(value: str) -> str:
     if len(raw_parts) > 1 and normalize_portuguese(raw_parts[-1]).startswith("nao "):
         head = normalize_portuguese(raw_parts[0])
         head = re.sub(r"^(?:e|eh)\s+", "", head)
+        if head in {
+            "oi",
+            "ola",
+            "opa",
+            "bom dia",
+            "boa tarde",
+            "boa noite",
+            "tudo bem",
+            "como vai",
+            "blz",
+            "amigo",
+            "moco",
+            "seguinte",
+            "rapidinho",
+            "e ai",
+        }:
+            return normalized
         if head:
             return head
     if len(raw_parts) > 1 and normalize_portuguese(raw_parts[0]).startswith("nao "):
@@ -1306,7 +1335,7 @@ def _contains_price_question(value: str) -> bool:
             r"\b(?:me\s+)?cobra\s+quanto\b",
             r"\bfica\s+em\s+quanto\b",
             r"\bsai\s+quanto\b",
-            r"\bqual(?:\s+e)?\s+o\s+valor\b",
+            r"\bqual(?:\s+(?:e|seria))?\s+o\s+valor\b",
             r"\bconsegue\s+me\s+passar\s+(?:o\s+)?valor\b",
             r"\bsabe\s+dizer\s+quanto\s+(?:da|fica)\b",
             r"\bquanto\s+da(?:\s+mais\s+ou\s+menos)?\b",
