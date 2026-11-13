@@ -625,6 +625,40 @@ async def _route_named_conversation(
     if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
 
+    if action is None and _is_pending_question_clarification(inbound.body):
+        explanation = _pending_question_explanation(state, context)
+        if explanation is not None:
+            return await _resume_pending_question(
+                conversation,
+                inbound,
+                context,
+                booking_port,
+                prefix=explanation,
+            )
+
+    if (
+        action is None
+        and _looks_like_used_equipment_request(inbound.body)
+        and await _is_ac_purchase_or_installation_context(
+            inbound,
+            context,
+            interpretation,
+            booking_port,
+        )
+    ):
+        return _transition(
+            ConversationState.HUMAN_HANDOFF,
+            _clean_context(context),
+            _text_message(
+                "Entendi que você procura um aparelho usado ou seminovo. "
+                "Esse tipo de equipamento fica fora do catálogo ativo do atendimento "
+                "automático, então vou encaminhar você para uma pessoa da equipe "
+                "verificar as opções, o estado do aparelho e a disponibilidade."
+            ),
+            automation_enabled=False,
+            handoff_status="waiting",
+        )
+
     equipment_question_answer = (
         None
         if action in {QUOTE_FINISH, QUOTE_SCHEDULE}
