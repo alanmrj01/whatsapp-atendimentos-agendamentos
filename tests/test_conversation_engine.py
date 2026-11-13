@@ -448,6 +448,63 @@ async def test_natural_service_request_advances_without_permission_question() ->
 
 
 @mark.asyncio
+async def test_natural_service_request_preserves_quantity_from_opening_message() -> None:
+    repository = FakeConversationRepository()
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=True,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(2, body="Quero higienizar três aparelhos")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["quantity"] == 3
+    assert repository.context["equipment_quantity"] == 3
+
+
+@mark.asyncio
+async def test_natural_installation_preserves_existing_equipment_from_opening_message() -> None:
+    repository = FakeConversationRepository()
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar condicionado split",
+            generate_service_intent_examples("Instalação de ar condicionado split"),
+        )
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=True,
+        requires_address=True,
+        asks_tubing_length=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(3, body="Já tenho o aparelho e preciso instalar meu ar condicionado")
+    )
+
+    assert repository.state == ConversationState.BOOKING_QUANTITY
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["equipment_ownership"] == "has_equipment"
+
+    await engine.process(inbound(4, body="um só"))
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["quantity"] == 1
+    assert repository.context["equipment_ownership"] == "has_equipment"
+
+
+@mark.asyncio
 async def test_book_request_while_choosing_service_does_not_loop_menu_copy() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_SERVICE
