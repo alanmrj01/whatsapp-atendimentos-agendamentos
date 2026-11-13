@@ -6075,3 +6075,45 @@ async def test_greeting_plus_generic_hvac_service_inquiry_reaches_catalog_select
     assert "Limpeza" in serialized
     assert "Instalação" in serialized
     assert "como posso te ajudar" not in (transition.outbound.body or "").casefold()
+
+
+
+@mark.parametrize(
+    "body",
+    [
+        "faz um preço melhor?",
+        "consegue fazer um preço melhor?",
+        "rola um desconto?",
+        "abaixa esse valor?",
+        "reduz esse valor pra mim?",
+        "dá pra negociar?",
+        "tem como negociar esse preço?",
+        "qual seu menor preço?",
+        "cobre essa oferta?",
+        "se eu fechar agora melhora o preço?",
+    ],
+)
+@mark.asyncio
+async def test_round9_commercial_negotiation_roots_handoff(body: str) -> None:
+    candidate = {
+        "service_id": str(SERVICE_ID),
+        "selected_date": "2026-09-02",
+        "selected_time": "09:00",
+    }
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={**candidate, "candidate_booking": candidate},
+        customer_name="Alan",
+    )
+
+    await ConversationEngine(repository, FakeBookingPort()).process(
+        inbound(1501, body=body)
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+    assert repository.context["candidate_booking"] == candidate
+    response = repository.outbounds[-1].transition.outbound.body or ""
+    assert "equipe" in response.casefold()
+    assert "negoci" in response.casefold()
