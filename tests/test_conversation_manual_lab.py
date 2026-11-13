@@ -25,7 +25,7 @@ async def _new_session():
 
 
 async def _new_named_session():
-    session_id, session = await _new_named_session()
+    session_id, session = await _new_session()
     session.repository.customer_name = "João"
     return session_id, session
 
