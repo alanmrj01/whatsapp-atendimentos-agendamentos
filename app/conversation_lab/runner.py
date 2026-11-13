@@ -388,7 +388,7 @@ async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]
     }
 
 
-async def run(mode: str, per_seed: int) -> int:
+async def run(mode: str, per_seed: int, stage: str = "all") -> int:
     if os.getenv("CONVERSATION_LAB_ALLOW_EXTERNAL_IO", "false").lower() == "true":
         raise RuntimeError("conversation_lab_external_io_must_remain_disabled")
 
@@ -402,6 +402,16 @@ async def run(mode: str, per_seed: int) -> int:
         context_cases.extend(DISCOVERY_CONTEXT_SEEDS)
         flow_cases.extend(DISCOVERY_FLOW_CASES)
         journey_cases.extend(DISCOVERY_JOURNEY_CASES)
+
+    if stage != "all":
+        if stage != "semantic":
+            semantic_cases = []
+        if stage != "context":
+            context_cases = []
+        if stage != "flow":
+            flow_cases = []
+        if stage != "journey":
+            journey_cases = []
 
     results: list[dict[str, object]] = []
     sequence = 1
@@ -535,6 +545,7 @@ async def run(mode: str, per_seed: int) -> int:
     )
     summary = {
         "mode": mode,
+        "stage": stage,
         "total": len(results),
         "passed": len(passed),
         "gaps": len(gaps),
@@ -577,8 +588,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Alovia Conversation Lab")
     parser.add_argument("--mode", choices=("regression", "discovery", "all"), default=os.getenv("CONVERSATION_LAB_MODE", "regression"))
     parser.add_argument("--per-seed", type=int, default=int(os.getenv("CONVERSATION_LAB_PER_SEED", "120")))
+    parser.add_argument(
+        "--stage",
+        choices=("all", "semantic", "context", "flow", "journey"),
+        default=os.getenv("CONVERSATION_LAB_STAGE", "all"),
+    )
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(run(args.mode, max(1, min(args.per_seed, 500)))))
+    raise SystemExit(
+        asyncio.run(
+            run(
+                args.mode,
+                max(1, min(args.per_seed, 500)),
+                args.stage,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":
