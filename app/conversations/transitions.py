@@ -9867,23 +9867,9 @@ def _service_candidates_for_interpretation(
 
     explicit_family_tokens: tuple[str, ...] = ()
     explicit_family_exclusions: tuple[str, ...] = ()
-    if (
-        any(
-            phrase in text
-            for phrase in (
-                "colocar um ar condicionado",
-                "colocar ar condicionado",
-                "colocar o ar condicionado",
-                "colocar um split",
-                "colocar split",
-                "montar ar condicionado",
-                "montar o ar condicionado",
-                "montar um split",
-                "fixar ar condicionado",
-                "fixar o ar condicionado",
-            )
-        )
-        and any(domain in text for domain in ("ar condicionado", "split"))
+    if re.search(
+        r"\b(?:colocar|montar|fixar)\b.{0,30}\b(?:ar condicionado|split)\b",
+        text,
     ):
         explicit_family_tokens = ("instal",)
         explicit_family_exclusions = ("desinstal", "realoc", "remoc", "remanej")
