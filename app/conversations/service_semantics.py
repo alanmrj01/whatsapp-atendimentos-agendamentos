@@ -148,6 +148,100 @@ _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
         "vazando gás",
     ),
     "split": ("ar condicionado", "ar-condicionado", "aparelho", "ar"),
+    "geladeira": (
+        "refrigerador",
+        "geladeira nao gela",
+        "geladeira nao esta gelando",
+        "geladeira gelando pouco",
+        "geladeira nao liga",
+        "geladeira fazendo barulho",
+        "geladeira vazando agua",
+        "conserto de geladeira",
+        "manutencao de geladeira",
+    ),
+    "refrigerador": (
+        "geladeira",
+        "refrigerador nao gela",
+        "refrigerador nao liga",
+        "conserto de refrigerador",
+        "manutencao de refrigerador",
+    ),
+    "freezer": (
+        "congelador",
+        "freezer nao congela",
+        "freezer nao gela",
+        "freezer nao liga",
+        "conserto de freezer",
+        "manutencao de freezer",
+    ),
+    "frigobar": (
+        "frigobar nao gela",
+        "frigobar nao liga",
+        "conserto de frigobar",
+        "manutencao de frigobar",
+    ),
+    "cervejeira": (
+        "cervejeira nao gela",
+        "cervejeira nao liga",
+        "conserto de cervejeira",
+        "manutencao de cervejeira",
+    ),
+    "eletrica": (
+        "eletricista",
+        "eletrica residencial",
+        "instalacao eletrica",
+        "manutencao eletrica",
+        "reparo eletrico",
+        "tomada",
+        "disjuntor",
+        "chuveiro",
+        "interruptor",
+        "luminaria",
+        "fiacao",
+        "curto circuito",
+    ),
+    "eletrico": (
+        "eletrica",
+        "eletricista",
+        "reparo eletrico",
+        "instalacao eletrica",
+    ),
+    "tomada": (
+        "tomada sem energia",
+        "tomada nao funciona",
+        "tomada queimou",
+        "trocar tomada",
+        "instalar tomada",
+    ),
+    "disjuntor": (
+        "disjuntor desarmando",
+        "disjuntor desarma",
+        "disjuntor caindo",
+        "trocar disjuntor",
+    ),
+    "chuveiro": (
+        "chuveiro nao liga",
+        "chuveiro nao esquenta",
+        "chuveiro queimou",
+        "instalar chuveiro",
+        "trocar chuveiro",
+    ),
+    "interruptor": (
+        "interruptor nao funciona",
+        "trocar interruptor",
+        "instalar interruptor",
+    ),
+    "luminaria": (
+        "luz nao acende",
+        "instalar luminaria",
+        "trocar luminaria",
+    ),
+    "fiacao": (
+        "fio queimado",
+        "fiacao aquecendo",
+        "trocar fiacao",
+        "refazer fiacao",
+    ),
 }
 
 _PERSONAL_NON_SERVICE_PHRASES = (
@@ -284,8 +378,41 @@ def semantic_service_score(
     query = normalize_service_text(message)
     if not query:
         return 0.0
-    if any(_contains_phrase(query, phrase) for phrase in _PERSONAL_NON_SERVICE_PHRASES):
-        return 0.0
+    personal_domain_tokens = {
+        "carro",
+        "veiculo",
+        "moto",
+        "celular",
+        "telefone",
+        "computador",
+        "notebook",
+        "chuveiro",
+        "geladeira",
+        "refrigerador",
+        "freezer",
+        "frigobar",
+        "cervejeira",
+        "tomada",
+        "disjuntor",
+        "interruptor",
+        "luminaria",
+    }
+    query_tokens = set(query.split())
+    mentioned_personal_domains = query_tokens & personal_domain_tokens
+    if mentioned_personal_domains:
+        candidate_domain_text = " ".join(
+            (
+                normalize_service_text(service_name),
+                *(
+                    normalize_service_text(example)
+                    for example in examples
+                    if isinstance(example, str)
+                ),
+            )
+        )
+        candidate_domain_tokens = set(candidate_domain_text.split())
+        if mentioned_personal_domains.isdisjoint(candidate_domain_tokens):
+            return 0.0
 
     query_capacities = {
         token for token in query.split() if token.startswith("capacidade_")
