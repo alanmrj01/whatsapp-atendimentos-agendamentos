@@ -313,6 +313,7 @@ def test_catalog_semantics_cover_common_refrigeration_service_synonyms() -> None
         ),
         "relocation": (
             "quero mudar o ar de lugar",
+            "preciso trocar o split de lugar",
             "preciso remanejar o aparelho",
             "quero retirar e instalar em outro lugar",
         ),
