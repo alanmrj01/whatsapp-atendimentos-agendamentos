@@ -715,7 +715,13 @@ async def _route_named_conversation(
                 "request_mode": "quote",
             },
             _text_message(equipment_question_answer),
-            follow_ups=(equipment_purchase_clarification_message(),),
+            follow_ups=(
+                equipment_purchase_clarification_message(
+                    purchase_already_known=interpretation.has(
+                        ConversationIntent.EQUIPMENT_PURCHASE
+                    ),
+                ),
+            ),
         )
 
     if (
@@ -1987,6 +1993,16 @@ async def _commercial_negotiation_handoff_if_applicable(
     # Interactive navigation (confirmar/voltar/cancelar) must keep its normal
     # deterministic path. Commercial negotiation is recognized from free text.
     if action is not None:
+        return None
+    if (
+        _looks_like_used_equipment_request(inbound.body)
+        and await _is_ac_purchase_or_installation_context(
+            inbound,
+            context,
+            interpretation,
+            booking_port,
+        )
+    ):
         return None
     if not _looks_like_commercial_negotiation(
         inbound.body,
