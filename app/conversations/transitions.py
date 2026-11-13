@@ -3339,6 +3339,23 @@ async def _handle_pending_change(
             booking_port,
             customer_name=conversation.customer_name,
         )
+    if pending_action in {EQUIPMENT_HAS, EQUIPMENT_NEEDS}:
+        ownership = (
+            "has_equipment"
+            if pending_action == EQUIPMENT_HAS
+            else "needs_equipment"
+        )
+        ownership_context = invalidate_changed_facts(
+            cleaned,
+            {**cleaned, "equipment_ownership": ownership},
+        )
+        return await _handle_equipment_ownership(
+            inbound,
+            ownership_context,
+            pending_action,
+            booking_port,
+            customer_name=conversation.customer_name,
+        )
     if pending_action in {
         EQUIPMENT_INSTALLATION,
         EQUIPMENT_PURCHASE,
@@ -3558,6 +3575,8 @@ def _stale_interactive_transition(
         EQUIPMENT_INSTALLATION: "somente instalação",
         EQUIPMENT_PURCHASE: "comprar o aparelho",
         EQUIPMENT_BOTH: "compra + instalação",
+        EQUIPMENT_HAS: "já tem o aparelho",
+        EQUIPMENT_NEEDS: "precisa de um aparelho",
         EQUIPMENT_PREF_MODERN: "um modelo mais moderno",
         EQUIPMENT_PREF_COST_BENEFIT: "custo-benefício",
         EQUIPMENT_PREF_ECONOMY: "maior economia",
