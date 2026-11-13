@@ -747,7 +747,8 @@ def tubing_guidance_message(
 
     body = (
         f"A instalação inclui até {included_label} metros de tubulação. "
-        "Se precisar de tubulação adicional, ela entra como adicional no orçamento. "
+        "Se precisar de tubulação adicional, ela entra como adicional no orçamento "
+        "e o valor pode variar conforme a metragem. "
         "Se você não souber a medida exata, sem problema: o técnico pode "
         "conferir no local."
     )
