@@ -365,21 +365,25 @@ def _equipment_model(raw: str, normalized: str) -> str | None:
 
 
 def _equipment_quantity(normalized: str) -> int | None:
+    equipment_noun = (
+        r"(?:ar|ares|aparelho|aparelhos|equipamento|equipamentos|split|"
+        r"splits|unidade|unidades)"
+    )
     match = re.search(
-        r"\b([1-9]\d?)\s+(?:ar|ares|aparelho|aparelhos|equipamento|"
-        r"equipamentos|split|splits|unidade|unidades)\b",
+        rf"\b([1-9]\d?)\s+{equipment_noun}\b",
         normalized,
     )
     if match:
         return int(match.group(1))
-    if re.search(
-        r"\b(?:ar|ares|aparelho|aparelhos|equipamento|equipamentos|split|"
-        r"splits|unidade|unidades)\b",
-        normalized,
-    ):
-        value = parse_number_answer(normalized)
-        if value is not None and value.is_integer() and 1 <= value <= 99:
-            return int(value)
+    for noun_match in re.finditer(rf"\b{equipment_noun}\b", normalized):
+        prefix_tokens = normalized[: noun_match.start()].split()
+        for width in range(min(3, len(prefix_tokens)), 0, -1):
+            candidate = " ".join(prefix_tokens[-width:])
+            if not _is_compact_number_answer(candidate):
+                continue
+            value = parse_number_answer(candidate)
+            if value is not None and value.is_integer() and 1 <= value <= 99:
+                return int(value)
     return None
 
 
