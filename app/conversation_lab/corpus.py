@@ -585,8 +585,7 @@ DISCOVERY_CONTEXT_SEEDS = (
         ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
     )
     for state in _SOCIAL_PAUSE_CHECKPOINTS
-)
- + tuple(
+) + tuple(
     ContextCase(
         "commercial_negotiation",
         state,
