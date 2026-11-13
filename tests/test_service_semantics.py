@@ -404,6 +404,36 @@ def test_catalog_semantics_support_refrigerator_only_when_catalog_has_it() -> No
     ) is None
 
 
+def test_explicit_hvac_request_excludes_other_catalog_domains() -> None:
+    diagnostics = BookingOption(
+        "1",
+        "Diagnóstico / manutenção corretiva",
+        generate_service_intent_examples("Diagnóstico / manutenção corretiva"),
+    )
+    refrigerator = BookingOption(
+        "2",
+        "Conserto e manutenção de geladeira e freezer",
+        generate_service_intent_examples(
+            "Conserto e manutenção de geladeira e freezer"
+        ),
+    )
+    electrical = BookingOption(
+        "3",
+        "Elétrica residencial",
+        generate_service_intent_examples("Elétrica residencial"),
+    )
+    interpreter = DeterministicConversationInterpreter()
+
+    for phrase in (
+        "meu ar condicionado não está gelando e preciso de manutenção",
+        "meu split não liga e preciso de manutenção",
+    ):
+        assert _service_for_interpretation(
+            (diagnostics, refrigerator, electrical),
+            interpreter.interpret(phrase),
+        ) == diagnostics
+
+
 def test_catalog_semantics_support_residential_electrical_only_when_catalog_has_it() -> None:
     electrical = BookingOption(
         "1",
