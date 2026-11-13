@@ -692,6 +692,7 @@ def test_round9_language_roots_cover_structural_variants(
     [
         ("Qual seria o valor?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
         ("Oi, não quero mais o agendamento", ConversationIntent.CANCEL, None),
+        ("E aí, não quero mais o agendamento", ConversationIntent.CANCEL, None),
         ("Se eu desistir como funciona?", ConversationIntent.CANCEL_QUESTION, ConversationAct.SIDE_QUESTION),
         ("Se eu precisar mudar o horário posso?", ConversationIntent.RESCHEDULE_QUESTION, ConversationAct.SIDE_QUESTION),
         ("Como funciona pra mudar o dia?", ConversationIntent.RESCHEDULE_QUESTION, ConversationAct.SIDE_QUESTION),
