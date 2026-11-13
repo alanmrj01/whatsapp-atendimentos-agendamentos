@@ -395,11 +395,23 @@ def parse_equipment_quantity_answer(
     """Parse an equipment count without consuming unrelated numeric roles."""
 
     normalized = normalize_portuguese(value or "")
+    normalized = re.sub(r"[?!.,]+$", "", normalized).strip()
+    normalized = re.sub(
+        r"^(?:(?:oi|ola|opa|blz|e ai|amigo|moco|seguinte|bom dia|boa tarde|boa noite|rapidinho)\s*[,;:-]?\s+)+",
+        "",
+        normalized,
+    ).strip()
+    normalized = re.sub(
+        r"\s+(?:por favor|pfv|valeu|blz)$",
+        "",
+        normalized,
+    ).strip()
     explicit = _equipment_quantity(normalized)
     if explicit is not None:
         return explicit
     if allow_bare and re.fullmatch(
-        r"(?:(?:so|apenas|somente)\s+)?(?:um|uma|1)(?:\s+(?:so|apenas|somente))?",
+        r"(?:(?:so|apenas|somente)\s+)?(?:um|uma|1)(?:\s+(?:so|apenas|somente))?"
+        r"(?:\s+(?:ar|aparelho|equipamento|split|unidade))?",
         normalized,
     ):
         return 1
