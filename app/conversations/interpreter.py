@@ -298,6 +298,7 @@ _TECHNICAL_TERMS = (
     "altura",
     "profundidade",
     "refrigerante",
+    "pressao",
     "serpentina",
     "cobre",
     "nivel de ruido",
