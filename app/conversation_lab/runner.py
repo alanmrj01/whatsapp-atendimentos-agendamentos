@@ -45,6 +45,26 @@ def _has_politeness_suffix(text: str) -> bool:
     return normalized.endswith(" por favor") or normalized.endswith(" pfv")
 
 
+def _is_social_or_pause_message(text: str) -> bool:
+    normalized = _strip_accents(text).strip().casefold().rstrip("?!., ")
+    return any(
+        marker in normalized
+        for marker in (
+            "valeu",
+            "obrigado",
+            "obrigada",
+            "beleza",
+            "blz",
+            "pera ai",
+            "um minutinho",
+            "um minuto",
+            "ja volto",
+            "so um instante",
+            "deixa eu ver",
+        )
+    )
+
+
 def _mutations(text: str, limit: int) -> list[str]:
     candidates: list[str] = [text, text.lower(), text.upper(), _strip_accents(text)]
     lower = text.lower()
@@ -60,8 +80,14 @@ def _mutations(text: str, limit: int) -> list[str]:
             suffix
             for suffix in SUFFIXES
             if not (
-                suffix.strip().casefold() in {"por favor", "pfv"}
-                and _has_politeness_suffix(item)
+                (
+                    suffix.strip().casefold() in {"por favor", "pfv"}
+                    and _has_politeness_suffix(item)
+                )
+                or (
+                    suffix.strip().casefold() in {"valeu", "blz"}
+                    and _is_social_or_pause_message(item)
+                )
             )
         )
         for prefix in prefixes:
