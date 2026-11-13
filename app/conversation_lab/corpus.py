@@ -358,7 +358,7 @@ DISCOVERY_FLOW_CASES = (
         (),
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
-    ),,
+    ),
     FlowCase(
         "resume_service_details_time",
         ConversationState.BOOKING_TIME,
