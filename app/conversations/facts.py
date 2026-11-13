@@ -398,6 +398,11 @@ def parse_equipment_quantity_answer(
     explicit = _equipment_quantity(normalized)
     if explicit is not None:
         return explicit
+    if allow_bare and re.fullmatch(
+        r"(?:(?:so|apenas|somente)\s+)?(?:um|uma|1)(?:\s+(?:so|apenas|somente))?",
+        normalized,
+    ):
+        return 1
     if not allow_bare or not _is_compact_number_answer(normalized):
         return None
     number = parse_number_answer(normalized)
