@@ -8695,11 +8695,13 @@ async def _advance_intake(
             service_id,
         )
 
+    property_type = _context_string(context, "property_type")
     needs_property = (
         service_kind == "installation"
         or context.get("request_mode") == "quote"
+        or property_type in {"building", "condominium"}
     )
-    if needs_property and _context_string(context, "property_type") is None:
+    if needs_property and property_type is None:
         return _transition(
             ConversationState.BOOKING_PROPERTY,
             context,
@@ -8707,6 +8709,21 @@ async def _advance_intake(
         )
 
     property_type = _context_string(context, "property_type")
+
+    # A cotação vem antes das regras operacionais do prédio/condomínio.
+    # Só coletamos horário de prestadores e portaria se o cliente decidir agendar.
+    if (
+        context.get("request_mode") == "quote"
+        and context.get("quote_presented") is not True
+    ):
+        return await _quote_transition(
+            inbound,
+            port,
+            context,
+            service_id,
+            customer_name=customer_name,
+        )
+
     if needs_property and property_type in {"building", "condominium"}:
         if (
             _context_string(context, "building_hours_start") is None
@@ -8742,18 +8759,6 @@ async def _advance_intake(
                 context,
                 site_limit_message(),
             )
-
-    if (
-        context.get("request_mode") == "quote"
-        and context.get("quote_presented") is not True
-    ):
-        return await _quote_transition(
-            inbound,
-            port,
-            context,
-            service_id,
-            customer_name=customer_name,
-        )
 
     return await _offer_dates(
         inbound,
@@ -9447,9 +9452,15 @@ async def _handle_quote_decision(
         }
         updated.pop("quote_paused", None)
         updated.pop("request_mode", None)
-        return await _offer_dates(
+        try:
+            service_id, intake = await _context_intake(inbound, updated, port)
+        except BookingRequiresHandoff as exc:
+            return _handoff_for_reason(str(exc))
+        updated["service_id"] = str(service_id)
+        return await _advance_intake(
             inbound,
             port,
+            intake,
             updated,
             customer_name=customer_name,
         )
