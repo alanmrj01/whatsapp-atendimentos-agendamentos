@@ -1131,6 +1131,11 @@ async def _route_named_conversation(
             inbound,
             interpretation,
             booking_port,
+            initial_context=(
+                context
+                if state is ConversationState.START
+                else {}
+            ),
         )
         retained_budget = {
             key: context[key]
@@ -4815,7 +4820,12 @@ async def _handle_natural_start(
     inbound: ConversationInput,
     interpretation: Interpretation,
     booking_port: BookingAvailabilityPort | None,
+    *,
+    initial_context: dict[str, Any] | None = None,
 ) -> ConversationTransition:
+    active_context = _clean_context(
+        conversation.context if initial_context is None else initial_context
+    )
     if (
         interpretation.intent is ConversationIntent.GREETING
         and not _has_substantive_intent(interpretation)
@@ -4885,7 +4895,7 @@ async def _handle_natural_start(
 
         transition = await _handle_service(
             inbound,
-            {},
+            active_context,
             None,
             port,
             interpretation=interpretation,
@@ -4903,7 +4913,7 @@ async def _handle_natural_start(
                 ),
             )
         return transition
-    fallback_context = _clean_context(conversation.context)
+    fallback_context = dict(active_context)
     previous_fallback = fallback_context.get("fallback_variant")
     fallback_already_sent = (
         isinstance(previous_fallback, int)
