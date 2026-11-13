@@ -4893,9 +4893,11 @@ async def _handle_natural_start(
         if not services:
             return _transition(ConversationState.MENU, {}, no_services_message())
 
+        service_context = dict(active_context)
+        service_context.pop("fallback_variant", None)
         transition = await _handle_service(
             inbound,
-            active_context,
+            service_context,
             None,
             port,
             interpretation=interpretation,
