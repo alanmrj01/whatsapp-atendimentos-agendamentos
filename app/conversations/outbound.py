@@ -116,26 +116,41 @@ def service_selection_message(
 def equipment_purchase_clarification_message(
     *,
     retry: bool = False,
+    purchase_already_known: bool = False,
 ) -> OutboundMessage:
-    body = (
-        "Você quer apenas comprar o aparelho ou gostaria de contratar a instalação também?"
-        if not retry
-        else (
-            "Para eu seguir com a opção certa: você quer comprar somente o aparelho, "
-            "fazer somente a instalação ou comprar e instalar?"
+    if purchase_already_known:
+        body = (
+            "Entendi que você quer comprar o aparelho. "
+            "Você também gostaria de contratar a instalação?"
+            if not retry
+            else (
+                "Só para confirmar: você quer apenas comprar o aparelho "
+                "ou comprar e contratar a instalação também?"
+            )
         )
-    )
+        options = (
+            BookingOption(EQUIPMENT_PURCHASE, "Só o aparelho"),
+            BookingOption(EQUIPMENT_BOTH, "Aparelho + instalação"),
+        )
+    else:
+        body = (
+            "Você quer apenas comprar o aparelho ou gostaria de contratar a instalação também?"
+            if not retry
+            else (
+                "Para eu seguir com a opção certa: você quer comprar somente o aparelho, "
+                "fazer somente a instalação ou comprar e instalar?"
+            )
+        )
+        options = (
+            BookingOption(EQUIPMENT_INSTALLATION, "Só instalação"),
+            BookingOption(EQUIPMENT_PURCHASE, "Comprar aparelho"),
+            BookingOption(EQUIPMENT_BOTH, "Compra + instalação"),
+        )
     return OutboundMessage(
         message_type="interactive_button",
         body=body,
         interactive_id="service.purchase_clarification",
-        outbound_payload=_button_payload(
-            (
-                BookingOption(EQUIPMENT_INSTALLATION, "Só instalação"),
-                BookingOption(EQUIPMENT_PURCHASE, "Comprar aparelho"),
-                BookingOption(EQUIPMENT_BOTH, "Compra + instalação"),
-            )
-        ),
+        outbound_payload=_button_payload(options),
     )
 
 
@@ -508,6 +523,7 @@ def tubing_variation_message(
     extra_meter_price: Decimal | None,
     unit_label: str | None = "metro",
 ) -> OutboundMessage:
+    del extra_meter_price, unit_label
     included = included_meters if included_meters is not None else Decimal("3")
     included_label = (
         str(int(included))
@@ -515,18 +531,10 @@ def tubing_variation_message(
         else str(included).replace(".", ",")
     )
     body = (
-        f"Importante: a instalação considera até {included_label} metros de "
-        "tubulação. Se o comprimento necessário for maior, o valor pode variar."
+        f"A instalação inclui até {included_label} metros de tubulação. "
+        "Se o comprimento necessário for maior, a tubulação adicional entra "
+        "como adicional no orçamento."
     )
-    if extra_meter_price is not None and extra_meter_price > 0:
-        body = (
-            f"A instalação inclui até {included_label} metros de tubulação. "
-            + _additional_material_price_sentence(
-                extra_meter_price,
-                unit_label,
-                material_label="tubulação adicional",
-            )
-        )
     return OutboundMessage(message_type="text", body=body)
 
 
@@ -658,17 +666,24 @@ def date_selection_message(
     )
 
 
-def quantity_selection_message() -> OutboundMessage:
+def quantity_selection_message(*, installation: bool = False) -> OutboundMessage:
+    options = tuple(
+        BookingOption(f"quantity:{value}", str(value))
+        for value in range(1, QUANTITY_OPTION_LIMIT + 1)
+    )
+    if installation:
+        options = (*options, BookingOption("quantity:more", "6 ou mais"))
     return OutboundMessage(
         message_type="interactive_list",
-        body="Quantos itens ou aparelhos são?",
+        body=(
+            "Quantos aparelhos de ar-condicionado são?"
+            if installation
+            else "Quantos itens ou aparelhos são?"
+        ),
         interactive_id="booking.quantity",
         outbound_payload=_list_payload(
             "Quantidade",
-            tuple(
-                BookingOption(f"quantity:{value}", str(value))
-                for value in range(1, QUANTITY_OPTION_LIMIT + 1)
-            ),
+            options,
         ),
     )
 
@@ -723,6 +738,7 @@ def tubing_guidance_message(
     extra_meter_price: Decimal | None,
     unit_label: str | None = "metro",
 ) -> OutboundMessage:
+    del extra_meter_price, unit_label
     included = included_meters if included_meters is not None else Decimal("3")
     if included == included.to_integral():
         included_label = str(int(included))
@@ -731,16 +747,7 @@ def tubing_guidance_message(
 
     body = (
         f"A instalação inclui até {included_label} metros de tubulação. "
-    )
-    if extra_meter_price is not None and extra_meter_price > 0:
-        body += _additional_material_price_sentence(
-            extra_meter_price,
-            unit_label,
-            material_label="tubulação adicional",
-        ) + " "
-    else:
-        body += "Se precisar de material adicional, o valor pode variar. "
-    body += (
+        "Se precisar de tubulação adicional, ela entra como adicional no orçamento. "
         "Se você não souber a medida exata, sem problema: o técnico pode "
         "conferir no local."
     )
