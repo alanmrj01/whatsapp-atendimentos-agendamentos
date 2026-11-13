@@ -4309,7 +4309,7 @@ async def test_diagnostics_price_is_presented_as_base_value_and_resumes_pending_
 
 
 @mark.asyncio
-async def test_completed_cheaper_equipment_question_routes_to_commercial_handoff() -> None:
+async def test_completed_cheaper_equipment_question_stays_catalog_driven() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.COMPLETED,
         context={
@@ -4338,11 +4338,11 @@ async def test_completed_cheaper_equipment_question_routes_to_commercial_handoff
         message.body or ""
         for message in (transition.outbound, *transition.follow_ups)
     ).casefold()
-    assert repository.state == ConversationState.HUMAN_HANDOFF
-    assert repository.automation_enabled is False
-    assert repository.handoff_status == "waiting"
-    assert "seminovo" in combined
-    assert "equipe" in combined
+    assert repository.state == ConversationState.POST_BOOKING_HELP
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert "seminovo" not in combined
+    assert "Gree" in combined
 
 
 @mark.asyncio
@@ -4857,7 +4857,7 @@ async def test_new_purchase_with_budget_keeps_budget_and_enters_purchase_flow() 
     assert "comprar" in body.casefold() or "instalar" in body.casefold()
 
 @mark.asyncio
-async def test_price_negotiation_after_final_purchase_quote_offers_used_unit_and_handoffs() -> None:
+async def test_cheaper_equipment_alternative_after_quote_keeps_booking_context() -> None:
     candidate = {
         "service_id": str(SERVICE_ID),
         "selected_date": "2026-09-02",
@@ -4893,13 +4893,11 @@ async def test_price_negotiation_after_final_purchase_quote_offers_used_unit_and
         )
     )
 
-    assert repository.state == ConversationState.HUMAN_HANDOFF
-    assert repository.automation_enabled is False
-    assert repository.handoff_status == "waiting"
+    assert repository.state == ConversationState.BOOKING_CONFIRM
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
     body = repository.outbounds[-1].transition.outbound.body or ""
-    assert "seminovo" in body.casefold()
-    assert "disponibilidade" in body.casefold()
-    assert "equipe" in body.casefold()
+    assert "seminovo" not in body.casefold()
     assert repository.context["selected_date"] == "2026-09-02"
     assert repository.context["selected_time"] == "09:00"
     assert repository.context["candidate_booking"] == candidate
@@ -5884,7 +5882,7 @@ async def test_24h_followup_non_price_dissatisfaction_handoffs_without_semi_new(
 
 
 @mark.asyncio
-async def test_24h_followup_price_objection_with_equipment_offers_semi_new() -> None:
+async def test_24h_followup_price_objection_handoffs_without_inventing_offer() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.QUOTE_DECISION,
         context={
@@ -5910,9 +5908,12 @@ async def test_24h_followup_price_objection_with_equipment_offers_semi_new() -> 
     )
 
     assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
     body = repository.outbounds[-1].transition.outbound.body or ""
-    assert "seminovo" in body.casefold()
-    assert "disponibilidade" in body.casefold()
+    assert "equipe" in body.casefold()
+    assert "negoci" in body.casefold()
+    assert "seminovo" not in body.casefold()
 
 
 @mark.asyncio
