@@ -1753,13 +1753,19 @@ def _looks_like_commercial_negotiation(
     if any(phrase in normalized for phrase in negotiation_phrases):
         return True
 
-    return bool(
-        re.search(
-            r"\b(?:faz|fecha|consegue fazer|da para fazer|da pra fazer)\s+"
-            r"por\s+(?:r\$\s*)?\d+[\d.,]*\b",
-            normalized,
-        )
+    negotiation_patterns = (
+        r"\b(?:faz|consegue fazer)\s+(?:um\s+)?preco\s+melhor\b",
+        r"\brola\s+(?:um\s+)?desconto\b",
+        r"\b(?:abaixa|reduz)\s+(?:(?:esse|o)\s+)?(?:valor|preco)\b",
+        r"\b(?:da pra|da para|tem como)\s+negociar\b",
+        r"\bnegociar\s+(?:(?:esse|o)\s+)?(?:preco|valor)\b",
+        r"\bqual\s+(?:e\s+)?(?:o\s+)?(?:seu\s+)?menor\s+(?:preco|valor)\b",
+        r"\bcobre\s+(?:essa|a)\s+oferta\b",
+        r"\bse eu fechar(?: agora)?\b.{0,24}\bmelhora(?:r)?\s+(?:o\s+)?(?:preco|valor)\b",
+        r"\b(?:faz|fecha|consegue fazer|da para fazer|da pra fazer)\s+"
+        r"por\s+(?:r\$\s*)?\d+[\d.,]*\b",
     )
+    return any(re.search(pattern, normalized) for pattern in negotiation_patterns)
 
 
 async def _is_ac_purchase_or_installation_context(
