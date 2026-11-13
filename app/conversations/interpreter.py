@@ -432,7 +432,7 @@ class DeterministicConversationInterpreter:
 
     def interpret(self, body: str | None) -> Interpretation:
         original = body or ""
-        normalized = normalize_portuguese(original)
+        normalized = _normalize_conversation_language(normalize_portuguese(original))
         if not normalized:
             return Interpretation(
                 ConversationIntent.UNKNOWN,
@@ -443,7 +443,7 @@ class DeterministicConversationInterpreter:
         intents: set[ConversationIntent] = set()
         acts: set[ConversationAct] = set()
         service_key: str | None = None
-        assertion = correction_focus(original)
+        assertion = _normalize_conversation_language(correction_focus(original))
         service_assertion = _normalize_service_language(assertion)
 
         if _is_social_acknowledgement(normalized):
@@ -1157,7 +1157,38 @@ def _contains_equipment_purchase(value: str) -> bool:
     return not _contains_any(value, installation_phrases)
 
 
+_CONVERSATION_LANGUAGE_TOKEN_MAP = {
+    "horaro": "horario",
+    "demroa": "demora",
+    "demorra": "demora",
+    "qnto": "quanto",
+    "qto": "quanto",
+    "vces": "voces",
+}
+
+
+def _normalize_conversation_language(value: str) -> str:
+    """Normalize only high-confidence conversational typos and shorthand."""
+
+    return " ".join(
+        _CONVERSATION_LANGUAGE_TOKEN_MAP.get(token, token)
+        for token in value.split()
+    )
+
+
+def _strip_social_wrappers(value: str) -> str:
+    normalized = value
+    normalized = re.sub(
+        r"^(?:(?:oi|ola|opa|blz|bom dia|boa tarde|boa noite|rapidinho)\s+)+",
+        "",
+        normalized,
+    )
+    normalized = re.sub(r"\s+(?:por favor|pfv)$", "", normalized)
+    return normalized.strip()
+
+
 def _is_social_acknowledgement(value: str) -> bool:
+    value = _strip_social_wrappers(value)
     if value in _SOCIAL_ONLY:
         return True
     return bool(
@@ -1171,6 +1202,7 @@ def _is_social_acknowledgement(value: str) -> bool:
 
 
 def _is_pause_message(value: str) -> bool:
+    value = _strip_social_wrappers(value)
     return bool(
         re.fullmatch(
             r"(?:pera ai(?: um minutinho| um minuto)?|ja volto|"

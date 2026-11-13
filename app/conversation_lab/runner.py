@@ -30,6 +30,19 @@ def _strip_accents(text: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn")
 
 
+def _has_social_prefix(text: str) -> bool:
+    normalized = text.strip().casefold()
+    return any(
+        prefix and normalized.startswith(prefix.strip().casefold())
+        for prefix in PREFIXES
+    )
+
+
+def _has_politeness_suffix(text: str) -> bool:
+    normalized = text.strip().casefold().rstrip("?!., ")
+    return normalized.endswith(" por favor") or normalized.endswith(" pfv")
+
+
 def _mutations(text: str, limit: int) -> list[str]:
     candidates: list[str] = [text, text.lower(), text.upper(), _strip_accents(text)]
     lower = text.lower()
@@ -40,8 +53,17 @@ def _mutations(text: str, limit: int) -> list[str]:
     base = list(dict.fromkeys(candidates))
     expanded: list[str] = []
     for item in base:
-        for prefix in PREFIXES:
-            for suffix in SUFFIXES:
+        prefixes = ("",) if _has_social_prefix(item) else PREFIXES
+        suffixes = tuple(
+            suffix
+            for suffix in SUFFIXES
+            if not (
+                suffix.strip().casefold() in {"por favor", "pfv"}
+                and _has_politeness_suffix(item)
+            )
+        )
+        for prefix in prefixes:
+            for suffix in suffixes:
                 expanded.append(f"{prefix}{item}{suffix}".strip())
     return list(islice(dict.fromkeys(expanded), limit))
 
