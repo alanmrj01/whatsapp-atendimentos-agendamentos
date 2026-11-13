@@ -10,7 +10,7 @@ from app.conversations.interpreter import ConversationAct, ConversationIntent
 class SemanticCase:
     family: str
     text: str
-    intent: ConversationIntent
+    intent: ConversationIntent | None
     act: ConversationAct | None = None
     forbidden_intents: tuple[ConversationIntent, ...] = ()
     forbidden_acts: tuple[ConversationAct, ...] = ()
@@ -73,9 +73,9 @@ DISCOVERY_SEEDS = (
     SemanticCase("reschedule_question", "se eu precisar remarcar depois, posso?", ConversationIntent.RESCHEDULE_QUESTION, ConversationAct.SIDE_QUESTION),
     SemanticCase("price", "quanto custa esse serviço?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
     SemanticCase("price", "qual o valor da visita?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
-    SemanticCase("negated_cancel", "não quero cancelar", ConversationIntent.UNKNOWN, None, (ConversationIntent.CANCEL, ConversationIntent.CANCEL_QUESTION)),
-    SemanticCase("negated_reschedule", "não quero remarcar", ConversationIntent.UNKNOWN, None, (ConversationIntent.RESCHEDULE, ConversationIntent.RESCHEDULE_QUESTION)),
-    SemanticCase("negated_handoff", "não quero falar com atendente", ConversationIntent.UNKNOWN, None, (ConversationIntent.HUMAN_HANDOFF,)),
+    SemanticCase("negated_cancel", "não quero cancelar", None, ConversationAct.NEGATED_ACTION, (ConversationIntent.CANCEL, ConversationIntent.CANCEL_QUESTION)),
+    SemanticCase("negated_reschedule", "não quero remarcar", None, ConversationAct.NEGATED_ACTION, (ConversationIntent.RESCHEDULE, ConversationIntent.RESCHEDULE_QUESTION)),
+    SemanticCase("negated_handoff", "não quero falar com atendente", None, ConversationAct.NEGATED_ACTION, (ConversationIntent.HUMAN_HANDOFF,)),
     SemanticCase("correction_reschedule", "quero cancelar, na verdade quero remarcar", ConversationIntent.RESCHEDULE, ConversationAct.CORRECTION, (ConversationIntent.CANCEL,)),
     SemanticCase("correction_cancel", "quero remarcar, na verdade quero cancelar", ConversationIntent.CANCEL, ConversationAct.CORRECTION, (ConversationIntent.RESCHEDULE,)),
     SemanticCase("composed_duration", "são 2 aparelhos e demora 3 horas?", ConversationIntent.DURATION_QUESTION, ConversationAct.SIDE_QUESTION),
