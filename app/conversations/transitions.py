@@ -9820,26 +9820,37 @@ def _service_candidates_for_interpretation(
         "gas-recharge": ("recarga", "gas", "vazamento"),
     }
     direct: tuple[BookingOption, ...] = ()
+    explicit_relocation_request = bool(
+        re.search(
+            r"\\b(?:mudar|trocar)\\b.{0,30}\\b"
+            r"(?:ar condicionado|ar|split|aparelho|evaporadora|condensadora)\\b"
+            r".{0,30}\\bde lugar\\b",
+            text,
+        )
+    )
     skip_direct_filter = (
         interpretation.service_key == "split-installation"
-        and any(
-            phrase in text
-            for phrase in (
-                "retirar e instalar",
-                "mudar de lugar",
-                "trocar de lugar",
-                "remanejar",
-                "remanejamento",
-                "realocar",
-                "desinstalar",
-                "retirar o ar",
-                "retirar ar condicionado",
-                "remover o ar",
-                "remover ar condicionado",
-                "infraestrutura",
-                "preparar o ponto",
-                "preparar ponto",
-                "tubulacao",
+        and (
+            explicit_relocation_request
+            or any(
+                phrase in text
+                for phrase in (
+                    "retirar e instalar",
+                    "mudar de lugar",
+                    "trocar de lugar",
+                    "remanejar",
+                    "remanejamento",
+                    "realocar",
+                    "desinstalar",
+                    "retirar o ar",
+                    "retirar ar condicionado",
+                    "remover o ar",
+                    "remover ar condicionado",
+                    "infraestrutura",
+                    "preparar o ponto",
+                    "preparar ponto",
+                    "tubulacao",
+                )
             )
         )
     ) or (
@@ -9873,7 +9884,7 @@ def _service_candidates_for_interpretation(
     ):
         explicit_family_tokens = ("instal",)
         explicit_family_exclusions = ("desinstal", "realoc", "remoc", "remanej")
-    elif any(
+    elif explicit_relocation_request or any(
         phrase in text
         for phrase in (
             "retirar e instalar",
