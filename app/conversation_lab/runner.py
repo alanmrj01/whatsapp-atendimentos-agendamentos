@@ -388,7 +388,7 @@ async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]
     }
 
 
-async def run(mode: str, per_seed: int, stage: str = "all") -> int:
+async def run(\n    mode: str,\n    per_seed: int,\n    stage: str = "all",\n    shard_index: int = 0,\n    shard_count: int = 1,\n) -> int:
     if os.getenv("CONVERSATION_LAB_ALLOW_EXTERNAL_IO", "false").lower() == "true":
         raise RuntimeError("conversation_lab_external_io_must_remain_disabled")
 
@@ -412,6 +412,32 @@ async def run(mode: str, per_seed: int, stage: str = "all") -> int:
             flow_cases = []
         if stage != "journey":
             journey_cases = []
+
+    if shard_count < 1:
+        raise ValueError("conversation_lab_shard_count_must_be_positive")
+    if not 0 <= shard_index < shard_count:
+        raise ValueError("conversation_lab_shard_index_out_of_range")
+    if shard_count > 1:
+        semantic_cases = [
+            case
+            for index, case in enumerate(semantic_cases)
+            if index % shard_count == shard_index
+        ]
+        context_cases = [
+            case
+            for index, case in enumerate(context_cases)
+            if index % shard_count == shard_index
+        ]
+        flow_cases = [
+            case
+            for index, case in enumerate(flow_cases)
+            if index % shard_count == shard_index
+        ]
+        journey_cases = [
+            case
+            for index, case in enumerate(journey_cases)
+            if index % shard_count == shard_index
+        ]
 
     results: list[dict[str, object]] = []
     sequence = 1
@@ -546,6 +572,8 @@ async def run(mode: str, per_seed: int, stage: str = "all") -> int:
     summary = {
         "mode": mode,
         "stage": stage,
+        "shard_index": shard_index,
+        "shard_count": shard_count,
         "total": len(results),
         "passed": len(passed),
         "gaps": len(gaps),
@@ -593,6 +621,16 @@ def main() -> None:
         choices=("all", "semantic", "context", "flow", "journey"),
         default=os.getenv("CONVERSATION_LAB_STAGE", "all"),
     )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=int(os.getenv("CONVERSATION_LAB_SHARD_INDEX", "0")),
+    )
+    parser.add_argument(
+        "--shard-count",
+        type=int,
+        default=int(os.getenv("CONVERSATION_LAB_SHARD_COUNT", "1")),
+    )
     args = parser.parse_args()
     raise SystemExit(
         asyncio.run(
@@ -600,6 +638,8 @@ def main() -> None:
                 args.mode,
                 max(1, min(args.per_seed, 500)),
                 args.stage,
+                args.shard_index,
+                args.shard_count,
             )
         )
     )
