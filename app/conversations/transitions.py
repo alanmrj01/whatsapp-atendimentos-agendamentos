@@ -177,6 +177,7 @@ from app.conversations.dialogue import (
 from app.conversations.service_semantics import (
     configured_service_name_matches,
     semantic_service_score,
+    service_domain_compatible,
 )
 from app.conversations.ports import (
     BookingAvailabilityPort,
@@ -9798,7 +9799,14 @@ def _service_candidates_for_interpretation(
     configured_name_matches = tuple(
         service
         for service in services
-        if configured_service_name_matches(text, service.label)
+        if (
+            configured_service_name_matches(text, service.label)
+            and service_domain_compatible(
+                text,
+                service.label,
+                service.examples,
+            )
+        )
     )
     if len(configured_name_matches) == 1:
         return configured_name_matches
@@ -9844,9 +9852,16 @@ def _service_candidates_for_interpretation(
         direct = tuple(
             service
             for service in services
-            if any(
-                token in normalize_portuguese(service.label)
-                for token in tokens
+            if (
+                any(
+                    token in normalize_portuguese(service.label)
+                    for token in tokens
+                )
+                and service_domain_compatible(
+                    text,
+                    service.label,
+                    service.examples,
+                )
             )
         )
 
@@ -9892,9 +9907,16 @@ def _service_candidates_for_interpretation(
         explicit = tuple(
             service
             for service in services
-            if any(
-                token in normalize_portuguese(service.label)
-                for token in explicit_family_tokens
+            if (
+                any(
+                    token in normalize_portuguese(service.label)
+                    for token in explicit_family_tokens
+                )
+                and service_domain_compatible(
+                    text,
+                    service.label,
+                    service.examples,
+                )
             )
         )
         if explicit:
