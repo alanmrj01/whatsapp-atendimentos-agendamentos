@@ -177,6 +177,7 @@ from app.conversations.dialogue import (
 from app.conversations.service_semantics import (
     configured_service_name_matches,
     semantic_service_score,
+    service_domain_compatible,
 )
 from app.conversations.ports import (
     BookingAvailabilityPort,
@@ -1675,69 +1676,96 @@ def _looks_like_commercial_negotiation(
     context: dict[str, Any],
     interpretation: Interpretation,
 ) -> bool:
+    del state, context, interpretation
     normalized = normalize_portuguese(body or "")
     if not normalized:
         return False
 
     negotiation_phrases = (
-        "mais barato",
-        "mais em conta",
-        "valor menor",
-        "preco menor",
-        "melhor preco",
         "melhorar o valor",
         "melhorar esse valor",
+        "melhorar o preco",
         "melhorar esse preco",
         "tem como melhorar",
         "consegue melhorar",
         "da para melhorar",
+        "da pra melhorar",
+        "tem como ficar mais em conta",
+        "consegue ficar mais em conta",
+        "faz mais em conta",
         "dar desconto",
+        "da desconto",
         "tem desconto",
         "consegue desconto",
+        "faz desconto",
+        "descontinho",
         "abaixar o valor",
+        "abaixar o preco",
+        "abaixa o valor",
+        "abaixa o preco",
         "baixar o valor",
+        "baixar o preco",
+        "baixa o valor",
+        "baixa o preco",
+        "consegue baixar",
+        "da para baixar",
+        "da pra baixar",
         "reduzir o valor",
         "reduzir o preco",
         "negociar o valor",
         "negociar o preco",
-        "ficou caro",
-        "esta caro",
-        "ta caro",
-        "muito caro",
-        "achei caro",
-        "passou do meu orcamento",
-        "fora do meu orcamento",
-        "nao cabe no meu orcamento",
-        "nao consigo pagar",
         "consegue fazer por",
         "da para fazer por",
+        "da pra fazer por",
         "tem como fazer por",
+        "faz por",
+        "fecha por",
+        "faz menos",
+        "consegue fazer menos",
+        "qual o menor valor",
+        "qual seu menor valor",
+        "qual o melhor valor que consegue",
+        "cobre o preco",
+        "cobre a oferta",
+        "no pix melhora",
+        "pix tem desconto",
+        "a vista melhora",
+        "pagando a vista melhora",
         "nao gostei do preco",
         "nao gostei do valor",
         "preco ficou alto",
         "valor ficou alto",
-        "preco esta alto",
-        "valor esta alto",
+        "ficou caro",
+        "esta caro",
+        "ta caro",
+        "muito caro",
+        "caro demais",
+        "ficou puxado",
+        "ta puxado",
+        "esta puxado",
+        "ta salgado",
+        "esta salgado",
+        "fora do meu orcamento",
+        "passou do meu orcamento",
+        "nao cabe no meu bolso",
+        "nao consigo pagar",
     )
     if any(phrase in normalized for phrase in negotiation_phrases):
         return True
 
-    price_already_presented = (
-        state in {
-            ConversationState.BOOKING_CONFIRM,
-            ConversationState.QUOTE_DECISION,
-        }
-        or context.get("quote_presented") is True
-        or context.get("recommendation_presented") is True
+    negotiation_patterns = (
+        r"\b(?:faz|consegue fazer)\s+(?:um\s+)?preco\s+melhor\b",
+        r"\brola\s+(?:um\s+)?desconto\b",
+        r"\b(?:abaixa|reduz)\s+(?:(?:esse|o)\s+)?(?:valor|preco)\b",
+        r"\b(?:da pra|da para|tem como)\s+negociar\b",
+        r"\bnegociar\s+(?:(?:esse|o)\s+)?(?:preco|valor)\b",
+        r"\bqual\s+(?:e\s+)?(?:o\s+)?(?:seu\s+)?menor\s+(?:preco|valor)\b",
+        r"\bcobre\s+(?:essa|a)\s+oferta\b",
+        r"\bse eu fechar(?: agora)?\b.{0,24}\bmelhora(?:r)?\s+(?:o\s+)?(?:preco|valor)\b",
+        r"\b(?:faz|fecha|consegue fazer|da para fazer|da pra fazer)\s+"
+        r"por\s+(?:r\$\s*)?\d+[\d.,]*\b",
     )
-    return (
-        price_already_presented
-        and interpretation.has(ConversationIntent.PRICE_QUESTION)
-        and any(
-            token in normalized
-            for token in ("preco", "valor", "quanto", "orcamento", "custa")
-        )
-    )
+    return any(re.search(pattern, normalized) for pattern in negotiation_patterns)
 
 
 async def _is_ac_purchase_or_installation_context(
@@ -1786,18 +1814,9 @@ async def _commercial_negotiation_handoff_if_applicable(
         interpretation=interpretation,
     ):
         return None
-    if not await _is_ac_purchase_or_installation_context(
-        inbound,
-        context,
-        interpretation,
-        booking_port,
-    ):
-        return None
-
     body = (
-        "Para compra ou instalação de ar-condicionado, podemos verificar um aparelho "
-        "seminovo, conforme disponibilidade. Vou encaminhar à equipe para confirmar "
-        "opções e valores."
+        "Entendi. Como você quer negociar o valor, vou encaminhar seu atendimento "
+        "para uma pessoa da equipe continuar com você e verificar essa condição."
     )
     return _transition(
         ConversationState.HUMAN_HANDOFF,
@@ -2534,6 +2553,57 @@ async def _equipment_question_answer(
     )
 
 
+def _generic_service_explanation(service_label: str) -> str:
+    normalized = normalize_portuguese(service_label)
+    if any(token in normalized for token in ("limpeza", "higien", "lavagem")):
+        return (
+            "É um serviço de limpeza técnica dos componentes acessíveis do equipamento, "
+            "com foco em remover sujeira acumulada e manter o funcionamento adequado."
+        )
+    if any(token in normalized for token in ("instal", "montagem")):
+        return (
+            "É a execução técnica da instalação do equipamento conforme o serviço "
+            "cadastrado e as condições encontradas no local."
+        )
+    if any(token in normalized for token in ("diagnost", "corretiv", "conser", "reparo")):
+        return (
+            "É um atendimento técnico para identificar a causa do problema e executar "
+            "o reparo compatível com o serviço cadastrado."
+        )
+    if any(token in normalized for token in ("geladeira", "refrigerador", "freezer", "frigobar", "cervejeira")):
+        return (
+            "É um atendimento técnico do equipamento de refrigeração para avaliar o "
+            "defeito e executar o serviço cadastrado de forma adequada."
+        )
+    if any(
+        token in normalized
+        for token in (
+            "eletrica",
+            "eletrico",
+            "tomada",
+            "disjuntor",
+            "chuveiro",
+            "interruptor",
+            "luminaria",
+            "fiacao",
+        )
+    ):
+        return (
+            "É um atendimento de elétrica residencial para verificar o ponto ou "
+            "componente relacionado ao serviço cadastrado e executar o reparo ou "
+            "instalação correspondente com segurança."
+        )
+    if any(token in normalized for token in ("recarga", "gas", "vazamento")):
+        return (
+            "É um atendimento técnico do sistema de refrigeração para verificar a "
+            "necessidade do serviço cadastrado e executar o procedimento adequado."
+        )
+    return (
+        f"É um atendimento técnico referente a {service_label}, seguindo o escopo "
+        "cadastrado pela empresa."
+    )
+
+
 async def _service_question_answer(
     inbound: ConversationInput,
     context: dict[str, Any],
@@ -2780,11 +2850,7 @@ async def _service_question_answer(
         if isinstance(description, str) and description.strip():
             parts.append(description.strip())
         elif not inquiry_language:
-            parts.append(
-                "Esse detalhe específico não está descrito no catálogo do serviço. "
-                "Para não te passar uma informação incorreta, prefiro confirmar "
-                "somente o que está cadastrado."
-            )
+            parts.append(_generic_service_explanation(target.label))
 
     return " ".join(parts) if parts else None
 
@@ -4843,6 +4909,30 @@ def _format_duration(minutes: int) -> str:
     return f"{hours} {hour_label} e {remainder} minutos"
 
 
+def _looks_like_generic_catalog_inquiry(
+    body: str | None,
+    interpretation: Interpretation,
+) -> bool:
+    if interpretation.service_key is not None:
+        return False
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+    inquiry_shape = bool(
+        re.search(
+            r"\b(?:voce|voces)?\s*(?:faz|fazem|tem|trabalha|trabalham|"
+            r"atende|atendem|oferece|oferecem|realiza|realizam)\b",
+            normalized,
+        )
+        or re.search(r"\bservicos?\s+de\b", normalized)
+    )
+    return inquiry_shape and (
+        "?" in (body or "")
+        or interpretation.has(ConversationIntent.GREETING)
+        or normalized.startswith(("voce ", "voces "))
+    )
+
+
 async def _handle_natural_start(
     conversation: ConversationSnapshot,
     inbound: ConversationInput,
@@ -4854,22 +4944,6 @@ async def _handle_natural_start(
     active_context = _clean_context(
         conversation.context if initial_context is None else initial_context
     )
-    if (
-        interpretation.intent is ConversationIntent.GREETING
-        and not _has_substantive_intent(interpretation)
-    ):
-        return _transition(
-            ConversationState.MENU,
-            {},
-            _text_message(
-                conversational_greeting(
-                    inbound.body,
-                    conversation.business_timezone,
-                    customer_name=conversation.customer_name,
-                    include_help=True,
-                )
-            ),
-        )
     if interpretation.intent is ConversationIntent.RESCHEDULE:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
     if interpretation.intent is ConversationIntent.CANCEL:
@@ -4901,11 +4975,80 @@ async def _handle_natural_start(
         except BookingPortUnavailable:
             port = None
             services = ()
-        if services and _service_candidates_for_interpretation(
-            services,
-            interpretation,
+        catalog_candidates = (
+            _service_candidates_for_interpretation(
+                services,
+                interpretation,
+            )
+            if services
+            else ()
+        )
+        if (
+            services
+            and _looks_like_generic_catalog_inquiry(
+                inbound.body,
+                interpretation,
+            )
         ):
+            selection = catalog_candidates or services
+            found = bool(catalog_candidates)
+            body = (
+                "Sim. Estes são os serviços do catálogo que correspondem ao que "
+                "você perguntou. Qual deles você precisa?"
+                if found
+                else (
+                    "Não encontrei esse serviço com segurança no catálogo ativo. "
+                    "Estes são os serviços disponíveis; escolha uma opção se alguma "
+                    "corresponder ao que você precisa."
+                )
+            )
+            transition = _transition(
+                ConversationState.BOOKING_SERVICE,
+                active_context,
+                service_selection_message(selection, body=body),
+            )
+            if interpretation.has(ConversationIntent.GREETING):
+                transition = _prepend_transition_body(
+                    transition,
+                    conversational_greeting(
+                        inbound.body,
+                        conversation.business_timezone,
+                        customer_name=conversation.customer_name,
+                        include_help=False,
+                    ),
+                )
+            return transition
+
+        if catalog_candidates:
             route_to_service = True
+
+        if (
+            services
+            and interpretation.has(ConversationIntent.SERVICE_QUESTION)
+            and not catalog_candidates
+        ):
+            transition = _transition(
+                ConversationState.BOOKING_SERVICE,
+                active_context,
+                service_selection_message(
+                    services,
+                    body=(
+                        "Claro. Estes são os serviços disponíveis no catálogo da empresa. "
+                        "Qual deles corresponde ao que você precisa?"
+                    ),
+                ),
+            )
+            if interpretation.has(ConversationIntent.GREETING):
+                transition = _prepend_transition_body(
+                    transition,
+                    conversational_greeting(
+                        inbound.body,
+                        conversation.business_timezone,
+                        customer_name=conversation.customer_name,
+                        include_help=False,
+                    ),
+                )
+            return transition
 
     if route_to_service:
         try:
@@ -4943,6 +5086,23 @@ async def _handle_natural_start(
                 ),
             )
         return transition
+    if (
+        interpretation.intent is ConversationIntent.GREETING
+        and not _has_substantive_intent(interpretation)
+    ):
+        return _transition(
+            ConversationState.MENU,
+            {},
+            _text_message(
+                conversational_greeting(
+                    inbound.body,
+                    conversation.business_timezone,
+                    customer_name=conversation.customer_name,
+                    include_help=True,
+                )
+            ),
+        )
+
     fallback_context = dict(active_context)
     previous_fallback = fallback_context.get("fallback_variant")
     fallback_already_sent = (
@@ -9645,7 +9805,14 @@ def _service_candidates_for_interpretation(
     configured_name_matches = tuple(
         service
         for service in services
-        if configured_service_name_matches(text, service.label)
+        if (
+            configured_service_name_matches(text, service.label)
+            and service_domain_compatible(
+                text,
+                service.label,
+                service.examples,
+            )
+        )
     )
     if len(configured_name_matches) == 1:
         return configured_name_matches
@@ -9659,26 +9826,37 @@ def _service_candidates_for_interpretation(
         "gas-recharge": ("recarga", "gas", "vazamento"),
     }
     direct: tuple[BookingOption, ...] = ()
+    explicit_relocation_request = bool(
+        re.search(
+            r"\b(?:mudar|trocar)\b.{0,30}\b"
+            r"(?:ar condicionado|ar|split|aparelho|evaporadora|condensadora)\b"
+            r".{0,30}\bde lugar\b",
+            text,
+        )
+    )
     skip_direct_filter = (
         interpretation.service_key == "split-installation"
-        and any(
-            phrase in text
-            for phrase in (
-                "retirar e instalar",
-                "mudar de lugar",
-                "trocar de lugar",
-                "remanejar",
-                "remanejamento",
-                "realocar",
-                "desinstalar",
-                "retirar o ar",
-                "retirar ar condicionado",
-                "remover o ar",
-                "remover ar condicionado",
-                "infraestrutura",
-                "preparar o ponto",
-                "preparar ponto",
-                "tubulacao",
+        and (
+            explicit_relocation_request
+            or any(
+                phrase in text
+                for phrase in (
+                    "retirar e instalar",
+                    "mudar de lugar",
+                    "trocar de lugar",
+                    "remanejar",
+                    "remanejamento",
+                    "realocar",
+                    "desinstalar",
+                    "retirar o ar",
+                    "retirar ar condicionado",
+                    "remover o ar",
+                    "remover ar condicionado",
+                    "infraestrutura",
+                    "preparar o ponto",
+                    "preparar ponto",
+                    "tubulacao",
+                )
             )
         )
     ) or (
@@ -9691,14 +9869,28 @@ def _service_candidates_for_interpretation(
         direct = tuple(
             service
             for service in services
-            if any(
-                token in normalize_portuguese(service.label)
-                for token in tokens
+            if (
+                any(
+                    token in normalize_portuguese(service.label)
+                    for token in tokens
+                )
+                and service_domain_compatible(
+                    text,
+                    service.label,
+                    service.examples,
+                )
             )
         )
 
     explicit_family_tokens: tuple[str, ...] = ()
-    if any(
+    explicit_family_exclusions: tuple[str, ...] = ()
+    if re.search(
+        r"\b(?:colocar|montar|fixar)\b.{0,30}\b(?:ar condicionado|split)\b",
+        text,
+    ):
+        explicit_family_tokens = ("instal",)
+        explicit_family_exclusions = ("desinstal", "realoc", "remoc", "remanej")
+    elif explicit_relocation_request or any(
         phrase in text
         for phrase in (
             "retirar e instalar",
@@ -9739,9 +9931,20 @@ def _service_candidates_for_interpretation(
         explicit = tuple(
             service
             for service in services
-            if any(
-                token in normalize_portuguese(service.label)
-                for token in explicit_family_tokens
+            if (
+                any(
+                    token in normalize_portuguese(service.label)
+                    for token in explicit_family_tokens
+                )
+                and not any(
+                    token in normalize_portuguese(service.label)
+                    for token in explicit_family_exclusions
+                )
+                and service_domain_compatible(
+                    text,
+                    service.label,
+                    service.examples,
+                )
             )
         )
         if explicit:
@@ -9787,6 +9990,7 @@ def _is_generic_maintenance_request(text: str) -> bool:
         "reparo",
         "assistencia tecnica",
         "nao gela",
+        "nao esta gelando",
         "nao resfria",
         "nao esfria",
         "nao liga",

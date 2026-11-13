@@ -206,9 +206,28 @@ def enrich_context_from_message(
         _assign_fact(updated, "room_people_max", people, is_correction)
 
     preference = _preference(assertion)
-    if preference is not None and (
-        preference != "economy"
-        or _should_capture_equipment_preference(updated, normalized)
+    exploratory_preference_question = (
+        "?" in raw
+        and preference is not None
+        and any(
+            phrase in normalized
+            for phrase in (
+                "mais barato",
+                "mais em conta",
+                "preco menor",
+                "valor menor",
+                "melhor preco",
+                "melhor valor",
+            )
+        )
+    )
+    if (
+        preference is not None
+        and not exploratory_preference_question
+        and (
+            preference != "economy"
+            or _should_capture_equipment_preference(updated, normalized)
+        )
     ):
         _assign_fact(updated, "equipment_preference", preference, is_correction)
 

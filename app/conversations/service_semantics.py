@@ -42,6 +42,10 @@ _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
         "suja",
         "mau cheiro",
         "cheiro ruim",
+        "limpeza de ar condicionado",
+        "higienizacao de ar condicionado",
+        "limpeza de split",
+        "higienizacao de split",
     ),
     "higienizacao": ("limpeza", "higienizar", "limpar", "lavagem"),
     "instalacao": (
@@ -148,6 +152,100 @@ _DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {
         "vazando gás",
     ),
     "split": ("ar condicionado", "ar-condicionado", "aparelho", "ar"),
+    "geladeira": (
+        "refrigerador",
+        "geladeira nao gela",
+        "geladeira nao esta gelando",
+        "geladeira gelando pouco",
+        "geladeira nao liga",
+        "geladeira fazendo barulho",
+        "geladeira vazando agua",
+        "conserto de geladeira",
+        "manutencao de geladeira",
+    ),
+    "refrigerador": (
+        "geladeira",
+        "refrigerador nao gela",
+        "refrigerador nao liga",
+        "conserto de refrigerador",
+        "manutencao de refrigerador",
+    ),
+    "freezer": (
+        "congelador",
+        "freezer nao congela",
+        "freezer nao gela",
+        "freezer nao liga",
+        "conserto de freezer",
+        "manutencao de freezer",
+    ),
+    "frigobar": (
+        "frigobar nao gela",
+        "frigobar nao liga",
+        "conserto de frigobar",
+        "manutencao de frigobar",
+    ),
+    "cervejeira": (
+        "cervejeira nao gela",
+        "cervejeira nao liga",
+        "conserto de cervejeira",
+        "manutencao de cervejeira",
+    ),
+    "eletrica": (
+        "eletricista",
+        "eletrica residencial",
+        "instalacao eletrica",
+        "manutencao eletrica",
+        "reparo eletrico",
+        "tomada",
+        "disjuntor",
+        "chuveiro",
+        "interruptor",
+        "luminaria",
+        "fiacao",
+        "curto circuito",
+    ),
+    "eletrico": (
+        "eletrica",
+        "eletricista",
+        "reparo eletrico",
+        "instalacao eletrica",
+    ),
+    "tomada": (
+        "tomada sem energia",
+        "tomada nao funciona",
+        "tomada queimou",
+        "trocar tomada",
+        "instalar tomada",
+    ),
+    "disjuntor": (
+        "disjuntor desarmando",
+        "disjuntor desarma",
+        "disjuntor caindo",
+        "trocar disjuntor",
+    ),
+    "chuveiro": (
+        "chuveiro nao liga",
+        "chuveiro nao esquenta",
+        "chuveiro queimou",
+        "instalar chuveiro",
+        "trocar chuveiro",
+    ),
+    "interruptor": (
+        "interruptor nao funciona",
+        "trocar interruptor",
+        "instalar interruptor",
+    ),
+    "luminaria": (
+        "luz nao acende",
+        "instalar luminaria",
+        "trocar luminaria",
+    ),
+    "fiacao": (
+        "fio queimado",
+        "fiacao aquecendo",
+        "trocar fiacao",
+        "refazer fiacao",
+    ),
 }
 
 _PERSONAL_NON_SERVICE_PHRASES = (
@@ -174,9 +272,7 @@ _PERSONAL_NON_SERVICE_PHRASES = (
 _SEMANTIC_STOPWORDS = {
     "a",
     "ao",
-    "ar",
-    "condicionado",
-    "aparelho",
+     "aparelho",
     "de",
     "do",
     "e",
@@ -194,8 +290,7 @@ _SEMANTIC_STOPWORDS = {
     "orcamento",
     "cotacao",
     "servico",
-    "split",
-    "um",
+     "um",
     "uma",
     "voces",
 }
@@ -256,14 +351,34 @@ def generate_service_intent_examples(name: str) -> tuple[str, ...]:
 
     examples: list[str] = []
     seen: set[str] = set()
-    for variant in variants:
-        for template in _GENERIC_TEMPLATES:
-            sentence = template.format(service=variant)
-            key = normalize_service_text(sentence)
-            if key and key not in seen:
-                seen.add(key)
-                examples.append(sentence)
-            if len(examples) >= 32:
+
+    def add_example(sentence: str) -> None:
+        key = normalize_service_text(sentence)
+        if key and key not in seen:
+            seen.add(key)
+            examples.append(sentence)
+
+    # Primeiro garante diversidade de atos para o nome configurado:
+    # pergunta, orçamento, agendamento, disponibilidade etc.
+    for template in _GENERIC_TEMPLATES:
+        add_example(template.format(service=service))
+
+    # Depois garante que TODAS as raízes lexicais tenham pelo menos uma
+    # formulação natural antes de multiplicar templates.
+    for variant in variants[1:]:
+        add_example(f"quero {variant}")
+        if len(examples) >= 64:
+            return tuple(examples)
+
+    for template in (
+        "preciso de {service}",
+        "vocês fazem {service}",
+        "quanto custa {service}",
+        "quero agendar {service}",
+    ):
+        for variant in variants[1:]:
+            add_example(template.format(service=variant))
+            if len(examples) >= 64:
                 return tuple(examples)
     return tuple(examples)
 
@@ -276,6 +391,74 @@ def configured_service_name_matches(message: str, service_name: str) -> bool:
     return len(service_tokens) >= 2 and service_tokens.issubset(query_tokens)
 
 
+def service_domain_compatible(
+    message: str,
+    service_name: str,
+    examples: Iterable[str],
+) -> bool:
+    """Prevent symptom overlap from crossing an explicit configured domain."""
+
+    query = normalize_service_text(message)
+    if not query:
+        return True
+
+    cold_appliance_signals = {
+        "geladeira",
+        "refrigerador",
+        "freezer",
+        "frigobar",
+        "cervejeira",
+    }
+    electrical_signals = {
+        "eletrica",
+        "eletricista",
+        "tomada",
+        "disjuntor",
+        "chuveiro",
+        "interruptor",
+        "luminaria",
+        "fiacao",
+    }
+
+    query_expanded = _expanded_tokens(query)
+    query_tokens = set(query.split())
+    explicit_hvac_request = (
+        _contains_phrase(query, "ar condicionado")
+        or bool(query_tokens & {"split", "condensadora", "evaporadora"})
+    )
+
+    required_groups: list[set[str]] = []
+    if query_expanded & cold_appliance_signals:
+        required_groups.append(cold_appliance_signals)
+    if query_expanded & electrical_signals:
+        required_groups.append(electrical_signals)
+    if not required_groups and not explicit_hvac_request:
+        return True
+
+    candidate_expanded = _expanded_tokens(service_name)
+    candidate_text = normalize_service_text(service_name)
+    for example in examples:
+        candidate_expanded.update(_expanded_tokens(example))
+        candidate_text += f" {normalize_service_text(example)}"
+
+    candidate_tokens = set(candidate_text.split())
+    candidate_has_explicit_hvac = (
+        _contains_phrase(candidate_text, "ar condicionado")
+        or bool(candidate_tokens & {"split", "condensadora", "evaporadora"})
+    )
+    if (
+        explicit_hvac_request
+        and candidate_expanded & (cold_appliance_signals | electrical_signals)
+        and not candidate_has_explicit_hvac
+    ):
+        return False
+
+    return all(
+        bool(candidate_expanded & group)
+        for group in required_groups
+    )
+
+
 def semantic_service_score(
     message: str,
     service_name: str,
@@ -284,8 +467,43 @@ def semantic_service_score(
     query = normalize_service_text(message)
     if not query:
         return 0.0
-    if any(_contains_phrase(query, phrase) for phrase in _PERSONAL_NON_SERVICE_PHRASES):
+    if not service_domain_compatible(message, service_name, examples):
         return 0.0
+    personal_domain_tokens = {
+        "carro",
+        "veiculo",
+        "moto",
+        "celular",
+        "telefone",
+        "computador",
+        "notebook",
+        "chuveiro",
+        "geladeira",
+        "refrigerador",
+        "freezer",
+        "frigobar",
+        "cervejeira",
+        "tomada",
+        "disjuntor",
+        "interruptor",
+        "luminaria",
+    }
+    query_tokens = set(query.split())
+    mentioned_personal_domains = query_tokens & personal_domain_tokens
+    if mentioned_personal_domains:
+        candidate_domain_text = " ".join(
+            (
+                normalize_service_text(service_name),
+                *(
+                    normalize_service_text(example)
+                    for example in examples
+                    if isinstance(example, str)
+                ),
+            )
+        )
+        candidate_domain_tokens = set(candidate_domain_text.split())
+        if mentioned_personal_domains.isdisjoint(candidate_domain_tokens):
+            return 0.0
 
     query_capacities = {
         token for token in query.split() if token.startswith("capacidade_")
@@ -306,7 +524,62 @@ def semantic_service_score(
         (_semantic_similarity(query, value) for value in candidates),
         default=0.0,
     )
-    return min(1.0, base_score + capacity_bonus)
+
+    domain_signals = {
+        "geladeira",
+        "refrigerador",
+        "freezer",
+        "frigobar",
+        "cervejeira",
+        "tomada",
+        "disjuntor",
+        "chuveiro",
+        "interruptor",
+        "luminaria",
+        "fiacao",
+        "eletricista",
+    }
+    query_expanded = _expanded_tokens(query)
+    candidate_expanded = _expanded_tokens(service_name)
+    for example in examples:
+        candidate_expanded.update(_expanded_tokens(example))
+    shared_domain = (
+        query_expanded
+        & candidate_expanded
+        & domain_signals
+    )
+    domain_bonus = 0.28 if shared_domain else 0.0
+
+    action_signals = {
+        "instal",
+        "coloc",
+        "mont",
+        "fix",
+        "desinstal",
+        "remov",
+        "retir",
+        "realoc",
+        "remanej",
+        "limp",
+        "higien",
+        "lav",
+        "consert",
+        "repar",
+        "recarg",
+        "vaz",
+        "eletric",
+    }
+    shared_action = (
+        query_expanded
+        & candidate_expanded
+        & action_signals
+    )
+    action_bonus = 0.22 if shared_action else 0.0
+
+    return min(
+        1.0,
+        base_score + capacity_bonus + domain_bonus + action_bonus,
+    )
 
 
 def _semantic_similarity(query: str, candidate: str) -> float:

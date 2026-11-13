@@ -4309,7 +4309,7 @@ async def test_diagnostics_price_is_presented_as_base_value_and_resumes_pending_
 
 
 @mark.asyncio
-async def test_completed_cheaper_equipment_question_routes_to_commercial_handoff() -> None:
+async def test_completed_cheaper_equipment_question_stays_catalog_driven() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.COMPLETED,
         context={
@@ -4338,11 +4338,13 @@ async def test_completed_cheaper_equipment_question_routes_to_commercial_handoff
         message.body or ""
         for message in (transition.outbound, *transition.follow_ups)
     ).casefold()
-    assert repository.state == ConversationState.HUMAN_HANDOFF
-    assert repository.automation_enabled is False
-    assert repository.handoff_status == "waiting"
-    assert "seminovo" in combined
-    assert "equipe" in combined
+    assert repository.state == ConversationState.POST_BOOKING_HELP
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert "seminovo" not in combined
+    assert "alexa" in combined
+    assert "não tenho compatibilidade" in combined or "nao tenho compatibilidade" in combined
+    assert "prefiro não assumir" in combined or "prefiro nao assumir" in combined
 
 
 @mark.asyncio
@@ -4857,7 +4859,7 @@ async def test_new_purchase_with_budget_keeps_budget_and_enters_purchase_flow() 
     assert "comprar" in body.casefold() or "instalar" in body.casefold()
 
 @mark.asyncio
-async def test_price_negotiation_after_final_purchase_quote_offers_used_unit_and_handoffs() -> None:
+async def test_cheaper_equipment_alternative_after_quote_keeps_booking_context() -> None:
     candidate = {
         "service_id": str(SERVICE_ID),
         "selected_date": "2026-09-02",
@@ -4893,20 +4895,18 @@ async def test_price_negotiation_after_final_purchase_quote_offers_used_unit_and
         )
     )
 
-    assert repository.state == ConversationState.HUMAN_HANDOFF
-    assert repository.automation_enabled is False
-    assert repository.handoff_status == "waiting"
+    assert repository.state == ConversationState.BOOKING_CONFIRM
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
     body = repository.outbounds[-1].transition.outbound.body or ""
-    assert "seminovo" in body.casefold()
-    assert "disponibilidade" in body.casefold()
-    assert "equipe" in body.casefold()
+    assert "seminovo" not in body.casefold()
     assert repository.context["selected_date"] == "2026-09-02"
     assert repository.context["selected_time"] == "09:00"
     assert repository.context["candidate_booking"] == candidate
 
 
 @mark.asyncio
-async def test_installation_price_negotiation_without_equipment_purchase_never_offers_semi_new() -> None:
+async def test_installation_price_negotiation_handoffs_without_inventing_offer() -> None:
     candidate = {
         "service_id": str(SERVICE_ID),
         "selected_date": "2026-09-02",
@@ -4929,15 +4929,18 @@ async def test_installation_price_negotiation_without_equipment_purchase_never_o
         inbound(1192, body="tem como melhorar o valor da instalação?")
     )
 
-    assert repository.state == ConversationState.BOOKING_CONFIRM
-    assert repository.automation_enabled is True
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
     body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "equipe" in body.casefold()
+    assert "negoci" in body.casefold()
     assert "seminovo" not in body.casefold()
     assert repository.context["candidate_booking"] == candidate
 
 
 @mark.asyncio
-async def test_cheaper_question_on_non_installation_service_does_not_erase_confirmation() -> None:
+async def test_price_negotiation_on_non_installation_service_handoffs_and_preserves_context() -> None:
     candidate = {
         "service_id": str(SERVICE_ID),
         "selected_date": "2026-09-02",
@@ -4955,21 +4958,20 @@ async def test_cheaper_question_on_non_installation_service_does_not_erase_confi
             "Limpeza e higienização",
         )
     ]
-    engine = ConversationEngine(repository, booking_port)
 
-    await engine.process(inbound(1193, body="tem como ficar mais em conta?"))
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1193, body="tem como ficar mais em conta?")
+    )
 
-    assert repository.state == ConversationState.BOOKING_CONFIRM
-    assert repository.automation_enabled is True
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
     assert repository.context["selected_date"] == "2026-09-02"
     assert repository.context["selected_time"] == "09:00"
     assert repository.context["candidate_booking"] == candidate
     body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "equipe" in body.casefold()
     assert "seminovo" not in body.casefold()
-
-    await engine.process(inbound(1194, body="Confirmar"))
-
-    assert repository.state == ConversationState.POST_BOOKING_HELP
 
 @mark.asyncio
 async def test_specific_unavailable_equipment_lookup_enters_purchase_clarification_instead_of_menu() -> None:
@@ -5882,7 +5884,7 @@ async def test_24h_followup_non_price_dissatisfaction_handoffs_without_semi_new(
 
 
 @mark.asyncio
-async def test_24h_followup_price_objection_with_equipment_offers_semi_new() -> None:
+async def test_24h_followup_price_objection_handoffs_without_inventing_offer() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.QUOTE_DECISION,
         context={
@@ -5908,9 +5910,12 @@ async def test_24h_followup_price_objection_with_equipment_offers_semi_new() -> 
     )
 
     assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
     body = repository.outbounds[-1].transition.outbound.body or ""
-    assert "seminovo" in body.casefold()
-    assert "disponibilidade" in body.casefold()
+    assert "equipe" in body.casefold()
+    assert "negoci" in body.casefold()
+    assert "seminovo" not in body.casefold()
 
 
 @mark.asyncio
@@ -5964,3 +5969,151 @@ async def test_six_month_cleaning_outreach_decline_stops_without_loop() -> None:
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "quando precisar" in body.casefold()
 
+
+
+@mark.asyncio
+async def test_catalog_driven_refrigerator_request_uses_configured_service() -> None:
+    repository = FakeConversationRepository(customer_name="Alan")
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Conserto e manutenção de geladeira e freezer",
+            generate_service_intent_examples(
+                "Conserto e manutenção de geladeira e freezer"
+            ),
+        )
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=False,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1401, body="minha geladeira não está gelando")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_catalog_driven_electrical_request_uses_configured_service() -> None:
+    repository = FakeConversationRepository(customer_name="Alan")
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Elétrica residencial",
+            generate_service_intent_examples("Elétrica residencial"),
+        )
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=False,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1402, body="a tomada da cozinha queimou")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_off_catalog_refrigerator_request_never_invents_supported_service() -> None:
+    repository = FakeConversationRepository(customer_name="Alan")
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Limpeza e higienização de ar-condicionado",
+            generate_service_intent_examples(
+                "Limpeza e higienização de ar-condicionado"
+            ),
+        )
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1403, body="minha geladeira não está gelando")
+    )
+
+    assert repository.context.get("service_id") is None
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_greeting_plus_generic_hvac_service_inquiry_reaches_catalog_selection() -> None:
+    repository = FakeConversationRepository(customer_name="Alan")
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Limpeza de ar-condicionado",
+            generate_service_intent_examples("Limpeza de ar-condicionado"),
+        ),
+        BookingOption(
+            "40000000-0000-0000-0000-000000000099",
+            "Instalação de ar-condicionado",
+            generate_service_intent_examples("Instalação de ar-condicionado"),
+        ),
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1404, body="oi, você faz serviço de ar condicionado?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    transition = repository.outbounds[-1].transition
+    serialized = str(transition.outbound.outbound_payload)
+    assert "Limpeza" in serialized
+    assert "Instalação" in serialized
+    assert "como posso te ajudar" not in (transition.outbound.body or "").casefold()
+
+
+
+@mark.parametrize(
+    "body",
+    [
+        "faz um preço melhor?",
+        "consegue fazer um preço melhor?",
+        "rola um desconto?",
+        "abaixa esse valor?",
+        "reduz esse valor pra mim?",
+        "dá pra negociar?",
+        "tem como negociar esse preço?",
+        "qual seu menor preço?",
+        "cobre essa oferta?",
+        "se eu fechar agora melhora o preço?",
+    ],
+)
+@mark.asyncio
+async def test_round9_commercial_negotiation_roots_handoff(body: str) -> None:
+    candidate = {
+        "service_id": str(SERVICE_ID),
+        "selected_date": "2026-09-02",
+        "selected_time": "09:00",
+    }
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_CONFIRM,
+        context={**candidate, "candidate_booking": candidate},
+        customer_name="Alan",
+    )
+
+    await ConversationEngine(repository, FakeBookingPort()).process(
+        inbound(1501, body=body)
+    )
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+    assert repository.context["candidate_booking"] == candidate
+    response = repository.outbounds[-1].transition.outbound.body or ""
+    assert "equipe" in response.casefold()
+    assert "negoci" in response.casefold()

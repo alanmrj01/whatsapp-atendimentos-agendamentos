@@ -225,6 +225,25 @@ _PRICE_PHRASES = (
     "quanto custa",
     "quanto fica",
     "quanto sai",
+    "quanto cobra",
+    "quanto cobram",
+    "quanto voce cobra",
+    "quanto voces cobram",
+    "voce cobra quanto",
+    "voces cobram quanto",
+    "quanto vai me cobrar",
+    "quanto vao me cobrar",
+    "quanto eu pago",
+    "quanto vou pagar",
+    "quanto tenho que pagar",
+    "quanto vou gastar",
+    "quanto eu vou gastar",
+    "quanto gasto nisso",
+    "quanto eu gasto nisso",
+    "me passa o valor",
+    "passa o valor",
+    "tem ideia de valor",
+    "qual a faixa de preco",
     "qual o valor",
     "qual valor",
     "preco",
@@ -282,12 +301,24 @@ _SERVICE_QUESTION_PHRASES = (
     "que servicos voces fazem",
     "o que e feito",
     "faz parte",
+    "o que vem nesse servico",
+    "como e feito o servico",
+    "o que o tecnico faz",
+    "o que voces verificam",
+    "o que voces mexem",
+    "qual e o escopo do servico",
+    "o servico cobre o que",
+    "o que e realizado",
+    "qual servico voces fazem",
+    "quais servicos voces atendem",
+    "com o que voces trabalham",
 )
 
 _TECHNICAL_TERMS = (
     "voltagem",
     "tensao",
     "consumo",
+    "consome",
     "energia",
     "garantia",
     "dimensao",
@@ -297,6 +328,8 @@ _TECHNICAL_TERMS = (
     "largura",
     "altura",
     "profundidade",
+    "tamanho",
+    "capacidade",
     "refrigerante",
     "pressao",
     "serpentina",
@@ -492,6 +525,8 @@ class DeterministicConversationInterpreter:
             "falar com alguem",
             "falar com uma pessoa",
             "falar com humano",
+            "falar com o tecnico",
+            "falar com um responsavel",
             "quero um atendente",
             "quero falar com atendente",
             "atendente humano",
@@ -501,38 +536,23 @@ class DeterministicConversationInterpreter:
             "pode chamar atendente",
             "chama um atendente",
             "chame um atendente",
+            "me passa pra um atendente",
+            "chama alguem da equipe",
+            "tem alguem pra falar comigo",
+            "pode me transferir",
+            "me encaminha pra equipe",
         )
         if _contains_any(assertion, handoff_aliases) and not any(
             _phrase_is_negated(normalized, alias) for alias in handoff_aliases
         ):
             intents.add(ConversationIntent.HUMAN_HANDOFF)
-        reschedule_signal = _contains_any(
-            assertion,
-            (
-                "remarcar",
-                "remarcacao",
-                "reagendar",
-                "reagendamento",
-                "mudar horario",
-                "trocar horario",
-                "trocar o horario",
-                "alterar horario",
-                "alterar o horario",
-                "mudar a data",
-                "trocar a data",
-                "alterar a data",
-            ),
-        )
-        cancel_signal = _contains_any(
-            assertion,
-            ("cancelar", "cancelamento", "cancela", "desmarcar", "desmarcacao"),
-        )
         reschedule_aliases = (
             "remarcar",
             "remarcacao",
             "reagendar",
             "reagendamento",
             "mudar horario",
+            "mudar o horario",
             "trocar horario",
             "trocar o horario",
             "alterar horario",
@@ -540,7 +560,16 @@ class DeterministicConversationInterpreter:
             "mudar a data",
             "trocar a data",
             "alterar a data",
+            "muda meu horario",
+            "troca meu horario",
+            "altera meu horario",
+            "passa pra outro dia",
+            "passar pra outro dia",
+            "joga pra outro horario",
+            "mudar o dia",
+            "mudar minha visita",
         )
+        reschedule_signal = _contains_any(assertion, reschedule_aliases)
         if reschedule_signal and not any(
             _phrase_is_negated(assertion, alias) for alias in reschedule_aliases
         ):
@@ -549,13 +578,29 @@ class DeterministicConversationInterpreter:
             else:
                 intents.add(ConversationIntent.RESCHEDULE_QUESTION)
                 acts.add(ConversationAct.SIDE_QUESTION)
+
         cancel_aliases = (
             "cancelar",
             "cancelamento",
             "cancela",
             "desmarcar",
             "desmarcacao",
+            "desmarca",
+            "tirar esse agendamento",
+            "remover minha visita",
+            "nao quero mais o agendamento",
         )
+        cancel_signal = _contains_any(assertion, cancel_aliases)
+        cancel_question_signal = bool(
+            re.search(
+                r"\bse\s+eu\s+desistir\b.{0,40}\b"
+                r"(?:como\s+funciona|o\s+que\s+acontece|posso)\b",
+                assertion,
+            )
+        )
+        if cancel_question_signal:
+            intents.add(ConversationIntent.CANCEL_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
         if cancel_signal and not any(
             _phrase_is_negated(assertion, alias) for alias in cancel_aliases
         ):
@@ -607,10 +652,21 @@ class DeterministicConversationInterpreter:
                 "enviar um tecnico",
                 "chamar tecnico",
                 "chamar um tecnico",
+                "deixar marcado",
+                "reservar um horario",
+                "separa um horario",
+                "marca uma visita",
+                "manda um tecnico",
+                "preciso que venha um tecnico",
+                "fechar um horario",
+                "colocar na agenda",
+                "deixar agendado",
+                "confirmar uma visita",
+                "combinar um dia",
             ),
         ):
             intents.add(ConversationIntent.BOOK)
-        if _contains_any(normalized, _PRICE_PHRASES):
+        if _contains_price_question(normalized):
             intents.add(ConversationIntent.PRICE_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
         if re.search(
@@ -621,7 +677,7 @@ class DeterministicConversationInterpreter:
         ):
             intents.add(ConversationIntent.PRICE_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
-        if _contains_any(normalized, _DURATION_PHRASES):
+        if _contains_duration_question(normalized):
             intents.add(ConversationIntent.DURATION_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
         if (
@@ -653,7 +709,14 @@ class DeterministicConversationInterpreter:
                 )
             )
         )
-        if technical_question_shape and _contains_any(normalized, _TECHNICAL_TERMS):
+        if technical_question_shape and (
+            _contains_any(normalized, _TECHNICAL_TERMS)
+            or re.search(
+                r"\b(?:110|127|220)\b.{0,12}\bou\b.{0,12}\b(?:110|127|220)\b",
+                normalized,
+            )
+            or re.search(r"\bqual\s+(?:o\s+)?gas\s+usa\b", normalized)
+        ):
             intents.add(ConversationIntent.TECHNICAL_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_greeting(normalized):
@@ -840,7 +903,27 @@ def correction_focus(value: str) -> str:
     raw_parts = re.split(r"[,;]", value)
     if len(raw_parts) > 1 and normalize_portuguese(raw_parts[-1]).startswith("nao "):
         head = normalize_portuguese(raw_parts[0])
+        social_prefixes = {
+            "oi",
+            "ola",
+            "opa",
+            "bom dia",
+            "boa tarde",
+            "boa noite",
+            "tudo bem",
+            "como vai",
+            "blz",
+            "amigo",
+            "moco",
+            "seguinte",
+            "rapidinho",
+            "e ai",
+        }
+        if head in social_prefixes:
+            return normalized
         head = re.sub(r"^(?:e|eh)\s+", "", head)
+        if head in social_prefixes:
+            return normalized
         if head:
             return head
     if len(raw_parts) > 1 and normalize_portuguese(raw_parts[0]).startswith("nao "):
@@ -884,9 +967,13 @@ def _is_action_request(value: str, aliases: tuple[str, ...]) -> bool:
     ):
         return True
     question_patterns = (
+        r"\bcomo(?:\s+faco)?\b",
         r"\bcomo funciona\b",
         r"\bposso\b",
+        r"\bconsigo\b",
         r"\btem como\b",
+        r"\btem problema\b",
+        r"\bqual(?:\s+a)?\s+regra\b",
         r"\be possivel\b",
         r"\bdepois posso\b",
         r"\bse eu\b",
@@ -897,6 +984,7 @@ def _is_action_request(value: str, aliases: tuple[str, ...]) -> bool:
         r"\bquero saber\b",
         r"\bvoces conseguem\b",
         r"\bda para\b",
+        r"\bda pra\b",
     )
     if any(re.search(pattern, value) for pattern in question_patterns):
         return False
@@ -1242,6 +1330,40 @@ def _contains_any(value: str, aliases: tuple[str, ...]) -> bool:
     return any(f" {alias} " in padded for alias in aliases)
 
 
+def _contains_price_question(value: str) -> bool:
+    if _contains_any(value, _PRICE_PHRASES):
+        return True
+    return any(
+        re.search(pattern, value)
+        for pattern in (
+            r"\b(?:me\s+)?cobra\s+quanto\b",
+            r"\bfica\s+em\s+quanto\b",
+            r"\bsai\s+quanto\b",
+            r"\bqual(?:\s+(?:e|seria))?\s+o\s+valor\b",
+            r"\bconsegue\s+me\s+passar\s+(?:o\s+)?valor\b",
+            r"\bsabe\s+dizer\s+quanto\s+(?:da|fica)\b",
+            r"\bquanto\s+da(?:\s+mais\s+ou\s+menos)?\b",
+            r"\bqual\s+o\s+custo(?:\s+(?:disso|do\s+servico))?\b",
+            r"\bquanto\s+e\s+(?:a\s+)?visita\b",
+        )
+    )
+
+
+def _contains_duration_question(value: str) -> bool:
+    if _contains_any(value, _DURATION_PHRASES):
+        return True
+    return any(
+        re.search(pattern, value)
+        for pattern in (
+            r"\bleva\s+(?:muito\s+tempo|o\s+dia\s+todo)\b",
+            r"\btermina\s+no\s+mesmo\s+dia\b",
+            r"\be\s+rapido\s+de\s+fazer\b",
+            r"\bdemora\s+muito\s+(?:pra|para)\s+concluir\b",
+            r"\bqual\s+o\s+prazo\s+do\s+atendimento\b",
+        )
+    )
+
+
 def _contains_availability_request(value: str) -> bool:
     if _contains_any(
         value,
@@ -1266,9 +1388,18 @@ def _contains_availability_request(value: str) -> bool:
     return any(
         re.search(pattern, value)
         for pattern in (
-            r"\b(?:qnd|quando)\s+(?:(?:vcs|voces|ces)\s+)?(?:conseguem|podem)(?:\s+vir)?\b",
-            r"\bqual(?:\s+o)?\s+(?:dia\s+da\s+pra\s+atender|proximo\s+horario)\b",
-            r"\btem\s+(?:algum\s+)?(?:horario|hr)\s+livre\b",
+            r"\b(?:qnd|quando)\s+(?:(?:vcs|voces|ces)\s+)?(?:consegue|conseguem|pode|podem)(?:\s+vir)?\b",
+            r"\bquando\s+da\s+pra\s+vir\b",
+            r"\bque\s+dia\s+(?:voces|vcs)\s+tem\b",
+            r"\bqual(?:\s+o)?\s+(?:dia\s+da\s+pra\s+atender|proximo\s+horario|primeiro\s+horario|horario\s+mais\s+proximo)\b",
+            r"\btem\s+(?:algum\s+)?(?:horario|hr)(?:\s+livre)?\b",
+            r"\bquando\s+(?:tem\s+agenda|abre\s+uma\s+vaga)\b",
+            r"\b(?:consegue\s+encaixar|tem\s+encaixe)\b",
+            r"\bda\s+pra\s+atender\s+(?:hoje|amanha)\b",
+            r"\bconsegue\s+atender\s+essa\s+semana\b",
+            r"\bqual\s+a\s+proxima\s+data\b",
+            r"\bquando\s+o\s+tecnico\s+esta\s+livre\b",
+            r"\btem\s+alguem\s+disponivel\s+hoje\b",
             r"\bagenda\s+como\s+ta\b",
         )
     )

@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 import unicodedata
 from collections import Counter
 from dataclasses import asdict, replace
@@ -17,6 +18,7 @@ from app.conversation_lab.corpus import (
     DISCOVERY_CONTEXT_SEEDS,
     DISCOVERY_FLOW_CASES,
     DISCOVERY_JOURNEY_CASES,
+    DISCOVERY_LANGUAGE_SEEDS,
     DISCOVERY_SEEDS,
     PREFIXES,
     REGRESSION_CONTEXT,
@@ -117,6 +119,7 @@ def _semantic_result(case: SemanticCase, text: str) -> dict[str, object]:
     return {
         "kind": "semantic",
         "family": case.family,
+        "root": case.text,
         "input": text,
         "expected_intent": case.intent.value if case.intent else None,
         "expected_act": case.act.value if case.act else None,
@@ -148,22 +151,42 @@ async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[s
     forbidden_calls_present = [
         call for call in case.forbidden_calls if call in port.calls
     ]
-    passed = (
-        not forbidden_present
-        and not forbidden_calls_present
-        and (case.expected_state is None or repository.state == case.expected_state)
-    )
     outbound = ""
     if repository.outbounds:
         outbound = repository.outbounds[-1].transition.outbound.body or ""
+    missing_outbound_terms = [
+        term
+        for term in case.required_outbound_terms
+        if term.casefold() not in outbound.casefold()
+    ]
+    automation_ok = (
+        case.expected_automation_enabled is None
+        or repository.automation_enabled == case.expected_automation_enabled
+    )
+    handoff_ok = (
+        case.expected_handoff_status is None
+        or repository.handoff_status == case.expected_handoff_status
+    )
+    passed = (
+        not forbidden_present
+        and not forbidden_calls_present
+        and not missing_outbound_terms
+        and automation_ok
+        and handoff_ok
+        and (case.expected_state is None or repository.state == case.expected_state)
+    )
     return {
         "kind": "context",
         "family": case.family,
+        "root": case.text,
         "input": text,
         "expected_state": case.expected_state,
         "actual_state": repository.state,
         "forbidden_present": forbidden_present,
         "forbidden_calls_present": forbidden_calls_present,
+        "missing_outbound_terms": missing_outbound_terms,
+        "expected_automation_enabled": case.expected_automation_enabled,
+        "expected_handoff_status": case.expected_handoff_status,
         "handoff_status": repository.handoff_status,
         "automation_enabled": repository.automation_enabled,
         "outbound": outbound,
@@ -225,6 +248,7 @@ async def _flow_result(case: FlowCase, text: str, sequence: int) -> dict[str, ob
     return {
         "kind": "flow",
         "family": case.family,
+        "root": f"{case.side_text} -> {case.followup_text}",
         "input": f"{text} -> {case.followup_text}",
         "side_input": text,
         "followup_input": case.followup_text,
@@ -348,6 +372,7 @@ async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]
     return {
         "kind": "journey",
         "family": case.family,
+        "root": case.family,
         "input": " -> ".join(
             step.body or step.action or ""
             for step in case.steps
@@ -363,7 +388,13 @@ async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]
     }
 
 
-async def run(mode: str, per_seed: int) -> int:
+async def run(
+    mode: str,
+    per_seed: int,
+    stage: str = "all",
+    shard_index: int = 0,
+    shard_count: int = 1,
+) -> int:
     if os.getenv("CONVERSATION_LAB_ALLOW_EXTERNAL_IO", "false").lower() == "true":
         raise RuntimeError("conversation_lab_external_io_must_remain_disabled")
 
@@ -373,33 +404,128 @@ async def run(mode: str, per_seed: int) -> int:
     journey_cases: list[JourneyCase] = []
     if mode in {"discovery", "all"}:
         semantic_cases.extend(DISCOVERY_SEEDS)
+        semantic_cases.extend(DISCOVERY_LANGUAGE_SEEDS)
         context_cases.extend(DISCOVERY_CONTEXT_SEEDS)
         flow_cases.extend(DISCOVERY_FLOW_CASES)
         journey_cases.extend(DISCOVERY_JOURNEY_CASES)
 
+    if stage != "all":
+        if stage != "semantic":
+            semantic_cases = []
+        if stage != "context":
+            context_cases = []
+        if stage != "flow":
+            flow_cases = []
+        if stage != "journey":
+            journey_cases = []
+
+    if shard_count < 1:
+        raise ValueError("conversation_lab_shard_count_must_be_positive")
+    if not 0 <= shard_index < shard_count:
+        raise ValueError("conversation_lab_shard_index_out_of_range")
+    if shard_count > 1:
+        semantic_cases = [
+            case
+            for index, case in enumerate(semantic_cases)
+            if index % shard_count == shard_index
+        ]
+        context_cases = [
+            case
+            for index, case in enumerate(context_cases)
+            if index % shard_count == shard_index
+        ]
+        flow_cases = [
+            case
+            for index, case in enumerate(flow_cases)
+            if index % shard_count == shard_index
+        ]
+        journey_cases = [
+            case
+            for index, case in enumerate(journey_cases)
+            if index % shard_count == shard_index
+        ]
+
     results: list[dict[str, object]] = []
     sequence = 1
+    run_started = time.perf_counter()
+
+    stage_started = time.perf_counter()
+    semantic_before = len(results)
     for case in semantic_cases:
         variants = [case.text] if mode == "regression" else _mutations(case.text, per_seed)
         for text in variants:
             results.append(_semantic_result(case, text))
+    print(
+        "CONVERSATION_LAB_STAGE "
+        + json.dumps(
+            {
+                "stage": "semantic",
+                "cases": len(results) - semantic_before,
+                "elapsed_seconds": round(time.perf_counter() - stage_started, 3),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
+    stage_started = time.perf_counter()
+    context_before = len(results)
     for case in context_cases:
         variants = [case.text] if mode == "regression" else _mutations(case.text, per_seed)
         for text in variants:
             results.append(await _context_result(case, text, sequence))
             sequence += 1
+    print(
+        "CONVERSATION_LAB_STAGE "
+        + json.dumps(
+            {
+                "stage": "context",
+                "cases": len(results) - context_before,
+                "elapsed_seconds": round(time.perf_counter() - stage_started, 3),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
+    stage_started = time.perf_counter()
+    flow_before = len(results)
     for case in flow_cases:
         variants = _mutations(case.side_text, per_seed)
         for text in variants:
             results.append(await _flow_result(case, text, sequence))
             sequence += 2
+    print(
+        "CONVERSATION_LAB_STAGE "
+        + json.dumps(
+            {
+                "stage": "flow",
+                "cases": len(results) - flow_before,
+                "elapsed_seconds": round(time.perf_counter() - stage_started, 3),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
+    stage_started = time.perf_counter()
+    journey_before = len(results)
     for case in journey_cases:
         for journey_variant in _journey_variants(case, per_seed):
             results.append(await _journey_result(journey_variant, sequence))
             sequence += len(journey_variant.steps)
+    print(
+        "CONVERSATION_LAB_STAGE "
+        + json.dumps(
+            {
+                "stage": "journey",
+                "cases": len(results) - journey_before,
+                "elapsed_seconds": round(time.perf_counter() - stage_started, 3),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
     gaps = [item for item in results if not item["pass"]]
     passed = [item for item in results if item["pass"]]
@@ -412,13 +538,59 @@ async def run(mode: str, per_seed: int) -> int:
             for item in results
         )
     )
+    semantic_roots = {
+        str(item.get("root"))
+        for item in results
+        if item.get("kind") == "semantic"
+    }
+    context_roots = {
+        str(item.get("root"))
+        for item in results
+        if item.get("kind") == "context"
+    }
+    flow_roots = {
+        str(item.get("root"))
+        for item in results
+        if item.get("kind") == "flow"
+    }
+    journey_roots = {
+        str(item.get("root"))
+        for item in results
+        if item.get("kind") == "journey"
+    }
+    states_covered = sorted(
+        {
+            str(item.get(key))
+            for item in results
+            for key in (
+                "expected_state",
+                "actual_state",
+                "side_expected_state",
+                "side_actual_state",
+                "followup_expected_state",
+                "followup_actual_state",
+                "expected_final_state",
+                "actual_final_state",
+            )
+            if item.get(key) is not None
+        }
+    )
     summary = {
         "mode": mode,
+        "stage": stage,
+        "shard_index": shard_index,
+        "shard_count": shard_count,
         "total": len(results),
         "passed": len(passed),
         "gaps": len(gaps),
         "families": sorted(family_totals),
+        "semantic_roots": len(semantic_roots),
+        "context_roots": len(context_roots),
+        "flow_roots": len(flow_roots),
+        "journey_roots": len(journey_roots),
+        "states_covered": states_covered,
         "fingerprint": hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest(),
+        "elapsed_seconds": round(time.perf_counter() - run_started, 3),
     }
     print("CONVERSATION_LAB_SUMMARY " + json.dumps(summary, ensure_ascii=False, sort_keys=True))
     for family in sorted(family_totals):
@@ -450,8 +622,33 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Alovia Conversation Lab")
     parser.add_argument("--mode", choices=("regression", "discovery", "all"), default=os.getenv("CONVERSATION_LAB_MODE", "regression"))
     parser.add_argument("--per-seed", type=int, default=int(os.getenv("CONVERSATION_LAB_PER_SEED", "120")))
+    parser.add_argument(
+        "--stage",
+        choices=("all", "semantic", "context", "flow", "journey"),
+        default=os.getenv("CONVERSATION_LAB_STAGE", "all"),
+    )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=int(os.getenv("CONVERSATION_LAB_SHARD_INDEX", "0")),
+    )
+    parser.add_argument(
+        "--shard-count",
+        type=int,
+        default=int(os.getenv("CONVERSATION_LAB_SHARD_COUNT", "1")),
+    )
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(run(args.mode, max(1, min(args.per_seed, 500)))))
+    raise SystemExit(
+        asyncio.run(
+            run(
+                args.mode,
+                max(1, min(args.per_seed, 500)),
+                args.stage,
+                args.shard_index,
+                args.shard_count,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":
