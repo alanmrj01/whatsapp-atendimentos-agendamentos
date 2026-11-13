@@ -333,6 +333,11 @@ def _equipment_ownership(normalized: str) -> str | None:
 
 
 def _equipment_model(raw: str, normalized: str) -> str | None:
+    if "?" in raw or re.match(
+        r"^(?:qual|quais|quanto|como|porque|por que)\b",
+        normalized,
+    ):
+        return None
     has_brand = any(
         re.search(rf"\b{re.escape(brand)}\b", normalized)
         for brand in _BRANDS
@@ -361,16 +366,40 @@ def _equipment_model(raw: str, normalized: str) -> str | None:
 
 def _equipment_quantity(normalized: str) -> int | None:
     match = re.search(
-        r"\b([1-9]\d?)\s+(?:ares|aparelhos|equipamentos|splits|unidades)\b",
+        r"\b([1-9]\d?)\s+(?:ar|ares|aparelho|aparelhos|equipamento|"
+        r"equipamentos|split|splits|unidade|unidades)\b",
         normalized,
     )
     if match:
         return int(match.group(1))
-    if re.search(r"\b(?:ares|aparelhos|equipamentos|splits|unidades)\b", normalized):
+    if re.search(
+        r"\b(?:ar|ares|aparelho|aparelhos|equipamento|equipamentos|split|"
+        r"splits|unidade|unidades)\b",
+        normalized,
+    ):
         value = parse_number_answer(normalized)
         if value is not None and value.is_integer() and 1 <= value <= 99:
             return int(value)
     return None
+
+
+def parse_equipment_quantity_answer(
+    value: str | None,
+    *,
+    allow_bare: bool = False,
+) -> int | None:
+    """Parse an equipment count without consuming unrelated numeric roles."""
+
+    normalized = normalize_portuguese(value or "")
+    explicit = _equipment_quantity(normalized)
+    if explicit is not None:
+        return explicit
+    if not allow_bare or not _is_compact_number_answer(normalized):
+        return None
+    number = parse_number_answer(normalized)
+    if number is None or not number.is_integer() or not 1 <= number <= 999:
+        return None
+    return int(number)
 
 
 def _room_area(normalized: str) -> float | None:
@@ -388,6 +417,23 @@ def _room_area(normalized: str) -> float | None:
     return None
 
 
+def parse_room_area_answer(
+    value: str | None,
+    *,
+    allow_bare: bool = False,
+) -> float | None:
+    """Parse area only from an area-labelled or compact checkpoint answer."""
+
+    normalized = normalize_portuguese(value or "")
+    explicit = _room_area(normalized)
+    if explicit is not None:
+        return explicit
+    if not allow_bare or not _is_compact_number_answer(normalized):
+        return None
+    number = parse_number_answer(normalized)
+    return number if number is not None and 1 <= number <= 500 else None
+
+
 def _people_count(normalized: str) -> int | None:
     match = re.search(
         r"\b([1-9]\d?)\s+(?:pessoa|pessoas|ocupantes)\b",
@@ -401,6 +447,41 @@ def _people_count(normalized: str) -> int | None:
         if value is not None and value.is_integer() and 1 <= value <= 100:
             return int(value)
     return None
+
+
+def parse_people_count_answer(
+    value: str | None,
+    *,
+    allow_bare: bool = False,
+) -> int | None:
+    """Parse occupancy without treating price, duration or capacity as people."""
+
+    normalized = normalize_portuguese(value or "")
+    explicit = _people_count(normalized)
+    if explicit is None and re.match(r"^(?:somos|ficam|cabem)\s+", normalized):
+        number = parse_number_answer(normalized)
+        if number is not None and number.is_integer() and 1 <= number <= 100:
+            explicit = int(number)
+    if explicit is not None:
+        return explicit
+    if not allow_bare or not _is_compact_number_answer(normalized):
+        return None
+    number = parse_number_answer(normalized)
+    if number is None or not number.is_integer() or not 1 <= number <= 100:
+        return None
+    return int(number)
+
+
+def _is_compact_number_answer(normalized: str) -> bool:
+    if not normalized:
+        return False
+    if re.fullmatch(r"\d{1,3}(?:[.,]\d{1,2})?", normalized):
+        return True
+    number_words = set(_SIMPLE_NUMBERS) | set(_TENS) | {"e"}
+    tokens = normalized.split()
+    return bool(tokens) and len(tokens) <= 3 and all(
+        token in number_words for token in tokens
+    )
 
 
 def _should_capture_equipment_preference(

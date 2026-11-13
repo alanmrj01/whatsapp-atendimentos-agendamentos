@@ -442,7 +442,11 @@ class DeterministicConversationInterpreter:
             marker in normalized for marker in _CORRECTION_MARKERS
         ):
             acts.add(ConversationAct.CORRECTION)
-        if re.search(r"\b(?:tambem|alem disso)\s+(?:quero|preciso|gostaria)\b", normalized):
+        if re.search(
+            r"(?:\b(?:tambem|alem disso)\s+(?:quero|preciso|gostaria)\b|"
+            r"\b(?:quero|preciso|gostaria)\b.+\btambem\b)",
+            normalized,
+        ):
             acts.add(ConversationAct.ADDITIONAL_REQUEST)
         negatable_actions = (
             "cancelar",
@@ -614,7 +618,24 @@ class DeterministicConversationInterpreter:
         if _contains_any(normalized, _PRICE_PHRASES):
             intents.add(ConversationIntent.PRICE_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
+        if re.search(
+            r"\b(?:visita\s+tecnica\s+(?:e\s+)?cobrad[ao]|"
+            r"cobram\s+(?:pela\s+)?visita\s+tecnica|"
+            r"taxa\s+(?:de|da)\s+visita)\b",
+            normalized,
+        ):
+            intents.add(ConversationIntent.PRICE_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_any(normalized, _DURATION_PHRASES):
+            intents.add(ConversationIntent.DURATION_QUESTION)
+            acts.add(ConversationAct.SIDE_QUESTION)
+        if (
+            "?" in original
+            and re.search(
+                r"\b(?:demora|leva)\b.{0,30}\b(?:minuto|minutos|hora|horas)\b",
+                normalized,
+            )
+        ):
             intents.add(ConversationIntent.DURATION_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
         if _contains_any(normalized, _SERVICE_QUESTION_PHRASES):

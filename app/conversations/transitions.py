@@ -25,7 +25,10 @@ from app.booking.domain import (
 from app.conversations.facts import (
     enrich_context_from_message,
     missing_equipment_profile_fields,
+    parse_equipment_quantity_answer,
     parse_number_answer,
+    parse_people_count_answer,
+    parse_room_area_answer,
 )
 from app.conversations.context_policy import (
     context_for_service_change,
@@ -756,6 +759,18 @@ async def _route_named_conversation(
         booking_states=booking_states,
     )
     if late_correction is not None:
+        if interpretation.has_act(ConversationAct.SIDE_QUESTION):
+            updated_answer = await _service_question_answer(
+                inbound,
+                late_correction.context,
+                interpretation,
+                booking_port,
+            )
+            if updated_answer is not None:
+                late_correction = _prepend_transition_body(
+                    late_correction,
+                    updated_answer,
+                )
         return late_correction
     if state in booking_states and interpretation.has_act(ConversationAct.SOCIAL):
         return await _resume_pending_question(
@@ -790,33 +805,16 @@ async def _route_named_conversation(
         )
     if (
         state in booking_states
-        and question_answer is not None
-        and (
-            interpretation.has_act(ConversationAct.SIDE_QUESTION)
-            or equipment_question_answer is not None
-        )
-        and not _message_can_answer_pending_state(
-            state,
-            inbound,
-            context,
-            interpretation,
-        )
-    ):
-        return await _resume_pending_question(
-            conversation,
-            inbound,
-            context,
-            booking_port,
-            prefix=question_answer,
-        )
-    if (
-        state in booking_states
         and action is None
         and interpretation.intent in {
             ConversationIntent.SERVICE_INTENT,
             ConversationIntent.EQUIPMENT_PURCHASE,
         }
-        and not _has_service_question(interpretation)
+        and (
+            not _has_service_question(interpretation)
+            or interpretation.has_act(ConversationAct.CORRECTION)
+            or interpretation.has_act(ConversationAct.ADDITIONAL_REQUEST)
+        )
     ):
         if interpretation.intent is ConversationIntent.EQUIPMENT_PURCHASE:
             # Durante uma cotação de instalação já em andamento, frases como
@@ -860,16 +858,19 @@ async def _route_named_conversation(
                 "pending_service_change_id": matched.id,
                 "pending_service_change_label": matched.label,
             }
-            return _transition(
+            transition = _transition(
                 state,
                 updated,
                 additional_request_message(matched.label),
             )
+            if question_answer is not None:
+                transition = _prepend_transition_body(transition, question_answer)
+            return transition
         if (
             matched is not None
             and (current_id is None or matched.id != str(current_id))
         ):
-            return await _handle_service(
+            transition = await _handle_service(
                 inbound,
                 context_for_service_change(context),
                 f"service:{matched.id}",
@@ -878,6 +879,38 @@ async def _route_named_conversation(
                 fallback_message=conversation.fallback_message,
                 customer_name=customer_name,
             )
+            if interpretation.has_act(ConversationAct.SIDE_QUESTION):
+                updated_answer = await _service_question_answer(
+                    inbound,
+                    transition.context,
+                    interpretation,
+                    booking_port,
+                )
+                if updated_answer is not None:
+                    transition = _prepend_transition_body(transition, updated_answer)
+            return transition
+
+    if (
+        state in booking_states
+        and question_answer is not None
+        and (
+            interpretation.has_act(ConversationAct.SIDE_QUESTION)
+            or equipment_question_answer is not None
+        )
+        and not _message_can_answer_pending_state(
+            state,
+            inbound,
+            context,
+            interpretation,
+        )
+    ):
+        return await _resume_pending_question(
+            conversation,
+            inbound,
+            context,
+            booking_port,
+            prefix=question_answer,
+        )
 
     daypart = _daypart_preference(inbound.body)
     if (
@@ -2480,6 +2513,21 @@ async def _service_question_answer(
     if target is None:
         return None
 
+    if (
+        interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and re.search(
+            r"\b(?:visita\s+tecnica\s+(?:e\s+)?cobrad[ao]|"
+            r"cobram\s+(?:pela\s+)?visita\s+tecnica|"
+            r"taxa\s+(?:de|da)\s+visita)\b",
+            interpretation.normalized_text,
+        )
+    ):
+        return (
+            "A cobrança específica da visita técnica não está cadastrada com "
+            "segurança. A equipe pode confirmar esse ponto sem alterar o andamento "
+            "do seu atendimento."
+        )
+
     try:
         target_id = uuid.UUID(target.id)
     except ValueError:
@@ -2646,7 +2694,7 @@ def _message_can_answer_pending_state(
         return interpretation.has(ConversationIntent.SERVICE_INTENT)
     if state is ConversationState.BOOKING_QUANTITY:
         return (
-            parse_number_answer(body) is not None
+            parse_equipment_quantity_answer(body, allow_bare=True) is not None
             or normalized in {
                 "nao sei",
                 "nao sei informar",
@@ -2697,7 +2745,8 @@ def _message_can_answer_pending_state(
     if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
         if _has_profile_fact(enrich_context_from_message({}, body)):
             return True
-        if parse_number_answer(body) is not None:
+        missing = missing_equipment_profile_fields(context)
+        if _apply_expected_profile_answer(context, missing, body)[1]:
             return True
         if any(
             phrase in normalized
@@ -2901,6 +2950,10 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        if interpretation.has_act(ConversationAct.SIDE_QUESTION):
+            model_fact = enrich_context_from_message({}, body).get("equipment_model")
+            if not isinstance(model_fact, str):
+                return False
         if normalized in {
             "nao",
             "nao tenho",
@@ -6182,26 +6235,17 @@ def _apply_expected_profile_answer(
     updated = dict(context)
     field = missing[0]
     normalized = normalize_portuguese(body)
-    number = parse_number_answer(body)
-
     if field == "people":
-        if (
-            number is not None
-            and number.is_integer()
-            and 1 <= number <= 100
-            and not re.search(r"\b(?:m2|metro|metros|cm|centimetro|centimetros)\b", normalized)
-        ):
-            updated["room_people_max"] = int(number)
+        people = parse_people_count_answer(body, allow_bare=True)
+        if people is not None:
+            updated["room_people_max"] = people
             return updated, True
         return updated, False
 
     if field == "area":
-        if (
-            number is not None
-            and 1 <= number <= 500
-            and not re.search(r"\b(?:pessoa|pessoas|ocupantes)\b", normalized)
-        ):
-            updated["room_area_m2"] = number
+        area = parse_room_area_answer(body, allow_bare=True)
+        if area is not None:
+            updated["room_area_m2"] = area
             return updated, True
         return updated, False
 
@@ -9943,29 +9987,7 @@ def _quantity(action: str | None, body: str | None) -> int | None:
             return None
         return value if 1 <= value <= 999 else None
 
-    normalized = normalize_portuguese(body or "")
-    match = re.search(r"\b([1-9]\d{0,2})\b", normalized)
-    if match:
-        value = int(match.group(1))
-        return value if 1 <= value <= 999 else None
-    words = {
-        "um": 1,
-        "uma": 1,
-        "dois": 2,
-        "duas": 2,
-        "tres": 3,
-        "quatro": 4,
-        "cinco": 5,
-        "seis": 6,
-        "sete": 7,
-        "oito": 8,
-        "nove": 9,
-        "dez": 10,
-    }
-    for token, value in words.items():
-        if f" {token} " in f" {normalized} ":
-            return value
-    return None
+    return parse_equipment_quantity_answer(body, allow_bare=True)
 
 
 def _site_limit(
