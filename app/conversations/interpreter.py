@@ -614,7 +614,8 @@ class DeterministicConversationInterpreter:
         if (
             "?" in original
             and re.search(
-                r"\b(?:demora|leva)\b.{0,30}\b(?:minuto|minutos|hora|horas)\b",
+                r"\b(?:demora|dura|leva(?:r|m)?)\b.{0,30}"
+                r"\b(?:\d+\s*h|(?:minuto|hora)s?)\b",
                 normalized,
             )
         ):

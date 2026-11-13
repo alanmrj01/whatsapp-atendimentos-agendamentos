@@ -2768,6 +2768,10 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_TIME:
+        if interpretation.has(
+            ConversationIntent.DURATION_QUESTION
+        ) and interpretation.has_act(ConversationAct.SIDE_QUESTION):
+            return False
         return _is_plausible_time_answer(body)
     if state is ConversationState.BOOKING_PROPERTY:
         focused = correction_focus(body)
