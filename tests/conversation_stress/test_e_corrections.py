@@ -1,8 +1,9 @@
 """Rodada 1 — correções, contradições e múltiplas intenções.
 
-Os ``xfail(strict=True)`` abaixo são gaps de descoberta confirmados no baseline.
-Eles mantêm o corpus executável sem transformar um comportamento ausente em
-sucesso silencioso. Nenhum ajuste de runtime pertence a esta rodada.
+As expectativas que falham abaixo são gaps de descoberta confirmados no
+baseline. Elas permanecem vermelhas de propósito, sem transformar um
+comportamento ausente em sucesso silencioso. Nenhum ajuste de runtime pertence
+a esta rodada.
 """
 
 from __future__ import annotations
@@ -134,10 +135,6 @@ def test_prefixed_additional_request_is_classified(
     assert interpretation.has_act(ConversationAct.ADDITIONAL_REQUEST)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="additional_request só reconhece o marcador antes da intenção",
-)
 def test_trailing_additional_marker_is_still_an_additional_request() -> None:
     interpretation = DeterministicConversationInterpreter().interpret(
         "quero manutenção também"
@@ -167,10 +164,6 @@ def test_negated_operation_never_becomes_destructive_intent(
     assert interpretation.has_act(ConversationAct.NEGATED_ACTION)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a forma 'não é para' não é considerada pela guarda de negação",
-)
 def test_indirect_cancel_negation_never_becomes_cancel_intent() -> None:
     interpretation = DeterministicConversationInterpreter().interpret(
         "não é para cancelar"
@@ -214,10 +207,6 @@ async def test_additional_service_preserves_active_request_until_confirmation(
     assert repository.context["pending_service_change_id"] == str(pending_id)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="o matcher do catálogo não prioriza a cláusula corrigida em 'não é X, é Y'",
-)
 @pytest.mark.asyncio
 async def test_contradictory_service_correction_selects_latest_assertion() -> None:
     repository = FakeConversationRepository(
@@ -238,10 +227,6 @@ async def test_contradictory_service_correction_selects_latest_assertion() -> No
     assert repository.context["service_address"] == OLD_ADDRESS
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="troca textual reconhecida reinicia com contexto vazio e perde fatos reutilizáveis",
-)
 @pytest.mark.parametrize(
     ("body", "expected_id"),
     [
@@ -285,10 +270,6 @@ async def test_service_correction_keeps_only_safe_independent_facts(
     assert "quote_presented" not in repository.context
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="correção textual de quantidade fora do checkpoint atualiza só equipment_quantity",
-)
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
@@ -329,10 +310,6 @@ async def test_quantity_correction_updates_canonical_fact_and_invalidates_schedu
     assert "candidate_booking" not in repository.context
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="endereço corrigido não é roteado ao handler fora de BOOKING_ADDRESS",
-)
 @pytest.mark.parametrize(
     "body",
     [
@@ -406,10 +383,6 @@ async def test_negated_operation_preserves_checkpoint_and_never_calls_mutation(
     assert "reschedule_booking" not in booking_port.calls
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="pergunta lateral é tratada antes da correção de serviço na mensagem composta",
-)
 @pytest.mark.asyncio
 async def test_service_correction_plus_price_question_applies_correction_then_resumes() -> None:
     repository = FakeConversationRepository(
@@ -425,10 +398,6 @@ async def test_service_correction_plus_price_question_applies_correction_then_re
     assert repository.context["service_address"] == OLD_ADDRESS
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="pergunta lateral impede o registro do pedido adicional na mensagem composta",
-)
 @pytest.mark.asyncio
 async def test_additional_service_plus_price_question_keeps_current_and_records_pending() -> None:
     repository = FakeConversationRepository(
@@ -445,10 +414,6 @@ async def test_additional_service_plus_price_question_keeps_current_and_records_
     assert repository.context["service_address"] == OLD_ADDRESS
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mensagem composta não promove equipment_quantity corrigida ao fato canônico quantity",
-)
 @pytest.mark.asyncio
 async def test_quantity_correction_plus_price_question_updates_quantity_before_resuming() -> None:
     repository = FakeConversationRepository(
