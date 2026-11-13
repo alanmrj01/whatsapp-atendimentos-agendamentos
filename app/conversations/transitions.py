@@ -772,6 +772,12 @@ async def _route_named_conversation(
                     updated_answer,
                 )
         return late_correction
+    if (
+        state is ConversationState.BOOKING_SITE_LIMIT
+        and action is None
+        and _is_site_limit_availability_question(interpretation, inbound.body)
+    ):
+        return _transition(state, context, site_limit_message())
     if state in booking_states and interpretation.has_act(ConversationAct.SOCIAL):
         return await _resume_pending_question(
             conversation,
@@ -2674,6 +2680,28 @@ def _prepend_transition_body(
     )
 
 
+def _is_site_limit_availability_question(
+    interpretation: Interpretation,
+    body: str | None,
+) -> bool:
+    normalized = normalize_portuguese(body or "")
+    explicit_restriction = bool(
+        re.search(
+            r"\b(?:limite|nao pode depois|servico so)\b|"
+            r"\b(?:condominio|predio|portaria)\b.*\b(?:permite|libera|deixa)\b|"
+            r"\bentrada permitida\b",
+            normalized,
+        )
+    )
+    if explicit_restriction:
+        return False
+    if interpretation.has(ConversationIntent.AVAILABILITY):
+        return True
+    return "?" in (body or "") and bool(
+        re.search(r"\b(?:horario|vaga|disponibilidade|consegue vir)\b", normalized)
+    )
+
+
 def _message_can_answer_pending_state(
     state: ConversationState,
     inbound: ConversationInput,
@@ -2854,6 +2882,8 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_SITE_LIMIT:
+        if _is_site_limit_availability_question(interpretation, body):
+            return False
         return _site_limit(None, body) is not False
     if state is ConversationState.BOOKING_ATTENDEE:
         return (
