@@ -243,6 +243,33 @@ async def _flow_result(case: FlowCase, text: str, sequence: int) -> dict[str, ob
     }
 
 
+def _journey_variants(case: JourneyCase, per_seed: int) -> list[JourneyCase]:
+    variants: list[JourneyCase] = [case]
+    seen = {
+        tuple((step.body, step.action) for step in case.steps)
+    }
+    for index in case.mutate_steps:
+        if index < 0 or index >= len(case.steps):
+            continue
+        step = case.steps[index]
+        if not step.body:
+            continue
+        for body in _mutations(
+            step.body,
+            min(case.variants_per_step, per_seed),
+        ):
+            if body == step.body:
+                continue
+            steps = list(case.steps)
+            steps[index] = replace(step, body=body)
+            signature = tuple((item.body, item.action) for item in steps)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            variants.append(replace(case, steps=tuple(steps)))
+    return variants
+
+
 async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]:
     port = DryRunBookingPort()
     repository = LabConversationRepository()
@@ -370,8 +397,9 @@ async def run(mode: str, per_seed: int) -> int:
             sequence += 2
 
     for case in journey_cases:
-        results.append(await _journey_result(case, sequence))
-        sequence += len(case.steps)
+        for journey_variant in _journey_variants(case, per_seed):
+            results.append(await _journey_result(journey_variant, sequence))
+            sequence += len(journey_variant.steps)
 
     gaps = [item for item in results if not item["pass"]]
     passed = [item for item in results if item["pass"]]
