@@ -1669,6 +1669,153 @@ def _has_service_question(interpretation: Interpretation) -> bool:
     )
 
 
+def _is_pending_question_clarification(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+    phrases = (
+        "nao entendi",
+        "nao estou entendendo",
+        "como assim",
+        "pode explicar",
+        "pode me explicar",
+        "explica melhor",
+        "me explica",
+        "o que quer dizer",
+        "o que isso quer dizer",
+        "o que significa",
+        "qual a diferenca",
+        "qual diferenca",
+    )
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _pending_question_explanation(
+    state: ConversationState,
+    context: dict[str, Any],
+) -> str | None:
+    if state is ConversationState.CUSTOMER_NAME:
+        return "Pergunto seu nome apenas para deixar o atendimento identificado e mais natural."
+    if state is ConversationState.BOOKING_SERVICE:
+        return "Quero identificar exatamente qual serviço você precisa para seguir pelo fluxo correto."
+    if state is ConversationState.BOOKING_QUANTITY:
+        return "A quantidade de aparelhos influencia o tempo do serviço e a organização do atendimento."
+    if state is ConversationState.BOOKING_ACCESS:
+        return "Quero saber se existe alguma dificuldade de acesso que o técnico precise considerar antes de ir ao local."
+    if state is ConversationState.BOOKING_ADDRESS:
+        return "Preciso do endereço para organizar o atendimento e consultar a agenda adequada para o local."
+    if state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
+        return "Quero confirmar se o aparelho já existe ou se você também precisa comprar um, porque os próximos passos são diferentes."
+    if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        return "A marca, o modelo ou a capacidade ajudam a tratar o equipamento correto sem fazer suposições."
+    if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
+        missing = missing_equipment_profile_fields(context)
+        field = missing[0] if missing else None
+        explanations = {
+            "people": (
+                "A quantidade de pessoas ajuda a estimar a capacidade de refrigeração "
+                "necessária para o ambiente."
+            ),
+            "area": (
+                "O tamanho em metros quadrados ajuda a estimar a capacidade do aparelho "
+                "adequada para o ambiente."
+            ),
+            "preference": (
+                "Quero entender sua prioridade: tecnologia mais moderna, equilíbrio entre "
+                "preço e recursos, ou menor investimento."
+            ),
+            "cycle": (
+                "“Só frio” apenas refrigera. “Quente/frio” também pode aquecer quando o "
+                "modelo oferece essa função."
+            ),
+            "indoor_space": (
+                "A unidade interna é a parte que fica dentro do ambiente; a externa é a "
+                "condensadora, que fica do lado de fora. Quero saber se alguma delas tem "
+                "pouco espaço para caber. Se houver espaço livre, pode responder “sem restrição”."
+            ),
+            "outdoor_space": (
+                "Agora estou perguntando sobre a unidade externa, a condensadora. Quero "
+                "saber se existe pouco espaço para instalá-la. Se o espaço for livre, pode "
+                "responder “sem restrição”."
+            ),
+        }
+        return explanations.get(field)
+    if state is ConversationState.BOOKING_EQUIPMENT_DELIVERY:
+        return "Quero definir como o aparelho será entregue ou retirado antes de organizar a próxima etapa."
+    if state is ConversationState.BOOKING_INSTALLATION_HEIGHT:
+        return "Acima de 3 metros o atendimento pode exigir preparação de trabalho em altura, por isso preciso confirmar esse ponto."
+    if state is ConversationState.BOOKING_PROPERTY:
+        return "O tipo de imóvel ajuda a saber se existem regras de acesso ou portaria que precisam ser consideradas."
+    if state is ConversationState.BOOKING_BUILDING_HOURS:
+        return "Em prédios e condomínios pode existir horário permitido para prestadores; preciso considerar essa janela ao consultar a agenda."
+    if state is ConversationState.BOOKING_GATE_DETAILS:
+        return "Quero registrar o que a portaria precisa para liberar a entrada do técnico no dia do atendimento."
+    if state is ConversationState.BOOKING_TUBING:
+        return "A metragem entre as unidades ajuda a estimar a tubulação necessária e eventuais adicionais no orçamento."
+    if state is ConversationState.BOOKING_SITE_LIMIT:
+        return "Quero evitar oferecer um horário que ultrapasse o limite permitido para realizar o serviço no local."
+    if state in {ConversationState.BOOKING_WEEKDAY, ConversationState.BOOKING_DATE}:
+        return "Estou escolhendo com você uma data disponível para o atendimento."
+    if state is ConversationState.BOOKING_TIME:
+        return "Estou escolhendo com você um horário disponível dentro das condições já informadas."
+    if state is ConversationState.BOOKING_ATTENDEE:
+        return "Preciso saber quem estará no local para o técnico saber com quem falar quando chegar."
+    if state is ConversationState.BOOKING_ATTENDEE_NAME:
+        return "Preciso do nome da pessoa que receberá o técnico para deixar o atendimento identificado."
+    if state is ConversationState.BOOKING_PHONE_CONFIRM:
+        return "Confirmo o telefone apenas para conseguirmos falar sobre esse atendimento se houver necessidade."
+    if state is ConversationState.BOOKING_CONFIRM:
+        return "Esta é a conferência final para evitar marcar o serviço com algum dado incorreto."
+    if state is ConversationState.QUOTE_DECISION:
+        return "A cotação já foi apresentada; agora só preciso saber se você quer seguir para consultar a agenda."
+    return None
+
+
+def _looks_like_used_equipment_request(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    return any(
+        phrase in normalized
+        for phrase in (
+            "usado",
+            "usada",
+            "seminovo",
+            "seminova",
+            "semi novo",
+            "semi nova",
+            "segunda mao",
+        )
+    )
+
+
+def _asks_for_technician_name_at_gate(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+    mentions_person = any(
+        phrase in normalized
+        for phrase in (
+            "nome do tecnico",
+            "nome do instalador",
+            "nome de quem vai",
+            "quem vai atender",
+            "qual tecnico",
+            "qual instalador",
+        )
+    )
+    gate_context = any(
+        term in normalized
+        for term in (
+            "portaria",
+            "porteiro",
+            "liberar",
+            "autorizar",
+            "entrada",
+            "acesso",
+        )
+    )
+    return mentions_person and gate_context
+
+
 def _looks_like_commercial_negotiation(
     body: str | None,
     *,
