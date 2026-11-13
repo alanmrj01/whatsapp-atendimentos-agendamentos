@@ -314,7 +314,11 @@ async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[s
     ]
     outbound = ""
     if repository.outbounds:
-        outbound = repository.outbounds[-1].transition.outbound.body or ""
+        transition = repository.outbounds[-1].transition
+        outbound = " ".join(
+            message.body or ""
+            for message in (transition.outbound, *transition.follow_ups)
+        )
     missing_outbound_terms = [
         term
         for term in case.required_outbound_terms
