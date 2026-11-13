@@ -5232,19 +5232,43 @@ async def _handle_service(
     } else None
 
     if clarification == "equipment_purchase" and purchase_action is None:
-        purchase_action = _purchase_mode_action_from_text(
-            normalized,
-            interpretation,
-        )
+        if normalized in {
+            "sim",
+            "sim quero",
+            "quero",
+            "quero instalacao",
+            "quero a instalacao",
+            "tambem",
+            "tambem quero",
+            "com instalacao",
+        }:
+            purchase_action = EQUIPMENT_BOTH
+        elif normalized in {
+            "nao",
+            "nao quero",
+            "so o aparelho",
+            "somente o aparelho",
+            "apenas o aparelho",
+            "sem instalacao",
+        }:
+            purchase_action = EQUIPMENT_PURCHASE
+        else:
+            purchase_action = _purchase_mode_action_from_text(
+                normalized,
+                interpretation,
+            )
         if purchase_action is None:
             return _retry_or_handoff(
                 ConversationState.BOOKING_SERVICE,
                 context,
                 "service_clarification",
-                equipment_purchase_clarification_message(retry=True),
+                equipment_purchase_clarification_message(
+                    retry=True,
+                    purchase_already_known=True,
+                ),
                 handoff_body=(
-                    "Não consegui confirmar com segurança se você quer comprar o aparelho, "
-                    "contratar a instalação ou fazer os dois. "
+                    "Não consegui confirmar com segurança se você quer apenas comprar "
+                    "o aparelho ou comprar e contratar a instalação também. "
                     "Vou chamar uma pessoa da equipe para continuar."
                 ),
             )
@@ -5262,7 +5286,9 @@ async def _handle_service(
         return _transition(
             ConversationState.BOOKING_SERVICE,
             updated,
-            equipment_purchase_clarification_message(),
+            equipment_purchase_clarification_message(
+                purchase_already_known=True,
+            ),
         )
 
     if purchase_action is not None:
@@ -5465,6 +5491,15 @@ async def _handle_quantity(
         )
     except BookingRequiresHandoff as exc:
         return _handoff_for_reason(str(exc))
+    if action == "quantity:more":
+        return _transition(
+            ConversationState.BOOKING_QUANTITY,
+            context,
+            _text_message(
+                "Certo. Quantos aparelhos de ar-condicionado são ao todo?"
+            ),
+        )
+
     quantity = _quantity(action, inbound.body)
     if quantity is None:
         return _retry_or_handoff(
@@ -8163,7 +8198,9 @@ async def _advance_intake(
         return _transition(
             ConversationState.BOOKING_QUANTITY,
             context,
-            quantity_selection_message(),
+            quantity_selection_message(
+                installation=service_kind == "installation",
+            ),
         )
     if (
         intake.considers_difficult_access
