@@ -9866,7 +9866,28 @@ def _service_candidates_for_interpretation(
         )
 
     explicit_family_tokens: tuple[str, ...] = ()
-    if any(
+    explicit_family_exclusions: tuple[str, ...] = ()
+    if (
+        any(
+            phrase in text
+            for phrase in (
+                "colocar um ar condicionado",
+                "colocar ar condicionado",
+                "colocar o ar condicionado",
+                "colocar um split",
+                "colocar split",
+                "montar ar condicionado",
+                "montar o ar condicionado",
+                "montar um split",
+                "fixar ar condicionado",
+                "fixar o ar condicionado",
+            )
+        )
+        and any(domain in text for domain in ("ar condicionado", "split"))
+    ):
+        explicit_family_tokens = ("instal",)
+        explicit_family_exclusions = ("desinstal", "realoc", "remoc", "remanej")
+    elif any(
         phrase in text
         for phrase in (
             "retirar e instalar",
@@ -9911,6 +9932,10 @@ def _service_candidates_for_interpretation(
                 any(
                     token in normalize_portuguese(service.label)
                     for token in explicit_family_tokens
+                )
+                and not any(
+                    token in normalize_portuguese(service.label)
+                    for token in explicit_family_exclusions
                 )
                 and service_domain_compatible(
                     text,
