@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 import unicodedata
 from collections import Counter
 from dataclasses import asdict, replace
@@ -404,27 +405,85 @@ async def run(mode: str, per_seed: int) -> int:
 
     results: list[dict[str, object]] = []
     sequence = 1
+    run_started = time.perf_counter()
+
+    stage_started = time.perf_counter()
+    semantic_before = len(results)
     for case in semantic_cases:
         variants = [case.text] if mode == "regression" else _mutations(case.text, per_seed)
         for text in variants:
             results.append(_semantic_result(case, text))
+    print(
+        "CONVERSATION_LAB_STAGE "
+        + json.dumps(
+            {
+                "stage": "semantic",
+                "cases": len(results) - semantic_before,
+                "elapsed_seconds": round(time.perf_counter() - stage_started, 3),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
+    stage_started = time.perf_counter()
+    context_before = len(results)
     for case in context_cases:
         variants = [case.text] if mode == "regression" else _mutations(case.text, per_seed)
         for text in variants:
             results.append(await _context_result(case, text, sequence))
             sequence += 1
+    print(
+        "CONVERSATION_LAB_STAGE "
+        + json.dumps(
+            {
+                "stage": "context",
+                "cases": len(results) - context_before,
+                "elapsed_seconds": round(time.perf_counter() - stage_started, 3),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
+    stage_started = time.perf_counter()
+    flow_before = len(results)
     for case in flow_cases:
         variants = _mutations(case.side_text, per_seed)
         for text in variants:
             results.append(await _flow_result(case, text, sequence))
             sequence += 2
+    print(
+        "CONVERSATION_LAB_STAGE "
+        + json.dumps(
+            {
+                "stage": "flow",
+                "cases": len(results) - flow_before,
+                "elapsed_seconds": round(time.perf_counter() - stage_started, 3),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
+    stage_started = time.perf_counter()
+    journey_before = len(results)
     for case in journey_cases:
         for journey_variant in _journey_variants(case, per_seed):
             results.append(await _journey_result(journey_variant, sequence))
             sequence += len(journey_variant.steps)
+    print(
+        "CONVERSATION_LAB_STAGE "
+        + json.dumps(
+            {
+                "stage": "journey",
+                "cases": len(results) - journey_before,
+                "elapsed_seconds": round(time.perf_counter() - stage_started, 3),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
     gaps = [item for item in results if not item["pass"]]
     passed = [item for item in results if item["pass"]]
@@ -486,6 +545,7 @@ async def run(mode: str, per_seed: int) -> int:
         "journey_roots": len(journey_roots),
         "states_covered": states_covered,
         "fingerprint": hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest(),
+        "elapsed_seconds": round(time.perf_counter() - run_started, 3),
     }
     print("CONVERSATION_LAB_SUMMARY " + json.dumps(summary, ensure_ascii=False, sort_keys=True))
     for family in sorted(family_totals):
