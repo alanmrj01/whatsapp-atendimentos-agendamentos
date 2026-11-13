@@ -653,6 +653,7 @@ def _height_over_three_meters(normalized: str) -> bool | None:
             "condensadora",
             "unidade interna",
             "unidade externa",
+            "escada",
         )
     )
     if not relevant:
@@ -677,7 +678,7 @@ def _height_over_three_meters(normalized: str) -> bool | None:
         )
     ):
         return False
-    match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:m|metro|metros)\b", normalized)
+    match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:m|mts?|mtrs?|metro|metros)\b", normalized)
     if match:
         return float(match.group(1).replace(",", ".")) > 3
     return None
