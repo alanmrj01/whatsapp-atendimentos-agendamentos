@@ -637,3 +637,21 @@ def test_enriched_lexicon_does_not_overclassify_unrelated_conversation(body: str
     assert not result.has(ConversationIntent.SERVICE_INTENT)
     if body == "Tenho uma visita da família amanhã":
         assert not result.has(ConversationIntent.BOOK)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Quanto você cobra?",
+        "Quanto vocês cobram?",
+        "Você cobra quanto?",
+        "Quanto vai me cobrar?",
+        "Quanto eu vou gastar?",
+        "Me passa o valor",
+    ],
+)
+def test_natural_charge_language_is_price_question(body: str) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(ConversationIntent.PRICE_QUESTION)
+    assert result.has_act(ConversationAct.SIDE_QUESTION)
