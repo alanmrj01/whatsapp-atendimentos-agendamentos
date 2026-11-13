@@ -532,6 +532,9 @@ def semantic_service_score(
 
     action_signals = {
         "instal",
+        "coloc",
+        "mont",
+        "fix",
         "desinstal",
         "remov",
         "retir",
