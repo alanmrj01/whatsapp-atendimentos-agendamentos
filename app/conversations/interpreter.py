@@ -103,6 +103,7 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
         "nao esfria",
         "gelando pouco",
         "gelando fraco",
+        "so ventilando",
         "parou",
         "nao liga",
         "nao funciona",
@@ -158,6 +159,8 @@ _SERVICE_CONTEXT_EXCLUSIONS: dict[str, tuple[str, ...]] = {
         "aplicativo",
         "programa",
         "software",
+        "televisao",
+        "tv",
         "impressora",
         "maquina",
         "movel",
@@ -172,6 +175,7 @@ _SERVICE_CONTEXT_EXCLUSIONS: dict[str, tuple[str, ...]] = {
         "limpar cozinha",
         "limpar a casa",
         "faxina",
+        "sofa",
         "roupa",
         "louca",
     ),
@@ -192,12 +196,16 @@ _SERVICE_CONTEXT_EXCLUSIONS: dict[str, tuple[str, ...]] = {
         "tv",
         "carro",
         "moto",
+        "chuveiro",
     ),
     "gas-recharge": (
         "botijao",
         "fogao",
         "gas de cozinha",
         "gas encanado",
+        "carro",
+        "moto",
+        "veiculo",
     ),
 }
 
@@ -435,6 +443,7 @@ class DeterministicConversationInterpreter:
         acts: set[ConversationAct] = set()
         service_key: str | None = None
         assertion = correction_focus(original)
+        service_assertion = _normalize_service_language(assertion)
 
         if normalized in _SOCIAL_ONLY:
             acts.add(ConversationAct.SOCIAL)
@@ -553,23 +562,23 @@ class DeterministicConversationInterpreter:
                 acts.add(ConversationAct.SIDE_QUESTION)
 
         for candidate_key, aliases in SERVICE_ALIASES.items():
-            if _service_alias_matches(assertion, candidate_key, aliases):
+            if _service_alias_matches(service_assertion, candidate_key, aliases):
                 service_key = candidate_key
                 intents.add(ConversationIntent.SERVICE_INTENT)
                 break
 
         if service_key is not None and re.search(
             r"\b(?:voces\s+)?(?:fazem|tem|trabalham\s+com|realizam|atendem|oferecem)\b",
-            assertion,
+            service_assertion,
         ):
             intents.add(ConversationIntent.SERVICE_QUESTION)
             acts.add(ConversationAct.SIDE_QUESTION)
 
-        if _contains_equipment_purchase(assertion) and not _purchase_is_negated(normalized):
+        if _contains_equipment_purchase(service_assertion) and not _purchase_is_negated(normalized):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
         elif (
             service_key is None
-            and _contains_generic_equipment_price_request(assertion)
+            and _contains_generic_equipment_price_request(service_assertion)
             and not _purchase_is_negated(normalized)
         ):
             intents.add(ConversationIntent.EQUIPMENT_PURCHASE)
@@ -1004,6 +1013,29 @@ def normalize_profile_customer_name(value: str | None) -> str | None:
     return candidate
 
 
+_SERVICE_LANGUAGE_TOKEN_MAP = {
+    "n": "nao",
+    "qro": "quero",
+    "limpa": "limpar",
+    "instlar": "instalar",
+    "limpesa": "limpeza",
+    "condisionado": "condicionado",
+    "higienizassao": "higienizacao",
+    "pingano": "pingando",
+    "barui": "barulho",
+    "estralando": "barulho",
+}
+
+
+def _normalize_service_language(value: str) -> str:
+    """Normalize only high-confidence service-language shorthand and typos."""
+
+    return " ".join(
+        _SERVICE_LANGUAGE_TOKEN_MAP.get(token, token)
+        for token in value.split()
+    )
+
+
 def _contains_generic_equipment_price_request(value: str) -> bool:
     """Treat a generic equipment price/quote request as purchase intent.
 
@@ -1044,6 +1076,13 @@ def _contains_equipment_purchase(value: str) -> bool:
     """Recognize purchase/quote intent for equipment without stealing install quotes."""
 
     tokens = value.split()
+    bare_ar_commercial = bool(
+        re.search(
+            r"\b(?:comprar|compra|vender|vende|vendem|cotar|cotacao|orcamento|orcar)\b"
+            r".{0,40}\bar\b",
+            value,
+        )
+    )
     has_equipment = (
         _contains_any(
             value,
@@ -1059,6 +1098,7 @@ def _contains_equipment_purchase(value: str) -> bool:
             token.startswith("condici") and token.endswith("onado")
             for token in tokens
         )
+        or bare_ar_commercial
     )
     if not has_equipment:
         return False

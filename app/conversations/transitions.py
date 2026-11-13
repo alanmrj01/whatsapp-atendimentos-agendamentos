@@ -174,7 +174,10 @@ from app.conversations.dialogue import (
     weekday_options,
     weekday_plural,
 )
-from app.conversations.service_semantics import semantic_service_score
+from app.conversations.service_semantics import (
+    configured_service_name_matches,
+    semantic_service_score,
+)
 from app.conversations.ports import (
     BookingAvailabilityPort,
     BookingConfirmation,
@@ -9478,6 +9481,14 @@ def _service_candidates_for_interpretation(
     text = interpretation.normalized_text
     if not text:
         return ()
+
+    configured_name_matches = tuple(
+        service
+        for service in services
+        if configured_service_name_matches(text, service.label)
+    )
+    if len(configured_name_matches) == 1:
+        return configured_name_matches
 
     key_tokens = {
         "split-installation": ("instal",),

@@ -268,6 +268,14 @@ def generate_service_intent_examples(name: str) -> tuple[str, ...]:
     return tuple(examples)
 
 
+def configured_service_name_matches(message: str, service_name: str) -> bool:
+    """Return True only for a unique-worthy multi-token configured name match."""
+
+    query_tokens = set(normalize_service_text(message).split()) - _SEMANTIC_STOPWORDS
+    service_tokens = set(normalize_service_text(service_name).split()) - _SEMANTIC_STOPWORDS
+    return len(service_tokens) >= 2 and service_tokens.issubset(query_tokens)
+
+
 def semantic_service_score(
     message: str,
     service_name: str,
