@@ -1329,7 +1329,7 @@ DISCOVERY_JOURNEY_CASES = (
             JourneyStep(
                 body="o que inclui esse serviço?",
                 expected_state=ConversationState.BOOKING_DATE,
-                contains=("equipamento de refrigeração",),
+                contains=("atendimento técnico", "reparo"),
             ),
             JourneyStep(
                 action="date:2026-11-16",
