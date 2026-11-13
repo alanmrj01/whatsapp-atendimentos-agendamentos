@@ -16,12 +16,14 @@ from app.conversation_lab.corpus import (
     ContextCase,
     DISCOVERY_CONTEXT_SEEDS,
     DISCOVERY_FLOW_CASES,
+    DISCOVERY_JOURNEY_CASES,
     DISCOVERY_SEEDS,
     PREFIXES,
     REGRESSION_CONTEXT,
     REGRESSION_SEMANTIC,
     SUFFIXES,
     FlowCase,
+    JourneyCase,
     SemanticCase,
     TYPO_REPLACEMENTS,
 )
@@ -241,6 +243,99 @@ async def _flow_result(case: FlowCase, text: str, sequence: int) -> dict[str, ob
     }
 
 
+async def _journey_result(case: JourneyCase, sequence: int) -> dict[str, object]:
+    port = DryRunBookingPort()
+    repository = LabConversationRepository()
+    engine = ConversationEngine(repository, port)
+    step_results: list[dict[str, object]] = []
+    saw_handoff = False
+
+    for index, step in enumerate(case.steps, start=1):
+        await engine.process(
+            inbound(
+                sequence,
+                body=step.body,
+                action=step.action,
+            )
+        )
+        sequence += 1
+
+        outbound = ""
+        if repository.outbounds:
+            transition = repository.outbounds[-1].transition
+            outbound = " ".join(
+                message.body or ""
+                for message in (transition.outbound, *transition.follow_ups)
+            )
+
+        missing_terms = [
+            term
+            for term in step.contains
+            if term.casefold() not in outbound.casefold()
+        ]
+        missing_context_keys = [
+            key
+            for key in step.required_context_keys
+            if key not in repository.context
+        ]
+        state_ok = (
+            step.expected_state is None
+            or repository.state == step.expected_state
+        )
+        if (
+            repository.state == ConversationState.HUMAN_HANDOFF
+            or repository.handoff_status != "none"
+            or not repository.automation_enabled
+        ):
+            saw_handoff = True
+
+        step_results.append(
+            {
+                "step": index,
+                "body": step.body,
+                "action": step.action,
+                "expected_state": step.expected_state,
+                "actual_state": repository.state,
+                "missing_terms": missing_terms,
+                "missing_context_keys": missing_context_keys,
+                "outbound": outbound,
+                "pass": state_ok and not missing_terms and not missing_context_keys,
+            }
+        )
+
+    missing_required_calls = [
+        call for call in case.required_calls if call not in port.calls
+    ]
+    forbidden_calls_present = [
+        call for call in case.forbidden_calls if call in port.calls
+    ]
+    failed_steps = [item for item in step_results if not item["pass"]]
+    passed = (
+        not failed_steps
+        and repository.state == case.expected_final_state
+        and not missing_required_calls
+        and not forbidden_calls_present
+        and (case.allow_handoff or not saw_handoff)
+    )
+
+    return {
+        "kind": "journey",
+        "family": case.family,
+        "input": " -> ".join(
+            step.body or step.action or ""
+            for step in case.steps
+        ),
+        "expected_final_state": case.expected_final_state,
+        "actual_final_state": repository.state,
+        "missing_required_calls": missing_required_calls,
+        "forbidden_calls_present": forbidden_calls_present,
+        "saw_handoff": saw_handoff,
+        "dry_run_calls": port.calls,
+        "failed_steps": failed_steps,
+        "pass": passed,
+    }
+
+
 async def run(mode: str, per_seed: int) -> int:
     if os.getenv("CONVERSATION_LAB_ALLOW_EXTERNAL_IO", "false").lower() == "true":
         raise RuntimeError("conversation_lab_external_io_must_remain_disabled")
@@ -248,10 +343,12 @@ async def run(mode: str, per_seed: int) -> int:
     semantic_cases = list(REGRESSION_SEMANTIC)
     context_cases = list(REGRESSION_CONTEXT)
     flow_cases: list[FlowCase] = []
+    journey_cases: list[JourneyCase] = []
     if mode in {"discovery", "all"}:
         semantic_cases.extend(DISCOVERY_SEEDS)
         context_cases.extend(DISCOVERY_CONTEXT_SEEDS)
         flow_cases.extend(DISCOVERY_FLOW_CASES)
+        journey_cases.extend(DISCOVERY_JOURNEY_CASES)
 
     results: list[dict[str, object]] = []
     sequence = 1
@@ -271,6 +368,10 @@ async def run(mode: str, per_seed: int) -> int:
         for text in variants:
             results.append(await _flow_result(case, text, sequence))
             sequence += 2
+
+    for case in journey_cases:
+        results.append(await _journey_result(case, sequence))
+        sequence += len(case.steps)
 
     gaps = [item for item in results if not item["pass"]]
     passed = [item for item in results if item["pass"]]

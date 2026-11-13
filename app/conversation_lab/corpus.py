@@ -27,6 +27,25 @@ class ContextCase:
 
 
 @dataclass(frozen=True, slots=True)
+class JourneyStep:
+    body: str | None = None
+    action: str | None = None
+    expected_state: str | None = None
+    contains: tuple[str, ...] = ()
+    required_context_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class JourneyCase:
+    family: str
+    steps: tuple[JourneyStep, ...]
+    expected_final_state: str
+    required_calls: tuple[str, ...] = ()
+    forbidden_calls: tuple[str, ...] = ()
+    allow_handoff: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class FlowCase:
     family: str
     state: str
@@ -331,6 +350,188 @@ DISCOVERY_FLOW_CASES = (
         ("R$ 100,00",),
         ConversationState.POST_BOOKING_HELP,
         (),
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
+    ),
+)
+
+
+# Jornadas profundas: do início do atendimento até confirmação dry-run.
+# O objetivo é provar que linguagem informal e dúvidas laterais não quebram
+# o fluxo determinístico nem geram handoff quando há dados suficientes.
+DISCOVERY_JOURNEY_CASES = (
+    JourneyCase(
+        "journey_cleaning_informal",
+        (
+            JourneyStep(
+                body="opa, preciso fazer uma limpeza no meu ar",
+                expected_state=ConversationState.BOOKING_QUANTITY,
+            ),
+            JourneyStep(
+                body="é só 1 aparelho",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("quantity",),
+            ),
+            JourneyStep(
+                body="quanto fica esse serviço?",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                contains=("R$ 100,00",),
+            ),
+            JourneyStep(
+                body="R. das Flores 123, Centro, SJC",
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+                required_context_keys=("service_address",),
+            ),
+            JourneyStep(
+                body="Midea 12000 BTU",
+                expected_state=ConversationState.BOOKING_DATE,
+                required_context_keys=("equipment_model",),
+            ),
+            JourneyStep(
+                body="valeu, pera aí um minutinho",
+                expected_state=ConversationState.BOOKING_DATE,
+            ),
+            JourneyStep(
+                action="date:2026-11-16",
+                expected_state=ConversationState.BOOKING_TIME,
+                required_context_keys=("selected_date",),
+            ),
+            JourneyStep(
+                body="14:30",
+                expected_state=ConversationState.BOOKING_ATTENDEE,
+                required_context_keys=("selected_time",),
+            ),
+            JourneyStep(
+                action="attendee.customer",
+                body="eu mesmo",
+                expected_state=ConversationState.BOOKING_PHONE_CONFIRM,
+            ),
+            JourneyStep(
+                action="phone.confirm",
+                body="pode usar esse número",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+                required_context_keys=("contact_phone", "contact_phone_confirmed"),
+            ),
+            JourneyStep(
+                body="e quanto tempo leva mesmo?",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+                contains=("30 minutos",),
+            ),
+            JourneyStep(
+                body="pode confirmar",
+                expected_state=ConversationState.POST_BOOKING_HELP,
+            ),
+        ),
+        ConversationState.POST_BOOKING_HELP,
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
+    ),
+    JourneyCase(
+        "journey_cleaning_informal_alt",
+        (
+            JourneyStep(
+                body="bom dia, queria higienizar meu ar condicionado",
+                expected_state=ConversationState.BOOKING_QUANTITY,
+            ),
+            JourneyStep(
+                body="um só",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("quantity",),
+            ),
+            JourneyStep(
+                body="Rua dos Alfaiates 109, Novo Horizonte, São José dos Campos",
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+                required_context_keys=("service_address",),
+            ),
+            JourneyStep(
+                body="LG dual inverter 9000 btus",
+                expected_state=ConversationState.BOOKING_DATE,
+                required_context_keys=("equipment_model",),
+            ),
+            JourneyStep(
+                body="quanto tempo costuma levar?",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("30 minutos",),
+            ),
+            JourneyStep(
+                action="date:2026-11-18",
+                expected_state=ConversationState.BOOKING_TIME,
+            ),
+            JourneyStep(
+                body="09:00",
+                expected_state=ConversationState.BOOKING_ATTENDEE,
+            ),
+            JourneyStep(
+                action="attendee.customer",
+                body="sou eu",
+                expected_state=ConversationState.BOOKING_PHONE_CONFIRM,
+            ),
+            JourneyStep(
+                action="phone.confirm",
+                body="sim",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+            ),
+            JourneyStep(
+                body="fechado, pode finalizar",
+                expected_state=ConversationState.POST_BOOKING_HELP,
+            ),
+        ),
+        ConversationState.POST_BOOKING_HELP,
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
+    ),
+    JourneyCase(
+        "journey_generic_book_then_select",
+        (
+            JourneyStep(
+                body="e aí, preciso agendar um atendimento",
+                expected_state=ConversationState.BOOKING_SERVICE,
+            ),
+            JourneyStep(
+                action="service:94000000-0000-0000-0000-000000000004",
+                expected_state=ConversationState.BOOKING_QUANTITY,
+            ),
+            JourneyStep(
+                body="1",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+            ),
+            JourneyStep(
+                body="Rua A, 10, Centro, São José dos Campos, SP",
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+            ),
+            JourneyStep(
+                body="Springer 12000 BTU",
+                expected_state=ConversationState.BOOKING_DATE,
+            ),
+            JourneyStep(
+                action="date:2026-11-16",
+                expected_state=ConversationState.BOOKING_TIME,
+            ),
+            JourneyStep(
+                body="18:00",
+                expected_state=ConversationState.BOOKING_ATTENDEE,
+            ),
+            JourneyStep(
+                action="attendee.customer",
+                body="eu",
+                expected_state=ConversationState.BOOKING_PHONE_CONFIRM,
+            ),
+            JourneyStep(
+                action="phone.confirm",
+                body="sim",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+            ),
+            JourneyStep(
+                body="quanto custa mesmo?",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+                contains=("R$ 100,00",),
+            ),
+            JourneyStep(
+                body="tudo certo, pode confirmar",
+                expected_state=ConversationState.POST_BOOKING_HELP,
+            ),
+        ),
+        ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
     ),
