@@ -7272,6 +7272,30 @@ async def _handle_gate_details(
         return _handoff_for_reason(str(exc))
 
     value = " ".join((inbound.body or "").strip().split())
+    if _asks_for_technician_name_at_gate(value):
+        updated = {
+            **_clear_repair_attempt(context, "gate_details"),
+            "service_id": str(service_id),
+            "gate_instructions": (
+                "Informar à portaria o nome do técnico responsável antes do atendimento."
+            ),
+        }
+        transition = await _advance_intake(
+            inbound,
+            port,
+            intake,
+            updated,
+            customer_name=customer_name,
+        )
+        return _prepend_transition_body(
+            transition,
+            (
+                "Entendi. Vou continuar com o agendamento. Depois de definirmos a data "
+                "e o horário, a equipe confirma qual técnico ficará responsável para "
+                "você informar o nome na portaria."
+            ),
+        )
+
     if not _looks_like_gate_instruction(value):
         return _retry_or_handoff(
             ConversationState.BOOKING_GATE_DETAILS,
