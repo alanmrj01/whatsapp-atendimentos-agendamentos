@@ -238,4 +238,3 @@ async def test_clear_service_intent_at_service_checkpoint_does_not_restart_menu(
         ConversationState.BOOKING_SERVICE,
         ConversationState.HUMAN_HANDOFF,
     }
-
