@@ -9990,6 +9990,7 @@ def _is_generic_maintenance_request(text: str) -> bool:
         "reparo",
         "assistencia tecnica",
         "nao gela",
+        "nao esta gelando",
         "nao resfria",
         "nao esfria",
         "nao liga",
