@@ -772,7 +772,7 @@ DISCOVERY_FLOW_CASES = (
             ("property_type", "house"),
         ),
         ConversationState.BOOKING_TIME,
-        ("Instalação de ar-condicionado split configurado no laboratório.",),
+        ("Instalação técnica do ar-condicionado",),
         ConversationState.BOOKING_ATTENDEE,
         ("selected_time",),
         (),
