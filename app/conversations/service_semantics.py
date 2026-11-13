@@ -347,14 +347,17 @@ def generate_service_intent_examples(name: str) -> tuple[str, ...]:
 
     examples: list[str] = []
     seen: set[str] = set()
-    for variant in variants:
-        for template in _GENERIC_TEMPLATES:
+    # Distribui primeiro as raízes lexicais entre os templates. Assim um
+    # domínio configurado como elétrica/geladeira não perde sinônimos tardios
+    # porque as primeiras variações consumiram todo o limite.
+    for template in _GENERIC_TEMPLATES:
+        for variant in variants:
             sentence = template.format(service=variant)
             key = normalize_service_text(sentence)
             if key and key not in seen:
                 seen.add(key)
                 examples.append(sentence)
-            if len(examples) >= 32:
+            if len(examples) >= 48:
                 return tuple(examples)
     return tuple(examples)
 
@@ -430,7 +433,36 @@ def semantic_service_score(
         (_semantic_similarity(query, value) for value in candidates),
         default=0.0,
     )
-    return min(1.0, base_score + capacity_bonus)
+
+    domain_signals = {
+        "geladeira",
+        "refrigerador",
+        "freezer",
+        "frigobar",
+        "cervejeira",
+        "tomada",
+        "disjuntor",
+        "chuveiro",
+        "interruptor",
+        "luminaria",
+        "fiacao",
+        "eletricista",
+    }
+    query_expanded = _expanded_tokens(query)
+    candidate_expanded = _expanded_tokens(service_name)
+    for example in examples:
+        candidate_expanded.update(_expanded_tokens(example))
+    shared_domain = (
+        query_expanded
+        & candidate_expanded
+        & domain_signals
+    )
+    domain_bonus = 0.28 if shared_domain else 0.0
+
+    return min(
+        1.0,
+        base_score + capacity_bonus + domain_bonus,
+    )
 
 
 def _semantic_similarity(query: str, candidate: str) -> float:
