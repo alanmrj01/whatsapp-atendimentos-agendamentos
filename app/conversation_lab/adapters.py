@@ -20,6 +20,7 @@ from app.booking.domain import (
 )
 from app.booking.equipment_recommender import EquipmentCatalogEntry
 from app.conversations.constants import ConversationState
+from app.conversations.service_semantics import generate_service_intent_examples
 from app.conversations.ports import (
     BookingConfirmation,
     BookingOption,
@@ -35,6 +36,8 @@ SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000004")
 INSTALLATION_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000007")
 DIAGNOSTICS_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000008")
 GAS_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000009")
+REFRIGERATOR_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000010")
+ELECTRICAL_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000011")
 APPOINTMENT_ID = uuid.UUID("95000000-0000-0000-0000-000000000005")
 EMPLOYEE_ID = uuid.UUID("96000000-0000-0000-0000-000000000006")
 
@@ -115,18 +118,37 @@ class DryRunBookingPort:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.services = [
-            BookingOption(str(SERVICE_ID), "Limpeza e higienização"),
+            BookingOption(
+                str(SERVICE_ID),
+                "Limpeza e higienização",
+                generate_service_intent_examples("Limpeza e higienização"),
+            ),
             BookingOption(
                 str(INSTALLATION_SERVICE_ID),
                 "Instalação de ar-condicionado split",
+                generate_service_intent_examples("Instalação de ar-condicionado split"),
             ),
             BookingOption(
                 str(DIAGNOSTICS_SERVICE_ID),
                 "Diagnóstico / manutenção corretiva",
+                generate_service_intent_examples("Diagnóstico / manutenção corretiva"),
             ),
             BookingOption(
                 str(GAS_SERVICE_ID),
                 "Recarga de gás e teste de vazamento",
+                generate_service_intent_examples("Recarga de gás e teste de vazamento"),
+            ),
+            BookingOption(
+                str(REFRIGERATOR_SERVICE_ID),
+                "Conserto e manutenção de geladeira e freezer",
+                generate_service_intent_examples(
+                    "Conserto e manutenção de geladeira e freezer"
+                ),
+            ),
+            BookingOption(
+                str(ELECTRICAL_SERVICE_ID),
+                "Elétrica residencial",
+                generate_service_intent_examples("Elétrica residencial"),
             ),
         ]
         self.dates = [
@@ -166,6 +188,22 @@ class DryRunBookingPort:
                 pricing_type=PricingType.ESTIMATED,
             ),
             GAS_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            REFRIGERATOR_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            ELECTRICAL_SERVICE_ID: ServiceIntake(
                 requires_quantity=False,
                 requires_address=True,
                 considers_difficult_access=False,
@@ -215,10 +253,28 @@ class DryRunBookingPort:
             SERVICE_ID,
             INSTALLATION_SERVICE_ID,
         }
+        descriptions = {
+            SERVICE_ID: (
+                "Limpeza técnica dos principais componentes acessíveis do "
+                "ar-condicionado para remover sujeira acumulada."
+            ),
+            INSTALLATION_SERVICE_ID: (
+                "Instalação técnica do ar-condicionado conforme as condições do local "
+                "e os materiais previstos no serviço."
+            ),
+            DIAGNOSTICS_SERVICE_ID: (
+                "Avaliação técnica do equipamento para identificar a causa do problema "
+                "e definir o reparo necessário."
+            ),
+            GAS_SERVICE_ID: (
+                "Verificação do sistema de refrigeração, avaliação de possível vazamento "
+                "e execução do serviço conforme a necessidade identificada."
+            ),
+        }
         return ServiceDetails(
             id=service_id,
             name=service.label,
-            description=f"{service.label} configurado no laboratório.",
+            description=descriptions.get(service_id),
             included_tubing_meters=Decimal("3") if has_tubing_details else None,
             extra_tubing_price=Decimal("50") if has_tubing_details else None,
             extra_tubing_unit_label="metro" if has_tubing_details else None,
@@ -306,6 +362,38 @@ class DryRunBookingPort:
                 service=ServiceEstimate(
                     estimated_duration_minutes=60,
                     estimated_price=Decimal("250"),
+                    pricing_type=PricingType.ESTIMATED,
+                    requires_human_quote=False,
+                    applied_rules=("conversation_lab",),
+                    qualifier="estimated",
+                ),
+                travel=self.plan.travel,
+                travel_before_minutes=0,
+                travel_after_minutes=0,
+                requires_handoff=False,
+            )
+
+        if service_id == REFRIGERATOR_SERVICE_ID:
+            return BookingPlan(
+                service=ServiceEstimate(
+                    estimated_duration_minutes=60,
+                    estimated_price=Decimal("220"),
+                    pricing_type=PricingType.ESTIMATED,
+                    requires_human_quote=False,
+                    applied_rules=("conversation_lab",),
+                    qualifier="estimated",
+                ),
+                travel=self.plan.travel,
+                travel_before_minutes=0,
+                travel_after_minutes=0,
+                requires_handoff=False,
+            )
+
+        if service_id == ELECTRICAL_SERVICE_ID:
+            return BookingPlan(
+                service=ServiceEstimate(
+                    estimated_duration_minutes=60,
+                    estimated_price=Decimal("160"),
                     pricing_type=PricingType.ESTIMATED,
                     requires_human_quote=False,
                     applied_rules=("conversation_lab",),
