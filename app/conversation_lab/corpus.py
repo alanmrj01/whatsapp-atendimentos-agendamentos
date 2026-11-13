@@ -24,6 +24,9 @@ class ContextCase:
     forbidden_context_keys: tuple[str, ...] = ()
     expected_state: str | None = None
     forbidden_calls: tuple[str, ...] = ()
+    expected_automation_enabled: bool | None = None
+    expected_handoff_status: str | None = None
+    required_outbound_terms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
