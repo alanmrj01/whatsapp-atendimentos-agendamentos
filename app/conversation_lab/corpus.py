@@ -26,6 +26,21 @@ class ContextCase:
     forbidden_calls: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class FlowCase:
+    family: str
+    state: str
+    side_text: str
+    followup_text: str
+    context_items: tuple[tuple[str, object], ...] = ()
+    side_expected_state: str | None = None
+    side_contains: tuple[str, ...] = ()
+    followup_expected_state: str | None = None
+    followup_context_keys: tuple[str, ...] = ()
+    required_calls: tuple[str, ...] = ()
+    forbidden_calls: tuple[str, ...] = ()
+
+
 # Corpus de regressão conhecido e aprovado. Discovery só vira regressão após passar
 # por um oráculo determinístico e revisão do relatório.
 REGRESSION_SEMANTIC = (
@@ -192,3 +207,131 @@ PREFIXES = (
     "seguinte, ",
 )
 SUFFIXES = ("", "?", " ??", " por favor", " pfv", " valeu", " blz")
+
+
+# Cenários multi-turno: uma dúvida lateral deve ser respondida com os dados
+# sintéticos da empresa e o fluxo deve retomar o checkpoint determinístico.
+DISCOVERY_FLOW_CASES = (
+    FlowCase(
+        "resume_price_time",
+        ConversationState.BOOKING_TIME,
+        "quanto custa esse serviço?",
+        "14:30",
+        (("service_id", "94000000-0000-0000-0000-000000000004"), ("selected_date", "2026-11-16"), ("quantity", 1)),
+        ConversationState.BOOKING_TIME,
+        ("R$ 100,00",),
+        ConversationState.BOOKING_ATTENDEE,
+        ("selected_time",),
+        (),
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+    ),
+    FlowCase(
+        "resume_duration_time",
+        ConversationState.BOOKING_TIME,
+        "quanto tempo leva esse serviço?",
+        "09:00",
+        (("service_id", "94000000-0000-0000-0000-000000000004"), ("selected_date", "2026-11-16"), ("quantity", 1)),
+        ConversationState.BOOKING_TIME,
+        ("30 minutos",),
+        ConversationState.BOOKING_ATTENDEE,
+        ("selected_time",),
+        (),
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+    ),
+    FlowCase(
+        "resume_tubing_time",
+        ConversationState.BOOKING_TIME,
+        "quantos metros de tubulação estão incluídos?",
+        "18:00",
+        (("service_id", "94000000-0000-0000-0000-000000000004"), ("selected_date", "2026-11-16"), ("quantity", 1)),
+        ConversationState.BOOKING_TIME,
+        ("3 metros",),
+        ConversationState.BOOKING_ATTENDEE,
+        ("selected_time",),
+        (),
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+    ),
+    FlowCase(
+        "resume_extra_tubing_price_time",
+        ConversationState.BOOKING_TIME,
+        "quanto custa cada metro adicional de tubulação?",
+        "14:30",
+        (("service_id", "94000000-0000-0000-0000-000000000004"), ("selected_date", "2026-11-16"), ("quantity", 1)),
+        ConversationState.BOOKING_TIME,
+        ("R$ 50,00", "metro"),
+        ConversationState.BOOKING_ATTENDEE,
+        ("selected_time",),
+        (),
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+    ),
+    FlowCase(
+        "resume_cancel_question_time",
+        ConversationState.BOOKING_TIME,
+        "se eu precisar cancelar depois, posso?",
+        "09:00",
+        (("service_id", "94000000-0000-0000-0000-000000000004"), ("selected_date", "2026-11-16"), ("quantity", 1)),
+        ConversationState.BOOKING_TIME,
+        ("cancelar um agendamento futuro",),
+        ConversationState.BOOKING_ATTENDEE,
+        ("selected_time",),
+        (),
+        ("cancel_dry_run", "reschedule_dry_run", "confirm_dry_run"),
+    ),
+    FlowCase(
+        "resume_reschedule_question_time",
+        ConversationState.BOOKING_TIME,
+        "se eu precisar remarcar depois, posso?",
+        "18:00",
+        (("service_id", "94000000-0000-0000-0000-000000000004"), ("selected_date", "2026-11-16"), ("quantity", 1)),
+        ConversationState.BOOKING_TIME,
+        ("remarcar um agendamento futuro",),
+        ConversationState.BOOKING_ATTENDEE,
+        ("selected_time",),
+        (),
+        ("cancel_dry_run", "reschedule_dry_run", "confirm_dry_run"),
+    ),
+    FlowCase(
+        "resume_price_quantity",
+        ConversationState.BOOKING_QUANTITY,
+        "quanto custa esse serviço?",
+        "2",
+        (("service_id", "94000000-0000-0000-0000-000000000004"),),
+        ConversationState.BOOKING_QUANTITY,
+        ("R$ 100,00",),
+        ConversationState.BOOKING_ADDRESS,
+        ("quantity",),
+        (),
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+    ),
+    FlowCase(
+        "resume_duration_address",
+        ConversationState.BOOKING_ADDRESS,
+        "quanto tempo leva esse serviço?",
+        "Rua das Flores, 123, São José dos Campos, SP",
+        (("service_id", "94000000-0000-0000-0000-000000000004"), ("quantity", 1)),
+        ConversationState.BOOKING_ADDRESS,
+        ("30 minutos",),
+        ConversationState.BOOKING_EQUIPMENT_MODEL,
+        ("service_address",),
+        (),
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+    ),
+    FlowCase(
+        "resume_price_confirm",
+        ConversationState.BOOKING_CONFIRM,
+        "quanto custa esse serviço?",
+        "pode confirmar",
+        (
+            ("service_id", "94000000-0000-0000-0000-000000000004"),
+            ("selected_date", "2026-11-16"),
+            ("selected_time", "14:30"),
+            ("quantity", 1),
+        ),
+        ConversationState.BOOKING_CONFIRM,
+        ("R$ 100,00",),
+        ConversationState.POST_BOOKING_HELP,
+        (),
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
+    ),
+)
