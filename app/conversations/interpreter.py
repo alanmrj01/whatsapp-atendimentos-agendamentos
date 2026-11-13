@@ -903,8 +903,7 @@ def correction_focus(value: str) -> str:
     raw_parts = re.split(r"[,;]", value)
     if len(raw_parts) > 1 and normalize_portuguese(raw_parts[-1]).startswith("nao "):
         head = normalize_portuguese(raw_parts[0])
-        head = re.sub(r"^(?:e|eh)\s+", "", head)
-        if head in {
+        social_prefixes = {
             "oi",
             "ola",
             "opa",
@@ -919,7 +918,11 @@ def correction_focus(value: str) -> str:
             "seguinte",
             "rapidinho",
             "e ai",
-        }:
+        }
+        if head in social_prefixes:
+            return normalized
+        head = re.sub(r"^(?:e|eh)\s+", "", head)
+        if head in social_prefixes:
             return normalized
         if head:
             return head
