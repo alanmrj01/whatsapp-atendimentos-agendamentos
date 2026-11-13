@@ -1208,5 +1208,134 @@ DISCOVERY_JOURNEY_CASES = (
         False,
         (0, 2, 7,),
         12,
+    ),
+    JourneyCase(
+        "journey_refrigerator_catalog",
+        (
+            JourneyStep(
+                body="minha geladeira não ta gelando direito",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("service_id",),
+            ),
+            JourneyStep(
+                body="Rua das Palmeiras 44, Centro, São José dos Campos, SP",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("R$ 220,00",),
+                required_context_keys=("service_address",),
+            ),
+            JourneyStep(
+                body="o que inclui esse serviço?",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("equipamento de refrigeração",),
+            ),
+            JourneyStep(
+                action="date:2026-11-16",
+                expected_state=ConversationState.BOOKING_TIME,
+            ),
+            JourneyStep(
+                body="14:30",
+                expected_state=ConversationState.BOOKING_ATTENDEE,
+            ),
+            JourneyStep(
+                action="attendee.customer",
+                body="eu mesmo",
+                expected_state=ConversationState.BOOKING_PHONE_CONFIRM,
+            ),
+            JourneyStep(
+                action="phone.confirm",
+                body="sim",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+            ),
+            JourneyStep(
+                body="pode confirmar",
+                expected_state=ConversationState.POST_BOOKING_HELP,
+            ),
+        ),
+        ConversationState.POST_BOOKING_HELP,
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0, 2, 7),
+        16,
+    ),
+    JourneyCase(
+        "journey_electrical_catalog",
+        (
+            JourneyStep(
+                body="a tomada da cozinha queimou e preciso arrumar",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("service_id",),
+            ),
+            JourneyStep(
+                body="Av. Brasil 120, Jardim América, São José dos Campos, SP",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("R$ 160,00",),
+                required_context_keys=("service_address",),
+            ),
+            JourneyStep(
+                body="como funciona esse serviço?",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("elétrica residencial",),
+            ),
+            JourneyStep(
+                action="date:2026-11-18",
+                expected_state=ConversationState.BOOKING_TIME,
+            ),
+            JourneyStep(
+                body="09:00",
+                expected_state=ConversationState.BOOKING_ATTENDEE,
+            ),
+            JourneyStep(
+                action="attendee.customer",
+                body="sou eu",
+                expected_state=ConversationState.BOOKING_PHONE_CONFIRM,
+            ),
+            JourneyStep(
+                action="phone.confirm",
+                body="sim",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+            ),
+            JourneyStep(
+                body="fechado, pode confirmar",
+                expected_state=ConversationState.POST_BOOKING_HELP,
+            ),
+        ),
+        ConversationState.POST_BOOKING_HELP,
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0, 2, 7),
+        16,
+    ),
+    JourneyCase(
+        "journey_generic_catalog_inquiry",
+        (
+            JourneyStep(
+                body="oi, vocês fazem serviço de ar condicionado?",
+                expected_state=ConversationState.BOOKING_SERVICE,
+            ),
+            JourneyStep(
+                action="service:94000000-0000-0000-0000-000000000004",
+                expected_state=ConversationState.BOOKING_QUANTITY,
+            ),
+            JourneyStep(
+                body="um só",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+            ),
+            JourneyStep(
+                body="Rua Um 10, Centro, São José dos Campos, SP",
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+            ),
+            JourneyStep(
+                body="Midea 12000 BTU",
+                expected_state=ConversationState.BOOKING_DATE,
+            ),
+        ),
+        ConversationState.BOOKING_DATE,
+        (),
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+        False,
+        (0,),
+        16,
     )
 )
