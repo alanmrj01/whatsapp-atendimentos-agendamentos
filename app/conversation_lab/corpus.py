@@ -538,5 +538,215 @@ DISCOVERY_JOURNEY_CASES = (
         ConversationState.POST_BOOKING_HELP,
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
+    ),,
+    JourneyCase(
+        "journey_cleaning_quantity_pricing",
+        (
+            JourneyStep(
+                body="quero higienizar três aparelhos",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("quantity",),
+            ),
+            JourneyStep(
+                body="Rua das Acácias 45, Centro, São José dos Campos, SP",
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+            ),
+            JourneyStep(
+                body="Midea 9000 BTU",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("R$ 260,00",),
+                required_context_keys=("equipment_model",),
+            ),
+            JourneyStep(
+                action="date:2026-11-16",
+                expected_state=ConversationState.BOOKING_TIME,
+            ),
+            JourneyStep(
+                body="09:00",
+                expected_state=ConversationState.BOOKING_ATTENDEE,
+            ),
+            JourneyStep(
+                action="attendee.customer",
+                body="eu mesmo",
+                expected_state=ConversationState.BOOKING_PHONE_CONFIRM,
+            ),
+            JourneyStep(
+                action="phone.confirm",
+                body="sim",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+            ),
+            JourneyStep(
+                body="pode confirmar",
+                expected_state=ConversationState.POST_BOOKING_HELP,
+            ),
+        ),
+        ConversationState.POST_BOOKING_HELP,
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
     ),
+    JourneyCase(
+        "journey_installation_extra_tubing",
+        (
+            JourneyStep(
+                body="opa, já tenho o aparelho e preciso instalar meu ar condicionado",
+                expected_state=ConversationState.BOOKING_QUANTITY,
+            ),
+            JourneyStep(
+                body="um só",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("quantity",),
+            ),
+            JourneyStep(
+                body="Rua das Flores 300, Centro, São José dos Campos, SP",
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+                required_context_keys=("service_address",),
+            ),
+            JourneyStep(
+                body="Midea 12000 BTU",
+                expected_state=ConversationState.BOOKING_INSTALLATION_HEIGHT,
+                required_context_keys=("equipment_model",),
+            ),
+            JourneyStep(
+                body="fica a menos de 3 metros de altura",
+                expected_state=ConversationState.BOOKING_TUBING,
+                required_context_keys=("installation_height_over_3m",),
+            ),
+            JourneyStep(
+                body="vai usar 5 metros de tubulação",
+                expected_state=ConversationState.BOOKING_PROPERTY,
+                required_context_keys=("tubing_meters",),
+            ),
+            JourneyStep(
+                body="é uma casa",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("R$ 800,00",),
+                required_context_keys=("property_type",),
+            ),
+            JourneyStep(
+                body="quanto custa cada metro adicional de tubulação?",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("R$ 50,00", "metro"),
+            ),
+            JourneyStep(
+                action="date:2026-11-18",
+                expected_state=ConversationState.BOOKING_TIME,
+            ),
+            JourneyStep(
+                body="14:30",
+                expected_state=ConversationState.BOOKING_ATTENDEE,
+            ),
+            JourneyStep(
+                action="attendee.customer",
+                body="sou eu",
+                expected_state=ConversationState.BOOKING_PHONE_CONFIRM,
+            ),
+            JourneyStep(
+                action="phone.confirm",
+                body="sim",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+            ),
+            JourneyStep(
+                body="pode confirmar",
+                expected_state=ConversationState.POST_BOOKING_HELP,
+            ),
+        ),
+        ConversationState.POST_BOOKING_HELP,
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
+    ),
+    JourneyCase(
+        "journey_diagnostics_complete",
+        (
+            JourneyStep(
+                body="meu ar condicionado não está gelando e preciso de manutenção",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("service_id",),
+            ),
+            JourneyStep(
+                body="Av. Central 80, Jardim Sul, São José dos Campos, SP",
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+            ),
+            JourneyStep(
+                body="Samsung 12000 BTU",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("R$ 180,00",),
+                required_context_keys=("equipment_model",),
+            ),
+            JourneyStep(
+                body="e costuma levar quanto tempo?",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("1 hora",),
+            ),
+            JourneyStep(
+                action="date:2026-11-16",
+                expected_state=ConversationState.BOOKING_TIME,
+            ),
+            JourneyStep(
+                body="18:00",
+                expected_state=ConversationState.BOOKING_ATTENDEE,
+            ),
+            JourneyStep(
+                action="attendee.customer",
+                body="eu mesmo",
+                expected_state=ConversationState.BOOKING_PHONE_CONFIRM,
+            ),
+            JourneyStep(
+                action="phone.confirm",
+                body="sim",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+            ),
+            JourneyStep(
+                body="tudo certo, pode confirmar",
+                expected_state=ConversationState.POST_BOOKING_HELP,
+            ),
+        ),
+        ConversationState.POST_BOOKING_HELP,
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
+    ),
+    JourneyCase(
+        "journey_gas_recharge_complete",
+        (
+            JourneyStep(
+                body="quero fazer recarga de gás e teste de vazamento",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("service_id",),
+            ),
+            JourneyStep(
+                body="Rua B 55, Vila Nova, São José dos Campos, SP",
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+            ),
+            JourneyStep(
+                body="LG dual inverter 12000 BTU",
+                expected_state=ConversationState.BOOKING_DATE,
+                contains=("R$ 250,00",),
+                required_context_keys=("equipment_model",),
+            ),
+            JourneyStep(
+                action="date:2026-11-18",
+                expected_state=ConversationState.BOOKING_TIME,
+            ),
+            JourneyStep(
+                body="09:00",
+                expected_state=ConversationState.BOOKING_ATTENDEE,
+            ),
+            JourneyStep(
+                action="attendee.customer",
+                body="eu",
+                expected_state=ConversationState.BOOKING_PHONE_CONFIRM,
+            ),
+            JourneyStep(
+                action="phone.confirm",
+                body="sim",
+                expected_state=ConversationState.BOOKING_CONFIRM,
+            ),
+            JourneyStep(
+                body="fechado, pode finalizar",
+                expected_state=ConversationState.POST_BOOKING_HELP,
+            ),
+        ),
+        ConversationState.POST_BOOKING_HELP,
+        ("confirm_dry_run",),
+        ("cancel_dry_run", "reschedule_dry_run"),
+    )
 )
