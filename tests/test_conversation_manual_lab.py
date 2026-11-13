@@ -13,7 +13,7 @@ from app.conversation_lab.manual import (
     health,
     send_message,
 )
-from app.conversations.states import ConversationState
+from app.conversations.constants import ConversationState
 
 
 async def _new_session():
