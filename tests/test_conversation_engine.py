@@ -4342,7 +4342,9 @@ async def test_completed_cheaper_equipment_question_stays_catalog_driven() -> No
     assert repository.automation_enabled is True
     assert repository.handoff_status == "none"
     assert "seminovo" not in combined
-    assert "Gree" in combined
+    assert "alexa" in combined
+    assert "não tenho compatibilidade" in combined or "nao tenho compatibilidade" in combined
+    assert "prefiro não assumir" in combined or "prefiro nao assumir" in combined
 
 
 @mark.asyncio
