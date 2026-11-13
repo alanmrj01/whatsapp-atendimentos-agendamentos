@@ -1730,6 +1730,24 @@ def _looks_like_commercial_negotiation(
         "pix tem desconto",
         "a vista melhora",
         "pagando a vista melhora",
+        "nao gostei do preco",
+        "nao gostei do valor",
+        "preco ficou alto",
+        "valor ficou alto",
+        "ficou caro",
+        "esta caro",
+        "ta caro",
+        "muito caro",
+        "caro demais",
+        "ficou puxado",
+        "ta puxado",
+        "esta puxado",
+        "ta salgado",
+        "esta salgado",
+        "fora do meu orcamento",
+        "passou do meu orcamento",
+        "nao cabe no meu bolso",
+        "nao consigo pagar",
     )
     if any(phrase in normalized for phrase in negotiation_phrases):
         return True
@@ -4884,6 +4902,30 @@ def _format_duration(minutes: int) -> str:
     return f"{hours} {hour_label} e {remainder} minutos"
 
 
+def _looks_like_generic_catalog_inquiry(
+    body: str | None,
+    interpretation: Interpretation,
+) -> bool:
+    if interpretation.service_key is not None:
+        return False
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+    inquiry_shape = bool(
+        re.search(
+            r"\b(?:voce|voces)?\s*(?:faz|fazem|tem|trabalha|trabalham|"
+            r"atende|atendem|oferece|oferecem|realiza|realizam)\b",
+            normalized,
+        )
+        or re.search(r"\bservicos?\s+de\b", normalized)
+    )
+    return inquiry_shape and (
+        "?" in (body or "")
+        or interpretation.has(ConversationIntent.GREETING)
+        or normalized.startswith(("voce ", "voces "))
+    )
+
+
 async def _handle_natural_start(
     conversation: ConversationSnapshot,
     inbound: ConversationInput,
@@ -4934,6 +4976,42 @@ async def _handle_natural_start(
             if services
             else ()
         )
+        if (
+            services
+            and _looks_like_generic_catalog_inquiry(
+                inbound.body,
+                interpretation,
+            )
+        ):
+            selection = catalog_candidates or services
+            found = bool(catalog_candidates)
+            body = (
+                "Sim. Estes são os serviços do catálogo que correspondem ao que "
+                "você perguntou. Qual deles você precisa?"
+                if found
+                else (
+                    "Não encontrei esse serviço com segurança no catálogo ativo. "
+                    "Estes são os serviços disponíveis; escolha uma opção se alguma "
+                    "corresponder ao que você precisa."
+                )
+            )
+            transition = _transition(
+                ConversationState.BOOKING_SERVICE,
+                active_context,
+                service_selection_message(selection, body=body),
+            )
+            if interpretation.has(ConversationIntent.GREETING):
+                transition = _prepend_transition_body(
+                    transition,
+                    conversational_greeting(
+                        inbound.body,
+                        conversation.business_timezone,
+                        customer_name=conversation.customer_name,
+                        include_help=False,
+                    ),
+                )
+            return transition
+
         if catalog_candidates:
             route_to_service = True
 
