@@ -10,8 +10,10 @@ from app.conversations.interpreter import ConversationAct, ConversationIntent
 class SemanticCase:
     family: str
     text: str
-    intent: ConversationIntent
+    intent: ConversationIntent | None
     act: ConversationAct | None = None
+    forbidden_intents: tuple[ConversationIntent, ...] = ()
+    forbidden_acts: tuple[ConversationAct, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +73,13 @@ DISCOVERY_SEEDS = (
     SemanticCase("reschedule_question", "se eu precisar remarcar depois, posso?", ConversationIntent.RESCHEDULE_QUESTION, ConversationAct.SIDE_QUESTION),
     SemanticCase("price", "quanto custa esse serviço?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
     SemanticCase("price", "qual o valor da visita?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("negated_cancel", "não quero cancelar", None, ConversationAct.NEGATED_ACTION, (ConversationIntent.CANCEL, ConversationIntent.CANCEL_QUESTION)),
+    SemanticCase("negated_reschedule", "não quero remarcar", None, ConversationAct.NEGATED_ACTION, (ConversationIntent.RESCHEDULE, ConversationIntent.RESCHEDULE_QUESTION)),
+    SemanticCase("negated_handoff", "não quero falar com atendente", None, ConversationAct.NEGATED_ACTION, (ConversationIntent.HUMAN_HANDOFF,)),
+    SemanticCase("correction_reschedule", "quero cancelar, na verdade quero remarcar", ConversationIntent.RESCHEDULE, ConversationAct.CORRECTION, (ConversationIntent.CANCEL,)),
+    SemanticCase("correction_cancel", "quero remarcar, na verdade quero cancelar", ConversationIntent.CANCEL, ConversationAct.CORRECTION, (ConversationIntent.RESCHEDULE,)),
+    SemanticCase("composed_duration", "são 2 aparelhos e demora 3 horas?", ConversationIntent.DURATION_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("composed_price", "tenho 2 aparelhos, quanto custa o serviço?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
 )
 
 DISCOVERY_CONTEXT_SEEDS = (
@@ -91,6 +100,11 @@ DISCOVERY_CONTEXT_SEEDS = (
     ContextCase("address_guard", ConversationState.BOOKING_ADDRESS, "meu ar é de 12 mil BTUs", ("service_address",), ConversationState.BOOKING_ADDRESS),
     ContextCase("destructive_question_guard", ConversationState.BOOKING_CONFIRM, "como funciona o cancelamento?", (), ConversationState.BOOKING_CONFIRM, ("cancel_dry_run", "reschedule_dry_run")),
     ContextCase("destructive_question_guard", ConversationState.BOOKING_CONFIRM, "se eu precisar remarcar depois, posso?", (), ConversationState.BOOKING_CONFIRM, ("cancel_dry_run", "reschedule_dry_run")),
+    ContextCase("negated_destructive_guard", ConversationState.BOOKING_CONFIRM, "não quero cancelar", (), ConversationState.BOOKING_CONFIRM, ("cancel_dry_run", "reschedule_dry_run")),
+    ContextCase("negated_destructive_guard", ConversationState.BOOKING_CONFIRM, "não quero remarcar", (), ConversationState.BOOKING_CONFIRM, ("cancel_dry_run", "reschedule_dry_run")),
+    ContextCase("correction_guard", ConversationState.BOOKING_TIME, "são 2 aparelhos, na verdade são 3", ("selected_time",), None, ("confirm_dry_run",)),
+    ContextCase("time_number_roles", ConversationState.BOOKING_TIME, "são 2 aparelhos e o serviço leva 3 horas?", ("selected_time",), ConversationState.BOOKING_TIME, ("confirm_dry_run",)),
+    ContextCase("quantity_number_roles", ConversationState.BOOKING_QUANTITY, "tenho 2 aparelhos e 5 metros de tubulação", (), None, ("confirm_dry_run",)),
 )
 
 TYPO_REPLACEMENTS = {

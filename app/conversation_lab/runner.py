@@ -70,16 +70,29 @@ def _mutations(text: str, limit: int) -> list[str]:
 
 def _semantic_result(case: SemanticCase, text: str) -> dict[str, object]:
     result = DeterministicConversationInterpreter().interpret(text)
-    passed = result.has(case.intent) and (case.act is None or result.has_act(case.act))
+    forbidden_intents_present = [
+        intent.value for intent in case.forbidden_intents if result.has(intent)
+    ]
+    forbidden_acts_present = [
+        act.value for act in case.forbidden_acts if result.has_act(act)
+    ]
+    passed = (
+        (case.intent is None or result.has(case.intent))
+        and (case.act is None or result.has_act(case.act))
+        and not forbidden_intents_present
+        and not forbidden_acts_present
+    )
     return {
         "kind": "semantic",
         "family": case.family,
         "input": text,
-        "expected_intent": case.intent.value,
+        "expected_intent": case.intent.value if case.intent else None,
         "expected_act": case.act.value if case.act else None,
         "pass": passed,
         "actual_intents": sorted(intent.value for intent in result.intents),
         "actual_acts": sorted(act.value for act in result.acts),
+        "forbidden_intents_present": forbidden_intents_present,
+        "forbidden_acts_present": forbidden_acts_present,
     }
 
 
