@@ -2565,10 +2565,77 @@ async def _service_question_answer(
         if current_id == target_id
         else BookingRequirements()
     )
+    normalized_question = interpretation.normalized_text
+    asks_included_tubing = (
+        interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
+        and "tubulacao" in normalized_question
+        and any(marker in normalized_question for marker in ("inclus", "incluid"))
+    )
+    asks_extra_tubing_price = (
+        interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and bool(
+            re.search(
+                r"\b(?:cada\s+)?metros?\s+(?:adicional|adicionais|extra|extras)\b|"
+                r"\b(?:adicional|adicionais|extra|extras)\b.{0,20}\bmetros?\b",
+                normalized_question,
+            )
+        )
+    )
+
     parts: list[str] = []
+    structured_details = None
+    if asks_included_tubing or asks_extra_tubing_price:
+        try:
+            structured_details = await port.get_service_details(
+                inbound.business_id,
+                target_id,
+            )
+        except BookingRequiresHandoff:
+            structured_details = None
+
+    specialized_technical_answer = False
+    if asks_included_tubing:
+        included = getattr(structured_details, "included_tubing_meters", None)
+        if isinstance(included, Decimal):
+            meters_text = format(included.normalize(), "f").replace(".", ",")
+            unit = "metro" if included == Decimal("1") else "metros"
+            parts.append(
+                f"O serviço inclui {meters_text} {unit} de tubulação."
+            )
+        else:
+            parts.append(
+                "A metragem de tubulação incluída não está cadastrada com segurança. "
+                "A equipe pode confirmar esse ponto."
+            )
+        specialized_technical_answer = True
+
+    specialized_price_answer = False
+    if asks_extra_tubing_price:
+        extra_price = getattr(structured_details, "extra_tubing_price", None)
+        unit_label = getattr(structured_details, "extra_tubing_unit_label", None)
+        if isinstance(extra_price, Decimal):
+            unit_text = (
+                unit_label.strip()
+                if isinstance(unit_label, str) and unit_label.strip()
+                else "metro"
+            )
+            parts.append(
+                f"O valor adicional de tubulação é {_format_brl(extra_price)} "
+                f"por {unit_text}."
+            )
+        else:
+            parts.append(
+                "O preço do material adicional não está cadastrado com segurança. "
+                "A equipe pode confirmar esse ponto."
+            )
+        specialized_price_answer = True
+
     plan: BookingPlan | None = None
     if (
-        interpretation.has(ConversationIntent.PRICE_QUESTION)
+        (
+            interpretation.has(ConversationIntent.PRICE_QUESTION)
+            and not specialized_price_answer
+        )
         or interpretation.has(ConversationIntent.DURATION_QUESTION)
     ):
         try:
@@ -2580,7 +2647,10 @@ async def _service_question_answer(
         except BookingRequiresHandoff:
             plan = None
 
-    if interpretation.has(ConversationIntent.PRICE_QUESTION):
+    if (
+        interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and not specialized_price_answer
+    ):
         target_kind = _service_kind(services, target_id)
         service_budget = (
             interpretation.service_budget_max
@@ -2649,6 +2719,7 @@ async def _service_question_answer(
     if (
         interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
         and not interpretation.has(ConversationIntent.SERVICE_QUESTION)
+        and not specialized_technical_answer
     ):
         parts.append(
             f"Esse detalhe técnico específico não está estruturado no cadastro de {target.label}. "
