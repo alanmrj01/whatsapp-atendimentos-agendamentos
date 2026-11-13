@@ -6,6 +6,12 @@ on:
       - test/discovery-round9-language-catalog-professionalism
     paths:
       - '.github/workflows/conversation-lab-mass.yml'
+      - 'app/conversation_lab/**'
+      - 'app/conversations/interpreter.py'
+      - 'app/conversations/service_semantics.py'
+      - 'app/conversations/transitions.py'
+      - 'tests/test_conversation_interpreter.py'
+      - 'tests/test_service_semantics.py'
   workflow_dispatch:
 
 permissions:
