@@ -1,0 +1,46 @@
+name: Manual Conversation Lab validation
+
+on:
+  push:
+    branches:
+      - test/productivity-manual-conversation-lab-r9
+    paths:
+      - 'Dockerfile.conversation-manual-lab'
+      - 'app/conversation_lab/manual.py'
+      - 'tests/test_conversation_manual_lab.py'
+      - '.github/workflows/conversation-manual-lab.yml'
+  pull_request:
+    paths:
+      - 'Dockerfile.conversation-manual-lab'
+      - 'app/conversation_lab/**'
+      - 'app/conversations/**'
+      - 'tests/test_conversation_manual_lab.py'
+      - '.github/workflows/conversation-manual-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manual-lab-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ENVIRONMENT: test
+      CONVERSATION_LAB_ALLOW_EXTERNAL_IO: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Compile manual lab
+        run: python -m compileall app/conversation_lab/manual.py app/conversation_lab app/conversations tests/test_conversation_manual_lab.py
+      - name: Manual lab API smoke
+        run: pytest tests/test_conversation_manual_lab.py -q -p no:cacheprovider
+      - name: Build isolated manual lab image
+        run: docker build -f Dockerfile.conversation-manual-lab -t alovia-manual-lab-r9 .
+      - name: Diff check
+        run: git diff --check
