@@ -43,6 +43,14 @@ jobs:
   discovery-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        stage:
+          - semantic
+          - context
+          - flow
+          - journey
     env:
       ENVIRONMENT: test
       CONVERSATION_LAB_ALLOW_EXTERNAL_IO: 'false'
@@ -53,4 +61,4 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: python -m pip install --disable-pip-version-check -r requirements-prod.txt
-      - run: python -m app.conversation_lab.runner --mode discovery --per-seed 12
+      - run: python -m app.conversation_lab.runner --mode discovery --per-seed 12 --stage ${{ matrix.stage }}
