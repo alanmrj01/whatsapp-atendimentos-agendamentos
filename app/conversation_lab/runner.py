@@ -286,6 +286,7 @@ def _semantic_result(case: SemanticCase, text: str) -> dict[str, object]:
 
 async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[str, object]:
     context: dict[str, object] = {"service_id": str(SERVICE_ID)}
+    context.update(dict(case.context_items))
     port = DryRunBookingPort()
     if case.state == ConversationState.BOOKING_TIME:
         context.update({
