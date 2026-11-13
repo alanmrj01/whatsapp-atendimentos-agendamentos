@@ -80,7 +80,44 @@ DISCOVERY_SEEDS = (
     SemanticCase("correction_cancel", "quero remarcar, na verdade quero cancelar", ConversationIntent.CANCEL, ConversationAct.CORRECTION, (ConversationIntent.RESCHEDULE,)),
     SemanticCase("composed_duration", "são 2 aparelhos e demora 3 horas?", ConversationIntent.DURATION_QUESTION, ConversationAct.SIDE_QUESTION),
     SemanticCase("composed_price", "tenho 2 aparelhos, quanto custa o serviço?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("service_installation", "preciso instalar um ar condicionado", ConversationIntent.SERVICE_INTENT),
+    SemanticCase("service_cleaning", "quero fazer uma limpeza no ar", ConversationIntent.SERVICE_INTENT),
+    SemanticCase("service_diagnostics", "meu ar não está gelando", ConversationIntent.SERVICE_INTENT),
+    SemanticCase("service_gas", "preciso de recarga de gás", ConversationIntent.SERVICE_INTENT),
+    SemanticCase("service_pmoc", "vocês fazem PMOC?", ConversationIntent.SERVICE_INTENT, ConversationAct.SIDE_QUESTION),
+    SemanticCase("service_question", "o que inclui esse serviço?", ConversationIntent.SERVICE_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("technical_question", "qual a voltagem do aparelho?", ConversationIntent.TECHNICAL_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("equipment_purchase", "quero comprar um split", ConversationIntent.EQUIPMENT_PURCHASE),
+    SemanticCase("human_handoff", "quero falar com uma pessoa", ConversationIntent.HUMAN_HANDOFF),
+    SemanticCase("book_action", "quero agendar uma visita", ConversationIntent.BOOK),
+    SemanticCase("informal_price", "fica quanto esse serviço?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("informal_availability", "tem algum horário livre?", ConversationIntent.AVAILABILITY),
 )
+
+_SOCIAL_PAUSE_CHECKPOINTS = (
+    ConversationState.BOOKING_SERVICE,
+    ConversationState.BOOKING_QUANTITY,
+    ConversationState.BOOKING_ACCESS,
+    ConversationState.BOOKING_ADDRESS,
+    ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
+    ConversationState.BOOKING_EQUIPMENT_MODEL,
+    ConversationState.BOOKING_EQUIPMENT_PROFILE,
+    ConversationState.BOOKING_EQUIPMENT_DELIVERY,
+    ConversationState.BOOKING_INSTALLATION_HEIGHT,
+    ConversationState.BOOKING_PROPERTY,
+    ConversationState.BOOKING_BUILDING_HOURS,
+    ConversationState.BOOKING_GATE_DETAILS,
+    ConversationState.BOOKING_TUBING,
+    ConversationState.BOOKING_SITE_LIMIT,
+    ConversationState.BOOKING_DATE,
+    ConversationState.BOOKING_TIME,
+    ConversationState.BOOKING_ATTENDEE,
+    ConversationState.BOOKING_ATTENDEE_NAME,
+    ConversationState.BOOKING_PHONE_CONFIRM,
+    ConversationState.BOOKING_CONFIRM,
+    ConversationState.QUOTE_DECISION,
+)
+
 
 DISCOVERY_CONTEXT_SEEDS = (
     ContextCase("time_guard", ConversationState.BOOKING_TIME, "essa visita tem garantia de 2 anos?", ("selected_time",), ConversationState.BOOKING_TIME),
@@ -105,6 +142,26 @@ DISCOVERY_CONTEXT_SEEDS = (
     ContextCase("correction_guard", ConversationState.BOOKING_TIME, "são 2 aparelhos, na verdade são 3", ("selected_time",), None, ("confirm_dry_run",)),
     ContextCase("time_number_roles", ConversationState.BOOKING_TIME, "são 2 aparelhos e o serviço leva 3 horas?", ("selected_time",), ConversationState.BOOKING_TIME, ("confirm_dry_run",)),
     ContextCase("quantity_number_roles", ConversationState.BOOKING_QUANTITY, "tenho 2 aparelhos e 5 metros de tubulação", (), None, ("confirm_dry_run",)),
+) + tuple(
+    ContextCase(
+        "social_checkpoint",
+        state,
+        "valeu",
+        ("repair_attempts",),
+        state,
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+    )
+    for state in _SOCIAL_PAUSE_CHECKPOINTS
+) + tuple(
+    ContextCase(
+        "pause_checkpoint",
+        state,
+        "pera aí um minutinho",
+        ("repair_attempts",),
+        state,
+        ("confirm_dry_run", "cancel_dry_run", "reschedule_dry_run"),
+    )
+    for state in _SOCIAL_PAUSE_CHECKPOINTS
 )
 
 TYPO_REPLACEMENTS = {
@@ -118,5 +175,16 @@ TYPO_REPLACEMENTS = {
     "quanto": ("qnto", "quanto", "qto"),
 }
 
-PREFIXES = ("", "oi, ", "bom dia, ", "blz, ", "opa, ", "rapidinho: ")
-SUFFIXES = ("", "?", " ??", " por favor", " pfv")
+PREFIXES = (
+    "",
+    "oi, ",
+    "bom dia, ",
+    "blz, ",
+    "opa, ",
+    "rapidinho: ",
+    "e aí, ",
+    "amigo, ",
+    "moço, ",
+    "seguinte, ",
+)
+SUFFIXES = ("", "?", " ??", " por favor", " pfv", " valeu", " blz")
