@@ -79,6 +79,12 @@ REGRESSION_SEMANTIC = (
     SemanticCase("duration", "qto tempo leva esse serviço?", ConversationIntent.DURATION_QUESTION, ConversationAct.SIDE_QUESTION),
     SemanticCase("availability", "tem horaro livre hoje?", ConversationIntent.AVAILABILITY),
     SemanticCase("availability", "quando vcês conseguem vir?", ConversationIntent.AVAILABILITY),
+    SemanticCase(
+        "technical_question",
+        "qual a pressão exata do gás nesse aparelho?",
+        ConversationIntent.TECHNICAL_QUESTION,
+        ConversationAct.SIDE_QUESTION,
+    ),
 )
 
 REGRESSION_CONTEXT = (

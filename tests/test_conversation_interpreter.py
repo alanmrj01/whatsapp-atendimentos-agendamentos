@@ -368,6 +368,7 @@ def test_service_inquiry_is_side_question_not_implicit_workflow_change(body: str
         "Qual a voltagem desse aparelho?",
         "Esse modelo tem Wi-Fi?",
         "Qual a garantia do serviço?",
+        "Qual a pressão exata do gás nesse aparelho?",
         "Quais as medidas da condensadora?",
     ],
 )

@@ -3471,6 +3471,41 @@ async def test_gas_recharge_collects_existing_equipment_before_agenda() -> None:
 
 
 @mark.asyncio
+async def test_gas_recharge_accepts_uncertain_model_answer_with_question_mark() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "equipment_ownership": "has_equipment",
+            "service_address": {
+                "address_line": "Rua A, 10",
+                "city": "São José dos Campos",
+                "state": "SP",
+            },
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Recarga de gás e teste de vazamento")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(950, body="oi, LG dual inverter 12000 BTU?")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["equipment_model"] == "LG dual inverter 12000 BTU"
+    assert repository.automation_enabled is True
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "não há equipamentos ativos" not in body.casefold()
+
+
+@mark.asyncio
 async def test_post_booking_supported_request_starts_new_supported_flow() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.POST_BOOKING_HELP,
