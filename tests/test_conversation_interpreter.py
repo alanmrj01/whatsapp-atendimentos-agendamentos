@@ -684,3 +684,27 @@ def test_round9_language_roots_cover_structural_variants(
     assert result.has(intent)
     if act is not None:
         assert result.has_act(act)
+
+
+
+@pytest.mark.parametrize(
+    ("body", "intent", "act"),
+    [
+        ("Qual seria o valor?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
+        ("Oi, não quero mais o agendamento", ConversationIntent.CANCEL, None),
+        ("Se eu desistir como funciona?", ConversationIntent.CANCEL_QUESTION, ConversationAct.SIDE_QUESTION),
+        ("Se eu precisar mudar o horário posso?", ConversationIntent.RESCHEDULE_QUESTION, ConversationAct.SIDE_QUESTION),
+        ("Como funciona pra mudar o dia?", ConversationIntent.RESCHEDULE_QUESTION, ConversationAct.SIDE_QUESTION),
+        ("Posso passar pra outro dia?", ConversationIntent.RESCHEDULE_QUESTION, ConversationAct.SIDE_QUESTION),
+    ],
+)
+def test_round9_residual_language_roots(
+    body: str,
+    intent: ConversationIntent,
+    act: ConversationAct | None,
+) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(intent)
+    if act is not None:
+        assert result.has_act(act)
