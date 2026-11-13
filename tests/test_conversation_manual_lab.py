@@ -7,6 +7,7 @@ from app.conversation_lab.adapters import (
     SERVICE_ID,
 )
 from app.conversation_lab.manual import (
+    HTML,
     ManualInput,
     _SESSIONS,
     create_session,
@@ -21,6 +22,12 @@ async def _new_session():
     snapshot = await create_session()
     session_id = snapshot["session_id"]
     return session_id, _SESSIONS[session_id]
+
+
+async def _new_named_session():
+    session_id, session = await _new_named_session()
+    session.repository.customer_name = "João"
+    return session_id, session
 
 
 @pytest.mark.asyncio
@@ -43,6 +50,38 @@ async def test_manual_lab_health_and_isolation_flags() -> None:
     }
 
 
+@pytest.mark.asyncio
+async def test_manual_lab_starts_without_synthetic_customer_name_and_asks_real_name() -> None:
+    session_id, _ = await _new_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="boa tarde"),
+    )
+
+    assert snapshot["state"] == ConversationState.CUSTOMER_NAME.value
+    assert snapshot["customer_name"] is None
+    joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
+    assert "como posso te chamar" in joined
+    assert "cliente sintético" not in joined
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_has_fixed_isolated_equipment_catalog() -> None:
+    _, session = await _new_session()
+
+    catalog = await session.port.list_equipment_catalog(None)
+
+    assert len(catalog) >= 3
+    assert {item.capacity_btu for item in catalog} >= {9000, 12000, 18000}
+    assert all(item.source_url.startswith("lab://") for item in catalog)
+
+
+def test_manual_lab_exposes_copy_conversation_button() -> None:
+    assert "Copiar conversa" in HTML
+    assert "copyConversation()" in HTML
+
+
 @pytest.mark.parametrize(
     ("body", "expected_service_id"),
     [
@@ -60,7 +99,7 @@ async def test_manual_lab_uses_r9_catalog_driven_service_selection(
     body: str,
     expected_service_id,
 ) -> None:
-    session_id, _ = await _new_session()
+    session_id, _ = await _new_named_session()
 
     snapshot = await send_message(
         session_id,
@@ -85,7 +124,7 @@ async def test_manual_lab_does_not_invent_service_outside_catalog(
     body: str,
     removed_service_id,
 ) -> None:
-    session_id, session = await _new_session()
+    session_id, session = await _new_named_session()
     session.port.services = [
         option
         for option in session.port.services
@@ -104,7 +143,7 @@ async def test_manual_lab_does_not_invent_service_outside_catalog(
 
 @pytest.mark.asyncio
 async def test_manual_lab_commercial_negotiation_hands_off_without_losing_candidate() -> None:
-    session_id, session = await _new_session()
+    session_id, session = await _new_named_session()
     candidate = {
         "service_id": str(SERVICE_ID),
         "selected_date": "2026-11-16",
@@ -129,7 +168,7 @@ async def test_manual_lab_commercial_negotiation_hands_off_without_losing_candid
 
 @pytest.mark.asyncio
 async def test_manual_lab_synthetic_audio_is_processed_without_external_io() -> None:
-    session_id, _ = await _new_session()
+    session_id, _ = await _new_named_session()
 
     snapshot = await send_message(
         session_id,
