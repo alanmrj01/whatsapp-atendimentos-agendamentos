@@ -57,6 +57,10 @@ REGRESSION_CONTEXT = (
     ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "valeu viu pfv", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
     ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "opa, pera ai um minutinho", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
     ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "rapidinho: pera ai um minutinho por favor", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
+    ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "e aí, valeu viu", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
+    ContextCase("social_pause", ConversationState.BOOKING_TIME, "amigo, pera aí um minutinho", ("repair_attempts",), ConversationState.BOOKING_TIME),
+    ContextCase("social_pause", ConversationState.BOOKING_SERVICE, "moço, valeu", ("repair_attempts",), ConversationState.BOOKING_SERVICE),
+    ContextCase("social_pause", ConversationState.BOOKING_CONFIRM, "seguinte, pera aí um minutinho", ("repair_attempts",), ConversationState.BOOKING_CONFIRM),
 )
 
 # Seeds de discovery. O runner gera variações adicionais de forma controlada.
