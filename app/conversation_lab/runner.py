@@ -100,8 +100,13 @@ async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[s
     repository = LabConversationRepository(state=case.state, context=context)
     await ConversationEngine(repository, port).process(inbound(sequence, body=text))
     forbidden_present = [key for key in case.forbidden_context_keys if key in repository.context]
-    passed = not forbidden_present and (
-        case.expected_state is None or repository.state == case.expected_state
+    forbidden_calls_present = [
+        call for call in case.forbidden_calls if call in port.calls
+    ]
+    passed = (
+        not forbidden_present
+        and not forbidden_calls_present
+        and (case.expected_state is None or repository.state == case.expected_state)
     )
     outbound = ""
     if repository.outbounds:
@@ -113,6 +118,7 @@ async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[s
         "expected_state": case.expected_state,
         "actual_state": repository.state,
         "forbidden_present": forbidden_present,
+        "forbidden_calls_present": forbidden_calls_present,
         "handoff_status": repository.handoff_status,
         "automation_enabled": repository.automation_enabled,
         "outbound": outbound,

@@ -21,6 +21,7 @@ class ContextCase:
     text: str
     forbidden_context_keys: tuple[str, ...] = ()
     expected_state: str | None = None
+    forbidden_calls: tuple[str, ...] = ()
 
 
 # Corpus de regressão conhecido e aprovado. Discovery só vira regressão após passar
@@ -64,15 +65,32 @@ DISCOVERY_SEEDS = (
     SemanticCase("availability", "tem horário livre hoje?", ConversationIntent.AVAILABILITY),
     SemanticCase("availability", "quando vocês conseguem vir?", ConversationIntent.AVAILABILITY),
     SemanticCase("availability", "qual o próximo horário?", ConversationIntent.AVAILABILITY),
+    SemanticCase("cancel_action", "quero cancelar meu agendamento", ConversationIntent.CANCEL),
+    SemanticCase("cancel_question", "como funciona o cancelamento?", ConversationIntent.CANCEL_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("reschedule_action", "preciso remarcar meu agendamento", ConversationIntent.RESCHEDULE),
+    SemanticCase("reschedule_question", "se eu precisar remarcar depois, posso?", ConversationIntent.RESCHEDULE_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("price", "quanto custa esse serviço?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
+    SemanticCase("price", "qual o valor da visita?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
 )
 
 DISCOVERY_CONTEXT_SEEDS = (
     ContextCase("time_guard", ConversationState.BOOKING_TIME, "essa visita tem garantia de 2 anos?", ("selected_time",), ConversationState.BOOKING_TIME),
     ContextCase("time_guard", ConversationState.BOOKING_TIME, "tem 5 metros de tubulação?", ("selected_time",), ConversationState.BOOKING_TIME),
     ContextCase("time_guard", ConversationState.BOOKING_TIME, "o endereço é número 9?", ("selected_time",), ConversationState.BOOKING_TIME),
+    ContextCase("time_guard", ConversationState.BOOKING_TIME, "meu aparelho é de 18 mil BTUs", ("selected_time", "candidate_booking"), None, ("confirm_dry_run",)),
+    ContextCase("time_guard", ConversationState.BOOKING_TIME, "o serviço leva 3 horas?", ("selected_time",), ConversationState.BOOKING_TIME),
     ContextCase("quantity_guard", ConversationState.BOOKING_QUANTITY, "quanto custa? meu limite é 500 reais", ("quantity", "equipment_quantity"), ConversationState.BOOKING_QUANTITY),
     ContextCase("quantity_guard", ConversationState.BOOKING_QUANTITY, "a tubulação tem até 3 metros", ("quantity", "equipment_quantity"), ConversationState.BOOKING_QUANTITY),
     ContextCase("quantity_guard", ConversationState.BOOKING_QUANTITY, "no ambiente ficam 4 pessoas", ("quantity", "equipment_quantity"), ConversationState.BOOKING_QUANTITY),
+    ContextCase("quantity_guard", ConversationState.BOOKING_QUANTITY, "meu endereço é número 12", ("quantity", "equipment_quantity"), ConversationState.BOOKING_QUANTITY),
+    ContextCase("date_guard", ConversationState.BOOKING_DATE, "são 3 aparelhos", ("selected_date",), ConversationState.BOOKING_DATE),
+    ContextCase("date_guard", ConversationState.BOOKING_DATE, "tenho 5 metros de tubulação", ("selected_date",), ConversationState.BOOKING_DATE),
+    ContextCase("date_guard", ConversationState.BOOKING_DATE, "o endereço é número 9", ("selected_date",), ConversationState.BOOKING_DATE),
+    ContextCase("address_guard", ConversationState.BOOKING_ADDRESS, "são 2 aparelhos", ("service_address",), ConversationState.BOOKING_ADDRESS),
+    ContextCase("address_guard", ConversationState.BOOKING_ADDRESS, "demora 3 horas?", ("service_address",), ConversationState.BOOKING_ADDRESS),
+    ContextCase("address_guard", ConversationState.BOOKING_ADDRESS, "meu ar é de 12 mil BTUs", ("service_address",), ConversationState.BOOKING_ADDRESS),
+    ContextCase("destructive_question_guard", ConversationState.BOOKING_CONFIRM, "como funciona o cancelamento?", (), ConversationState.BOOKING_CONFIRM, ("cancel_dry_run", "reschedule_dry_run")),
+    ContextCase("destructive_question_guard", ConversationState.BOOKING_CONFIRM, "se eu precisar remarcar depois, posso?", (), ConversationState.BOOKING_CONFIRM, ("cancel_dry_run", "reschedule_dry_run")),
 )
 
 TYPO_REPLACEMENTS = {
