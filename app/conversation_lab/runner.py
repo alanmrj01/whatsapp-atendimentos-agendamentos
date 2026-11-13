@@ -15,11 +15,13 @@ from app.conversation_lab.adapters import DryRunBookingPort, LabConversationRepo
 from app.conversation_lab.corpus import (
     ContextCase,
     DISCOVERY_CONTEXT_SEEDS,
+    DISCOVERY_FLOW_CASES,
     DISCOVERY_SEEDS,
     PREFIXES,
     REGRESSION_CONTEXT,
     REGRESSION_SEMANTIC,
     SUFFIXES,
+    FlowCase,
     SemanticCase,
     TYPO_REPLACEMENTS,
 )
@@ -168,15 +170,88 @@ async def _context_result(case: ContextCase, text: str, sequence: int) -> dict[s
     }
 
 
+async def _flow_result(case: FlowCase, text: str, sequence: int) -> dict[str, object]:
+    context = dict(case.context_items)
+    port = DryRunBookingPort()
+    repository = LabConversationRepository(state=case.state, context=context)
+    engine = ConversationEngine(repository, port)
+
+    await engine.process(inbound(sequence, body=text))
+    side_state = repository.state
+    side_outbound = ""
+    if repository.outbounds:
+        side_outbound = repository.outbounds[-1].transition.outbound.body or ""
+
+    missing_side_terms = [
+        term for term in case.side_contains if term.casefold() not in side_outbound.casefold()
+    ]
+    side_forbidden_calls = [
+        call for call in case.forbidden_calls if call in port.calls
+    ]
+    side_passed = (
+        (case.side_expected_state is None or side_state == case.side_expected_state)
+        and not missing_side_terms
+        and not side_forbidden_calls
+        and repository.automation_enabled
+        and repository.handoff_status == "none"
+    )
+
+    await engine.process(inbound(sequence + 1, body=case.followup_text))
+    final_state = repository.state
+    missing_context_keys = [
+        key for key in case.followup_context_keys if key not in repository.context
+    ]
+    missing_required_calls = [
+        call for call in case.required_calls if call not in port.calls
+    ]
+    forbidden_calls_present = [
+        call for call in case.forbidden_calls if call in port.calls
+    ]
+    passed = (
+        side_passed
+        and (case.followup_expected_state is None or final_state == case.followup_expected_state)
+        and not missing_context_keys
+        and not missing_required_calls
+        and not forbidden_calls_present
+        and repository.automation_enabled
+        and repository.handoff_status == "none"
+    )
+    final_outbound = ""
+    if repository.outbounds:
+        final_outbound = repository.outbounds[-1].transition.outbound.body or ""
+
+    return {
+        "kind": "flow",
+        "family": case.family,
+        "input": f"{text} -> {case.followup_text}",
+        "side_input": text,
+        "followup_input": case.followup_text,
+        "side_expected_state": case.side_expected_state,
+        "side_actual_state": side_state,
+        "followup_expected_state": case.followup_expected_state,
+        "followup_actual_state": final_state,
+        "missing_side_terms": missing_side_terms,
+        "missing_context_keys": missing_context_keys,
+        "missing_required_calls": missing_required_calls,
+        "forbidden_calls_present": forbidden_calls_present,
+        "side_outbound": side_outbound,
+        "final_outbound": final_outbound,
+        "dry_run_calls": port.calls,
+        "pass": passed,
+    }
+
+
 async def run(mode: str, per_seed: int) -> int:
     if os.getenv("CONVERSATION_LAB_ALLOW_EXTERNAL_IO", "false").lower() == "true":
         raise RuntimeError("conversation_lab_external_io_must_remain_disabled")
 
     semantic_cases = list(REGRESSION_SEMANTIC)
     context_cases = list(REGRESSION_CONTEXT)
+    flow_cases: list[FlowCase] = []
     if mode in {"discovery", "all"}:
         semantic_cases.extend(DISCOVERY_SEEDS)
         context_cases.extend(DISCOVERY_CONTEXT_SEEDS)
+        flow_cases.extend(DISCOVERY_FLOW_CASES)
 
     results: list[dict[str, object]] = []
     sequence = 1
@@ -190,6 +265,12 @@ async def run(mode: str, per_seed: int) -> int:
         for text in variants:
             results.append(await _context_result(case, text, sequence))
             sequence += 1
+
+    for case in flow_cases:
+        variants = _mutations(case.side_text, per_seed)
+        for text in variants:
+            results.append(await _flow_result(case, text, sequence))
+            sequence += 2
 
     gaps = [item for item in results if not item["pass"]]
     passed = [item for item in results if item["pass"]]
