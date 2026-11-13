@@ -1179,7 +1179,7 @@ def _normalize_conversation_language(value: str) -> str:
 def _strip_social_wrappers(value: str) -> str:
     normalized = value
     normalized = re.sub(
-        r"^(?:(?:oi|ola|opa|blz|bom dia|boa tarde|boa noite|rapidinho)\s+)+",
+        r"^(?:(?:oi|ola|opa|blz|e ai|amigo|moco|seguinte|bom dia|boa tarde|boa noite|rapidinho)\s+)+",
         "",
         normalized,
     )
