@@ -781,7 +781,16 @@ async def _route_named_conversation(
         and _is_site_limit_availability_question(interpretation, inbound.body)
     ):
         return _transition(state, context, site_limit_message())
-    if state in booking_states and interpretation.has_act(ConversationAct.SOCIAL):
+    if (
+        state in booking_states
+        and interpretation.has_act(ConversationAct.SOCIAL)
+        and not _message_can_answer_pending_state(
+            state,
+            inbound,
+            context,
+            interpretation,
+        )
+    ):
         return await _resume_pending_question(
             conversation,
             inbound,
