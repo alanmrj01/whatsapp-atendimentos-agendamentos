@@ -655,3 +655,32 @@ def test_natural_charge_language_is_price_question(body: str) -> None:
 
     assert result.has(ConversationIntent.PRICE_QUESTION)
     assert result.has_act(ConversationAct.SIDE_QUESTION)
+
+
+
+@pytest.mark.parametrize(
+    ("body", "intent", "act"),
+    [
+        ("Fica em quanto?", ConversationIntent.PRICE_QUESTION, ConversationAct.SIDE_QUESTION),
+        ("Leva o dia todo?", ConversationIntent.DURATION_QUESTION, ConversationAct.SIDE_QUESTION),
+        ("Tem encaixe?", ConversationIntent.AVAILABILITY, None),
+        ("Manda um técnico", ConversationIntent.BOOK, None),
+        ("Desmarca meu horário", ConversationIntent.CANCEL, None),
+        ("Como cancela?", ConversationIntent.CANCEL_QUESTION, ConversationAct.SIDE_QUESTION),
+        ("Passa pra outro dia", ConversationIntent.RESCHEDULE, None),
+        ("Dá pra trocar o horário?", ConversationIntent.RESCHEDULE_QUESTION, ConversationAct.SIDE_QUESTION),
+        ("Me passa pra um atendente", ConversationIntent.HUMAN_HANDOFF, None),
+        ("O que o técnico faz?", ConversationIntent.SERVICE_QUESTION, ConversationAct.SIDE_QUESTION),
+        ("É 110 ou 220?", ConversationIntent.TECHNICAL_QUESTION, ConversationAct.SIDE_QUESTION),
+    ],
+)
+def test_round9_language_roots_cover_structural_variants(
+    body: str,
+    intent: ConversationIntent,
+    act: ConversationAct | None,
+) -> None:
+    result = DeterministicConversationInterpreter().interpret(body)
+
+    assert result.has(intent)
+    if act is not None:
+        assert result.has_act(act)
