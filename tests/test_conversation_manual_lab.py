@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 
 from app.conversation_lab.adapters import (
@@ -432,13 +434,13 @@ def test_apartment_address_fact_infers_building_for_short_term_memory() -> None:
 
 def test_tubing_guidance_defers_exact_extra_price_until_quote() -> None:
     guidance = tubing_guidance_message(
-        included_meters=3,
-        extra_meter_price=50,
+        included_meters=Decimal("3"),
+        extra_meter_price=Decimal("50"),
         unit_label="metro",
     )
     variation = tubing_variation_message(
-        included_meters=3,
-        extra_meter_price=50,
+        included_meters=Decimal("3"),
+        extra_meter_price=Decimal("50"),
         unit_label="metro",
     )
 
