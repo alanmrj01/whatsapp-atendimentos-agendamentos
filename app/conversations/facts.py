@@ -169,7 +169,7 @@ def enrich_context_from_message(
         updated["equipment_model_known"] = True
 
     quantity = _equipment_quantity(assertion)
-    if quantity is not None:
+    if quantity is not None and ("quantity" not in updated or is_correction):
         _assign_fact(updated, "equipment_quantity", quantity, is_correction)
         if "quantity" not in updated or is_correction:
             updated["quantity"] = quantity

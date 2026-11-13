@@ -1229,7 +1229,8 @@ async def _handle_late_booking_correction(
     )
     previous = _clean_context(conversation.context)
     quantity_changed = (
-        isinstance(context.get("quantity"), int)
+        explicit_correction
+        and isinstance(context.get("quantity"), int)
         and not isinstance(context.get("quantity"), bool)
         and previous.get("quantity") != context.get("quantity")
     )
