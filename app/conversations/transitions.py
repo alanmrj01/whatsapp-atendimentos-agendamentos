@@ -8432,16 +8432,22 @@ async def _handle_weekday(
         return await _restart_service_selection(inbound, port)
     requirements = _requirements_from_context(context)
     try:
+        operating_weekdays = await _operating_weekday_options(
+            inbound,
+            port,
+            service_id,
+            requirements,
+        )
         dates = _snapshot_options(
             await port.list_dates(inbound.business_id, service_id, requirements)
         )
     except BookingRequiresHandoff as exc:
         return _handoff_for_reason(str(exc))
-    if not dates:
+    if not operating_weekdays:
         return await _restart_service_selection(
             inbound,
             port,
-            body="Não encontrei datas disponíveis para esse serviço.",
+            body="Não encontrei dias de atendimento configurados para esse serviço.",
         )
 
     exact_date = _date_from_text(inbound.body, dates)
@@ -8466,7 +8472,7 @@ async def _handle_weekday(
             context,
             "weekday",
             weekday_selection_message(
-                weekday_options(dates),
+                operating_weekdays,
                 body=(
                     f"{customer_lead(customer_name)}Qual dia da semana fica melhor "
                     "para receber a visita do técnico? Se qualquer dia servir, pode me dizer."
@@ -8478,17 +8484,49 @@ async def _handle_weekday(
             ),
         )
 
-    matches = dates if any_day else dates_for_weekday(dates, weekday)
-    if not matches:
+    if weekday is not None and not _option_exists(
+        operating_weekdays, str(weekday)
+    ):
         return _transition(
             ConversationState.BOOKING_WEEKDAY,
             _intake_context(context),
             weekday_selection_message(
-                weekday_options(dates),
+                operating_weekdays,
                 body=(
-                    f"Não encontrei horário disponível em {weekday_plural(weekday)}. "
-                    "Qual outro dia da semana fica melhor?"
+                    "Esse dia não está entre os dias de atendimento configurados. "
+                    "Qual destes dias da semana fica melhor?"
                 ),
+            ),
+        )
+
+    try:
+        matches = await _suggested_schedule_dates(
+            inbound,
+            port,
+            service_id,
+            requirements,
+            weekday=None if any_day else weekday,
+            limit=3,
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    if not matches:
+        unavailable_body = (
+            "Não encontrei horário disponível nos próximos períodos consultados. "
+            "Qual dia da semana fica melhor para tentar outra opção?"
+            if any_day
+            else (
+                f"Não encontrei horário disponível em {weekday_plural(weekday)} "
+                "nos próximos períodos consultados. Qual outro dia da semana fica melhor?"
+            )
+        )
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            _intake_context(context),
+            weekday_selection_message(
+                operating_weekdays,
+                body=unavailable_body,
             ),
         )
 
@@ -8508,7 +8546,7 @@ async def _handle_weekday(
             ConversationState.BOOKING_WEEKDAY,
             _intake_context(context),
             weekday_selection_message(
-                weekday_options(dates),
+                operating_weekdays,
                 body=(
                     "As opções que eu estava consultando acabaram de ficar indisponíveis. "
                     "Qual dia da semana fica melhor para eu consultar novamente?"
