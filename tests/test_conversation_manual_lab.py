@@ -581,6 +581,39 @@ async def test_gate_request_for_technician_name_continues_scheduling_professiona
     joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
     assert "depois de definirmos a data e o horário" in joined
     assert "confirma qual técnico" in joined
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert [option["title"] for option in last["options"]] == [
+        "Segunda-feira",
+        "Terça-feira",
+        "Quarta-feira",
+        "Quinta-feira",
+        "Sexta-feira",
+        "Sábado",
+        "Domingo",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_weekday_choice_offers_three_cross_month_slots() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_WEEKDAY
+    session.repository.context = {
+        "service_id": str(SERVICE_ID),
+        "service_qualification_version": 2,
+    }
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="quarta-feira"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_DATE.value
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert [option["title"] for option in last["options"]] == [
+        "quarta-feira, 18/11 às 09:00",
+        "quarta-feira, 25/11 às 14:30",
+        "quarta-feira, 02/12 às 18:00",
+    ]
 
 
 def test_apartment_address_fact_infers_building_for_short_term_memory() -> None:
