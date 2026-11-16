@@ -6,6 +6,7 @@ class ConversationState(StrEnum):
     CUSTOMER_NAME = "CUSTOMER_NAME"
     MENU = "MENU"
     BOOKING_SERVICE = "BOOKING_SERVICE"
+    BOOKING_SERVICE_DETAILS = "BOOKING_SERVICE_DETAILS"
     BOOKING_QUANTITY = "BOOKING_QUANTITY"
     BOOKING_ACCESS = "BOOKING_ACCESS"
     BOOKING_ADDRESS = "BOOKING_ADDRESS"
@@ -119,6 +120,9 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "issue_video_requested",
         "issue_video_received",
         "reported_issue",
+        "service_details_text",
+        "service_issue_category",
+        "appliance_type",
         "equipment_quantity",
         "equipment_profile_intro_sent",
         "room_area_m2",
