@@ -1083,8 +1083,8 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
     assert interactive["booking.services"].outbound_payload["sections"][0]["rows"] == [
         {"id": f"service:{SERVICE_ID}", "title": "Service"}
     ]
-    assert interactive["booking.dates"].outbound_payload["sections"][0]["rows"] == [
-        {"id": "date:2026-09-02", "title": "02/09/2026"}
+    assert interactive["booking.weekdays"].outbound_payload["sections"][0]["rows"] == [
+        {"id": "weekday:2", "title": "Quarta-feira"}
     ]
     assert interactive["booking.times"].outbound_payload["sections"][0]["rows"] == [
         {"id": "time:09:00", "title": "09:00"}
