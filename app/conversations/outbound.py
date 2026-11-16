@@ -13,6 +13,7 @@ from app.conversations.constants import (
     EQUIPMENT_INSTALLATION,
     EQUIPMENT_MODEL_KNOWN,
     EQUIPMENT_MODEL_RECOMMEND,
+    EQUIPMENT_MODEL_EXACT_CHECK,
     EQUIPMENT_NEEDS,
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
@@ -193,6 +194,23 @@ def equipment_model_request_message(
     ),
 ) -> OutboundMessage:
     return OutboundMessage(message_type="text", body=body)
+
+
+def equipment_alternative_offer_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            "Desculpe, não temos esse modelo específico no catálogo. "
+            "Posso te apresentar opções semelhantes que temos disponíveis?"
+        ),
+        interactive_id="booking.equipment_alternative",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_MODEL_RECOMMEND, "Ver semelhantes"),
+                BookingOption(EQUIPMENT_MODEL_EXACT_CHECK, "Quero esse modelo"),
+            )
+        ),
+    )
 
 
 def equipment_profile_message(
@@ -685,8 +703,7 @@ def quantity_selection_message(*, installation: bool = False) -> OutboundMessage
         BookingOption(f"quantity:{value}", str(value))
         for value in range(1, QUANTITY_OPTION_LIMIT + 1)
     )
-    if installation:
-        options = (*options, BookingOption("quantity:more", "6 ou mais"))
+    options = (*options, BookingOption("quantity:more", "6 ou mais"))
     return OutboundMessage(
         message_type="interactive_list",
         body=(
