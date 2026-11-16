@@ -3754,6 +3754,28 @@ def _message_can_answer_pending_state(
             )
         )
     if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        if _context_string(context, "catalog_mismatch_query") is not None:
+            if normalized in {
+                "sim",
+                "sim pode",
+                "pode",
+                "pode sim",
+                "quero ver",
+                "me mostra",
+                "mostra",
+                "pode mostrar",
+                "sim quero",
+                "quero semelhantes",
+                "quero ver semelhantes",
+                "quero esse modelo",
+                "quero esse mesmo",
+                "prefiro esse modelo",
+                "prefiro esse",
+                "quero exatamente esse",
+                "tem que ser esse",
+                "esse mesmo",
+            }:
+                return True
         if interpretation.has_act(ConversationAct.SIDE_QUESTION):
             model_fact = enrich_context_from_message({}, body).get("equipment_model")
             if (
