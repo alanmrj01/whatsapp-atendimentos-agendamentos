@@ -5830,7 +5830,10 @@ async def _handle_service(
         if purchase_action == EQUIPMENT_INSTALLATION:
             updated_context["equipment_ownership"] = "has_equipment"
             updated_context["purchase_only"] = False
-            updated_context.pop("request_mode", None)
+            if context.get("request_mode") == "quote":
+                updated_context["request_mode"] = "quote"
+            else:
+                updated_context.pop("request_mode", None)
             updated_context.pop("recommended_equipment", None)
             updated_context.pop("recommendation_presented", None)
         else:
@@ -8779,8 +8782,21 @@ async def _advance_intake(
                 installation=service_kind == "installation",
             ),
         )
+
+    # Sales-first orchestration: for the core refrigeration journeys, understand
+    # the appliance/service before asking logistical data such as access/address.
+    # Those fields are collected later, when they are needed to finish a quote
+    # or open the schedule.
+    qualification_first = service_kind in {
+        "installation",
+        "cleaning",
+        "gas_recharge",
+        "diagnostics",
+        "preventive",
+    }
     if (
-        intake.considers_difficult_access
+        not qualification_first
+        and intake.considers_difficult_access
         and _context_string(context, "access_condition") is None
     ):
         return _transition(
@@ -8789,15 +8805,9 @@ async def _advance_intake(
             access_selection_message(),
         )
     if (
-        intake.requires_address
+        not qualification_first
+        and intake.requires_address
         and ServiceAddress.from_snapshot(context.get("service_address")) is None
-        and not (
-            service_kind == "installation"
-            and (
-                _context_string(context, "equipment_ownership") == "needs_equipment"
-                or context.get("purchase_mode") in {"purchase", "both"}
-            )
-        )
     ):
         return _transition(
             ConversationState.BOOKING_ADDRESS,
@@ -8995,16 +9005,6 @@ async def _advance_intake(
                     customer_name=customer_name,
                 )
 
-        if (
-            intake.requires_address
-            and ServiceAddress.from_snapshot(context.get("service_address")) is None
-        ):
-            return _transition(
-                ConversationState.BOOKING_ADDRESS,
-                context,
-                address_request_message(),
-            )
-
         if context.get("installation_height_over_3m") is None:
             return _transition(
                 ConversationState.BOOKING_INSTALLATION_HEIGHT,
@@ -9068,6 +9068,35 @@ async def _advance_intake(
         )
 
     property_type = _context_string(context, "property_type")
+
+    if (
+        intake.considers_difficult_access
+        and _context_string(context, "access_condition") is None
+    ):
+        return _transition(
+            ConversationState.BOOKING_ACCESS,
+            context,
+            access_selection_message(),
+        )
+
+    if (
+        intake.requires_address
+        and ServiceAddress.from_snapshot(context.get("service_address")) is None
+    ):
+        address_body = (
+            "Agora que já entendi o serviço, para finalizar a cotação e verificar "
+            "o atendimento na sua região, qual é o endereço completo do serviço, "
+            "incluindo a cidade?"
+            if context.get("request_mode") == "quote"
+            else
+            "Agora que já entendi o serviço, para consultar a agenda e organizar "
+            "o atendimento, qual é o endereço completo do serviço, incluindo a cidade?"
+        )
+        return _transition(
+            ConversationState.BOOKING_ADDRESS,
+            context,
+            address_request_message(address_body),
+        )
 
     # A cotação vem antes das regras operacionais do prédio/condomínio.
     # Só coletamos horário de prestadores e portaria se o cliente decidir agendar.
