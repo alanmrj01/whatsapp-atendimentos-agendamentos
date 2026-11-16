@@ -1656,14 +1656,18 @@ async def test_booking_collects_only_simple_required_information() -> None:
     await engine.process(inbound(1, action=f"service:{SERVICE_ID}"))
     assert repository.state == ConversationState.BOOKING_QUANTITY
     await engine.process(inbound(2, action="quantity:3"))
+    assert repository.state == ConversationState.BOOKING_SERVICE_DETAILS
+    await engine.process(
+        inbound(3, body="preciso verificar um equipamento que parou durante o uso")
+    )
     assert repository.state == ConversationState.BOOKING_ACCESS
-    await engine.process(inbound(3, action="access.unknown"))
+    await engine.process(inbound(4, action="access.unknown"))
     assert repository.state == ConversationState.BOOKING_ADDRESS
     await engine.process(
-        inbound(4, body="Rua das Flores, 10, São José dos Campos - SP")
+        inbound(5, body="Rua das Flores, 10, São José dos Campos - SP")
     )
     assert repository.state == ConversationState.BOOKING_SITE_LIMIT
-    await engine.process(inbound(5, action="site_limit.17:00"))
+    await engine.process(inbound(6, action="site_limit.17:00"))
 
     assert repository.state == ConversationState.BOOKING_DATE
     assert repository.context["quantity"] == 3
@@ -1673,6 +1677,7 @@ async def test_booking_collects_only_simple_required_information() -> None:
         item.transition.outbound.body or "" for item in repository.outbounds
     ).casefold()
     assert "quantos itens ou aparelhos" in questions
+    assert "antes de pedir o endereço" in questions
     assert "endereço completo" in questions
     assert "horário limite" in questions
     for forbidden in (
