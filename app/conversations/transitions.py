@@ -2965,6 +2965,14 @@ async def _service_question_answer(
         else BookingRequirements()
     )
     normalized_question = interpretation.normalized_text
+    asks_price_ceiling = bool(
+        interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and re.search(
+            r"\b(?:ate\s+quanto|chegar\s+ate\s+quanto|quanto\s+pode\s+chegar|"
+            r"valor\s+maximo|preco\s+maximo|qual\s+o\s+maximo)\b",
+            normalized_question,
+        )
+    )
     asks_included_tubing = (
         interpretation.has(ConversationIntent.TECHNICAL_QUESTION)
         and "tubulacao" in normalized_question
@@ -3070,6 +3078,20 @@ async def _service_question_answer(
         if plan is None or plan.service.estimated_price is None:
             parts.append(
                 f"O valor de {target.label} depende de uma avaliação da equipe."
+            )
+        elif asks_price_ceiling and target_kind == "diagnostics":
+            parts.append(
+                "Não tenho um valor máximo cadastrado com segurança. "
+                "O valor base do atendimento técnico é "
+                f"{_format_brl(plan.service.estimated_price)}. "
+                "O valor final é confirmado depois do diagnóstico, porque pode haver "
+                "necessidade de peças, materiais ou um reparo mais complexo."
+            )
+        elif asks_price_ceiling:
+            parts.append(
+                "Não tenho um valor máximo cadastrado com segurança. "
+                f"A estimativa atual de {target.label} é "
+                f"{_format_brl(plan.service.estimated_price)}."
             )
         elif target_kind == "diagnostics":
             parts.append(
