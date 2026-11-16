@@ -799,6 +799,7 @@ async def _route_named_conversation(
         ConversationState.CUSTOMER_NAME,
         ConversationState.BOOKING_QUANTITY,
         ConversationState.BOOKING_SERVICE,
+        ConversationState.BOOKING_SERVICE_DETAILS,
         ConversationState.BOOKING_ACCESS,
         ConversationState.BOOKING_ADDRESS,
         ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
@@ -1101,6 +1102,7 @@ async def _route_named_conversation(
         )
         structured_checkpoint = state in {
             ConversationState.BOOKING_QUANTITY,
+            ConversationState.BOOKING_SERVICE_DETAILS,
             ConversationState.BOOKING_ACCESS,
             ConversationState.BOOKING_EQUIPMENT_OWNERSHIP,
             ConversationState.BOOKING_EQUIPMENT_PROFILE,
@@ -1262,6 +1264,13 @@ async def _route_named_conversation(
             booking_port,
             interpretation=interpretation,
             fallback_message=conversation.fallback_message,
+            customer_name=customer_name,
+        )
+    elif state is ConversationState.BOOKING_SERVICE_DETAILS:
+        transition = await _handle_service_details(
+            inbound,
+            context,
+            booking_port,
             customer_name=customer_name,
         )
     elif state is ConversationState.BOOKING_QUANTITY:
@@ -1906,10 +1915,29 @@ def _pending_question_explanation(
         return "Pergunto seu nome apenas para deixar o atendimento identificado e mais natural."
     if state is ConversationState.BOOKING_SERVICE:
         return "Quero identificar exatamente qual serviço você precisa para seguir pelo fluxo correto."
+    if state is ConversationState.BOOKING_SERVICE_DETAILS:
+        return (
+            "Antes de pedir dados logísticos, quero entender o problema ou o escopo "
+            "básico do serviço para conduzir o atendimento pelo caminho certo."
+        )
     if state is ConversationState.BOOKING_QUANTITY:
         return "A quantidade de aparelhos influencia o tempo do serviço e a organização do atendimento."
     if state is ConversationState.BOOKING_ACCESS:
         return "Quero saber se existe alguma dificuldade de acesso que o técnico precise considerar antes de ir ao local."
+    if state is ConversationState.BOOKING_SERVICE_DETAILS:
+        return _retry_or_handoff(
+            state,
+            context,
+            "service_details",
+            _text_message(
+                "Antes de continuar, me conte em uma frase o que precisa ser feito "
+                "ou qual problema está acontecendo."
+            ),
+            handoff_body=(
+                "Não consegui entender os detalhes básicos do serviço com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar."
+            ),
+        )
     if state is ConversationState.BOOKING_ADDRESS:
         if context.get("address_purpose") == "delivery":
             return "O endereço é necessário para organizar a entrega do aparelho."
@@ -1925,7 +1953,10 @@ def _pending_question_explanation(
     if state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
         return "Quero confirmar se o aparelho já existe ou se você também precisa comprar um, porque os próximos passos são diferentes."
     if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
-        return "A marca, o modelo ou a capacidade ajudam a tratar o equipamento correto sem fazer suposições."
+        return (
+            "A marca e o modelo ajudam a equipe a tratar o equipamento correto sem "
+            "fazer suposições; a capacidade também é útil quando se aplica."
+        )
     if state is ConversationState.BOOKING_EQUIPMENT_PROFILE:
         missing = missing_equipment_profile_fields(context)
         field = missing[0] if missing else None
@@ -3465,6 +3496,21 @@ def _message_can_answer_pending_state(
         return extract_customer_name(body, allow_bare=True) is not None
     if state is ConversationState.BOOKING_SERVICE:
         return interpretation.has(ConversationIntent.SERVICE_INTENT)
+    if state is ConversationState.BOOKING_SERVICE_DETAILS:
+        if interpretation.has_act(ConversationAct.SIDE_QUESTION):
+            return False
+        return (
+            len(normalized.split()) >= 2
+            and normalized not in {
+                "sim",
+                "ok",
+                "certo",
+                "isso",
+                "nao",
+                "nao sei",
+            }
+            and "?" not in body
+        )
     if state is ConversationState.BOOKING_QUANTITY:
         return (
             parse_equipment_quantity_answer(body, allow_bare=True) is not None
@@ -3848,7 +3894,6 @@ async def _resume_pending_question(
         ConversationState.BOOKING_ACCESS: access_selection_message(),
         ConversationState.BOOKING_ADDRESS: _service_address_request_message(context),
         ConversationState.BOOKING_EQUIPMENT_OWNERSHIP: installation_equipment_status_message(),
-        ConversationState.BOOKING_EQUIPMENT_MODEL: equipment_model_request_message(),
         ConversationState.BOOKING_EQUIPMENT_PROFILE: _equipment_profile_prompt(
             missing_equipment_profile_fields(context)
         ),
@@ -3891,6 +3936,32 @@ async def _resume_pending_question(
             state,
             context,
             service_selection_message(services),
+        )
+    elif state is ConversationState.BOOKING_SERVICE_DETAILS:
+        services = _snapshot_options(await port.list_services(inbound.business_id))
+        service_id = _context_service_id(context)
+        service_kind = (
+            _service_kind(services, service_id)
+            if service_id is not None
+            else "other"
+        )
+        transition = _transition(
+            state,
+            context,
+            _service_details_request_message(service_kind),
+        )
+    elif state is ConversationState.BOOKING_EQUIPMENT_MODEL:
+        services = _snapshot_options(await port.list_services(inbound.business_id))
+        service_id = _context_service_id(context)
+        service_kind = (
+            _service_kind(services, service_id)
+            if service_id is not None
+            else "other"
+        )
+        transition = _transition(
+            state,
+            context,
+            _equipment_model_request_for_kind(service_kind, context),
         )
     elif state in {ConversationState.BOOKING_DATE, ConversationState.BOOKING_WEEKDAY}:
         service_id = _context_service_id(context)
@@ -4316,7 +4387,10 @@ def _stale_interactive_transition(
             state,
             context,
             "equipment_model",
-            equipment_model_known_message(),
+            equipment_model_request_message(
+                "Pode me dizer a marca e o modelo do equipamento? "
+                "Se não souber, pode responder “não sei”."
+            ),
             handoff_body=(
                 "Não consegui confirmar o equipamento com segurança. "
                 "Vou chamar uma pessoa da equipe para continuar."
@@ -4687,6 +4761,7 @@ def _repair_slot_for_pending_state(
     return {
         ConversationState.CUSTOMER_NAME: "customer_name",
         ConversationState.BOOKING_SERVICE: "service",
+        ConversationState.BOOKING_SERVICE_DETAILS: "service_details",
         ConversationState.BOOKING_QUANTITY: "quantity",
         ConversationState.BOOKING_ACCESS: "access",
         ConversationState.BOOKING_EQUIPMENT_OWNERSHIP: "equipment_ownership",
@@ -11616,6 +11691,9 @@ def _requirements_from_context(context: dict[str, Any]) -> BookingRequirements:
         "issue_video_required",
         "issue_video_received",
         "reported_issue",
+        "service_details_text",
+        "service_issue_category",
+        "appliance_type",
         "equipment_quantity",
         "room_area_m2",
         "room_people_max",
