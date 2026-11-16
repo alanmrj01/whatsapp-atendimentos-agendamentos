@@ -695,6 +695,15 @@ async def _route_named_conversation(
         )
     )
     if (
+        state in {ConversationState.START, ConversationState.MENU}
+        and action is None
+        and interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
+        and interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and not _equipment_purchase_explicitly_known(inbound.body)
+    ):
+        question_answer = None
+        equipment_question_answer = None
+    if (
         state is ConversationState.BOOKING_EQUIPMENT_MODEL
         and _equipment_model_checkpoint_answer(inbound.body)
     ):
@@ -729,8 +738,8 @@ async def _route_named_conversation(
             _text_message(equipment_question_answer),
             follow_ups=(
                 equipment_purchase_clarification_message(
-                    purchase_already_known=interpretation.has(
-                        ConversationIntent.EQUIPMENT_PURCHASE
+                    purchase_already_known=_equipment_purchase_explicitly_known(
+                        inbound.body
                     ),
                 ),
             ),
@@ -2368,6 +2377,47 @@ def _catalog_entry_matching_customer_request(
         matches.append(item)
 
     return matches[0] if len(matches) == 1 else None
+
+
+def _equipment_purchase_explicitly_known(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+
+    if re.search(
+        r"\b(?:comprar|compra|adquirir|vender|vende|vendem|fornecer|fornecem)\b",
+        normalized,
+    ):
+        return True
+
+    if re.search(
+        r"\b(?:preco|valor|cotacao|orcamento|cotar|orcar|quanto custa)\b"
+        r".{0,45}\b(?:aparelho|equipamento)\b",
+        normalized,
+    ):
+        return True
+
+    if re.search(r"\b\d{4,6}\s*btu\b", normalized):
+        return True
+
+    return any(
+        brand in normalized
+        for brand in (
+            "midea",
+            "gree",
+            "lg",
+            "samsung",
+            "electrolux",
+            "philco",
+            "tcl",
+            "agratto",
+            "daikin",
+            "elgin",
+            "hisense",
+            "carrier",
+            "springer",
+        )
+    )
 
 
 def _looks_like_specific_equipment_request(body: str | None) -> bool:
@@ -5822,7 +5872,9 @@ async def _handle_service(
             ConversationState.BOOKING_SERVICE,
             updated,
             equipment_purchase_clarification_message(
-                purchase_already_known=True,
+                purchase_already_known=_equipment_purchase_explicitly_known(
+                    inbound.body
+                ),
             ),
         )
 
