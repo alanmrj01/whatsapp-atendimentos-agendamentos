@@ -1870,6 +1870,25 @@ def _is_pending_question_clarification(body: str | None) -> bool:
     return any(phrase in normalized for phrase in phrases)
 
 
+def _service_address_request_message(
+    context: dict[str, Any],
+) -> OutboundMessage:
+    if context.get("address_purpose") == "delivery":
+        return address_request_message(
+            "Qual é o endereço de entrega, com rua, número e cidade?"
+        )
+    if context.get("request_mode") == "quote":
+        return address_request_message(
+            "Agora que já entendi o serviço, para finalizar a cotação e verificar "
+            "o atendimento na sua região, qual é o endereço completo do serviço, "
+            "incluindo a cidade?"
+        )
+    return address_request_message(
+        "Agora que já entendi o serviço, para consultar a agenda e organizar "
+        "o atendimento, qual é o endereço completo do serviço, incluindo a cidade?"
+    )
+
+
 def _pending_question_explanation(
     state: ConversationState,
     context: dict[str, Any],
@@ -1883,7 +1902,17 @@ def _pending_question_explanation(
     if state is ConversationState.BOOKING_ACCESS:
         return "Quero saber se existe alguma dificuldade de acesso que o técnico precise considerar antes de ir ao local."
     if state is ConversationState.BOOKING_ADDRESS:
-        return "Preciso do endereço para organizar o atendimento e consultar a agenda adequada para o local."
+        if context.get("address_purpose") == "delivery":
+            return "O endereço é necessário para organizar a entrega do aparelho."
+        if context.get("request_mode") == "quote":
+            return (
+                "Agora que já entendi o serviço, uso o endereço para finalizar a "
+                "cotação e confirmar o atendimento na sua região."
+            )
+        return (
+            "Agora que já entendi o serviço, uso o endereço para consultar a agenda "
+            "correta e organizar o atendimento."
+        )
     if state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
         return "Quero confirmar se o aparelho já existe ou se você também precisa comprar um, porque os próximos passos são diferentes."
     if state is ConversationState.BOOKING_EQUIPMENT_MODEL:
@@ -3757,11 +3786,7 @@ async def _resume_pending_question(
         ),
         ConversationState.BOOKING_QUANTITY: quantity_selection_message(),
         ConversationState.BOOKING_ACCESS: access_selection_message(),
-        ConversationState.BOOKING_ADDRESS: address_request_message(
-            "Qual é o endereço de entrega, com rua, número e cidade?"
-            if context.get("address_purpose") == "delivery"
-            else "Qual é o endereço, com rua, número e cidade?"
-        ),
+        ConversationState.BOOKING_ADDRESS: _service_address_request_message(context),
         ConversationState.BOOKING_EQUIPMENT_OWNERSHIP: installation_equipment_status_message(),
         ConversationState.BOOKING_EQUIPMENT_MODEL: equipment_model_request_message(),
         ConversationState.BOOKING_EQUIPMENT_PROFILE: _equipment_profile_prompt(
@@ -8812,7 +8837,7 @@ async def _advance_intake(
         return _transition(
             ConversationState.BOOKING_ADDRESS,
             context,
-            address_request_message(),
+            _service_address_request_message(context),
         )
 
     if service_kind in {
@@ -9083,19 +9108,10 @@ async def _advance_intake(
         intake.requires_address
         and ServiceAddress.from_snapshot(context.get("service_address")) is None
     ):
-        address_body = (
-            "Agora que já entendi o serviço, para finalizar a cotação e verificar "
-            "o atendimento na sua região, qual é o endereço completo do serviço, "
-            "incluindo a cidade?"
-            if context.get("request_mode") == "quote"
-            else
-            "Agora que já entendi o serviço, para consultar a agenda e organizar "
-            "o atendimento, qual é o endereço completo do serviço, incluindo a cidade?"
-        )
         return _transition(
             ConversationState.BOOKING_ADDRESS,
             context,
-            address_request_message(address_body),
+            _service_address_request_message(context),
         )
 
     # A cotação vem antes das regras operacionais do prédio/condomínio.
