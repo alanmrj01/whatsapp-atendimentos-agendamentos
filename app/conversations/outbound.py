@@ -268,7 +268,7 @@ def equipment_profile_intro_message() -> OutboundMessage:
         message_type="text",
         body=(
             "Para te indicar uma opção que faça sentido para o ambiente, "
-            "vou confirmar algumas informações rápidas."
+            "vou fazer algumas perguntas rápidas."
         ),
     )
 
