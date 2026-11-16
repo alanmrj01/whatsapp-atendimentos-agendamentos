@@ -6073,9 +6073,10 @@ async def test_catalog_driven_electrical_request_uses_configured_service() -> No
     assert repository.context["service_id"] == str(SERVICE_ID)
     assert repository.context["service_issue_category"] == "outlet"
     assert "service_address" not in repository.context
+    transition = repository.outbounds[-1].transition
     body = " ".join(
         message.body or ""
-        for message in repository.outbounds[-1].transition.messages
+        for message in (transition.outbound, *transition.follow_ups)
     ).casefold()
     assert "risco elétrico" in body
     assert repository.automation_enabled is True
