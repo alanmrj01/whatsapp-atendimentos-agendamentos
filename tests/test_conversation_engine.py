@@ -2869,7 +2869,8 @@ async def test_generic_ac_quote_opens_neutral_scope_clarification() -> None:
     assert repository.state == ConversationState.BOOKING_SERVICE
     assert transition.outbound.message_type == "interactive_button"
     body = (transition.outbound.body or "").casefold()
-    assert "você quer apenas comprar" in body
+    assert "para eu entender sua cotação" in body
+    assert "só a instalação" in body
     assert "instalação" in body
     assert "entendi que você quer comprar" not in body
     assert "r$ 700,00" not in body
@@ -4821,7 +4822,8 @@ async def test_generic_equipment_quote_never_recommends_model_before_sizing() ->
     assert "uma opção compatível" not in normalized
     assert "entendi que você quer comprar" not in normalized
     assert "r$ 700,00" not in normalized
-    assert "você quer apenas comprar o aparelho" in normalized
+    assert "para eu entender sua cotação" in normalized
+    assert "só a instalação" in normalized
 
 
 @mark.asyncio
