@@ -267,8 +267,8 @@ def equipment_profile_intro_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="text",
         body=(
-            "Como você ainda não escolheu um aparelho, vou fazer algumas perguntas rápidas "
-            "para te ajudar a encontrar a opção mais adequada para o ambiente."
+            "Para te indicar uma opção que faça sentido para o ambiente, "
+            "vou confirmar algumas informações rápidas."
         ),
     )
 
