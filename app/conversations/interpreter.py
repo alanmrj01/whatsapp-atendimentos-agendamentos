@@ -409,7 +409,7 @@ _BARE_NAME_REJECT_WORDS = frozenset(
         # Perguntas e qualificadores que indicam frase, não nome.
         "quanto", "qual", "quando", "onde", "como", "porque", "por que",
         "bem", "mal", "tao", "muito", "pouco", "mais", "menos", "melhor",
-        "pior", "bom", "ruim",
+        "pior", "bom", "ruim", "qualquer", "um", "uma", "assim", "nome",
         # Vocabulário operacional/comercial da refrigeração.
         "problema", "duvida", "servico", "atendimento", "aparelho", "equipamento",
         "modelo", "preco", "valor", "orcamento", "instalacao", "manutencao",
