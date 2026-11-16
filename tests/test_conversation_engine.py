@@ -2121,6 +2121,36 @@ async def test_uncertain_tubing_value_is_confirmed_before_advancing() -> None:
 
 
 @mark.asyncio
+async def test_bare_no_answers_tubing_question_as_unknown_without_retry() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TUBING,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(
+        booking_port.intake,
+        asks_tubing_length=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1051, body="não")
+    )
+
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert repository.context["tubing_length_answered"] is True
+    assert "tubing_meters" not in repository.context
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    joined = " ".join(
+        message.body or ""
+        for stored in repository.outbounds
+        for message in (stored.transition.outbound, *stored.transition.follow_ups)
+    ).casefold()
+    assert "não consegui entender a metragem" not in joined
+
+
+@mark.asyncio
 async def test_unknown_tubing_keeps_automatic_flow_without_inventing_measurement() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_TUBING,
