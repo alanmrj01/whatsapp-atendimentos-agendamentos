@@ -238,6 +238,9 @@ class DryRunBookingPort:
         self.dates = [
             BookingOption("2026-11-16", "segunda-feira, 16 de novembro"),
             BookingOption("2026-11-18", "quarta-feira, 18 de novembro"),
+            BookingOption("2026-11-25", "quarta-feira, 25 de novembro"),
+            BookingOption("2026-12-02", "quarta-feira, 2 de dezembro"),
+            BookingOption("2026-11-20", "sexta-feira, 20 de novembro"),
         ]
         self.times = [
             BookingOption("09:00", "09:00"),
@@ -393,6 +396,32 @@ class DryRunBookingPort:
             GAS_SERVICE_ID: (
                 "Verificação do sistema de refrigeração, avaliação de possível vazamento "
                 "e execução do serviço conforme a necessidade identificada."
+            ),
+            REFRIGERATOR_SERVICE_ID: (
+                "Diagnóstico e manutenção de geladeiras e freezers conforme o defeito "
+                "relatado e as condições encontradas no equipamento."
+            ),
+            ELECTRICAL_SERVICE_ID: (
+                "Atendimento de elétrica residencial para avaliação e execução do serviço "
+                "cadastrado, respeitando as condições de segurança do local."
+            ),
+            PMOC_SERVICE_ID: (
+                "Atendimento sintético de laboratório para validar o fluxo de PMOC."
+            ),
+            DEINSTALLATION_SERVICE_ID: (
+                "Atendimento sintético de laboratório para validar desinstalação "
+                "de ar-condicionado."
+            ),
+            RELOCATION_SERVICE_ID: (
+                "Atendimento sintético de laboratório para validar realocação "
+                "de ar-condicionado."
+            ),
+            INFRASTRUCTURE_SERVICE_ID: (
+                "Atendimento sintético de laboratório para validar infraestrutura "
+                "de ar-condicionado."
+            ),
+            GENERIC_SERVICE_ID: (
+                "Atendimento sintético genérico usado apenas para validar o laboratório."
             ),
         }
         return ServiceDetails(
