@@ -9321,14 +9321,24 @@ async def _advance_intake(
     # be understood before logistical fields such as access/address are requested.
     # Known domains use their specific qualification; unknown catalog services use
     # one generic scope checkpoint instead of jumping straight to the address.
+    generic_scope_needed = (
+        service_kind == "other"
+        and (
+            intake.requires_address
+            or intake.considers_difficult_access
+            or intake.asks_site_time_limit
+        )
+    )
     if (
         sales_qualification_v2
-        and service_kind in {
-            "refrigeration_appliance",
-            "electrical",
-            "hvac_scope",
-            "other",
-        }
+        and (
+            service_kind in {
+                "refrigeration_appliance",
+                "electrical",
+                "hvac_scope",
+            }
+            or generic_scope_needed
+        )
         and _context_string(context, "service_details_text") is None
     ):
         return _transition(
