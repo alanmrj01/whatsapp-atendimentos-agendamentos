@@ -100,17 +100,17 @@ def test_manual_lab_exposes_copy_conversation_button() -> None:
         (
             "minha geladeira não está gelando",
             REFRIGERATOR_SERVICE_ID,
-            ConversationState.BOOKING_ADDRESS,
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
         ),
         (
             "meu freezer não congela",
             REFRIGERATOR_SERVICE_ID,
-            ConversationState.BOOKING_ADDRESS,
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
         ),
         (
             "a tomada da cozinha queimou",
             ELECTRICAL_SERVICE_ID,
-            ConversationState.BOOKING_ADDRESS,
+            ConversationState.BOOKING_PROPERTY,
         ),
         (
             "meu ar condicionado não está gelando e preciso de manutenção",
@@ -136,6 +136,62 @@ async def test_manual_lab_uses_r9_catalog_driven_service_selection(
     assert snapshot["context"]["service_id"] == str(expected_service_id)
     assert "services" in snapshot["dry_run_calls"]
     assert any(item["role"] == "assistant" for item in snapshot["history"])
+    assert "service_address" not in snapshot["context"]
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_refrigerator_qualifies_appliance_before_address() -> None:
+    session_id, _ = await _new_named_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="minha geladeira não está gelando"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
+    assert snapshot["context"]["appliance_type"] == "refrigerator"
+    assert snapshot["context"]["service_issue_category"] == "no_cooling"
+    assert "service_address" not in snapshot["context"]
+    joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
+    assert "marca" in joined
+    assert "modelo" in joined
+    assert "endereço" not in joined
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="Brastemp BRM44"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_ADDRESS.value
+    assert snapshot["context"]["equipment_model"] == "Brastemp BRM44"
+    assert "agora que já entendi o serviço" in snapshot["history"][-1]["body"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_electrical_qualifies_risk_and_property_before_address() -> None:
+    session_id, _ = await _new_named_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="a tomada da cozinha queimou"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_PROPERTY.value
+    assert snapshot["context"]["service_issue_category"] == "outlet"
+    assert "service_address" not in snapshot["context"]
+    joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
+    assert "risco elétrico" in joined
+    assert "disjuntor" in joined
+    assert "casa" in joined
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="é uma casa"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_ADDRESS.value
+    assert snapshot["context"]["property_type"] == "house"
+    assert "agora que já entendi o serviço" in snapshot["history"][-1]["body"].casefold()
 
 
 @pytest.mark.parametrize(
