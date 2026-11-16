@@ -5277,6 +5277,42 @@ async def test_semantic_maintenance_inquiry_confirms_service_without_false_catal
 
 
 @mark.asyncio
+async def test_service_explanation_without_company_description_does_not_invent_scope() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Elétrica residencial")
+    ]
+    booking_port.get_service_details = AsyncMock(
+        return_value=ServiceDetails(
+            id=SERVICE_ID,
+            name="Elétrica residencial",
+            description=None,
+        )
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(12106, body="como funciona esse serviço?")
+    )
+
+    body = " ".join(
+        message.body or ""
+        for message in (
+            repository.outbounds[-1].transition.outbound,
+            *repository.outbounds[-1].transition.follow_ups,
+        )
+    ).casefold()
+    assert "descrição detalhada" in body or "descricao detalhada" in body
+    assert "não está cadastrada pela empresa" in body or "nao esta cadastrada pela empresa" in body
+    assert "executar o reparo ou instalação correspondente" not in body
+    assert "executar o reparo ou instalacao correspondente" not in body
+
+
+@mark.asyncio
 async def test_service_question_from_menu_answers_then_shows_real_service_choices() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.MENU,
