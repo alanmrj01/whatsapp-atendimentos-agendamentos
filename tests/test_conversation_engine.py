@@ -464,10 +464,13 @@ async def test_natural_service_request_preserves_quantity_from_opening_message()
         inbound(2, body="Quero higienizar três aparelhos")
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["service_id"] == str(SERVICE_ID)
     assert repository.context["quantity"] == 3
     assert repository.context["equipment_quantity"] == 3
+    assert "endereço" not in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
 
 
 @mark.asyncio
@@ -499,9 +502,12 @@ async def test_natural_installation_preserves_existing_equipment_from_opening_me
 
     await engine.process(inbound(4, body="um só"))
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["quantity"] == 1
     assert repository.context["equipment_ownership"] == "has_equipment"
+    assert "marca e o modelo" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
 
 
 @mark.asyncio
@@ -823,10 +829,10 @@ async def test_unnamed_customer_is_asked_once_and_pending_service_is_resumed() -
     await engine.process(inbound(2, body="Alan"))
 
     assert repository.customer_name == "Alan"
-    assert repository.state == ConversationState.BOOKING_ADDRESS
-    assert "endereço" in (
-        repository.outbounds[-1].transition.outbound.body or ""
-    ).casefold()
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "marca e o modelo" in body
+    assert "endereço" not in body
 
 
 @mark.asyncio
@@ -846,9 +852,10 @@ async def test_explicit_name_reply_also_resumes_pending_service_request() -> Non
     await engine.process(inbound(2, body="Meu nome é Juliana"))
 
     assert repository.customer_name == "Juliana"
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "endereço" in body
+    assert "marca e o modelo" in body
+    assert "endereço" not in body
 
 
 @mark.asyncio
@@ -877,7 +884,7 @@ async def test_social_detour_during_name_does_not_spend_retry_or_block_service()
     await engine.process(inbound(3, body="Quero fazer uma limpeza"))
 
     assert repository.customer_name is None
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["customer_name_skipped"] is True
     assert "repair_attempts" not in repository.context
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
@@ -911,7 +918,7 @@ async def test_invalid_name_reply_gets_one_retry_and_keeps_pending_request() -> 
     await engine.process(inbound(3, body="joao"))
 
     assert repository.customer_name == "Joao"
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert "repair_attempts" not in repository.context
     assert "pending_customer_message" not in repository.context
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
@@ -2420,7 +2427,10 @@ async def test_purchase_request_is_clarified_instead_of_generic_service_list() -
 async def test_purchase_clarification_installation_choice_resumes_booking() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_SERVICE,
-        context={"service_clarification": "equipment_purchase"},
+        context={
+            "service_clarification": "equipment_purchase",
+            "request_mode": "quote",
+        },
         customer_name="Joao",
     )
     booking_port = FakeBookingPort()
@@ -2443,11 +2453,12 @@ async def test_purchase_clarification_installation_choice_resumes_booking() -> N
         )
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert "service_clarification" not in repository.context
-    assert "endereço" in (
-        repository.outbounds[-1].transition.outbound.body or ""
-    ).casefold()
+    assert repository.context["request_mode"] == "quote"
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "marca e o modelo" in body
+    assert "endereço" not in body
 
 
 @mark.asyncio
