@@ -64,6 +64,24 @@ def test_global_enrichment_accepts_explicit_equipment_count(
     assert enriched["equipment_quantity"] == expected
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "quero comprar um ar-condicionado",
+        "gostaria de comprar um ar condicionado",
+        "quero um ar-condicionado",
+        "preciso de um ar-condicionado",
+    ],
+)
+def test_global_enrichment_does_not_treat_singular_purchase_article_as_quantity(
+    body: str,
+) -> None:
+    enriched = enrich_context_from_message({}, body)
+
+    assert "quantity" not in enriched
+    assert "equipment_quantity" not in enriched
+
+
 @pytest.mark.parametrize("body", ["1", "2", "dois", "quatro"])
 def test_global_enrichment_never_promotes_bare_number(body: str) -> None:
     enriched = enrich_context_from_message({}, body)

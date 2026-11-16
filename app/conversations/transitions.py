@@ -7230,12 +7230,18 @@ async def _handle_building_hours(
             ),
         )
 
+    existing_site_end = _context_string(context, "site_allowed_end")
+    effective_site_end = (
+        min(existing_site_end, end)
+        if existing_site_end is not None
+        else end
+    )
     updated = {
         **_clear_repair_attempt(context, "building_hours"),
         "service_id": str(service_id),
         "building_hours_start": start,
         "building_hours_end": end,
-        "site_allowed_end": end,
+        "site_allowed_end": effective_site_end,
         "site_limit_answered": True,
     }
     return await _advance_intake(

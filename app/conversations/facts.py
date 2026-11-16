@@ -401,19 +401,28 @@ def _equipment_quantity(normalized: str) -> int | None:
             if not _is_compact_number_answer(candidate):
                 continue
             value = parse_number_answer(candidate)
-            if (
+            prefix = " ".join(prefix_tokens[:-width])
+            singular_article_is_ambiguous = (
                 value is not None
                 and value.is_integer()
                 and int(value) == 1
                 and candidate in {"um", "uma"}
-                and re.search(
-                    r"\b(?:comprar|adquirir|cotar|quero|queria|preciso)\b",
-                    " ".join(prefix_tokens[:-width]),
+                and (
+                    re.search(
+                        r"\b(?:comprar|adquirir|cotar)\b",
+                        prefix,
+                    )
+                    or re.fullmatch(
+                        r"(?:eu\s+)?(?:quero|queria|preciso|gostaria)(?:\s+de)?",
+                        prefix,
+                    )
                 )
-            ):
-                # Em pedidos como "quero comprar um ar-condicionado", "um" é
-                # normalmente artigo indefinido. A quantidade será confirmada
-                # no checkpoint próprio; números explícitos continuam valendo.
+            )
+            if singular_article_is_ambiguous:
+                # Em pedidos como "quero comprar um ar-condicionado" ou
+                # "preciso de um ar-condicionado", "um" é normalmente artigo
+                # indefinido. Já em "preciso limpar uma unidade", a unidade é
+                # uma quantidade explícita do serviço.
                 continue
             if value is not None and value.is_integer() and 1 <= value <= 99:
                 return int(value)
