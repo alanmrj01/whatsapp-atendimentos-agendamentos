@@ -368,6 +368,108 @@ async def test_answer_plus_price_question_uses_context_updated_in_same_turn() ->
 
 
 @pytest.mark.asyncio
+async def test_installation_quote_preserves_quote_and_qualifies_before_address() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        context={
+            "service_clarification": "equipment_purchase",
+            "request_mode": "quote",
+        },
+        customer_name="Joao",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    port.intake = replace(
+        port.intake,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, port)
+
+    await engine.process(
+        inbound(
+            3076,
+            action="equipment.installation",
+            body="Só instalação",
+        )
+    )
+
+    body = _combined_body(repository)
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["request_mode"] == "quote"
+    assert repository.context["equipment_ownership"] == "has_equipment"
+    assert "service_address" not in repository.context
+    assert "marca e o modelo" in body
+    assert "endereço" not in body
+
+
+@pytest.mark.asyncio
+async def test_cleaning_lead_is_qualified_before_service_address() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.MENU,
+        customer_name="Joao",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    port.intake = replace(
+        port.intake,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, port)
+
+    await engine.process(
+        inbound(3077, body="quero fazer uma limpeza no meu ar condicionado")
+    )
+
+    body = _combined_body(repository)
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert "service_address" not in repository.context
+    assert "marca e o modelo" in body
+    assert "endereço" not in body
+
+
+@pytest.mark.asyncio
+async def test_quote_address_is_requested_with_clear_commercial_reason() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_PROPERTY,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "equipment_ownership": "has_equipment",
+            "equipment_model": "LG 12000 BTUs",
+            "installation_height_over_3m": False,
+            "tube_disclaimer_sent": True,
+            "tubing_length_answered": True,
+        },
+        customer_name="Joao",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    port.intake = replace(
+        port.intake,
+        requires_address=True,
+        asks_tubing_length=False,
+    )
+    engine = ConversationEngine(repository, port)
+
+    await engine.process(
+        inbound(3078, action="property.house", body="Casa")
+    )
+
+    body = _combined_body(repository)
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["property_type"] == "house"
+    assert "agora que já entendi o serviço" in body
+    assert "finalizar a cotação" in body
+    assert "endereço completo" in body
+
+
+@pytest.mark.asyncio
 async def test_real_invalid_slot_answer_gets_one_retry_then_handoff() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_QUANTITY,
