@@ -9071,6 +9071,14 @@ async def _offer_dates(
         )
     )
     prefix = f"{estimate}\n\n" if estimate else ""
+    next_context = _intake_context(context)
+    if (
+        estimate
+        and fulfillment_type not in {"equipment_delivery", "equipment_pickup"}
+        and plan.service.estimated_price is not None
+        and plan.service.pricing_type is not PricingType.FIXED
+    ):
+        next_context["last_assistant_topic"] = "estimated_service_price"
     if len(dates) > 10:
         body = (
             f"{prefix}Tenho disponibilidade em vários dias. "
@@ -9079,7 +9087,7 @@ async def _offer_dates(
         )
         return _transition(
             ConversationState.BOOKING_WEEKDAY,
-            _intake_context(context),
+            next_context,
             weekday_selection_message(
                 weekday_options(dates),
                 body=body,
@@ -9093,7 +9101,7 @@ async def _offer_dates(
     )
     return _transition(
         ConversationState.BOOKING_DATE,
-        _intake_context(context),
+        next_context,
         date_selection_message(dates, body=body),
     )
 
@@ -9863,6 +9871,11 @@ async def _quote_transition(
         **context,
         "quote_presented": True,
     }
+    if (
+        service_amount is not None
+        and plan.service.pricing_type is not PricingType.FIXED
+    ):
+        updated["last_assistant_topic"] = "estimated_service_price"
     return _transition(
         ConversationState.QUOTE_DECISION,
         updated,
