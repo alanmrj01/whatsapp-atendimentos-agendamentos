@@ -6040,8 +6040,11 @@ async def test_catalog_driven_refrigerator_request_uses_configured_service() -> 
         inbound(1401, body="minha geladeira não está gelando")
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["appliance_type"] == "refrigerator"
+    assert repository.context["service_issue_category"] == "no_cooling"
+    assert "service_address" not in repository.context
     assert repository.automation_enabled is True
 
 
@@ -6066,9 +6069,101 @@ async def test_catalog_driven_electrical_request_uses_configured_service() -> No
         inbound(1402, body="a tomada da cozinha queimou")
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_PROPERTY
     assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["service_issue_category"] == "outlet"
+    assert "service_address" not in repository.context
+    body = " ".join(
+        message.body or ""
+        for message in repository.outbounds[-1].transition.messages
+    ).casefold()
+    assert "risco elétrico" in body
     assert repository.automation_enabled is True
+
+
+@mark.asyncio
+async def test_generic_configured_service_is_qualified_before_address() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Atendimento técnico especial")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=False,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(
+            1405,
+            action=f"service:{SERVICE_ID}",
+            body="Atendimento técnico especial",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_SERVICE_DETAILS
+    assert "service_address" not in repository.context
+    first_body = repository.outbounds[-1].transition.outbound.body.casefold()
+    assert "antes de pedir o endereço" in first_body
+
+    await engine.process(
+        inbound(
+            1406,
+            body="preciso verificar um equipamento que parou durante o uso",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["service_details_text"].startswith("preciso verificar")
+    assert "service_address" not in repository.context
+
+
+@mark.asyncio
+async def test_electrical_installation_never_enters_ac_installation_flow() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação elétrica residencial",
+            generate_service_intent_examples("Instalação elétrica residencial"),
+        )
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=False,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(
+            1407,
+            action=f"service:{SERVICE_ID}",
+            body="Instalação elétrica residencial",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_SERVICE_DETAILS
+    assert repository.state != ConversationState.BOOKING_EQUIPMENT_OWNERSHIP
+    assert "equipment_ownership" not in repository.context
+    assert "service_address" not in repository.context
+
+    await engine.process(
+        inbound(1408, body="preciso instalar uma tomada nova na cozinha")
+    )
+
+    assert repository.state == ConversationState.BOOKING_PROPERTY
+    assert repository.context["service_issue_category"] == "outlet"
+    assert "service_address" not in repository.context
 
 
 @mark.asyncio
