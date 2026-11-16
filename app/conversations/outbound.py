@@ -134,11 +134,12 @@ def equipment_purchase_clarification_message(
         )
     else:
         body = (
-            "Você quer apenas comprar o aparelho ou gostaria de contratar a instalação também?"
+            "Para eu entender sua cotação: você quer cotar só o aparelho, "
+            "só a instalação ou os dois juntos?"
             if not retry
             else (
-                "Para eu seguir com a opção certa: você quer comprar somente o aparelho, "
-                "fazer somente a instalação ou comprar e instalar?"
+                "Para eu seguir com a opção certa: você quer cotar somente o aparelho, "
+                "fazer somente a instalação ou cotar os dois juntos?"
             )
         )
         options = (
