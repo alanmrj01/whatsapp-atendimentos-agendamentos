@@ -84,6 +84,29 @@ def test_referral_language_is_recognized_without_fallback(body: str) -> None:
     assert is_referral_message(body) is True
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "tudo certo, estou no trabalho",
+        "nossa, dormi tão mal",
+        "estou trabalhando",
+    ],
+)
+def test_contextual_social_detour_never_consumes_repair(body: str) -> None:
+    interpretation = DeterministicConversationInterpreter().interpret(body)
+
+    result = classify_pending_turn(
+        body=body,
+        interpretation=interpretation,
+        can_answer_pending=False,
+        has_question_answer=False,
+        is_clarification=False,
+    )
+
+    assert result.relation is TurnRelation.SOCIAL
+    assert result.consumes_repair is False
+
+
 def test_side_question_never_consumes_repair_attempt() -> None:
     interpretation = DeterministicConversationInterpreter().interpret(
         "quanto custa esse serviço?"
