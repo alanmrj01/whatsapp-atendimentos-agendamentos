@@ -10859,6 +10859,24 @@ async def _advance_preconfirmation(
     *,
     customer_name: str | None,
 ) -> ConversationTransition:
+    if context.get("purchase_only") is not True:
+        try:
+            _service_id, intake = await _context_intake(inbound, context, port)
+        except BookingRequiresHandoff as exc:
+            return _handoff_for_reason(str(exc))
+        if (
+            intake.requires_address
+            and ServiceAddress.from_snapshot(context.get("service_address")) is None
+        ):
+            return _transition(
+                ConversationState.BOOKING_ADDRESS,
+                context,
+                address_request_message(
+                    "Perfeito, data e horário definidos. Agora me passe o endereço completo "
+                    "do serviço, incluindo a cidade."
+                ),
+            )
+
     mode = _context_string(context, "onsite_contact_mode")
     if mode not in {"customer", "other"}:
         return _transition(
