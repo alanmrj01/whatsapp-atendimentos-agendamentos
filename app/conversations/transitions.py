@@ -8934,8 +8934,13 @@ async def _advance_intake(
                     ConversationState.BOOKING_EQUIPMENT_MODEL,
                     updated,
                     equipment_model_request_message(
-                        "Qual é a marca e o modelo do seu ar-condicionado? "
+                        "Para eu entender o tamanho do aparelho e montar a cotação "
+                        "corretamente, qual é a marca e a capacidade em BTUs ou o modelo? "
                         "Se não souber, pode me mandar uma foto."
+                        if context.get("request_mode") == "quote"
+                        else
+                        "Qual é a marca e a capacidade em BTUs ou o modelo do seu "
+                        "ar-condicionado? Se não souber, pode me mandar uma foto."
                     ),
                 )
         else:
