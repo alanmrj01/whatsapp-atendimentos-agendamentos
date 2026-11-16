@@ -62,6 +62,8 @@ def test_pending_name_accepts_natural_conversational_replies(
     [
         "pode ser amanhã",
         "pode ser hoje",
+        "pode ser qualquer um",
+        "pode ser assim",
         "sou técnico",
         "me chama de atendimento",
     ],
