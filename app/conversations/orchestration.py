@@ -87,6 +87,60 @@ def is_referral_message(body: str | None) -> bool:
     )
 
 
+def is_contextual_social_message(
+    body: str | None,
+    interpretation: Interpretation,
+) -> bool:
+    """Recognize harmless conversational detours without hiding real intent."""
+
+    if any(
+        interpretation.has(intent)
+        for intent in (
+            ConversationIntent.BOOK,
+            ConversationIntent.RESCHEDULE,
+            ConversationIntent.CANCEL,
+            ConversationIntent.HUMAN_HANDOFF,
+            ConversationIntent.SERVICE_INTENT,
+            ConversationIntent.EQUIPMENT_PURCHASE,
+            ConversationIntent.AVAILABILITY,
+            ConversationIntent.PRICE_QUESTION,
+            ConversationIntent.DURATION_QUESTION,
+            ConversationIntent.SERVICE_QUESTION,
+            ConversationIntent.TECHNICAL_QUESTION,
+            ConversationIntent.CANCEL_QUESTION,
+            ConversationIntent.RESCHEDULE_QUESTION,
+        )
+    ):
+        return False
+    if any(
+        interpretation.has_act(act)
+        for act in (
+            ConversationAct.CORRECTION,
+            ConversationAct.SIDE_QUESTION,
+            ConversationAct.ADDITIONAL_REQUEST,
+            ConversationAct.NEGATED_ACTION,
+        )
+    ):
+        return False
+
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+
+    return bool(
+        re.match(
+            r"^(?:tudo\s+certo|ta\s+tudo\s+certo|beleza|tranquilo|show|"
+            r"valeu|obrigad[oa]|nossa)\b",
+            normalized,
+        )
+        or re.fullmatch(
+            r"(?:eu\s+)?(?:estou|to)\s+(?:no\s+)?(?:trabalho|trabalhando|"
+            r"ocupado|ocupada|na\s+rua|dirigindo)",
+            normalized,
+        )
+    )
+
+
 def referral_acknowledgement(customer_name: str | None = None) -> str:
     lead = f"{customer_name}, " if customer_name else ""
     return (
@@ -124,7 +178,10 @@ def classify_pending_turn(
     if interpretation.has_act(ConversationAct.PAUSE):
         return TurnOrchestration(TurnRelation.PAUSE, consumes_repair=False)
 
-    if interpretation.has_act(ConversationAct.SOCIAL):
+    if (
+        interpretation.has_act(ConversationAct.SOCIAL)
+        or is_contextual_social_message(body, interpretation)
+    ):
         return TurnOrchestration(TurnRelation.SOCIAL, consumes_repair=False)
 
     if (
