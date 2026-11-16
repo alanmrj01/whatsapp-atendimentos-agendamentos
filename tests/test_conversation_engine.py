@@ -4815,7 +4815,8 @@ async def test_generic_equipment_quote_never_recommends_model_before_sizing() ->
 
     assert repository.state == ConversationState.BOOKING_SERVICE
     assert repository.context["service_clarification"] == "equipment_purchase"
-    assert "comprar" in normalized
+    assert "para eu entender sua cotação" in normalized
+    assert "só o aparelho" in normalized
     assert "instalação" in normalized
     assert "gree" not in normalized
     assert "9.000 btu" not in normalized
