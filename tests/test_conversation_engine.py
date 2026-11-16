@@ -996,7 +996,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
     }
 
     assert await engine.process(
-        inbound(4, action="date:2026-09-02")
+        inbound(4, body="quarta, 2 de setembro")
     ) is True
     assert repository.state == ConversationState.BOOKING_TIME
     assert repository.context == {
@@ -1144,7 +1144,7 @@ async def test_outbound_payload_is_snapshot_of_booking_options() -> None:
             {"service_id": str(SERVICE_ID)},
             "times",
             "date:2026-09-02",
-            ConversationState.BOOKING_DATE,
+            ConversationState.BOOKING_WEEKDAY,
         ),
     ],
 )
