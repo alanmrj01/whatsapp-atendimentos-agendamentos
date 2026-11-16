@@ -1570,7 +1570,14 @@ async def _handle_customer_name(
         or extract_customer_name(inbound.body, allow_bare=True)
     )
     if customer_name is None:
-        if is_referral_message(inbound.body):
+        name_turn = classify_pending_turn(
+            body=inbound.body,
+            interpretation=interpretation,
+            can_answer_pending=False,
+            has_question_answer=False,
+            is_clarification=_is_pending_question_clarification(inbound.body),
+        )
+        if name_turn.relation is TurnRelation.REFERRAL:
             transition = _transition(
                 ConversationState.CUSTOMER_NAME,
                 context,
@@ -1598,14 +1605,14 @@ async def _handle_customer_name(
                     question_answer,
                 )
 
-        if interpretation.has_act(ConversationAct.SOCIAL):
+        if name_turn.relation is TurnRelation.SOCIAL:
             return _transition(
                 ConversationState.CUSTOMER_NAME,
                 context,
                 name_request_message("Tudo certo. Como posso te chamar?"),
             )
 
-        if interpretation.has_act(ConversationAct.PAUSE):
+        if name_turn.relation is TurnRelation.PAUSE:
             return _transition(
                 ConversationState.CUSTOMER_NAME,
                 context,
