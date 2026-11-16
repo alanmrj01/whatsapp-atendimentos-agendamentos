@@ -6942,6 +6942,7 @@ async def _handle_equipment_model(
             "gas_recharge",
             "diagnostics",
             "preventive",
+            "refrigeration_appliance",
         }
     )
 
@@ -6988,7 +6989,11 @@ async def _handle_equipment_model(
         )
         return _prepend_transition_body(
             transition,
-            "Recebi a foto do aparelho para a equipe conferir.",
+            (
+                "Recebi a foto do equipamento para a equipe conferir."
+                if service_kind == "refrigeration_appliance"
+                else "Recebi a foto do aparelho para a equipe conferir."
+            ),
         )
 
     if (
@@ -7028,7 +7033,14 @@ async def _handle_equipment_model(
             return _transition(
                 ConversationState.BOOKING_EQUIPMENT_MODEL,
                 updated,
-                equipment_photo_request_message(),
+                (
+                    _text_message(
+                        "Sem problema. Pode me mandar uma foto da frente ou da etiqueta "
+                        "do equipamento para a equipe identificar."
+                    )
+                    if service_kind == "refrigeration_appliance"
+                    else equipment_photo_request_message()
+                ),
             )
         return await _advance_intake(
             inbound,
@@ -7040,16 +7052,11 @@ async def _handle_equipment_model(
         )
 
     if action == EQUIPMENT_MODEL_KNOWN and context.get("equipment_model_known") is not True:
-        body = (
-            "Qual é a marca e o modelo do seu ar-condicionado? "
-            "Se não souber, pode me mandar uma foto."
-            if existing_equipment
-            else "Qual é a marca e o modelo do ar-condicionado?"
-        )
+        updated = {**context, "equipment_model_known": True}
         return _transition(
             ConversationState.BOOKING_EQUIPMENT_MODEL,
-            {**context, "equipment_model_known": True},
-            equipment_model_request_message(body),
+            updated,
+            _equipment_model_request_for_kind(service_kind, updated),
         )
 
     raw = " ".join((inbound.body or "").strip().split())
@@ -7200,8 +7207,15 @@ async def _handle_equipment_model(
         "equipment_model",
         (
             equipment_model_request_message(
-                "Não consegui identificar o modelo. Pode me dizer a marca e o modelo "
-                "ou a capacidade em BTUs? Se não souber, diga “não sei”."
+                (
+                    "Não consegui identificar o modelo. Pode me dizer a marca e o modelo "
+                    "do equipamento? Se não souber, diga “não sei” ou mande uma foto."
+                )
+                if service_kind == "refrigeration_appliance"
+                else (
+                    "Não consegui identificar o modelo. Pode me dizer a marca e o modelo "
+                    "ou a capacidade em BTUs? Se não souber, diga “não sei”."
+                )
             )
             if existing_equipment or context.get("equipment_model_known") is True
             else equipment_model_known_message()
