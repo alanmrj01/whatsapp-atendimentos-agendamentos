@@ -4264,6 +4264,26 @@ async def test_status_reply_opener_is_answered_naturally_without_forcing_name() 
 
 
 @mark.asyncio
+async def test_short_greeting_before_name_is_not_replayed_as_unknown_request() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(11121, body="opa"))
+
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    assert "pending_customer_message" not in repository.context
+
+    await engine.process(inbound(11122, body="Alan"))
+
+    assert repository.customer_name == "Alan"
+    assert repository.state == ConversationState.MENU
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert body == "Prazer, Alan. Como posso te ajudar?"
+    assert "não entendi" not in body.casefold()
+    assert "nao entendi" not in body.casefold()
+
+
+@mark.asyncio
 async def test_referral_then_service_request_still_collects_name_and_resumes_service() -> None:
     repository = FakeConversationRepository(customer_name=None)
     booking_port = FakeBookingPort()
@@ -5139,7 +5159,7 @@ async def test_specific_unavailable_equipment_lookup_enters_purchase_clarificati
 
 
 @mark.asyncio
-async def test_off_catalog_purchase_model_never_becomes_customer_equipment_and_profiles_environment() -> None:
+async def test_off_catalog_purchase_model_offers_similar_options_before_profile() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_EQUIPMENT_MODEL,
         context={
@@ -5156,30 +5176,63 @@ async def test_off_catalog_purchase_model_never_becomes_customer_equipment_and_p
     booking_port.services = [
         BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
     ]
+    engine = ConversationEngine(repository, booking_port)
 
-    await ConversationEngine(repository, booking_port).process(
+    await engine.process(
         inbound(1202, body="Midea 50000btu quente frio")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["equipment_model_known"] is False
+    assert repository.context["catalog_mismatch_attempts"] == 1
+    assert repository.context["catalog_mismatch_query"] == "midea 50000btu quente frio"
+    assert "equipment_model" not in repository.context
+    assert "recommended_equipment" not in repository.context
+    transition = repository.outbounds[-1].transition
+    body = transition.outbound.body or ""
+    assert "não temos esse modelo específico" in body.casefold()
+    assert "opções semelhantes" in body.casefold()
+    button_ids = {
+        row["id"]
+        for row in transition.outbound.outbound_payload["buttons"]
+    }
+    assert "equipment.model.recommend" in button_ids
+    assert "equipment.model.exact_check" in button_ids
+
+    await engine.process(
+        inbound(
+            1203,
+            action="equipment.model.recommend",
+            body="Ver semelhantes",
+        )
     )
 
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
     assert repository.context["equipment_model_known"] is False
-    assert repository.context["catalog_mismatch_attempts"] == 1
-    assert "equipment_model" not in repository.context
-    assert "recommended_equipment" not in repository.context
-    transition = repository.outbounds[-1].transition
+    assert repository.context["catalog_mismatch_attempts"] == 0
     combined = " ".join(
         message.body or ""
-        for message in (transition.outbound, *transition.follow_ups)
+        for message in (
+            repository.outbounds[-1].transition.outbound,
+            *repository.outbounds[-1].transition.follow_ups,
+        )
     ).casefold()
-    assert "não encontrei" in combined
-    assert "catálogo ativo" in combined or "catalogo ativo" in combined
-    assert "perfil do ambiente" in combined
+    assert "alternativa semelhante" in combined
+    assert "quantas pessoas" in combined
+
+    await engine.process(inbound(1204, body="1"))
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    next_body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "tamanho aproximado" in next_body.casefold()
 
 
 @mark.asyncio
-async def test_repeated_off_catalog_purchase_request_handoffs_without_inventing_product() -> None:
+async def test_customer_insisting_on_exact_off_catalog_model_handoffs_for_manual_check() -> None:
     repository = FakeConversationRepository(
-        state=ConversationState.BOOKING_EQUIPMENT_PROFILE,
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
         context={
             "service_id": str(SERVICE_ID),
             "request_mode": "quote",
@@ -5188,7 +5241,7 @@ async def test_repeated_off_catalog_purchase_request_handoffs_without_inventing_
             "equipment_ownership": "needs_equipment",
             "equipment_model_known": False,
             "catalog_mismatch_attempts": 1,
-            "equipment_profile_intro_sent": True,
+            "catalog_mismatch_query": "midea 50000btu quente frio",
         },
         customer_name="Alan",
     )
@@ -5198,7 +5251,11 @@ async def test_repeated_off_catalog_purchase_request_handoffs_without_inventing_
     ]
 
     await ConversationEngine(repository, booking_port).process(
-        inbound(1203, body="Eu quero mesmo o Midea 50000 btu")
+        inbound(
+            1205,
+            action="equipment.model.exact_check",
+            body="Quero esse modelo",
+        )
     )
 
     assert repository.state == ConversationState.HUMAN_HANDOFF
@@ -5206,8 +5263,9 @@ async def test_repeated_off_catalog_purchase_request_handoffs_without_inventing_
     assert repository.handoff_status == "waiting"
     assert "equipment_model" not in repository.context
     body = repository.outbounds[-1].transition.outbound.body or ""
-    assert "fora do catálogo ativo" in body.casefold() or "fora do catalogo ativo" in body.casefold()
-    assert "equipe" in body.casefold()
+    assert "modelo específico" in body.casefold()
+    assert "disponibilidade" in body.casefold()
+    assert "valor" in body.casefold()
 
 
 @mark.asyncio
@@ -5465,7 +5523,7 @@ async def test_quote_decision_accepts_natural_yes_and_goes_to_agenda() -> None:
 
 
 @mark.asyncio
-async def test_repeated_arbitrary_off_catalog_name_is_handed_off_on_second_attempt() -> None:
+async def test_arbitrary_off_catalog_name_offers_alternatives_and_insistence_handoffs() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_EQUIPMENT_MODEL,
         context={
@@ -5486,16 +5544,19 @@ async def test_repeated_arbitrary_off_catalog_name_is_handed_off_on_second_attem
 
     await engine.process(inbound(1214, body="FrostMaster X Ultra"))
 
-    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["catalog_mismatch_attempts"] == 1
     assert repository.context["catalog_mismatch_query"] == "frostmaster x ultra"
     assert "equipment_model" not in repository.context
+    assert "opções semelhantes" in (
+        repository.outbounds[-1].transition.outbound.body or ""
+    ).casefold()
 
-    await engine.process(inbound(1215, body="Quero mesmo o FrostMaster X Ultra"))
+    await engine.process(inbound(1215, body="Quero esse modelo"))
 
     assert repository.state == ConversationState.HUMAN_HANDOFF
     assert repository.automation_enabled is False
-    assert repository.context["catalog_mismatch_attempts"] == 2
+    assert repository.handoff_status == "waiting"
 
 @mark.asyncio
 async def test_unavailable_brand_is_never_substituted_by_same_capacity_from_another_brand() -> None:
