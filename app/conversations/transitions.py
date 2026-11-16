@@ -147,6 +147,7 @@ from app.conversations.outbound import (
     reschedule_message,
     service_selection_message,
     site_limit_message,
+    slot_selection_message,
     slot_unavailable_message,
     tubing_confirmation_message,
     tubing_guidance_message,
@@ -3407,7 +3408,11 @@ async def _service_question_answer(
         if isinstance(description, str) and description.strip():
             parts.append(description.strip())
         elif not inquiry_language:
-            parts.append(_generic_service_explanation(target.label))
+            parts.append(
+                "A descrição detalhada desse serviço não está cadastrada pela empresa "
+                "com segurança. Prefiro não completar essa informação por conta própria; "
+                "a equipe pode confirmar esse ponto."
+            )
 
     return " ".join(parts) if parts else None
 
@@ -8399,7 +8404,8 @@ async def _handle_weekday(
     weekday = _selected_weekday(action)
     if weekday is None:
         weekday = weekday_from_text(inbound.body)
-    if weekday is None:
+    any_day = _any_weekday_requested(inbound.body)
+    if weekday is None and not any_day:
         return _retry_or_handoff(
             ConversationState.BOOKING_WEEKDAY,
             context,
@@ -8407,8 +8413,8 @@ async def _handle_weekday(
             weekday_selection_message(
                 weekday_options(dates),
                 body=(
-                    f"{customer_lead(customer_name)}Tenho disponibilidade em vários dias. "
-                    "Qual dia da semana fica melhor para o seu atendimento?"
+                    f"{customer_lead(customer_name)}Qual dia da semana fica melhor "
+                    "para receber a visita do técnico? Se qualquer dia servir, pode me dizer."
                 ),
             ),
             handoff_body=(
@@ -8417,7 +8423,7 @@ async def _handle_weekday(
             ),
         )
 
-    matches = dates_for_weekday(dates, weekday)
+    matches = dates if any_day else dates_for_weekday(dates, weekday)
     if not matches:
         return _transition(
             ConversationState.BOOKING_WEEKDAY,
@@ -8430,26 +8436,44 @@ async def _handle_weekday(
                 ),
             ),
         )
-    if len(matches) == 1:
-        return await _offer_times_for_date(
+
+    try:
+        slot_options = await _suggested_slot_options(
             inbound,
             port,
-            context,
             service_id,
-            matches[0].id,
+            matches,
             requirements,
-            customer_name=customer_name,
         )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    if not slot_options:
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            _intake_context(context),
+            weekday_selection_message(
+                weekday_options(dates),
+                body=(
+                    "As opções que eu estava consultando acabaram de ficar indisponíveis. "
+                    "Qual dia da semana fica melhor para eu consultar novamente?"
+                ),
+            ),
+        )
+
+    body = (
+        f"{customer_lead(customer_name)}Encontrei estas opções mais próximas na agenda. "
+        "Qual fica melhor para o seu atendimento?"
+        if any_day
+        else (
+            f"{customer_lead(customer_name)}Encontrei estas opções mais próximas "
+            f"para {weekday_plural(weekday)}. Qual fica melhor para o seu atendimento?"
+        )
+    )
     return _transition(
         ConversationState.BOOKING_DATE,
         _intake_context(context),
-        date_selection_message(
-            matches,
-            body=(
-                f"{customer_lead(customer_name)}Tenho estas {weekday_plural(weekday)} "
-                "disponíveis. Qual data fica melhor para o seu atendimento?"
-            ),
-        ),
+        slot_selection_message(slot_options, body=body),
     )
 
 
@@ -8487,6 +8511,53 @@ async def _handle_date(
             inbound,
             port,
             body="Não há datas disponíveis. Escolha outro serviço.",
+        )
+
+    selected_slot = _selected_slot(action)
+    if selected_slot is not None:
+        selected_date, selected_time = selected_slot
+        if not _option_exists(dates, selected_date):
+            return _transition(
+                ConversationState.BOOKING_WEEKDAY,
+                _intake_context(context),
+                weekday_selection_message(
+                    weekday_options(dates),
+                    body=(
+                        "Essa opção acabou de ficar indisponível. "
+                        "Qual dia da semana fica melhor para eu consultar novamente?"
+                    ),
+                ),
+            )
+        try:
+            current_times = _snapshot_options(
+                await port.list_times(
+                    inbound.business_id,
+                    service_id,
+                    selected_date,
+                    requirements,
+                )
+            )
+        except BookingRequiresHandoff as exc:
+            return _handoff_for_reason(str(exc))
+        if _option_exists(current_times, selected_time):
+            return await _advance_preconfirmation(
+                inbound,
+                port,
+                {
+                    **_clear_repair_attempt(context, "date"),
+                    "selected_date": selected_date,
+                    "selected_time": selected_time,
+                },
+                customer_name=customer_name,
+            )
+        return await _offer_times_for_date(
+            inbound,
+            port,
+            _clear_repair_attempt(context, "date"),
+            service_id,
+            selected_date,
+            requirements,
+            customer_name=customer_name,
         )
 
     selected_date = _selected_date(action) or _date_from_text(inbound.body, dates)
@@ -9804,11 +9875,24 @@ async def _offer_dates(
         and plan.service.pricing_type is not PricingType.FIXED
     ):
         next_context["last_assistant_topic"] = "estimated_service_price"
+    if fulfillment_type not in {"equipment_delivery", "equipment_pickup"}:
+        body = (
+            f"{prefix}{customer_lead(customer_name)}qual dia da semana fica melhor "
+            "para receber a visita do técnico?"
+        )
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            next_context,
+            weekday_selection_message(
+                weekday_options(dates),
+                body=body,
+            ),
+        )
+
     if len(dates) > 10:
         body = (
             f"{prefix}Tenho disponibilidade em vários dias. "
-            f"{customer_lead(customer_name)}qual dia da semana fica melhor "
-            "para o seu atendimento?"
+            f"{customer_lead(customer_name)}qual dia da semana fica melhor?"
         )
         return _transition(
             ConversationState.BOOKING_WEEKDAY,
@@ -9821,14 +9905,77 @@ async def _offer_dates(
 
     body = (
         f"{prefix}Tenho disponibilidade nestas datas. "
-        f"{customer_lead(customer_name)}qual dia fica melhor "
-        "para o seu atendimento?"
+        f"{customer_lead(customer_name)}qual dia fica melhor?"
     )
     return _transition(
         ConversationState.BOOKING_DATE,
         next_context,
         date_selection_message(dates, body=body),
     )
+
+
+def _any_weekday_requested(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    return any(
+        phrase in normalized
+        for phrase in (
+            "qualquer dia",
+            "qualquer um",
+            "tanto faz",
+            "o dia que tiver",
+            "dia que tiver",
+            "primeiro dia livre",
+            "primeiro que tiver",
+        )
+    )
+
+
+async def _suggested_slot_options(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    service_id: uuid.UUID,
+    dates: Sequence[BookingOption],
+    requirements: BookingRequirements,
+) -> tuple[BookingOption, ...]:
+    options: list[BookingOption] = []
+    used_times: set[str] = set()
+
+    for date_option in dates:
+        if len(options) >= 3:
+            break
+        times = _snapshot_options(
+            await port.list_times(
+                inbound.business_id,
+                service_id,
+                date_option.id,
+                requirements,
+            )
+        )
+        if not times:
+            continue
+
+        index = len(options)
+        if index == 0:
+            ordered = list(times)
+        elif index == 1:
+            midpoint = len(times) // 2
+            ordered = [*times[midpoint:], *times[:midpoint]]
+        else:
+            ordered = list(reversed(times))
+
+        selected = next(
+            (option for option in ordered if option.id not in used_times),
+            ordered[0],
+        )
+        used_times.add(selected.id)
+        options.append(
+            BookingOption(
+                id=f"{date_option.id}|{selected.id}",
+                label=f"{date_short_label(date_option.id)} às {selected.label}",
+            )
+        )
+
+    return tuple(options)
 
 
 async def _offer_times_for_date(
@@ -10896,16 +11043,18 @@ async def _return_to_dates(
     )
     if not dates:
         return await _restart_service_selection(inbound, port)
-    if len(dates) > 10:
+    if _context_string(context, "fulfillment_type") not in {
+        "equipment_delivery",
+        "equipment_pickup",
+    } or len(dates) > 10:
         return _transition(
             ConversationState.BOOKING_WEEKDAY,
             _intake_context(context),
             weekday_selection_message(
                 weekday_options(dates),
                 body=(
-                    "Não há horários disponíveis na data escolhida. "
-                    f"{customer_lead(customer_name)}qual outro dia da semana "
-                    "fica melhor?"
+                    "Não há horários disponíveis na opção escolhida. "
+                    f"{customer_lead(customer_name)}qual outro dia da semana fica melhor?"
                 ),
             ),
         )
@@ -11545,6 +11694,26 @@ def _context_from_existing_booking(booking) -> dict[str, Any]:
         if key in ALLOWED_CONTEXT_KEYS:
             context[key] = value
     return context
+
+
+def _selected_slot(action: str | None) -> tuple[str, str] | None:
+    if action is None or not action.startswith("slot:"):
+        return None
+    raw = action.removeprefix("slot:")
+    raw_date, separator, raw_time = raw.partition("|")
+    if not separator:
+        return None
+    try:
+        parsed_date = date.fromisoformat(raw_date)
+        parsed_time = time.fromisoformat(raw_time)
+    except ValueError:
+        return None
+    if parsed_time.tzinfo is not None:
+        return None
+    normalized_time = parsed_time.strftime("%H:%M")
+    if parsed_date.isoformat() != raw_date or normalized_time != raw_time:
+        return None
+    return raw_date, raw_time
 
 
 def _selected_date(action: str | None) -> str | None:
