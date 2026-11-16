@@ -852,7 +852,7 @@ async def test_explicit_name_reply_also_resumes_pending_service_request() -> Non
 
 
 @mark.asyncio
-async def test_unrecognized_name_gets_one_retry_then_service_can_continue() -> None:
+async def test_social_detour_during_name_does_not_spend_retry_or_block_service() -> None:
     repository = FakeConversationRepository(customer_name=None)
     booking_port = FakeBookingPort()
     booking_port.services = [
@@ -870,7 +870,7 @@ async def test_unrecognized_name_gets_one_retry_then_service_can_continue() -> N
 
     assert repository.customer_name is None
     assert repository.state == ConversationState.CUSTOMER_NAME
-    assert repository.context["repair_attempts"]["customer_name"] == 1
+    assert "repair_attempts" not in repository.context
     assert repository.context.get("customer_name_skipped") is not True
     assert repository.handoff_status == "none"
 
@@ -901,7 +901,7 @@ async def test_invalid_name_reply_gets_one_retry_and_keeps_pending_request() -> 
     assert repository.state == ConversationState.CUSTOMER_NAME
     assert repository.context["pending_customer_message"] == "Preciso fazer uma limpeza"
 
-    await engine.process(inbound(2, body="Nossa dormi tão mal"))
+    await engine.process(inbound(2, body="12345"))
 
     assert repository.customer_name is None
     assert repository.state == ConversationState.CUSTOMER_NAME
