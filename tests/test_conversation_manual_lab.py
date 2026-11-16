@@ -3,10 +3,15 @@ from decimal import Decimal
 import pytest
 
 from app.conversation_lab.adapters import (
+    DEINSTALLATION_SERVICE_ID,
     DIAGNOSTICS_SERVICE_ID,
     ELECTRICAL_SERVICE_ID,
+    GENERIC_SERVICE_ID,
+    INFRASTRUCTURE_SERVICE_ID,
     INSTALLATION_SERVICE_ID,
+    PMOC_SERVICE_ID,
     REFRIGERATOR_SERVICE_ID,
+    RELOCATION_SERVICE_ID,
     SERVICE_ID,
 )
 from app.conversation_lab.manual import (
@@ -191,6 +196,68 @@ async def test_manual_lab_electrical_qualifies_risk_and_property_before_address(
 
     assert snapshot["state"] == ConversationState.BOOKING_ADDRESS.value
     assert snapshot["context"]["property_type"] == "house"
+    assert "agora que já entendi o serviço" in snapshot["history"][-1]["body"].casefold()
+
+
+@pytest.mark.parametrize(
+    ("service_id", "label", "details"),
+    [
+        (
+            PMOC_SERVICE_ID,
+            "PMOC - Plano de manutenção, operação e controle",
+            "preciso fazer o PMOC em 4 aparelhos da empresa",
+        ),
+        (
+            DEINSTALLATION_SERVICE_ID,
+            "Desinstalação de ar-condicionado",
+            "preciso desinstalar 2 aparelhos em uma empresa",
+        ),
+        (
+            RELOCATION_SERVICE_ID,
+            "Realocação de ar-condicionado",
+            "preciso realocar 2 aparelhos entre dois ambientes",
+        ),
+        (
+            INFRASTRUCTURE_SERVICE_ID,
+            "Infraestrutura para ar-condicionado",
+            "preciso preparar infraestrutura para 3 ambientes da empresa",
+        ),
+        (
+            GENERIC_SERVICE_ID,
+            "Atendimento técnico especial",
+            "preciso verificar um equipamento que parou durante o uso",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_manual_lab_motor_wide_services_qualify_scope_before_address(
+    service_id,
+    label: str,
+    details: str,
+) -> None:
+    session_id, _ = await _new_named_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(
+            text=label,
+            action=f"service:{service_id}",
+        ),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_SERVICE_DETAILS.value
+    assert snapshot["context"]["service_id"] == str(service_id)
+    assert "service_address" not in snapshot["context"]
+    assert "antes de pedir o endereço" in snapshot["history"][-1]["body"].casefold()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text=details),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_ADDRESS.value
+    assert snapshot["context"]["service_details_text"]
+    assert "service_address" not in snapshot["context"]
     assert "agora que já entendi o serviço" in snapshot["history"][-1]["body"].casefold()
 
 
