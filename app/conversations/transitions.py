@@ -5220,7 +5220,7 @@ def _service_issue_category(service_kind: str, body: str | None) -> str | None:
     if not normalized:
         return None
 
-    if service_kind == "refrigeration_appliance":
+    if sales_qualification_v2 and service_kind == "refrigeration_appliance":
         categories = (
             (
                 "no_cooling",
@@ -6269,6 +6269,7 @@ async def _handle_service(
             **context,
             "service_id": str(service_id),
             "purchase_mode": purchase_mode,
+            "service_qualification_version": 2,
         }
         updated_context.pop("service_clarification", None)
         if purchase_action == EQUIPMENT_INSTALLATION:
@@ -6379,6 +6380,7 @@ async def _handle_service(
     updated_context = {
         **context,
         "service_id": str(service_id),
+        "service_qualification_version": 2,
     }
     updated_context.pop("service_clarification", None)
     selected_service_kind = _service_kind(services, service_id)
@@ -9304,6 +9306,7 @@ async def _advance_intake(
         await port.list_services(inbound.business_id)
     )
     service_kind = _service_kind(available_services, service_id)
+    sales_qualification_v2 = context.get("service_qualification_version") == 2
 
     if intake.requires_quantity and not isinstance(context.get("quantity"), int):
         return _transition(
@@ -9319,7 +9322,8 @@ async def _advance_intake(
     # Known domains use their specific qualification; unknown catalog services use
     # one generic scope checkpoint instead of jumping straight to the address.
     if (
-        service_kind in {
+        sales_qualification_v2
+        and service_kind in {
             "refrigeration_appliance",
             "electrical",
             "hvac_scope",
@@ -9604,7 +9608,8 @@ async def _advance_intake(
 
     property_type = _context_string(context, "property_type")
     needs_property = (
-        service_kind in {"installation", "electrical"}
+        service_kind == "installation"
+        or (sales_qualification_v2 and service_kind == "electrical")
         or context.get("request_mode") == "quote"
         or property_type in {"building", "condominium"}
     )
