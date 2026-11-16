@@ -5128,14 +5128,7 @@ def _installation_service_option(
     ]
     if ranked:
         return ranked[0]
-    return next(
-        (
-            item
-            for item in services
-            if "instal" in normalize_portuguese(item.label)
-        ),
-        None,
-    )
+    return None
 
 
 def _service_kind(
