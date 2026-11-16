@@ -982,6 +982,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
     assert repository.state == ConversationState.BOOKING_DATE
     assert repository.context == {
         "service_id": str(SERVICE_ID),
+        "service_qualification_version": 2,
         "last_assistant_topic": "estimated_service_price",
     }
 
@@ -991,6 +992,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
     assert repository.state == ConversationState.BOOKING_TIME
     assert repository.context == {
         "service_id": str(SERVICE_ID),
+        "service_qualification_version": 2,
         "selected_date": "2026-09-02",
     }
 
