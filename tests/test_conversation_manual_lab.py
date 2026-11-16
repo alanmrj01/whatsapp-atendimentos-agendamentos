@@ -449,7 +449,7 @@ async def test_manual_lab_off_catalog_model_offers_alternatives_and_keeps_automa
 
     snapshot = await send_message(
         session_id,
-        ManualInput(text="FrostMaster X Ultra 18000 BTU"),
+        ManualInput(text="Midea 50000 BTU quente frio"),
     )
 
     assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
