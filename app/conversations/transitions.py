@@ -167,6 +167,7 @@ from app.conversations.interpreter import (
 from app.conversations.orchestration import (
     TurnRelation,
     classify_pending_turn,
+    is_contextual_social_message,
     is_referral_message,
     referral_acknowledgement,
 )
@@ -1924,20 +1925,6 @@ def _pending_question_explanation(
         return "A quantidade de aparelhos influencia o tempo do serviço e a organização do atendimento."
     if state is ConversationState.BOOKING_ACCESS:
         return "Quero saber se existe alguma dificuldade de acesso que o técnico precise considerar antes de ir ao local."
-    if state is ConversationState.BOOKING_SERVICE_DETAILS:
-        return _retry_or_handoff(
-            state,
-            context,
-            "service_details",
-            _text_message(
-                "Antes de continuar, me conte em uma frase o que precisa ser feito "
-                "ou qual problema está acontecendo."
-            ),
-            handoff_body=(
-                "Não consegui entender os detalhes básicos do serviço com segurança. "
-                "Vou chamar uma pessoa da equipe para continuar."
-            ),
-        )
     if state is ConversationState.BOOKING_ADDRESS:
         if context.get("address_purpose") == "delivery":
             return "O endereço é necessário para organizar a entrega do aparelho."
@@ -3497,7 +3484,13 @@ def _message_can_answer_pending_state(
     if state is ConversationState.BOOKING_SERVICE:
         return interpretation.has(ConversationIntent.SERVICE_INTENT)
     if state is ConversationState.BOOKING_SERVICE_DETAILS:
-        if interpretation.has_act(ConversationAct.SIDE_QUESTION):
+        if (
+            interpretation.has_act(ConversationAct.SIDE_QUESTION)
+            or interpretation.has_act(ConversationAct.PAUSE)
+            or interpretation.has_act(ConversationAct.SOCIAL)
+            or is_referral_message(body)
+            or is_contextual_social_message(body, interpretation)
+        ):
             return False
         return (
             len(normalized.split()) >= 2
