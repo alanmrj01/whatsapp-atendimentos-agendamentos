@@ -1068,7 +1068,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
     ]
     assert interactive_ids == [
         "booking.services",
-        "booking.dates",
+        "booking.weekdays",
         "booking.times",
         "booking.attendee",
         "booking.phone_confirmation",
