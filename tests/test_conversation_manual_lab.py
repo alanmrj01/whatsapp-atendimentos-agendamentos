@@ -145,6 +145,28 @@ async def test_manual_lab_uses_r9_catalog_driven_service_selection(
 
 
 @pytest.mark.asyncio
+async def test_manual_lab_smell_complaint_routes_to_cleaning_after_name_capture() -> None:
+    session_id, _ = await _new_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="blz? meu ar ta fedendo"),
+    )
+
+    assert snapshot["state"] == ConversationState.CUSTOMER_NAME.value
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="joao"),
+    )
+
+    assert snapshot["context"]["service_id"] == str(SERVICE_ID)
+    assert snapshot["state"] == ConversationState.BOOKING_QUANTITY.value
+    joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
+    assert "quantos itens ou aparelhos" in joined
+
+
+@pytest.mark.asyncio
 async def test_manual_lab_refrigerator_qualifies_appliance_before_address() -> None:
     session_id, _ = await _new_named_session()
 
