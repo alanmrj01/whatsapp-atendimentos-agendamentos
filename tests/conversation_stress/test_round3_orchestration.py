@@ -326,6 +326,46 @@ async def test_unknown_parallel_question_does_not_consume_slot_repair() -> None:
 
 
 @pytest.mark.asyncio
+async def test_answer_plus_price_question_uses_context_updated_in_same_turn() -> None:
+    class QuantityAwarePort(FakeBookingPort):
+        async def estimate(self, business_id, service_id, requirements):
+            assert service_id == SERVICE_ID
+            amount = Decimal("100.00") * requirements.quantity
+            return replace(
+                self.plan,
+                service=replace(
+                    self.plan.service,
+                    estimated_price=amount,
+                    pricing_type=PricingType.ESTIMATED,
+                ),
+            )
+
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_QUANTITY,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Joao",
+    )
+    port = QuantityAwarePort()
+    port.intake = replace(
+        port.intake,
+        requires_quantity=True,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, port)
+
+    await engine.process(
+        inbound(3075, body="são 2 aparelhos, quanto fica?")
+    )
+
+    body = _combined_body(repository)
+    assert repository.context["quantity"] == 2
+    assert repository.context["equipment_quantity"] == 2
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert "r$ 200,00" in body
+    assert "r$ 100,00" not in body
+
+
+@pytest.mark.asyncio
 async def test_real_invalid_slot_answer_gets_one_retry_then_handoff() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_QUANTITY,
