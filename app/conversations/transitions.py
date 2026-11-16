@@ -9232,37 +9232,57 @@ async def _advance_intake(
             ),
         )
 
-    # Sales-first orchestration: for the core refrigeration journeys, understand
-    # the appliance/service before asking logistical data such as access/address.
-    # Those fields are collected later, when they are needed to finish a quote
-    # or open the schedule.
-    qualification_first = service_kind in {
-        "installation",
-        "cleaning",
-        "gas_recharge",
-        "diagnostics",
-        "preventive",
-    }
+    # Sales-first orchestration is motor-wide: every configured service must
+    # be understood before logistical fields such as access/address are requested.
+    # Known domains use their specific qualification; unknown catalog services use
+    # one generic scope checkpoint instead of jumping straight to the address.
     if (
-        not qualification_first
-        and intake.considers_difficult_access
-        and _context_string(context, "access_condition") is None
+        service_kind in {
+            "refrigeration_appliance",
+            "electrical",
+            "hvac_scope",
+            "other",
+        }
+        and _context_string(context, "service_details_text") is None
     ):
         return _transition(
-            ConversationState.BOOKING_ACCESS,
+            ConversationState.BOOKING_SERVICE_DETAILS,
             context,
-            access_selection_message(),
+            _service_details_request_message(service_kind),
         )
-    if (
-        not qualification_first
-        and intake.requires_address
-        and ServiceAddress.from_snapshot(context.get("service_address")) is None
-    ):
-        return _transition(
-            ConversationState.BOOKING_ADDRESS,
-            context,
-            _service_address_request_message(context),
+
+    if service_kind == "refrigeration_appliance":
+        context = {
+            **context,
+            "equipment_ownership": "has_equipment",
+        }
+        has_equipment_reference = (
+            _context_string(context, "equipment_model") is not None
+            or context.get("equipment_photo_received") is True
         )
+        if not has_equipment_reference:
+            if context.get("equipment_model_known") is False:
+                updated = {
+                    **context,
+                    "equipment_photo_requested": True,
+                }
+                return _transition(
+                    ConversationState.BOOKING_EQUIPMENT_MODEL,
+                    updated,
+                    _text_message(
+                        "Sem problema. Pode me mandar uma foto da frente ou da etiqueta "
+                        "do equipamento para a equipe identificar."
+                    ),
+                )
+            updated = {
+                **context,
+                "equipment_model_known": True,
+            }
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_MODEL,
+                updated,
+                _equipment_model_request_for_kind(service_kind, updated),
+            )
 
     if service_kind in {
         "cleaning",
@@ -9357,15 +9377,7 @@ async def _advance_intake(
                 return _transition(
                     ConversationState.BOOKING_EQUIPMENT_MODEL,
                     updated,
-                    equipment_model_request_message(
-                        "Para eu entender o tamanho do aparelho e montar a cotação "
-                        "corretamente, qual é a marca e a capacidade em BTUs ou o modelo? "
-                        "Se não souber, pode me mandar uma foto."
-                        if context.get("request_mode") == "quote"
-                        else
-                        "Qual é a marca e a capacidade em BTUs ou o modelo do seu "
-                        "ar-condicionado? Se não souber, pode me mandar uma foto."
-                    ),
+                    _equipment_model_request_for_kind(service_kind, updated),
                 )
         else:
             model_known = context.get("equipment_model_known")
@@ -9510,7 +9522,7 @@ async def _advance_intake(
 
     property_type = _context_string(context, "property_type")
     needs_property = (
-        service_kind == "installation"
+        service_kind in {"installation", "electrical"}
         or context.get("request_mode") == "quote"
         or property_type in {"building", "condominium"}
     )
