@@ -413,7 +413,8 @@ async def test_real_quote_journey_keeps_sales_intent_until_installation_qualific
     assert repository.context["request_mode"] == "quote"
     assert repository.context["equipment_ownership"] == "has_equipment"
     assert "service_address" not in repository.context
-    assert "marca e o modelo" in body
+    assert "capacidade em btus" in body
+    assert "montar a cotação" in body
     assert "endereço" not in body
 
 
@@ -450,7 +451,8 @@ async def test_installation_quote_preserves_quote_and_qualifies_before_address()
     assert repository.context["request_mode"] == "quote"
     assert repository.context["equipment_ownership"] == "has_equipment"
     assert "service_address" not in repository.context
-    assert "marca e o modelo" in body
+    assert "capacidade em btus" in body
+    assert "montar a cotação" in body
     assert "endereço" not in body
 
 
