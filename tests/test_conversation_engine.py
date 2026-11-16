@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock
@@ -177,6 +177,7 @@ class FakeBookingPort:
         self.confirmation_requirements: list[BookingRequirements] = []
         self.services = [BookingOption(str(SERVICE_ID), "Service")]
         self.dates = [BookingOption("2026-09-02", "02/09/2026")]
+        self.operating_weekdays: list[int] | None = None
         self.times = [BookingOption("09:00", "09:00")]
         self.intake = ServiceIntake(
             requires_quantity=False,
@@ -319,6 +320,50 @@ class FakeBookingPort:
         assert service_id == SERVICE_ID
         self.calls.append("dates")
         return tuple(self.dates)
+
+    async def list_operating_weekdays(
+        self,
+        _: uuid.UUID,
+        service_id: uuid.UUID,
+    ) -> tuple[BookingOption, ...]:
+        assert service_id == SERVICE_ID
+        weekdays = (
+            self.operating_weekdays
+            if self.operating_weekdays is not None
+            else sorted({date.fromisoformat(item.id).weekday() for item in self.dates})
+        )
+        labels = (
+            "Segunda-feira",
+            "Terça-feira",
+            "Quarta-feira",
+            "Quinta-feira",
+            "Sexta-feira",
+            "Sábado",
+            "Domingo",
+        )
+        self.calls.append("operating_weekdays")
+        return tuple(
+            BookingOption(id=str(value), label=labels[value])
+            for value in weekdays
+        )
+
+    async def list_suggested_dates(
+        self,
+        _: uuid.UUID,
+        service_id: uuid.UUID,
+        __: BookingRequirements = BookingRequirements(),
+        *,
+        weekday: int | None = None,
+        limit: int = 3,
+    ) -> tuple[BookingOption, ...]:
+        assert service_id == SERVICE_ID
+        self.calls.append("suggested_dates")
+        matches = tuple(
+            item
+            for item in self.dates
+            if weekday is None or date.fromisoformat(item.id).weekday() == weekday
+        )
+        return matches[:limit]
 
     async def list_times(
         self,
