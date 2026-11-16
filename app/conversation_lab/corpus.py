@@ -1439,8 +1439,19 @@ DISCOVERY_JOURNEY_CASES = (
         (
             JourneyStep(
                 body="minha geladeira não ta gelando direito",
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+                contains=("marca", "modelo"),
+                required_context_keys=(
+                    "service_id",
+                    "service_details_text",
+                    "appliance_type",
+                    "service_issue_category",
+                ),
+            ),
+            JourneyStep(
+                body="Brastemp BRM44",
                 expected_state=ConversationState.BOOKING_ADDRESS,
-                required_context_keys=("service_id",),
+                required_context_keys=("equipment_model",),
             ),
             JourneyStep(
                 body="Rua das Palmeiras 44, Centro, São José dos Campos, SP",
@@ -1480,7 +1491,7 @@ DISCOVERY_JOURNEY_CASES = (
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
         False,
-        (0, 2, 7),
+        (0, 3, 8),
         16,
     ),
     JourneyCase(
@@ -1488,8 +1499,18 @@ DISCOVERY_JOURNEY_CASES = (
         (
             JourneyStep(
                 body="a tomada da cozinha queimou e preciso arrumar",
+                expected_state=ConversationState.BOOKING_PROPERTY,
+                contains=("risco elétrico", "casa"),
+                required_context_keys=(
+                    "service_id",
+                    "service_details_text",
+                    "service_issue_category",
+                ),
+            ),
+            JourneyStep(
+                body="é uma casa",
                 expected_state=ConversationState.BOOKING_ADDRESS,
-                required_context_keys=("service_id",),
+                required_context_keys=("property_type",),
             ),
             JourneyStep(
                 body="Av. Brasil 120, Jardim América, São José dos Campos, SP",
@@ -1529,7 +1550,7 @@ DISCOVERY_JOURNEY_CASES = (
         ("confirm_dry_run",),
         ("cancel_dry_run", "reschedule_dry_run"),
         False,
-        (0, 2, 7),
+        (0, 3, 8),
         16,
     ),
     JourneyCase(
