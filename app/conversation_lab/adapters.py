@@ -38,6 +38,11 @@ DIAGNOSTICS_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000008")
 GAS_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000009")
 REFRIGERATOR_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000010")
 ELECTRICAL_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000011")
+PMOC_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000012")
+DEINSTALLATION_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000013")
+RELOCATION_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000014")
+INFRASTRUCTURE_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000015")
+GENERIC_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000016")
 APPOINTMENT_ID = uuid.UUID("95000000-0000-0000-0000-000000000005")
 EMPLOYEE_ID = uuid.UUID("96000000-0000-0000-0000-000000000006")
 
@@ -202,6 +207,33 @@ class DryRunBookingPort:
                 "Elétrica residencial",
                 generate_service_intent_examples("Elétrica residencial"),
             ),
+            BookingOption(
+                str(PMOC_SERVICE_ID),
+                "PMOC - Plano de manutenção, operação e controle",
+                generate_service_intent_examples(
+                    "PMOC - Plano de manutenção, operação e controle"
+                ),
+            ),
+            BookingOption(
+                str(DEINSTALLATION_SERVICE_ID),
+                "Desinstalação de ar-condicionado",
+                generate_service_intent_examples("Desinstalação de ar-condicionado"),
+            ),
+            BookingOption(
+                str(RELOCATION_SERVICE_ID),
+                "Realocação de ar-condicionado",
+                generate_service_intent_examples("Realocação de ar-condicionado"),
+            ),
+            BookingOption(
+                str(INFRASTRUCTURE_SERVICE_ID),
+                "Infraestrutura para ar-condicionado",
+                generate_service_intent_examples("Infraestrutura para ar-condicionado"),
+            ),
+            BookingOption(
+                str(GENERIC_SERVICE_ID),
+                "Atendimento técnico especial",
+                generate_service_intent_examples("Atendimento técnico especial"),
+            ),
         ]
         self.dates = [
             BookingOption("2026-11-16", "segunda-feira, 16 de novembro"),
@@ -256,6 +288,46 @@ class DryRunBookingPort:
                 pricing_type=PricingType.ESTIMATED,
             ),
             ELECTRICAL_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            PMOC_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            DEINSTALLATION_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            RELOCATION_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            INFRASTRUCTURE_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            GENERIC_SERVICE_ID: ServiceIntake(
                 requires_quantity=False,
                 requires_address=True,
                 considers_difficult_access=False,
