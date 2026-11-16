@@ -9908,6 +9908,7 @@ async def _offer_dates(
     if service_id is None:
         return await _restart_service_selection(inbound, port)
     requirements = _requirements_from_context(context)
+    fulfillment_type = _context_string(context, "fulfillment_type")
     try:
         plan = await port.estimate(
             inbound.business_id,
@@ -9916,16 +9917,42 @@ async def _offer_dates(
         )
         if plan.requires_handoff:
             return _handoff_for_reason(plan.handoff_reason)
-        dates = _snapshot_options(
-            await port.list_dates(
-                inbound.business_id,
+        if fulfillment_type in {"equipment_delivery", "equipment_pickup"}:
+            dates = _snapshot_options(
+                await port.list_dates(
+                    inbound.business_id,
+                    service_id,
+                    requirements,
+                )
+            )
+            operating_weekdays = weekday_options(dates)
+        else:
+            operating_weekdays = await _operating_weekday_options(
+                inbound,
+                port,
                 service_id,
                 requirements,
             )
-        )
+            dates = ()
     except BookingRequiresHandoff as exc:
         return _handoff_for_reason(str(exc))
-    if not dates:
+
+    if not operating_weekdays:
+        available_services = services or _snapshot_options(
+            await port.list_services(inbound.business_id)
+        )
+        return _transition(
+            ConversationState.BOOKING_SERVICE,
+            {},
+            service_selection_message(
+                available_services,
+                body="Não encontrei dias de atendimento configurados. Escolha outro serviço.",
+            ),
+        )
+    if (
+        fulfillment_type in {"equipment_delivery", "equipment_pickup"}
+        and not dates
+    ):
         available_services = services or _snapshot_options(
             await port.list_services(inbound.business_id)
         )
@@ -9938,7 +9965,6 @@ async def _offer_dates(
             ),
         )
 
-    fulfillment_type = _context_string(context, "fulfillment_type")
     estimate = (
         _fulfillment_schedule_intro(plan, context)
         if fulfillment_type in {"equipment_delivery", "equipment_pickup"}
@@ -9966,7 +9992,7 @@ async def _offer_dates(
             ConversationState.BOOKING_WEEKDAY,
             next_context,
             weekday_selection_message(
-                weekday_options(dates),
+                operating_weekdays,
                 body=body,
             ),
         )
@@ -11120,15 +11146,34 @@ async def _return_to_dates(
     *,
     customer_name: str | None = None,
 ) -> ConversationTransition:
+    fulfillment_type = _context_string(context, "fulfillment_type")
+    if fulfillment_type not in {"equipment_delivery", "equipment_pickup"}:
+        operating_weekdays = await _operating_weekday_options(
+            inbound,
+            port,
+            service_id,
+            requirements,
+        )
+        if not operating_weekdays:
+            return await _restart_service_selection(inbound, port)
+        return _transition(
+            ConversationState.BOOKING_WEEKDAY,
+            _intake_context(context),
+            weekday_selection_message(
+                operating_weekdays,
+                body=(
+                    "Não há horários disponíveis na opção escolhida. "
+                    f"{customer_lead(customer_name)}qual outro dia da semana fica melhor?"
+                ),
+            ),
+        )
+
     dates = _snapshot_options(
         await port.list_dates(inbound.business_id, service_id, requirements)
     )
     if not dates:
         return await _restart_service_selection(inbound, port)
-    if _context_string(context, "fulfillment_type") not in {
-        "equipment_delivery",
-        "equipment_pickup",
-    } or len(dates) > 10:
+    if len(dates) > 10:
         return _transition(
             ConversationState.BOOKING_WEEKDAY,
             _intake_context(context),
