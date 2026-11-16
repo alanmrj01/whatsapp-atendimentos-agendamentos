@@ -84,6 +84,28 @@ async def test_manual_lab_starts_without_synthetic_customer_name_and_asks_real_n
 
 
 @pytest.mark.asyncio
+async def test_manual_lab_short_greeting_then_name_does_not_emit_unknown_fallback() -> None:
+    session_id, _ = await _new_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="opa"),
+    )
+    assert snapshot["state"] == ConversationState.CUSTOMER_NAME.value
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="alan"),
+    )
+
+    assert snapshot["state"] == ConversationState.MENU.value
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert last["body"] == "Prazer, Alan. Como posso te ajudar?"
+    assert "não entendi" not in last["body"].casefold()
+    assert "nao entendi" not in last["body"].casefold()
+
+
+@pytest.mark.asyncio
 async def test_manual_lab_has_fixed_isolated_equipment_catalog() -> None:
     _, session = await _new_session()
 
@@ -372,6 +394,96 @@ async def test_purchase_intent_only_asks_whether_installation_is_also_wanted() -
     assert snapshot["state"] == ConversationState.BOOKING_SERVICE.value
     assert "você também gostaria de contratar a instalação" in joined
     assert option_titles == ["Só o aparelho", "Compra + instalação"]
+
+
+@pytest.mark.asyncio
+async def test_cleaning_quantity_also_supports_six_or_more_and_exact_count() -> None:
+    session_id, _ = await _new_named_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="quero fazer uma limpeza"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_QUANTITY.value
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert [option["title"] for option in last["options"]] == [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6 ou mais",
+    ]
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="6 ou mais", action="quantity:more"),
+    )
+    assert snapshot["state"] == ConversationState.BOOKING_QUANTITY.value
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert "quantos itens ou aparelhos são ao todo" in last["body"].casefold()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="20"),
+    )
+
+    assert snapshot["context"]["quantity"] == 20
+    assert snapshot["state"] != ConversationState.HUMAN_HANDOFF.value
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_off_catalog_model_offers_alternatives_and_keeps_automation() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
+    session.repository.context = {
+        "service_id": str(INSTALLATION_SERVICE_ID),
+        "request_mode": "quote",
+        "purchase_mode": "purchase",
+        "purchase_only": True,
+        "equipment_ownership": "needs_equipment",
+        "equipment_model_known": True,
+        "quantity": 1,
+    }
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="FrostMaster X Ultra 18000 BTU"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
+    assert snapshot["automation_enabled"] is True
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert "não temos esse modelo específico" in last["body"].casefold()
+    assert "opções semelhantes" in last["body"].casefold()
+    assert {option["id"] for option in last["options"]} >= {
+        "equipment.model.recommend",
+        "equipment.model.exact_check",
+    }
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(
+            text="Ver semelhantes",
+            action="equipment.model.recommend",
+        ),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_PROFILE.value
+    assert snapshot["automation_enabled"] is True
+    assert snapshot["handoff_status"] == "none"
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="1"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_PROFILE.value
+    assert snapshot["automation_enabled"] is True
+    assert snapshot["handoff_status"] == "none"
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert "tamanho aproximado" in last["body"].casefold()
 
 
 @pytest.mark.asyncio
