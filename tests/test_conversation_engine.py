@@ -726,16 +726,25 @@ async def test_weekday_choice_narrows_dates_then_selected_date_offers_times() ->
         "sections"
     ][0]["rows"]
     assert [row["id"] for row in date_rows] == [
-        "date:2026-09-24",
-        "date:2026-10-01",
-        "date:2026-10-08",
+        "slot:2026-09-24|10:30",
+        "slot:2026-10-01|11:00",
+        "slot:2026-10-08|11:30",
     ]
 
-    await engine.process(inbound(2, body="24/09"))
+    await engine.process(
+        inbound(
+            2,
+            action="slot:2026-09-24|10:30",
+            body="quinta, 24/09 às 10:30",
+        )
+    )
 
-    assert repository.state == ConversationState.BOOKING_TIME
     assert repository.context["selected_date"] == "2026-09-24"
-    assert "10:30" in (repository.outbounds[-1].transition.outbound.body or "")
+    assert repository.context["selected_time"] == "10:30"
+    assert repository.state not in {
+        ConversationState.BOOKING_DATE,
+        ConversationState.BOOKING_TIME,
+    }
 
 
 @mark.asyncio
@@ -979,7 +988,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
     assert await engine.process(
         inbound(3, action=f"service:{SERVICE_ID}")
     ) is True
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context == {
         "service_id": str(SERVICE_ID),
         "service_qualification_version": 2,
@@ -1671,7 +1680,7 @@ async def test_booking_collects_only_simple_required_information() -> None:
     assert repository.state == ConversationState.BOOKING_SITE_LIMIT
     await engine.process(inbound(6, action="site_limit.17:00"))
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["quantity"] == 3
     assert repository.context["access_condition"] == "unknown"
     assert repository.context["site_allowed_end"] == "17:00"
@@ -2060,7 +2069,7 @@ async def test_uncertain_tubing_value_is_confirmed_before_advancing() -> None:
         inbound(105, action="tubing.confirm", body="Sim")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["tubing_meters"] == "3"
     assert repository.context["tubing_length_answered"] is True
     assert repository.automation_enabled is True
@@ -2083,7 +2092,7 @@ async def test_unknown_tubing_keeps_automatic_flow_without_inventing_measurement
         inbound(106, body="Não tenho certeza")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["tubing_length_answered"] is True
     assert "tubing_meters" not in repository.context
     assert repository.automation_enabled is True
@@ -2226,7 +2235,7 @@ async def test_customer_can_supply_different_city_after_city_confirmation() -> N
 
     await engine.process(inbound(204, body="Jacareí - SP"))
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     address = repository.context["service_address"]
     assert address["city"] == "Jacareí"
     assert address["state"] == "SP"
@@ -2255,7 +2264,7 @@ async def test_full_service_address_is_canonicalized_for_route_and_persistence()
         )
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     address = repository.context["service_address"]
     assert address == {
         "address_line": "Rua dos Alfaiates 109, Novo Horizonte",
@@ -2283,7 +2292,7 @@ async def test_dotted_street_and_city_abbreviations_become_canonical_address() -
         inbound(211, body="R. dos Alfaiates 109, Novo Horizonte, SJC")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     address = repository.context["service_address"]
     assert address["address_line"] == "Rua dos Alfaiates 109, Novo Horizonte"
     assert address["city"] == "São José dos Campos"
@@ -2492,7 +2501,7 @@ async def test_abbreviated_address_with_different_city_does_not_force_business_c
         inbound(307, body="rua 28 pq imperial jacarei")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     stored = repository.context["service_address"]["address_line"]
     assert "Parque imperial jacarei" in stored
     assert "São José dos Campos" not in stored
@@ -2522,7 +2531,7 @@ async def test_city_reply_after_other_city_is_accepted_without_reasking() -> Non
         inbound(308, body="jacarei")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     address = repository.context["service_address"]
     assert address["city"] == "jacarei"
     assert "repair_attempts" not in repository.context
@@ -2748,7 +2757,7 @@ async def test_building_information_is_collected_before_availability() -> None:
     await engine.process(
         inbound(411, body="Bloco B, apartamento 42, falar com Alan na portaria")
     )
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["building_hours_start"] == "08:00"
     assert repository.context["building_hours_end"] == "17:00"
     assert "Bloco B" in repository.context["gate_instructions"]
@@ -3401,7 +3410,7 @@ async def test_missing_city_is_asked_directly_without_business_city_guess() -> N
     await engine.process(inbound(941, body="Taubaté"))
 
     assert repository.context["service_address"]["city"] == "Taubaté"
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
 
 
 @mark.asyncio
@@ -3428,7 +3437,7 @@ async def test_common_city_abbreviation_bh_is_normalized() -> None:
     address = repository.context["service_address"]
     assert address["city"] == "Belo Horizonte"
     assert address["state"] == "MG"
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
 
 
 @mark.asyncio
@@ -3485,7 +3494,7 @@ async def test_noise_diagnostic_collects_model_photo_and_video_before_agenda() -
     await engine.process(
         inbound(947, body="Rua A, 10, Centro, SJC")
     )
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
 
 
 @mark.asyncio
@@ -3544,7 +3553,7 @@ async def test_gas_recharge_accepts_uncertain_model_answer_with_question_mark() 
         inbound(950, body="oi, LG dual inverter 12000 BTU?")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["equipment_model"] == "LG dual inverter 12000 BTU"
     assert repository.automation_enabled is True
     body = repository.outbounds[-1].transition.outbound.body or ""
@@ -4665,12 +4674,12 @@ async def test_quote_finish_then_ok_vamos_seguir_resumes_same_quote() -> None:
         inbound(1183, body="Ok, vamos seguir")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["service_id"] == str(SERVICE_ID)
     assert "quote_paused" not in repository.context
     assert "request_mode" not in repository.context
     body = repository.outbounds[-1].transition.outbound.body or ""
-    assert "disponibilidade" in body.casefold()
+    assert "dia da semana" in body.casefold()
     assert "posso ajudar com limpeza" not in body.casefold()
 
 
@@ -4702,10 +4711,10 @@ async def test_quote_finish_then_text_or_old_button_consults_same_agenda() -> No
             inbound(sequence, action=action, body=body)
         )
 
-        assert repository.state == ConversationState.BOOKING_DATE
+        assert repository.state == ConversationState.BOOKING_WEEKDAY
         assert repository.context["service_id"] == str(SERVICE_ID)
         response = repository.outbounds[-1].transition.outbound.body or ""
-        assert "disponibilidade" in response.casefold()
+        assert "dia da semana" in response.casefold()
         assert "como podemos ajudar" not in response.casefold()
 
 
@@ -4732,10 +4741,10 @@ async def test_paused_quote_menu_agendar_resumes_instead_of_restarting_service()
         inbound(1186, action="menu.book", body="Agendar")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["service_id"] == str(SERVICE_ID)
     body = repository.outbounds[-1].transition.outbound.body or ""
-    assert "disponibilidade" in body.casefold()
+    assert "dia da semana" in body.casefold()
     assert "escolha um serviço" not in body.casefold()
 
 
@@ -5355,7 +5364,7 @@ async def test_access_step_accepts_free_text_without_forcing_button() -> None:
     )
 
     assert repository.context["access_condition"] == "normal"
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
 
 
 @mark.asyncio
@@ -5375,7 +5384,7 @@ async def test_quote_decision_accepts_natural_yes_and_goes_to_agenda() -> None:
         inbound(1213, body="Sim, vamos seguir")
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["service_id"] == str(SERVICE_ID)
     assert "request_mode" not in repository.context
 
@@ -5704,7 +5713,7 @@ async def test_site_limit_accepts_natural_no_restriction_text() -> None:
 
     assert repository.context["site_limit_answered"] is True
     assert "site_allowed_end" not in repository.context
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
 
 
 @mark.asyncio
