@@ -3526,7 +3526,11 @@ def _message_can_answer_pending_state(
         ConversationState.BOOKING_WEEKDAY,
     }:
         return bool(
-            weekday_from_text(body) is not None
+            (
+                state is ConversationState.BOOKING_WEEKDAY
+                and _any_weekday_requested(body)
+            )
+            or weekday_from_text(body) is not None
             or re.search(
                 r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b",
                 body,
@@ -4545,6 +4549,8 @@ async def _tubing_prompt_transition(
 
 
 def _tubing_unknown_text(normalized: str) -> bool:
+    if normalized.strip() in {"nao", "negativo"}:
+        return True
     phrases = (
         "nao sei",
         "nao tenho certeza",
@@ -8354,6 +8360,55 @@ async def _handle_site_limit(
         updated,
         customer_name=customer_name,
     )
+
+
+async def _operating_weekday_options(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    service_id: uuid.UUID,
+    requirements: BookingRequirements,
+) -> tuple[BookingOption, ...]:
+    method = getattr(port, "list_operating_weekdays", None)
+    if callable(method):
+        options = _snapshot_options(
+            await method(inbound.business_id, service_id)
+        )
+        if options:
+            return options
+
+    dates = _snapshot_options(
+        await port.list_dates(inbound.business_id, service_id, requirements)
+    )
+    return weekday_options(dates)
+
+
+async def _suggested_schedule_dates(
+    inbound: ConversationInput,
+    port: BookingAvailabilityPort,
+    service_id: uuid.UUID,
+    requirements: BookingRequirements,
+    *,
+    weekday: int | None,
+    limit: int = 3,
+) -> tuple[BookingOption, ...]:
+    method = getattr(port, "list_suggested_dates", None)
+    if callable(method):
+        return _snapshot_options(
+            await method(
+                inbound.business_id,
+                service_id,
+                requirements,
+                weekday=weekday,
+                limit=limit,
+            )
+        )
+
+    dates = _snapshot_options(
+        await port.list_dates(inbound.business_id, service_id, requirements)
+    )
+    if weekday is not None:
+        dates = dates_for_weekday(dates, weekday)
+    return tuple(dates[:limit])
 
 
 async def _handle_weekday(
