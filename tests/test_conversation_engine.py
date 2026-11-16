@@ -5625,6 +5625,7 @@ async def test_purchase_model_brand_and_capacity_must_match_same_catalog_item() 
         inbound(1217, body="Quero Samsung 9000 BTU")
     )
 
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["catalog_mismatch_attempts"] == 1
     assert "equipment_model" not in repository.context
     assert "recommended_equipment" not in repository.context
@@ -5634,7 +5635,8 @@ async def test_purchase_model_brand_and_capacity_must_match_same_catalog_item() 
         for message in (transition.outbound, *transition.follow_ups)
     ).casefold()
     assert "gree" not in combined
-    assert "catálogo ativo" in combined or "catalogo ativo" in combined
+    assert "não temos esse modelo específico" in combined
+    assert "opções semelhantes" in combined
 
 @mark.asyncio
 async def test_known_equipment_technical_question_answers_from_catalog_and_resumes_time() -> None:
