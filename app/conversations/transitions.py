@@ -1354,6 +1354,28 @@ async def _route_named_conversation(
     else:
         transition = _transition(ConversationState.MENU, {}, main_menu_message())
 
+    if (
+        turn_orchestration is not None
+        and turn_orchestration.relation is TurnRelation.ANSWER_WITH_SIDE_QUESTION
+    ):
+        updated_equipment_answer = await _equipment_question_answer(
+            inbound,
+            transition.context,
+            interpretation,
+            booking_port,
+        )
+        updated_question_answer = (
+            updated_equipment_answer
+            or await _service_question_answer(
+                inbound,
+                transition.context,
+                interpretation,
+                booking_port,
+            )
+        )
+        if updated_question_answer is not None:
+            question_answer = updated_question_answer
+
     if question_answer is not None:
         transition = _prepend_transition_body(transition, question_answer)
     if greeting_prefix is not None:
