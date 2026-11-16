@@ -123,6 +123,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "service_details_text",
         "service_issue_category",
         "appliance_type",
+        "service_qualification_version",
         "equipment_quantity",
         "equipment_profile_intro_sent",
         "room_area_m2",
