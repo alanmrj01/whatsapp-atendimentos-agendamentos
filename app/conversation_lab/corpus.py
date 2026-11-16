@@ -1267,13 +1267,8 @@ DISCOVERY_JOURNEY_CASES = (
             ),
             JourneyStep(
                 body="um só",
-                expected_state=ConversationState.BOOKING_ADDRESS,
-                required_context_keys=("quantity",),
-            ),
-            JourneyStep(
-                body="Rua das Flores 300, Centro, São José dos Campos, SP",
                 expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
-                required_context_keys=("service_address",),
+                required_context_keys=("quantity",),
             ),
             JourneyStep(
                 body="Midea 12000 BTU",
@@ -1292,9 +1287,14 @@ DISCOVERY_JOURNEY_CASES = (
             ),
             JourneyStep(
                 body="é uma casa",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("property_type",),
+            ),
+            JourneyStep(
+                body="Rua das Flores 300, Centro, São José dos Campos, SP",
                 expected_state=ConversationState.BOOKING_DATE,
                 contains=("R$ 800,00",),
-                required_context_keys=("property_type",),
+                required_context_keys=("service_address",),
             ),
             JourneyStep(
                 body="quanto custa cada metro adicional de tubulação?",
@@ -1336,18 +1336,19 @@ DISCOVERY_JOURNEY_CASES = (
         (
             JourneyStep(
                 body="meu ar condicionado não está gelando e preciso de manutenção",
-                expected_state=ConversationState.BOOKING_ADDRESS,
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
                 required_context_keys=("service_id",),
             ),
             JourneyStep(
-                body="Av. Central 80, Jardim Sul, São José dos Campos, SP",
-                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+                body="Samsung 12000 BTU",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("equipment_model",),
             ),
             JourneyStep(
-                body="Samsung 12000 BTU",
+                body="Av. Central 80, Jardim Sul, São José dos Campos, SP",
                 expected_state=ConversationState.BOOKING_DATE,
                 contains=("R$ 180,00",),
-                required_context_keys=("equipment_model",),
+                required_context_keys=("service_address",),
             ),
             JourneyStep(
                 body="e costuma levar quanto tempo?",
@@ -1389,18 +1390,19 @@ DISCOVERY_JOURNEY_CASES = (
         (
             JourneyStep(
                 body="quero fazer recarga de gás e teste de vazamento",
-                expected_state=ConversationState.BOOKING_ADDRESS,
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
                 required_context_keys=("service_id",),
             ),
             JourneyStep(
-                body="Rua B 55, Vila Nova, São José dos Campos, SP",
-                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+                body="LG dual inverter 12000 BTU",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("equipment_model",),
             ),
             JourneyStep(
-                body="LG dual inverter 12000 BTU",
+                body="Rua B 55, Vila Nova, São José dos Campos, SP",
                 expected_state=ConversationState.BOOKING_DATE,
                 contains=("R$ 250,00",),
-                required_context_keys=("equipment_model",),
+                required_context_keys=("service_address",),
             ),
             JourneyStep(
                 action="date:2026-11-18",
@@ -1543,14 +1545,14 @@ DISCOVERY_JOURNEY_CASES = (
             ),
             JourneyStep(
                 body="um só",
-                expected_state=ConversationState.BOOKING_ADDRESS,
-            ),
-            JourneyStep(
-                body="Rua Um 10, Centro, São José dos Campos, SP",
                 expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
             ),
             JourneyStep(
                 body="Midea 12000 BTU",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+            ),
+            JourneyStep(
+                body="Rua Um 10, Centro, São José dos Campos, SP",
                 expected_state=ConversationState.BOOKING_DATE,
             ),
         ),
