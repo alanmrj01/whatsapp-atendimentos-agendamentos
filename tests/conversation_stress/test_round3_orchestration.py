@@ -399,6 +399,11 @@ async def test_real_quote_journey_keeps_sales_intent_until_installation_qualific
     assert repository.state == ConversationState.BOOKING_SERVICE
     assert repository.context["request_mode"] == "quote"
     assert repository.context["service_clarification"] == "equipment_purchase"
+    scope_body = _combined_body(repository)
+    assert "entendi que você quer comprar" not in scope_body
+    assert "r$ 700,00" not in scope_body
+    assert "você quer apenas comprar o aparelho" in scope_body
+    assert "instalação" in scope_body
 
     await engine.process(
         inbound(
