@@ -1367,6 +1367,11 @@ def _contains_price_question(value: str) -> bool:
             r"\bquanto\s+da(?:\s+mais\s+ou\s+menos)?\b",
             r"\bqual\s+o\s+custo(?:\s+(?:disso|do\s+servico))?\b",
             r"\bquanto\s+e\s+(?:a\s+)?visita\b",
+            r"\b(?:o\s+)?valor\s+pode\s+chegar\s+ate\s+quanto\b",
+            r"\bquanto\s+(?:o\s+)?valor\s+pode\s+chegar\b",
+            r"\b(?:qual\s+(?:e\s+)?o\s+)?valor\s+maximo\b",
+            r"\b(?:qual\s+(?:e\s+)?o\s+)?preco\s+maximo\b",
+            r"\bate\s+quanto\s+(?:pode\s+)?(?:ficar|chegar|custar)\b",
         )
     )
 
