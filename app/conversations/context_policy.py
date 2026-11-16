@@ -118,6 +118,7 @@ def invalidate_changed_facts(
 
     if changed & _QUOTE_INVALIDATING_INPUTS:
         updated.pop("quote_presented", None)
+        updated.pop("last_assistant_topic", None)
 
     if changed & _PLANNING_INPUTS:
         for field in _SCHEDULING_FIELDS:
@@ -144,6 +145,7 @@ def invalidate_changed_facts(
             "address_purpose",
             "delivery_installation_match_pending",
             "quote_presented",
+            "last_assistant_topic",
             *_SCHEDULING_FIELDS,
         ):
             updated.pop(field, None)
