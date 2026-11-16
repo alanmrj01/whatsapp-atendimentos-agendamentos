@@ -2397,6 +2397,16 @@ def _equipment_purchase_explicitly_known(body: str | None) -> bool:
     ):
         return True
 
+    if (
+        re.search(
+            r"\b(?:preciso|quero|gostaria)\s+(?:de\s+)?(?:um|uma)\s+"
+            r"(?:ar\s+condicionado|split|aparelho|equipamento)\b",
+            normalized,
+        )
+        and not re.search(r"\b(?:instalar|instalacao)\b", normalized)
+    ):
+        return True
+
     if re.search(r"\b\d{4,6}\s*btu\b", normalized):
         return True
 
