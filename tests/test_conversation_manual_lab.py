@@ -235,7 +235,8 @@ async def test_manual_lab_motor_wide_services_qualify_scope_before_address(
     label: str,
     details: str,
 ) -> None:
-    session_id, _ = await _new_named_session()
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_SERVICE
 
     snapshot = await send_message(
         session_id,
