@@ -852,7 +852,7 @@ async def test_explicit_name_reply_also_resumes_pending_service_request() -> Non
 
 
 @mark.asyncio
-async def test_unrecognized_name_is_skipped_once_and_service_continues() -> None:
+async def test_unrecognized_name_gets_one_retry_then_service_can_continue() -> None:
     repository = FakeConversationRepository(customer_name=None)
     booking_port = FakeBookingPort()
     booking_port.services = [
@@ -869,8 +869,9 @@ async def test_unrecognized_name_is_skipped_once_and_service_continues() -> None
     await engine.process(inbound(2, body="Tudo certo, estou no trabalho"))
 
     assert repository.customer_name is None
-    assert repository.state == ConversationState.MENU
-    assert repository.context["customer_name_skipped"] is True
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    assert repository.context["repair_attempts"]["customer_name"] == 1
+    assert repository.context.get("customer_name_skipped") is not True
     assert repository.handoff_status == "none"
 
     await engine.process(inbound(3, body="Quero fazer uma limpeza"))
@@ -878,6 +879,7 @@ async def test_unrecognized_name_is_skipped_once_and_service_continues() -> None
     assert repository.customer_name is None
     assert repository.state == ConversationState.BOOKING_ADDRESS
     assert repository.context["customer_name_skipped"] is True
+    assert "repair_attempts" not in repository.context
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
     assert "endereço" in body
     assert "como posso te chamar" not in body
@@ -885,7 +887,7 @@ async def test_unrecognized_name_is_skipped_once_and_service_continues() -> None
 
 
 @mark.asyncio
-async def test_invalid_name_reply_resumes_request_that_was_already_pending() -> None:
+async def test_invalid_name_reply_gets_one_retry_and_keeps_pending_request() -> None:
     repository = FakeConversationRepository(customer_name=None)
     booking_port = FakeBookingPort()
     booking_port.services = [
@@ -897,15 +899,23 @@ async def test_invalid_name_reply_resumes_request_that_was_already_pending() -> 
     await engine.process(inbound(1, body="Preciso fazer uma limpeza"))
 
     assert repository.state == ConversationState.CUSTOMER_NAME
+    assert repository.context["pending_customer_message"] == "Preciso fazer uma limpeza"
 
     await engine.process(inbound(2, body="Nossa dormi tão mal"))
 
     assert repository.customer_name is None
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    assert repository.context["repair_attempts"]["customer_name"] == 1
+    assert repository.context["pending_customer_message"] == "Preciso fazer uma limpeza"
+
+    await engine.process(inbound(3, body="joao"))
+
+    assert repository.customer_name == "Joao"
     assert repository.state == ConversationState.BOOKING_ADDRESS
-    assert repository.context["customer_name_skipped"] is True
+    assert "repair_attempts" not in repository.context
+    assert "pending_customer_message" not in repository.context
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
     assert "endereço" in body
-    assert "nome" not in body
     assert "equipe" not in body
 
 
@@ -960,7 +970,10 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         inbound(3, action=f"service:{SERVICE_ID}")
     ) is True
     assert repository.state == ConversationState.BOOKING_DATE
-    assert repository.context == {"service_id": str(SERVICE_ID)}
+    assert repository.context == {
+        "service_id": str(SERVICE_ID),
+        "last_assistant_topic": "estimated_service_price",
+    }
 
     assert await engine.process(
         inbound(4, action="date:2026-09-02")
