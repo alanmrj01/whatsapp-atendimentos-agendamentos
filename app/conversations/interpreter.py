@@ -219,6 +219,10 @@ _SERVICE_CONTEXT_EXCLUSIONS: dict[str, tuple[str, ...]] = {
 _GREETING_PHRASES = (
     "oi",
     "ola",
+    "opa",
+    "e ai",
+    "eai",
+    "blz",
     "bom dia",
     "boa tarde",
     "boa noite",
