@@ -1638,6 +1638,7 @@ async def _handle_customer_name(
             ),
         )
 
+    context = _clear_repair_attempt(context, "customer_name")
     pending_body = _context_string(context, "pending_customer_message")
     pending_action = _context_string(context, "pending_interactive_id")
     if pending_body is not None or pending_action is not None:
