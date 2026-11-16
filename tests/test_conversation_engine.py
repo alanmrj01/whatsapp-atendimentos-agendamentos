@@ -2854,7 +2854,7 @@ async def test_quote_can_finish_without_creating_appointment() -> None:
     assert "confirm" not in booking_port.calls
 
 @mark.asyncio
-async def test_equipment_quote_without_buy_verb_opens_purchase_clarification() -> None:
+async def test_generic_ac_quote_opens_neutral_scope_clarification() -> None:
     repository = FakeConversationRepository(customer_name="Alan")
     booking_port = FakeBookingPort()
     booking_port.services = [
@@ -2869,9 +2869,16 @@ async def test_equipment_quote_without_buy_verb_opens_purchase_clarification() -
     assert repository.state == ConversationState.BOOKING_SERVICE
     assert transition.outbound.message_type == "interactive_button"
     body = (transition.outbound.body or "").casefold()
-    assert "comprar" in body
+    assert "você quer apenas comprar" in body
     assert "instalação" in body
-    assert "direcionar corretamente" not in body
+    assert "entendi que você quer comprar" not in body
+    assert "r$ 700,00" not in body
+    buttons = [button["id"] for button in transition.outbound.outbound_payload["buttons"]]
+    assert buttons == [
+        "equipment.installation",
+        "equipment.purchase",
+        "equipment.both",
+    ]
 
 
 @mark.asyncio
@@ -4812,8 +4819,9 @@ async def test_generic_equipment_quote_never_recommends_model_before_sizing() ->
     assert "gree" not in normalized
     assert "9.000 btu" not in normalized
     assert "uma opção compatível" not in normalized
-    assert normalized.find("boa noite") < normalized.find("entendi que")
-    assert "você também gostaria de contratar a instalação" in normalized
+    assert "entendi que você quer comprar" not in normalized
+    assert "r$ 700,00" not in normalized
+    assert "você quer apenas comprar o aparelho" in normalized
 
 
 @mark.asyncio
