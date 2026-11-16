@@ -629,4 +629,3 @@ async def test_service_details_real_failure_retries_once_then_handoffs() -> None
     assert repository.state == ConversationState.HUMAN_HANDOFF
     assert repository.automation_enabled is False
     assert repository.handoff_status == "waiting"
-
