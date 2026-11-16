@@ -3314,7 +3314,7 @@ async def test_recommendation_message_omits_thermal_load_credibility_caveat() ->
         for message in (transition.outbound, *transition.follow_ups)
     ).casefold()
     assert "carga térmica fora do padrão" not in body
-    assert "boa referência" in body
+    assert "opção que faz sentido" in body
     assert repository.context["recommended_equipment"]["selected_cycle"] == "cold"
     assert "só frio" in repository.context["recommended_equipment"]["label"].casefold()
 
@@ -3872,7 +3872,7 @@ async def test_purchase_only_recommends_once_and_pickup_goes_to_calendar() -> No
     recommendation = repository.outbounds[-1].transition
     messages = (recommendation.outbound, *recommendation.follow_ups)
     combined = " ".join(message.body or "" for message in messages)
-    assert combined.casefold().count("uma boa referência") == 1
+    assert combined.casefold().count("uma opção que faz sentido") == 1
     assert "9.000 BTU" in combined
     assert "Só Frio" in combined
     assert "R$ 2.500,00" in combined
