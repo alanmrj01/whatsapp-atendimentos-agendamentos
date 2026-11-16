@@ -576,7 +576,7 @@ async def test_gate_request_for_technician_name_continues_scheduling_professiona
         ManualInput(text="preciso do nome do instalador para liberar na portaria"),
     )
 
-    assert snapshot["state"] == ConversationState.BOOKING_DATE.value
+    assert snapshot["state"] == ConversationState.BOOKING_WEEKDAY.value
     assert "nome do técnico responsável" in snapshot["context"]["gate_instructions"]
     joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
     assert "depois de definirmos a data e o horário" in joined
