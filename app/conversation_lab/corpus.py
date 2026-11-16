@@ -103,10 +103,10 @@ REGRESSION_CONTEXT = (
     ContextCase("time_guard", ConversationState.BOOKING_TIME, "posso parcelar em 10 vezes?", ("selected_time",), ConversationState.BOOKING_TIME),
     ContextCase("quantity_guard", ConversationState.BOOKING_QUANTITY, "demora 2 horas?", ("quantity", "equipment_quantity"), ConversationState.BOOKING_QUANTITY),
     ContextCase("quantity_guard", ConversationState.BOOKING_QUANTITY, "o modelo é de 12 mil BTUs", ("quantity", "equipment_quantity"), ConversationState.BOOKING_QUANTITY),
-    ContextCase("quantity_informal", ConversationState.BOOKING_QUANTITY, "um só", (), ConversationState.BOOKING_ADDRESS),
-    ContextCase("quantity_informal", ConversationState.BOOKING_QUANTITY, "só um", (), ConversationState.BOOKING_ADDRESS),
-    ContextCase("quantity_informal", ConversationState.BOOKING_QUANTITY, "apenas um", (), ConversationState.BOOKING_ADDRESS),
-    ContextCase("quantity_informal", ConversationState.BOOKING_QUANTITY, "somente um", (), ConversationState.BOOKING_ADDRESS),
+    ContextCase("quantity_informal", ConversationState.BOOKING_QUANTITY, "um só", (), ConversationState.BOOKING_EQUIPMENT_MODEL),
+    ContextCase("quantity_informal", ConversationState.BOOKING_QUANTITY, "só um", (), ConversationState.BOOKING_EQUIPMENT_MODEL),
+    ContextCase("quantity_informal", ConversationState.BOOKING_QUANTITY, "apenas um", (), ConversationState.BOOKING_EQUIPMENT_MODEL),
+    ContextCase("quantity_informal", ConversationState.BOOKING_QUANTITY, "somente um", (), ConversationState.BOOKING_EQUIPMENT_MODEL),
     ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "valeu viu", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
     ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "pera aí um minutinho", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
     ContextCase("social_pause", ConversationState.BOOKING_ADDRESS, "blz, valeu viu", ("repair_attempts",), ConversationState.BOOKING_ADDRESS),
@@ -1034,23 +1034,23 @@ DISCOVERY_JOURNEY_CASES = (
             ),
             JourneyStep(
                 body="é só 1 aparelho",
-                expected_state=ConversationState.BOOKING_ADDRESS,
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
                 required_context_keys=("quantity",),
             ),
             JourneyStep(
                 body="quanto fica esse serviço?",
-                expected_state=ConversationState.BOOKING_ADDRESS,
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
                 contains=("R$ 100,00",),
             ),
             JourneyStep(
-                body="R. das Flores 123, Centro, SJC",
-                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
-                required_context_keys=("service_address",),
+                body="Midea 12000 BTU",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("equipment_model",),
             ),
             JourneyStep(
-                body="Midea 12000 BTU",
+                body="R. das Flores 123, Centro, SJC",
                 expected_state=ConversationState.BOOKING_DATE,
-                required_context_keys=("equipment_model",),
+                required_context_keys=("service_address",),
             ),
             JourneyStep(
                 body="valeu, pera aí um minutinho",
@@ -1103,18 +1103,18 @@ DISCOVERY_JOURNEY_CASES = (
             ),
             JourneyStep(
                 body="um só",
-                expected_state=ConversationState.BOOKING_ADDRESS,
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
                 required_context_keys=("quantity",),
             ),
             JourneyStep(
-                body="Rua dos Alfaiates 109, Novo Horizonte, São José dos Campos",
-                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
-                required_context_keys=("service_address",),
+                body="LG dual inverter 9000 btus",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("equipment_model",),
             ),
             JourneyStep(
-                body="LG dual inverter 9000 btus",
+                body="Rua dos Alfaiates 109, Novo Horizonte, São José dos Campos",
                 expected_state=ConversationState.BOOKING_DATE,
-                required_context_keys=("equipment_model",),
+                required_context_keys=("service_address",),
             ),
             JourneyStep(
                 body="quanto tempo costuma levar?",
@@ -1164,14 +1164,14 @@ DISCOVERY_JOURNEY_CASES = (
             ),
             JourneyStep(
                 body="1",
-                expected_state=ConversationState.BOOKING_ADDRESS,
-            ),
-            JourneyStep(
-                body="Rua A, 10, Centro, São José dos Campos, SP",
                 expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
             ),
             JourneyStep(
                 body="Springer 12000 BTU",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+            ),
+            JourneyStep(
+                body="Rua A, 10, Centro, São José dos Campos, SP",
                 expected_state=ConversationState.BOOKING_DATE,
             ),
             JourneyStep(
@@ -1214,18 +1214,19 @@ DISCOVERY_JOURNEY_CASES = (
         (
             JourneyStep(
                 body="quero higienizar três aparelhos",
-                expected_state=ConversationState.BOOKING_ADDRESS,
+                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
                 required_context_keys=("quantity",),
             ),
             JourneyStep(
-                body="Rua das Acácias 45, Centro, São José dos Campos, SP",
-                expected_state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+                body="Midea 9000 BTU",
+                expected_state=ConversationState.BOOKING_ADDRESS,
+                required_context_keys=("equipment_model",),
             ),
             JourneyStep(
-                body="Midea 9000 BTU",
+                body="Rua das Acácias 45, Centro, São José dos Campos, SP",
                 expected_state=ConversationState.BOOKING_DATE,
                 contains=("R$ 260,00",),
-                required_context_keys=("equipment_model",),
+                required_context_keys=("service_address",),
             ),
             JourneyStep(
                 action="date:2026-11-16",
