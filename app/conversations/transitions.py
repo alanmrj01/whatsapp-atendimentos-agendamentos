@@ -8591,36 +8591,10 @@ async def _handle_date(
     if service_id is None:
         return await _restart_service_selection(inbound, port)
     requirements = _requirements_from_context(context)
-    try:
-        dates = _snapshot_options(
-            await port.list_dates(
-                inbound.business_id, service_id, requirements
-            )
-        )
-    except BookingRequiresHandoff as exc:
-        return _handoff_for_reason(str(exc))
-    if not dates:
-        return await _restart_service_selection(
-            inbound,
-            port,
-            body="Não há datas disponíveis. Escolha outro serviço.",
-        )
 
     selected_slot = _selected_slot(action)
     if selected_slot is not None:
         selected_date, selected_time = selected_slot
-        if not _option_exists(dates, selected_date):
-            return _transition(
-                ConversationState.BOOKING_WEEKDAY,
-                _intake_context(context),
-                weekday_selection_message(
-                    weekday_options(dates),
-                    body=(
-                        "Essa opção acabou de ficar indisponível. "
-                        "Qual dia da semana fica melhor para eu consultar novamente?"
-                    ),
-                ),
-            )
         try:
             current_times = _snapshot_options(
                 await port.list_times(
@@ -8651,6 +8625,21 @@ async def _handle_date(
             selected_date,
             requirements,
             customer_name=customer_name,
+        )
+
+    try:
+        dates = _snapshot_options(
+            await port.list_dates(
+                inbound.business_id, service_id, requirements
+            )
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+    if not dates:
+        return await _restart_service_selection(
+            inbound,
+            port,
+            body="Não há datas disponíveis. Escolha outro serviço.",
         )
 
     selected_date = _selected_date(action) or _date_from_text(inbound.body, dates)
