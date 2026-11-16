@@ -5220,7 +5220,7 @@ def _service_issue_category(service_kind: str, body: str | None) -> str | None:
     if not normalized:
         return None
 
-    if sales_qualification_v2 and service_kind == "refrigeration_appliance":
+    if service_kind == "refrigeration_appliance":
         categories = (
             (
                 "no_cooling",
@@ -9337,7 +9337,7 @@ async def _advance_intake(
             _service_details_request_message(service_kind),
         )
 
-    if service_kind == "refrigeration_appliance":
+    if sales_qualification_v2 and service_kind == "refrigeration_appliance":
         context = {
             **context,
             "equipment_ownership": "has_equipment",
