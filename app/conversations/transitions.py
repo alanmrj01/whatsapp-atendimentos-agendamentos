@@ -2558,6 +2558,26 @@ async def _equipment_question_answer(
         or context.get("equipment_ownership") == "needs_equipment"
         or isinstance(context.get("recommended_equipment"), dict)
     )
+    # In an active service flow, plural equipment words often describe the
+    # service quantity ("2 aparelhos, quanto fica?"), not a catalog purchase.
+    # Keep the price question on the current service unless equipment purchase
+    # is explicit or the customer asks for the price of each equipment item.
+    if (
+        _context_service_id(context) is not None
+        and interpretation.has(ConversationIntent.PRICE_QUESTION)
+        and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
+        and not has_equipment_context
+        and re.search(
+            r"\b(?:sao|seriam|tenho|preciso(?:\s+de)?)?\s*\d+\s+"
+            r"(?:aparelhos?|equipamentos?|unidades?)\b",
+            normalized,
+        )
+        and not re.search(
+            r"\b(?:cada|por)\s+(?:aparelho|equipamento|unidade)\b",
+            normalized,
+        )
+    ):
+        return None
     technical_equipment_terms = (
         "voltagem",
         "tensao",
