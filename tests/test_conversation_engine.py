@@ -629,7 +629,7 @@ async def test_ambiguous_installation_request_lists_only_compatible_installation
 
 
 @mark.asyncio
-async def test_probable_diagnostic_asks_only_for_required_address() -> None:
+async def test_probable_diagnostic_qualifies_equipment_before_address() -> None:
     repository = FakeConversationRepository()
     booking_port = FakeBookingPort()
     booking_port.services = [
@@ -641,9 +641,10 @@ async def test_probable_diagnostic_asks_only_for_required_address() -> None:
         inbound(1, body="Boa tarde, meu ar não está gelando")
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     response = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "endereço" in response
+    assert "marca e o modelo" in response
+    assert "endereço" not in response
     assert "compressor" not in response
     assert "causa" not in response
 
@@ -888,7 +889,8 @@ async def test_social_detour_during_name_does_not_spend_retry_or_block_service()
     assert repository.context["customer_name_skipped"] is True
     assert "repair_attempts" not in repository.context
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "endereço" in body
+    assert "marca e o modelo" in body
+    assert "endereço" not in body
     assert "como posso te chamar" not in body
     assert "equipe" not in body
 
@@ -922,7 +924,8 @@ async def test_invalid_name_reply_gets_one_retry_and_keeps_pending_request() -> 
     assert "repair_attempts" not in repository.context
     assert "pending_customer_message" not in repository.context
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "endereço" in body
+    assert "marca e o modelo" in body
+    assert "endereço" not in body
     assert "equipe" not in body
 
 
@@ -1981,10 +1984,10 @@ async def test_explicit_name_can_correct_previous_bad_capture_and_keep_request()
     )
 
     assert repository.customer_name == "Alan"
-    assert repository.state == ConversationState.BOOKING_ADDRESS
-    assert "endereço" in (
-        repository.outbounds[-1].transition.outbound.body or ""
-    ).casefold()
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_OWNERSHIP
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "já tem o ar-condicionado" in body
+    assert "endereço" not in body
 
 
 @mark.asyncio
@@ -2376,10 +2379,11 @@ async def test_greeting_plus_request_is_not_lost_while_asking_name() -> None:
     await engine.process(inbound(303, body="Alan"))
 
     assert repository.customer_name == "Alan"
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     second = repository.outbounds[-1].transition.outbound.body or ""
     assert second.startswith("Prazer, Alan.")
-    assert "endereço" in second.casefold()
+    assert "marca e o modelo" in second.casefold()
+    assert "endereço" not in second.casefold()
     assert "qual serviço" not in second.casefold()
 
 
@@ -2571,7 +2575,7 @@ async def test_invalid_quantity_is_rephrased_once_then_handoff() -> None:
 
 
 @mark.asyncio
-async def test_installation_quote_collects_tubing_length_after_height_before_pricing() -> None:
+async def test_installation_quote_collects_tubing_before_address_and_pricing() -> None:
     repository = FakeConversationRepository(customer_name="Alan")
     booking_port = FakeBookingPort()
     booking_port.services = [
@@ -2588,26 +2592,20 @@ async def test_installation_quote_collects_tubing_length_after_height_before_pri
     await engine.process(
         inbound(401, body="Preciso de uma cotação para instalação de ar condicionado")
     )
-    assert repository.state == ConversationState.BOOKING_ADDRESS
-
-    await engine.process(
-        inbound(
-            402,
-            body="Rua das Flores, 20, Centro, São José dos Campos - SP",
-        )
-    )
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_OWNERSHIP
+    assert repository.context["request_mode"] == "quote"
+    assert "service_address" not in repository.context
 
     await engine.process(
-        inbound(403, action="equipment.has", body="Já tenho")
+        inbound(402, action="equipment.has", body="Já tenho")
     )
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
 
-    await engine.process(inbound(404, body="LG Dual Inverter 12000 BTU"))
+    await engine.process(inbound(403, body="LG Dual Inverter 12000 BTU"))
     assert repository.state == ConversationState.BOOKING_INSTALLATION_HEIGHT
 
     await engine.process(
-        inbound(405, action="height.at_most_3m", body="Até 3 metros")
+        inbound(404, action="height.at_most_3m", body="Até 3 metros")
     )
     transition = repository.outbounds[-1].transition
     combined = " ".join(
@@ -2621,12 +2619,19 @@ async def test_installation_quote_collects_tubing_length_after_height_before_pri
     assert "r$ 20,00" not in combined
     assert "adicional no orçamento" in combined
     assert "quantos metros" in combined
+    assert "endereço" not in combined
     assert "tubing_length_answered" not in repository.context
 
-    await engine.process(inbound(406, body="5 metros"))
+    await engine.process(inbound(405, body="5 metros"))
     assert repository.context["tubing_meters"] == "5"
     assert repository.context["tubing_length_answered"] is True
     assert repository.state == ConversationState.BOOKING_PROPERTY
+
+    await engine.process(inbound(406, action="property.house", body="Casa"))
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    address_body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "finalizar a cotação" in address_body
+    assert "endereço completo" in address_body
 
 
 @mark.asyncio
@@ -3428,20 +3433,14 @@ async def test_noise_diagnostic_collects_model_photo_and_video_before_agenda() -
         inbound(943, body="Meu aparelho de ar condicionado está fazendo barulho")
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["issue_video_required"] is True
     assert "barulho" in repository.context["reported_issue"].casefold()
-
-    await engine.process(
-        inbound(944, body="Rua A, 10, Centro, SJC")
-    )
-
-    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert "marca e o modelo" in (
         repository.outbounds[-1].transition.outbound.body or ""
     ).casefold()
 
-    await engine.process(inbound(945, body="Não sei"))
+    await engine.process(inbound(944, body="Não sei"))
 
     assert repository.context["equipment_photo_requested"] is True
     assert "foto" in (
@@ -3449,7 +3448,7 @@ async def test_noise_diagnostic_collects_model_photo_and_video_before_agenda() -
     ).casefold()
 
     await engine.process(
-        inbound(946, message_type="image")
+        inbound(945, message_type="image")
     )
 
     assert repository.context["equipment_photo_received"] is True
@@ -3459,14 +3458,19 @@ async def test_noise_diagnostic_collects_model_photo_and_video_before_agenda() -
     ).casefold()
 
     await engine.process(
-        inbound(947, message_type="video")
+        inbound(946, message_type="video")
     )
 
     assert repository.context["issue_video_received"] is True
-    assert repository.state == ConversationState.BOOKING_DATE
-    assert "vídeo" in (
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert "endereço" in (
         repository.outbounds[-1].transition.outbound.body or ""
     ).casefold()
+
+    await engine.process(
+        inbound(947, body="Rua A, 10, Centro, SJC")
+    )
+    assert repository.state == ConversationState.BOOKING_DATE
 
 
 @mark.asyncio
@@ -3485,14 +3489,16 @@ async def test_gas_recharge_collects_existing_equipment_before_agenda() -> None:
     await engine.process(
         inbound(948, body="Gostaria de fazer a reposição do gás do meu ar condicionado")
     )
-    assert repository.state == ConversationState.BOOKING_ADDRESS
-
-    await engine.process(
-        inbound(949, body="Rua A, 10, Centro, SJC")
-    )
-
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["equipment_ownership"] == "has_equipment"
+    assert "service_address" not in repository.context
+
+    await engine.process(
+        inbound(949, body="LG Dual Inverter 12000 BTU")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["equipment_model"] == "LG Dual Inverter 12000 BTU"
 
 
 @mark.asyncio
@@ -3550,8 +3556,9 @@ async def test_post_booking_supported_request_starts_new_supported_flow() -> Non
         inbound(950, body="Também gostaria de fazer uma limpeza")
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.automation_enabled is True
+    assert "service_address" not in repository.context
 
 
 @mark.asyncio
@@ -4181,8 +4188,9 @@ async def test_referral_then_service_request_still_collects_name_and_resumes_ser
     await engine.process(inbound(1115, body="Alan"))
 
     assert repository.customer_name == "Alan"
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "service_address" not in repository.context
 
 
 @mark.asyncio
@@ -4265,7 +4273,8 @@ async def test_purchase_and_install_offers_delivery_with_technician() -> None:
 
     assert repository.context["delivery_method"] == "with_installation"
     assert "delivery_address" not in repository.context
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_INSTALLATION_HEIGHT
+    assert "service_address" not in repository.context
     assert repository.context.get("address_purpose") != "delivery"
 
 
@@ -5113,19 +5122,19 @@ async def test_generic_ac_problem_is_diagnostics_and_never_turns_into_installati
         inbound(1204, body="Bom dia! Meu ar condicionado está com problema")
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
-    assert repository.context["service_id"] == str(SERVICE_ID)
-    assert "purchase_mode" not in repository.context
-
-    await engine.process(
-        inbound(1205, body="Rua A, 10, Centro, Jacareí")
-    )
-
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["service_id"] == str(SERVICE_ID)
     assert repository.context["equipment_ownership"] == "has_equipment"
+    assert "purchase_mode" not in repository.context
     body = repository.outbounds[-1].transition.outbound.body or ""
     assert "marca e o modelo" in body.casefold()
+    assert "endereço" not in body.casefold()
     assert "cotar o aparelho" not in body.casefold()
+
+    await engine.process(
+        inbound(1205, body="LG Dual Inverter 12000 BTU")
+    )
+    assert repository.state == ConversationState.BOOKING_ADDRESS
 
 
 @mark.asyncio
