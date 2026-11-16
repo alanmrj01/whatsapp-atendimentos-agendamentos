@@ -632,7 +632,13 @@ async def _route_named_conversation(
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="cancel")
 
     if action is None and _is_pending_question_clarification(inbound.body):
-        explanation = _pending_question_explanation(state, context)
+        explanation = await _assistant_claim_explanation(
+            inbound,
+            context,
+            booking_port,
+        )
+        if explanation is None:
+            explanation = _pending_question_explanation(state, context)
         if explanation is not None:
             return await _resume_pending_question(
                 conversation,
