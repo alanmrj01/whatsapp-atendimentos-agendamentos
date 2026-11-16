@@ -41,6 +41,75 @@ def test_real_whatsapp_availability_language_is_understood(body: str) -> None:
     assert interpretation.has(ConversationIntent.AVAILABILITY)
 
 
+@pytest.mark.asyncio
+async def test_initial_schedule_prompt_uses_all_configured_company_weekdays() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        customer_name="Cliente Teste",
+    )
+    port = FakeBookingPort()
+    port.operating_weekdays = [0, 1, 2, 3, 4, 5, 6]
+    port.dates = [
+        BookingOption("2026-10-14", "quarta-feira, 14 de outubro"),
+    ]
+
+    await ConversationEngine(repository, port).process(
+        inbound(2298, action=f"service:{SERVICE_ID}")
+    )
+
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    rows = repository.outbounds[-1].transition.outbound.outbound_payload[
+        "sections"
+    ][0]["rows"]
+    assert [row["id"] for row in rows] == [
+        "weekday:0",
+        "weekday:1",
+        "weekday:2",
+        "weekday:3",
+        "weekday:4",
+        "weekday:5",
+        "weekday:6",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_selected_weekday_can_offer_three_dates_across_months() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_WEEKDAY,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Teste",
+    )
+    port = FakeBookingPort()
+    port.operating_weekdays = [0, 1, 2, 3, 4, 5, 6]
+    port.dates = [
+        BookingOption("2026-10-14", "quarta-feira, 14 de outubro"),
+        BookingOption("2026-10-21", "quarta-feira, 21 de outubro"),
+        BookingOption("2026-11-04", "quarta-feira, 4 de novembro"),
+        BookingOption("2026-11-06", "sexta-feira, 6 de novembro"),
+    ]
+    port.list_times = AsyncMock(
+        return_value=(
+            BookingOption("09:00", "09:00"),
+            BookingOption("14:30", "14:30"),
+            BookingOption("18:00", "18:00"),
+        )
+    )
+
+    await ConversationEngine(repository, port).process(
+        inbound(2299, body="quarta-feira")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    rows = repository.outbounds[-1].transition.outbound.outbound_payload[
+        "sections"
+    ][0]["rows"]
+    assert [row["id"] for row in rows] == [
+        "slot:2026-10-14|09:00",
+        "slot:2026-10-21|14:30",
+        "slot:2026-11-04|18:00",
+    ]
+
+
 def _date_repository() -> FakeConversationRepository:
     return FakeConversationRepository(
         state=ConversationState.BOOKING_DATE,
