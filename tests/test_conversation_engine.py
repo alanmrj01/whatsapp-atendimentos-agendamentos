@@ -505,7 +505,7 @@ async def test_natural_installation_preserves_existing_equipment_from_opening_me
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
     assert repository.context["quantity"] == 1
     assert repository.context["equipment_ownership"] == "has_equipment"
-    assert "marca e o modelo" in (
+    assert "capacidade em btus" in (
         repository.outbounds[-1].transition.outbound.body or ""
     ).casefold()
 
@@ -2457,7 +2457,8 @@ async def test_purchase_clarification_installation_choice_resumes_booking() -> N
     assert "service_clarification" not in repository.context
     assert repository.context["request_mode"] == "quote"
     body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "marca e o modelo" in body
+    assert "capacidade em btus" in body
+    assert "montar a cotação" in body
     assert "endereço" not in body
 
 
