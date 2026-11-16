@@ -6314,6 +6314,21 @@ async def _handle_service(
     }
     updated_context.pop("service_clarification", None)
     selected_service_kind = _service_kind(services, service_id)
+    if (
+        action is None
+        and selected_service_kind in {
+            "refrigeration_appliance",
+            "electrical",
+            "hvac_scope",
+            "other",
+        }
+    ):
+        updated_context = _capture_service_qualification(
+            updated_context,
+            selected_service_kind,
+            inbound.body,
+        )
+
     if selected_service_kind in {
         "cleaning",
         "gas_recharge",
@@ -6351,7 +6366,7 @@ async def _handle_service(
             )
         ):
             updated_context["issue_video_required"] = True
-    return await _advance_intake(
+    transition = await _advance_intake(
         inbound,
         port,
         intake,
@@ -6359,6 +6374,64 @@ async def _handle_service(
         services=services,
         customer_name=customer_name,
     )
+    if selected_service_kind == "electrical" and action is None:
+        safety_prefix = _electrical_safety_prefix(inbound.body)
+        if safety_prefix is not None:
+            transition = _prepend_transition_body(transition, safety_prefix)
+    return transition
+
+
+async def _handle_service_details(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    booking_port: BookingAvailabilityPort | None,
+    *,
+    customer_name: str | None = None,
+) -> ConversationTransition:
+    try:
+        port = _require_booking_port(booking_port)
+        service_id, intake = await _context_intake(inbound, context, port)
+        services = _snapshot_options(await port.list_services(inbound.business_id))
+    except BookingPortUnavailable:
+        return _transition(
+            ConversationState.BOOKING_SERVICE_DETAILS,
+            context,
+            booking_unavailable_message(),
+        )
+    except BookingRequiresHandoff as exc:
+        return _handoff_for_reason(str(exc))
+
+    service_kind = _service_kind(services, service_id)
+    if not _service_details_answer_sufficient(service_kind, inbound.body):
+        return _retry_or_handoff(
+            ConversationState.BOOKING_SERVICE_DETAILS,
+            context,
+            "service_details",
+            _service_details_request_message(service_kind, retry=True),
+            handoff_body=(
+                "Não consegui entender os detalhes básicos do serviço com segurança. "
+                "Vou chamar uma pessoa da equipe para continuar com você."
+            ),
+        )
+
+    updated = _capture_service_qualification(
+        _clear_repair_attempt(context, "service_details"),
+        service_kind,
+        inbound.body,
+    )
+    transition = await _advance_intake(
+        inbound,
+        port,
+        intake,
+        updated,
+        services=services,
+        customer_name=customer_name,
+    )
+    if service_kind == "electrical":
+        safety_prefix = _electrical_safety_prefix(inbound.body)
+        if safety_prefix is not None:
+            transition = _prepend_transition_body(transition, safety_prefix)
+    return transition
 
 
 async def _handle_quantity(
