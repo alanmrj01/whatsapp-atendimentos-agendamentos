@@ -108,6 +108,22 @@ class BookingAvailabilityPort(Protocol):
         requirements: BookingRequirements = BookingRequirements(),
     ) -> Sequence[BookingOption]: ...
 
+    async def list_operating_weekdays(
+        self,
+        business_id: uuid.UUID,
+        service_id: uuid.UUID,
+    ) -> Sequence[BookingOption]: ...
+
+    async def list_suggested_dates(
+        self,
+        business_id: uuid.UUID,
+        service_id: uuid.UUID,
+        requirements: BookingRequirements = BookingRequirements(),
+        *,
+        weekday: int | None = None,
+        limit: int = 3,
+    ) -> Sequence[BookingOption]: ...
+
     async def list_times(
         self,
         business_id: uuid.UUID,

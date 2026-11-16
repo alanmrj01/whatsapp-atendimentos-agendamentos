@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -38,6 +38,11 @@ DIAGNOSTICS_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000008")
 GAS_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000009")
 REFRIGERATOR_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000010")
 ELECTRICAL_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000011")
+PMOC_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000012")
+DEINSTALLATION_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000013")
+RELOCATION_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000014")
+INFRASTRUCTURE_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000015")
+GENERIC_SERVICE_ID = uuid.UUID("94000000-0000-0000-0000-000000000016")
 APPOINTMENT_ID = uuid.UUID("95000000-0000-0000-0000-000000000005")
 EMPLOYEE_ID = uuid.UUID("96000000-0000-0000-0000-000000000006")
 
@@ -202,10 +207,45 @@ class DryRunBookingPort:
                 "Elétrica residencial",
                 generate_service_intent_examples("Elétrica residencial"),
             ),
+            BookingOption(
+                str(PMOC_SERVICE_ID),
+                "PMOC - Plano de manutenção, operação e controle",
+                generate_service_intent_examples(
+                    "PMOC - Plano de manutenção, operação e controle"
+                ),
+            ),
+            BookingOption(
+                str(DEINSTALLATION_SERVICE_ID),
+                "Desinstalação de ar-condicionado",
+                generate_service_intent_examples("Desinstalação de ar-condicionado"),
+            ),
+            BookingOption(
+                str(RELOCATION_SERVICE_ID),
+                "Realocação de ar-condicionado",
+                generate_service_intent_examples("Realocação de ar-condicionado"),
+            ),
+            BookingOption(
+                str(INFRASTRUCTURE_SERVICE_ID),
+                "Infraestrutura para ar-condicionado",
+                generate_service_intent_examples("Infraestrutura para ar-condicionado"),
+            ),
+            BookingOption(
+                str(GENERIC_SERVICE_ID),
+                "Atendimento técnico especial",
+                generate_service_intent_examples("Atendimento técnico especial"),
+            ),
         ]
+        self.operating_weekdays = tuple(range(7))
         self.dates = [
             BookingOption("2026-11-16", "segunda-feira, 16 de novembro"),
+            BookingOption("2026-11-17", "terça-feira, 17 de novembro"),
             BookingOption("2026-11-18", "quarta-feira, 18 de novembro"),
+            BookingOption("2026-11-19", "quinta-feira, 19 de novembro"),
+            BookingOption("2026-11-20", "sexta-feira, 20 de novembro"),
+            BookingOption("2026-11-21", "sábado, 21 de novembro"),
+            BookingOption("2026-11-22", "domingo, 22 de novembro"),
+            BookingOption("2026-11-25", "quarta-feira, 25 de novembro"),
+            BookingOption("2026-12-02", "quarta-feira, 2 de dezembro"),
         ]
         self.times = [
             BookingOption("09:00", "09:00"),
@@ -256,6 +296,46 @@ class DryRunBookingPort:
                 pricing_type=PricingType.ESTIMATED,
             ),
             ELECTRICAL_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            PMOC_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            DEINSTALLATION_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            RELOCATION_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            INFRASTRUCTURE_SERVICE_ID: ServiceIntake(
+                requires_quantity=False,
+                requires_address=True,
+                considers_difficult_access=False,
+                asks_site_time_limit=False,
+                automatic_booking=True,
+                pricing_type=PricingType.ESTIMATED,
+            ),
+            GENERIC_SERVICE_ID: ServiceIntake(
                 requires_quantity=False,
                 requires_address=True,
                 considers_difficult_access=False,
@@ -321,6 +401,32 @@ class DryRunBookingPort:
             GAS_SERVICE_ID: (
                 "Verificação do sistema de refrigeração, avaliação de possível vazamento "
                 "e execução do serviço conforme a necessidade identificada."
+            ),
+            REFRIGERATOR_SERVICE_ID: (
+                "Diagnóstico e manutenção de geladeiras e freezers conforme o defeito "
+                "relatado e as condições encontradas no equipamento."
+            ),
+            ELECTRICAL_SERVICE_ID: (
+                "Atendimento de elétrica residencial para avaliação e execução do serviço "
+                "cadastrado, respeitando as condições de segurança do local."
+            ),
+            PMOC_SERVICE_ID: (
+                "Atendimento sintético de laboratório para validar o fluxo de PMOC."
+            ),
+            DEINSTALLATION_SERVICE_ID: (
+                "Atendimento sintético de laboratório para validar desinstalação "
+                "de ar-condicionado."
+            ),
+            RELOCATION_SERVICE_ID: (
+                "Atendimento sintético de laboratório para validar realocação "
+                "de ar-condicionado."
+            ),
+            INFRASTRUCTURE_SERVICE_ID: (
+                "Atendimento sintético de laboratório para validar infraestrutura "
+                "de ar-condicionado."
+            ),
+            GENERIC_SERVICE_ID: (
+                "Atendimento sintético genérico usado apenas para validar o laboratório."
             ),
         }
         return ServiceDetails(
@@ -462,6 +568,39 @@ class DryRunBookingPort:
     async def list_dates(self, _: uuid.UUID, __: uuid.UUID, ___: BookingRequirements = BookingRequirements()):
         self.calls.append("dates")
         return tuple(self.dates)
+
+    async def list_operating_weekdays(self, _: uuid.UUID, __: uuid.UUID):
+        self.calls.append("operating_weekdays")
+        labels = (
+            "Segunda-feira",
+            "Terça-feira",
+            "Quarta-feira",
+            "Quinta-feira",
+            "Sexta-feira",
+            "Sábado",
+            "Domingo",
+        )
+        return tuple(
+            BookingOption(id=str(value), label=labels[value])
+            for value in self.operating_weekdays
+        )
+
+    async def list_suggested_dates(
+        self,
+        _: uuid.UUID,
+        __: uuid.UUID,
+        ___: BookingRequirements = BookingRequirements(),
+        *,
+        weekday: int | None = None,
+        limit: int = 3,
+    ):
+        self.calls.append("suggested_dates")
+        matches = tuple(
+            option
+            for option in self.dates
+            if weekday is None or date.fromisoformat(option.id).weekday() == weekday
+        )
+        return matches[:limit]
 
     async def list_times(self, _: uuid.UUID, __: uuid.UUID, selected_date: str, ___: BookingRequirements = BookingRequirements()):
         self.calls.append("times")

@@ -3,10 +3,15 @@ from decimal import Decimal
 import pytest
 
 from app.conversation_lab.adapters import (
+    DEINSTALLATION_SERVICE_ID,
     DIAGNOSTICS_SERVICE_ID,
     ELECTRICAL_SERVICE_ID,
+    GENERIC_SERVICE_ID,
+    INFRASTRUCTURE_SERVICE_ID,
     INSTALLATION_SERVICE_ID,
+    PMOC_SERVICE_ID,
     REFRIGERATOR_SERVICE_ID,
+    RELOCATION_SERVICE_ID,
     SERVICE_ID,
 )
 from app.conversation_lab.manual import (
@@ -79,6 +84,28 @@ async def test_manual_lab_starts_without_synthetic_customer_name_and_asks_real_n
 
 
 @pytest.mark.asyncio
+async def test_manual_lab_short_greeting_then_name_does_not_emit_unknown_fallback() -> None:
+    session_id, _ = await _new_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="opa"),
+    )
+    assert snapshot["state"] == ConversationState.CUSTOMER_NAME.value
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="alan"),
+    )
+
+    assert snapshot["state"] == ConversationState.MENU.value
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert last["body"] == "Prazer, Alan. Como posso te ajudar?"
+    assert "não entendi" not in last["body"].casefold()
+    assert "nao entendi" not in last["body"].casefold()
+
+
+@pytest.mark.asyncio
 async def test_manual_lab_has_fixed_isolated_equipment_catalog() -> None:
     _, session = await _new_session()
 
@@ -95,14 +122,27 @@ def test_manual_lab_exposes_copy_conversation_button() -> None:
 
 
 @pytest.mark.parametrize(
-    ("body", "expected_service_id"),
+    ("body", "expected_service_id", "expected_state"),
     [
-        ("minha geladeira não está gelando", REFRIGERATOR_SERVICE_ID),
-        ("meu freezer não congela", REFRIGERATOR_SERVICE_ID),
-        ("a tomada da cozinha queimou", ELECTRICAL_SERVICE_ID),
+        (
+            "minha geladeira não está gelando",
+            REFRIGERATOR_SERVICE_ID,
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
+        ),
+        (
+            "meu freezer não congela",
+            REFRIGERATOR_SERVICE_ID,
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
+        ),
+        (
+            "a tomada da cozinha queimou",
+            ELECTRICAL_SERVICE_ID,
+            ConversationState.BOOKING_PROPERTY,
+        ),
         (
             "meu ar condicionado não está gelando e preciso de manutenção",
             DIAGNOSTICS_SERVICE_ID,
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
         ),
     ],
 )
@@ -110,6 +150,7 @@ def test_manual_lab_exposes_copy_conversation_button() -> None:
 async def test_manual_lab_uses_r9_catalog_driven_service_selection(
     body: str,
     expected_service_id,
+    expected_state: ConversationState,
 ) -> None:
     session_id, _ = await _new_named_session()
 
@@ -118,10 +159,151 @@ async def test_manual_lab_uses_r9_catalog_driven_service_selection(
         ManualInput(text=body),
     )
 
-    assert snapshot["state"] == ConversationState.BOOKING_ADDRESS.value
+    assert snapshot["state"] == expected_state.value
     assert snapshot["context"]["service_id"] == str(expected_service_id)
     assert "services" in snapshot["dry_run_calls"]
     assert any(item["role"] == "assistant" for item in snapshot["history"])
+    assert "service_address" not in snapshot["context"]
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_smell_complaint_routes_to_cleaning_after_name_capture() -> None:
+    session_id, _ = await _new_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="blz? meu ar ta fedendo"),
+    )
+
+    assert snapshot["state"] == ConversationState.CUSTOMER_NAME.value
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="joao"),
+    )
+
+    assert snapshot["context"]["service_id"] == str(SERVICE_ID)
+    assert snapshot["state"] == ConversationState.BOOKING_QUANTITY.value
+    joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
+    assert "quantos itens ou aparelhos" in joined
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_refrigerator_qualifies_appliance_before_address() -> None:
+    session_id, _ = await _new_named_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="minha geladeira não está gelando"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
+    assert snapshot["context"]["appliance_type"] == "refrigerator"
+    assert snapshot["context"]["service_issue_category"] == "no_cooling"
+    assert "service_address" not in snapshot["context"]
+    joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
+    assert "marca" in joined
+    assert "modelo" in joined
+    assert "endereço" not in joined
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="Brastemp BRM44"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_ADDRESS.value
+    assert snapshot["context"]["equipment_model"] == "Brastemp BRM44"
+    assert "agora que já entendi o serviço" in snapshot["history"][-1]["body"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_electrical_qualifies_risk_and_property_before_address() -> None:
+    session_id, _ = await _new_named_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="a tomada da cozinha queimou"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_PROPERTY.value
+    assert snapshot["context"]["service_issue_category"] == "outlet"
+    assert "service_address" not in snapshot["context"]
+    joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
+    assert "risco elétrico" in joined
+    assert "disjuntor" in joined
+    assert "casa" in joined
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="é uma casa"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_ADDRESS.value
+    assert snapshot["context"]["property_type"] == "house"
+    assert "agora que já entendi o serviço" in snapshot["history"][-1]["body"].casefold()
+
+
+@pytest.mark.parametrize(
+    ("service_id", "label", "details"),
+    [
+        (
+            PMOC_SERVICE_ID,
+            "PMOC - Plano de manutenção, operação e controle",
+            "preciso fazer o PMOC em 4 aparelhos da empresa",
+        ),
+        (
+            DEINSTALLATION_SERVICE_ID,
+            "Desinstalação de ar-condicionado",
+            "preciso desinstalar 2 aparelhos em uma empresa",
+        ),
+        (
+            RELOCATION_SERVICE_ID,
+            "Realocação de ar-condicionado",
+            "preciso realocar 2 aparelhos entre dois ambientes",
+        ),
+        (
+            INFRASTRUCTURE_SERVICE_ID,
+            "Infraestrutura para ar-condicionado",
+            "preciso preparar infraestrutura para 3 ambientes da empresa",
+        ),
+        (
+            GENERIC_SERVICE_ID,
+            "Atendimento técnico especial",
+            "preciso verificar um equipamento que parou durante o uso",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_manual_lab_motor_wide_services_qualify_scope_before_address(
+    service_id,
+    label: str,
+    details: str,
+) -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_SERVICE
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(
+            text=label,
+            action=f"service:{service_id}",
+        ),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_SERVICE_DETAILS.value
+    assert snapshot["context"]["service_id"] == str(service_id)
+    assert "service_address" not in snapshot["context"]
+    assert "antes de pedir o endereço" in snapshot["history"][-1]["body"].casefold()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text=details),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_ADDRESS.value
+    assert snapshot["context"]["service_details_text"]
+    assert "service_address" not in snapshot["context"]
+    assert "agora que já entendi o serviço" in snapshot["history"][-1]["body"].casefold()
 
 
 @pytest.mark.parametrize(
@@ -212,6 +394,96 @@ async def test_purchase_intent_only_asks_whether_installation_is_also_wanted() -
     assert snapshot["state"] == ConversationState.BOOKING_SERVICE.value
     assert "você também gostaria de contratar a instalação" in joined
     assert option_titles == ["Só o aparelho", "Compra + instalação"]
+
+
+@pytest.mark.asyncio
+async def test_cleaning_quantity_also_supports_six_or_more_and_exact_count() -> None:
+    session_id, _ = await _new_named_session()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="quero fazer uma limpeza"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_QUANTITY.value
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert [option["title"] for option in last["options"]] == [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6 ou mais",
+    ]
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="6 ou mais", action="quantity:more"),
+    )
+    assert snapshot["state"] == ConversationState.BOOKING_QUANTITY.value
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert "quantos itens ou aparelhos são ao todo" in last["body"].casefold()
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="20"),
+    )
+
+    assert snapshot["context"]["quantity"] == 20
+    assert snapshot["state"] != ConversationState.HUMAN_HANDOFF.value
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_off_catalog_model_offers_alternatives_and_keeps_automation() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
+    session.repository.context = {
+        "service_id": str(INSTALLATION_SERVICE_ID),
+        "request_mode": "quote",
+        "purchase_mode": "purchase",
+        "purchase_only": True,
+        "equipment_ownership": "needs_equipment",
+        "equipment_model_known": True,
+        "quantity": 1,
+    }
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="Midea 50000 BTU quente frio"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
+    assert snapshot["automation_enabled"] is True
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert "não temos esse modelo específico" in last["body"].casefold()
+    assert "opções semelhantes" in last["body"].casefold()
+    assert {option["id"] for option in last["options"]} >= {
+        "equipment.model.recommend",
+        "equipment.model.exact_check",
+    }
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(
+            text="Ver semelhantes",
+            action="equipment.model.recommend",
+        ),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_PROFILE.value
+    assert snapshot["automation_enabled"] is True
+    assert snapshot["handoff_status"] == "none"
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="1"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_PROFILE.value
+    assert snapshot["automation_enabled"] is True
+    assert snapshot["handoff_status"] == "none"
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert "tamanho aproximado" in last["body"].casefold()
 
 
 @pytest.mark.asyncio
@@ -416,11 +688,44 @@ async def test_gate_request_for_technician_name_continues_scheduling_professiona
         ManualInput(text="preciso do nome do instalador para liberar na portaria"),
     )
 
-    assert snapshot["state"] == ConversationState.BOOKING_DATE.value
+    assert snapshot["state"] == ConversationState.BOOKING_WEEKDAY.value
     assert "nome do técnico responsável" in snapshot["context"]["gate_instructions"]
     joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
     assert "depois de definirmos a data e o horário" in joined
     assert "confirma qual técnico" in joined
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert [option["title"] for option in last["options"]] == [
+        "Segunda-feira",
+        "Terça-feira",
+        "Quarta-feira",
+        "Quinta-feira",
+        "Sexta-feira",
+        "Sábado",
+        "Domingo",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_weekday_choice_offers_three_cross_month_slots() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_WEEKDAY
+    session.repository.context = {
+        "service_id": str(SERVICE_ID),
+        "service_qualification_version": 2,
+    }
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="quarta-feira"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_DATE.value
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert [option["title"] for option in last["options"]] == [
+        "quarta-feira, 18/11 às 09:00",
+        "quarta-feira, 25/11 às 14:30",
+        "quarta-feira, 02/12 às 18:00",
+    ]
 
 
 def test_apartment_address_fact_infers_building_for_short_term_memory() -> None:

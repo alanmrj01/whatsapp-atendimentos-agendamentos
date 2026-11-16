@@ -82,6 +82,11 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
         "lavagem do ar",
         "sanitizacao",
         "sanitizar",
+        "fedendo",
+        "fede",
+        "fedor",
+        "mau cheiro",
+        "cheiro ruim",
     ),
     "preventive-maintenance": (
         "preventiva",
@@ -214,6 +219,10 @@ _SERVICE_CONTEXT_EXCLUSIONS: dict[str, tuple[str, ...]] = {
 _GREETING_PHRASES = (
     "oi",
     "ola",
+    "opa",
+    "e ai",
+    "eai",
+    "blz",
     "bom dia",
     "boa tarde",
     "boa noite",
@@ -384,7 +393,7 @@ _BARE_NAME_REJECT_WORDS = frozenset(
     {
         # Tempo, lugar e conectores de conversa.
         "agora", "aqui", "ai", "ali", "la", "hoje", "amanha", "ontem",
-        "cedo", "tarde", "noite", "antes", "depois", "ainda", "ja",
+        "cedo", "manha", "tarde", "noite", "antes", "depois", "ainda", "ja",
         "pra", "para", "por", "com", "sem", "que", "quem", "e",
         # Pronomes, possessivos e referências cotidianas.
         "eu", "voce", "vc", "voces", "vcs", "ele", "ela", "eles", "elas",
@@ -409,7 +418,7 @@ _BARE_NAME_REJECT_WORDS = frozenset(
         # Perguntas e qualificadores que indicam frase, não nome.
         "quanto", "qual", "quando", "onde", "como", "porque", "por que",
         "bem", "mal", "tao", "muito", "pouco", "mais", "menos", "melhor",
-        "pior", "bom", "ruim",
+        "pior", "bom", "ruim", "qualquer", "um", "uma", "assim", "nome",
         # Vocabulário operacional/comercial da refrigeração.
         "problema", "duvida", "servico", "atendimento", "aparelho", "equipamento",
         "modelo", "preco", "valor", "orcamento", "instalacao", "manutencao",
@@ -1022,6 +1031,28 @@ def extract_customer_name(
 
     if not allow_bare:
         return None
+
+    # Replies to a pending name question are allowed to be conversational,
+    # but only after stripping the wrapper and validating the remaining words.
+    contextual_patterns = (
+        r"^\s*pode\s+ser\s+(.+?)(?:\s+mesmo)?\s*[.!]?$",
+        r"^\s*(?:me\s+chama\s+de|pode\s+me\s+chamar(?:\s+de)?)\s+(.+?)\s*[.!]?$",
+        r"^\s*sou(?:\s+o|\s+a)?\s+(.+?)\s*[.!]?$",
+        r"^\s*(.+?)\s+mesmo\s*[.!]?$",
+    )
+    for pattern in contextual_patterns:
+        match = re.search(pattern, raw, flags=re.IGNORECASE)
+        if match:
+            candidate = _clean_name(match.group(1))
+            if candidate is None:
+                continue
+            normalized_candidate = normalize_portuguese(candidate)
+            if any(
+                word in _BARE_NAME_REJECT_WORDS
+                for word in normalized_candidate.split()
+            ):
+                continue
+            return candidate
     normalized = normalize_portuguese(raw)
     if any(
         normalized == prefix.rstrip() or normalized.startswith(prefix)
@@ -1345,6 +1376,11 @@ def _contains_price_question(value: str) -> bool:
             r"\bquanto\s+da(?:\s+mais\s+ou\s+menos)?\b",
             r"\bqual\s+o\s+custo(?:\s+(?:disso|do\s+servico))?\b",
             r"\bquanto\s+e\s+(?:a\s+)?visita\b",
+            r"\b(?:o\s+)?valor\s+pode\s+chegar\s+ate\s+quanto\b",
+            r"\bquanto\s+(?:o\s+)?valor\s+pode\s+chegar\b",
+            r"\b(?:qual\s+(?:e\s+)?o\s+)?valor\s+maximo\b",
+            r"\b(?:qual\s+(?:e\s+)?o\s+)?preco\s+maximo\b",
+            r"\bate\s+quanto\s+(?:pode\s+)?(?:ficar|chegar|custar)\b",
         )
     )
 

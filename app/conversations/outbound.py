@@ -13,6 +13,7 @@ from app.conversations.constants import (
     EQUIPMENT_INSTALLATION,
     EQUIPMENT_MODEL_KNOWN,
     EQUIPMENT_MODEL_RECOMMEND,
+    EQUIPMENT_MODEL_EXACT_CHECK,
     EQUIPMENT_NEEDS,
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
@@ -134,11 +135,12 @@ def equipment_purchase_clarification_message(
         )
     else:
         body = (
-            "Você quer apenas comprar o aparelho ou gostaria de contratar a instalação também?"
+            "Para eu entender sua cotação: você quer cotar só o aparelho, "
+            "só a instalação ou os dois juntos?"
             if not retry
             else (
-                "Para eu seguir com a opção certa: você quer comprar somente o aparelho, "
-                "fazer somente a instalação ou comprar e instalar?"
+                "Para eu seguir com a opção certa: você quer cotar somente o aparelho, "
+                "fazer somente a instalação ou cotar os dois juntos?"
             )
         )
         options = (
@@ -192,6 +194,23 @@ def equipment_model_request_message(
     ),
 ) -> OutboundMessage:
     return OutboundMessage(message_type="text", body=body)
+
+
+def equipment_alternative_offer_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            "Desculpe, não temos esse modelo específico no catálogo. "
+            "Posso te apresentar opções semelhantes que temos disponíveis?"
+        ),
+        interactive_id="booking.equipment_alternative",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_MODEL_RECOMMEND, "Ver semelhantes"),
+                BookingOption(EQUIPMENT_MODEL_EXACT_CHECK, "Quero esse modelo"),
+            )
+        ),
+    )
 
 
 def equipment_profile_message(
@@ -248,8 +267,8 @@ def equipment_profile_intro_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="text",
         body=(
-            "Como você ainda não escolheu um aparelho, vou fazer algumas perguntas rápidas "
-            "para te ajudar a encontrar a opção mais adequada para o ambiente."
+            "Para te indicar uma opção que faça sentido para o ambiente, "
+            "vou fazer algumas perguntas rápidas."
         ),
     )
 
@@ -666,13 +685,25 @@ def date_selection_message(
     )
 
 
+def slot_selection_message(
+    options: Sequence[BookingOption],
+    *,
+    body: str,
+) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_list",
+        body=body,
+        interactive_id="booking.suggested_slots",
+        outbound_payload=_list_payload("Opções de agenda", options, prefix="slot:"),
+    )
+
+
 def quantity_selection_message(*, installation: bool = False) -> OutboundMessage:
     options = tuple(
         BookingOption(f"quantity:{value}", str(value))
         for value in range(1, QUANTITY_OPTION_LIMIT + 1)
     )
-    if installation:
-        options = (*options, BookingOption("quantity:more", "6 ou mais"))
+    options = (*options, BookingOption("quantity:more", "6 ou mais"))
     return OutboundMessage(
         message_type="interactive_list",
         body=(
