@@ -5072,7 +5072,56 @@ def _service_kind(
         None,
     )
     normalized = normalize_portuguese(selected.label if selected else "")
-    if "instal" in normalized:
+
+    # Domain takes precedence over generic verbs. "Instalação elétrica", for
+    # example, must never enter the air-conditioning installation flow.
+    if any(
+        token in normalized
+        for token in (
+            "eletrica",
+            "eletrico",
+            "eletricista",
+            "tomada",
+            "disjuntor",
+            "chuveiro",
+            "interruptor",
+            "luminaria",
+            "fiacao",
+        )
+    ):
+        return "electrical"
+    if any(
+        token in normalized
+        for token in (
+            "geladeira",
+            "refrigerador",
+            "freezer",
+            "frigobar",
+            "cervejeira",
+            "congelador",
+        )
+    ):
+        return "refrigeration_appliance"
+    if any(
+        token in normalized
+        for token in (
+            "pmoc",
+            "desinstal",
+            "realoc",
+            "remanej",
+            "infraestrutura",
+            "pre instalacao",
+            "pre-instalacao",
+        )
+    ):
+        return "hvac_scope"
+    if (
+        "instal" in normalized
+        and any(
+            token in normalized
+            for token in ("ar condicionado", "split", "climat")
+        )
+    ):
         return "installation"
     if any(token in normalized for token in ("limpeza", "higien", "lavagem")):
         return "cleaning"
@@ -5083,6 +5132,246 @@ def _service_kind(
     if "preventiv" in normalized or "revis" in normalized:
         return "preventive"
     return "other"
+
+
+def _appliance_type_from_text(body: str | None) -> str | None:
+    normalized = normalize_portuguese(body or "")
+    if "freezer" in normalized or "congelador" in normalized:
+        return "freezer"
+    if "frigobar" in normalized:
+        return "minibar"
+    if "cervejeira" in normalized:
+        return "beer_cooler"
+    if "geladeira" in normalized or "refrigerador" in normalized:
+        return "refrigerator"
+    return None
+
+
+def _service_issue_category(service_kind: str, body: str | None) -> str | None:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return None
+
+    if service_kind == "refrigeration_appliance":
+        categories = (
+            (
+                "no_cooling",
+                (
+                    "nao gela",
+                    "nao esta gelando",
+                    "nao resfria",
+                    "nao esfria",
+                    "gelando pouco",
+                    "gelando fraco",
+                    "nao congela",
+                    "parou de gelar",
+                ),
+            ),
+            ("not_powering", ("nao liga", "nao funciona", "parou de funcionar")),
+            (
+                "noise",
+                ("barulho", "ruido", "chiando", "estalando", "vibrando"),
+            ),
+            (
+                "leak",
+                ("vazando", "vaza agua", "agua no chao", "pingando"),
+            ),
+            (
+                "overfreezing",
+                ("congelando demais", "muito gelo", "excesso de gelo", "forma gelo"),
+            ),
+            (
+                "door_seal",
+                ("borracha", "vedacao", "porta nao fecha", "porta aberta"),
+            ),
+        )
+        for category, phrases in categories:
+            if any(phrase in normalized for phrase in phrases):
+                return category
+        return None
+
+    if service_kind == "electrical":
+        if "curto" in normalized:
+            return "short_circuit"
+        if "disjuntor" in normalized:
+            return "breaker"
+        if "tomada" in normalized:
+            return "outlet"
+        if "chuveiro" in normalized:
+            return "shower"
+        if "interruptor" in normalized:
+            return "switch"
+        if any(token in normalized for token in ("luminaria", "lampada", "luz")):
+            return "lighting"
+        if any(token in normalized for token in ("fiacao", "fio", "cabo")):
+            return "wiring"
+        if "quadro" in normalized:
+            return "electrical_panel"
+    return None
+
+
+def _service_details_answer_sufficient(
+    service_kind: str,
+    body: str | None,
+) -> bool:
+    normalized = normalize_portuguese(body or "")
+    if not normalized or normalized in {
+        "sim",
+        "ok",
+        "certo",
+        "isso",
+        "nao",
+        "nao sei",
+        "qualquer um",
+    }:
+        return False
+
+    words = normalized.split()
+    if service_kind == "refrigeration_appliance":
+        return (
+            _appliance_type_from_text(body) is not None
+            and (
+                _service_issue_category(service_kind, body) is not None
+                or len(words) >= 5
+            )
+        )
+    if service_kind == "electrical":
+        return _service_issue_category(service_kind, body) is not None
+    if service_kind == "hvac_scope":
+        return len(words) >= 5 and any(
+            token in normalized
+            for token in (
+                "aparelho",
+                "aparelhos",
+                "unidade",
+                "unidades",
+                "ambiente",
+                "ambientes",
+                "desinstal",
+                "realoc",
+                "remanej",
+                "infra",
+                "ponto",
+                "tubulacao",
+                "loja",
+                "empresa",
+                "condominio",
+            )
+        )
+    return len(words) >= 4
+
+
+def _service_details_request_message(
+    service_kind: str,
+    *,
+    retry: bool = False,
+) -> OutboundMessage:
+    if service_kind == "refrigeration_appliance":
+        body = (
+            "Antes de pedir o endereço, preciso entender o equipamento e o defeito. "
+            "É geladeira, freezer, frigobar ou cervejeira? O que está acontecendo com ele?"
+            if not retry
+            else
+            "Só para eu encaminhar o serviço certo: qual é o tipo do equipamento "
+            "(geladeira, freezer, frigobar ou cervejeira) e qual defeito ele apresenta?"
+        )
+    elif service_kind == "electrical":
+        body = (
+            "Antes de pedir o endereço, me diga o que precisa ser feito e o que está "
+            "acontecendo — por exemplo tomada, disjuntor, chuveiro, interruptor, "
+            "luminária ou fiação."
+            if not retry
+            else
+            "Pode me dizer qual ponto elétrico está com problema e o que está acontecendo?"
+        )
+    elif service_kind == "hvac_scope":
+        body = (
+            "Antes de pedir o endereço, me conte rapidamente o escopo: o que precisa "
+            "ser feito e em quantos aparelhos ou ambientes, se souber?"
+            if not retry
+            else
+            "Pode resumir o que precisa ser feito e a quantidade de aparelhos ou "
+            "ambientes envolvidos?"
+        )
+    else:
+        body = (
+            "Antes de pedir o endereço, me conte rapidamente o que precisa ser feito "
+            "nesse serviço."
+            if not retry
+            else
+            "Pode me explicar em uma frase o que você precisa nesse serviço?"
+        )
+    return _text_message(body)
+
+
+def _capture_service_qualification(
+    context: dict[str, Any],
+    service_kind: str,
+    body: str | None,
+) -> dict[str, Any]:
+    if not _service_details_answer_sufficient(service_kind, body):
+        return dict(context)
+
+    raw = " ".join((body or "").strip().split())
+    updated = {
+        **context,
+        "service_details_text": raw[:500],
+    }
+    if service_kind in {"refrigeration_appliance", "electrical"}:
+        updated["reported_issue"] = raw[:300]
+
+    issue_category = _service_issue_category(service_kind, body)
+    if issue_category is not None:
+        updated["service_issue_category"] = issue_category
+
+    if service_kind == "refrigeration_appliance":
+        appliance_type = _appliance_type_from_text(body)
+        if appliance_type is not None:
+            updated["appliance_type"] = appliance_type
+    return updated
+
+
+def _electrical_safety_prefix(body: str | None) -> str | None:
+    normalized = normalize_portuguese(body or "")
+    if not any(
+        phrase in normalized
+        for phrase in (
+            "faisca",
+            "queimou",
+            "cheiro de queimado",
+            "aquecendo",
+            "fio exposto",
+            "curto",
+            "fumaca",
+        )
+    ):
+        return None
+    return (
+        "Como há sinal de possível risco elétrico, evite usar esse ponto. "
+        "Se houver faísca, cheiro de queimado ou aquecimento e for seguro identificar "
+        "o circuito, desligue o disjuntor correspondente até a avaliação do técnico."
+    )
+
+
+def _equipment_model_request_for_kind(
+    service_kind: str,
+    context: dict[str, Any],
+) -> OutboundMessage:
+    if service_kind == "refrigeration_appliance":
+        return equipment_model_request_message(
+            "Qual é a marca e o modelo do equipamento? Se não souber, pode me mandar "
+            "uma foto da frente ou da etiqueta para a equipe conferir."
+        )
+    if service_kind == "installation" and context.get("request_mode") == "quote":
+        return equipment_model_request_message(
+            "Para eu entender o tamanho do aparelho e montar a cotação corretamente, "
+            "qual é a marca e a capacidade em BTUs ou o modelo? Se não souber, "
+            "pode me mandar uma foto."
+        )
+    return equipment_model_request_message(
+        "Qual é a marca e a capacidade em BTUs ou o modelo do seu ar-condicionado? "
+        "Se não souber, pode me mandar uma foto."
+    )
 
 
 async def _safe_service_details(
