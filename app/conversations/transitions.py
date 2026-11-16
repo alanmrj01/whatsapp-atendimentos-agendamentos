@@ -840,31 +840,45 @@ async def _route_named_conversation(
         and _is_site_limit_availability_question(interpretation, inbound.body)
     ):
         return _transition(state, context, site_limit_message())
-    if (
-        state in booking_states
-        and interpretation.has_act(ConversationAct.SOCIAL)
-        and not _message_can_answer_pending_state(
+    turn_orchestration = None
+    if state in booking_states and action is None:
+        can_answer_pending = _message_can_answer_pending_state(
             state,
             inbound,
             context,
             interpretation,
         )
-    ):
-        return await _resume_pending_question(
-            conversation,
-            inbound,
-            context,
-            booking_port,
-            prefix="Tudo certo.",
+        turn_orchestration = classify_pending_turn(
+            body=inbound.body,
+            interpretation=interpretation,
+            can_answer_pending=can_answer_pending,
+            has_question_answer=question_answer is not None,
+            is_clarification=_is_pending_question_clarification(inbound.body),
         )
-    if state in booking_states and interpretation.has_act(ConversationAct.PAUSE):
-        return await _resume_pending_question(
-            conversation,
-            inbound,
-            context,
-            booking_port,
-            prefix="Sem problema. Continuamos daqui quando você estiver pronto.",
-        )
+        if turn_orchestration.relation is TurnRelation.REFERRAL:
+            return await _resume_pending_question(
+                conversation,
+                inbound,
+                context,
+                booking_port,
+                prefix=referral_acknowledgement(customer_name),
+            )
+        if turn_orchestration.relation is TurnRelation.SOCIAL:
+            return await _resume_pending_question(
+                conversation,
+                inbound,
+                context,
+                booking_port,
+                prefix="Tudo certo.",
+            )
+        if turn_orchestration.relation is TurnRelation.PAUSE:
+            return await _resume_pending_question(
+                conversation,
+                inbound,
+                context,
+                booking_port,
+                prefix="Sem problema. Continuamos daqui quando você estiver pronto.",
+            )
     if state in booking_states and interpretation.has_act(
         ConversationAct.NEGATED_ACTION
     ) and not interpretation.has_act(ConversationAct.CORRECTION):
@@ -1127,12 +1141,19 @@ async def _route_named_conversation(
                 )
             )
             repair_slot = _repair_slot_for_pending_state(state, context)
+            should_consume_repair = bool(
+                repair_slot is not None
+                and turn_orchestration is not None
+                and turn_orchestration.consumes_repair
+                and not looks_like_parallel_question
+                and not is_conversation_feedback
+            )
             repair_context = (
                 _context_after_repair_attempt(context, repair_slot)
-                if repair_slot is not None
+                if should_consume_repair and repair_slot is not None
                 else dict(context)
             )
-            if repair_slot is not None and repair_context is None:
+            if should_consume_repair and repair_context is None:
                 return _handoff_transition(
                     _unknown_fallback_handoff_message(conversation.business_name)
                 )
