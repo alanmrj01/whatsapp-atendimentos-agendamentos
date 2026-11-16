@@ -235,12 +235,17 @@ class DryRunBookingPort:
                 generate_service_intent_examples("Atendimento técnico especial"),
             ),
         ]
+        self.operating_weekdays = tuple(range(7))
         self.dates = [
             BookingOption("2026-11-16", "segunda-feira, 16 de novembro"),
+            BookingOption("2026-11-17", "terça-feira, 17 de novembro"),
             BookingOption("2026-11-18", "quarta-feira, 18 de novembro"),
+            BookingOption("2026-11-19", "quinta-feira, 19 de novembro"),
+            BookingOption("2026-11-20", "sexta-feira, 20 de novembro"),
+            BookingOption("2026-11-21", "sábado, 21 de novembro"),
+            BookingOption("2026-11-22", "domingo, 22 de novembro"),
             BookingOption("2026-11-25", "quarta-feira, 25 de novembro"),
             BookingOption("2026-12-02", "quarta-feira, 2 de dezembro"),
-            BookingOption("2026-11-20", "sexta-feira, 20 de novembro"),
         ]
         self.times = [
             BookingOption("09:00", "09:00"),
@@ -563,6 +568,39 @@ class DryRunBookingPort:
     async def list_dates(self, _: uuid.UUID, __: uuid.UUID, ___: BookingRequirements = BookingRequirements()):
         self.calls.append("dates")
         return tuple(self.dates)
+
+    async def list_operating_weekdays(self, _: uuid.UUID, __: uuid.UUID):
+        self.calls.append("operating_weekdays")
+        labels = (
+            "Segunda-feira",
+            "Terça-feira",
+            "Quarta-feira",
+            "Quinta-feira",
+            "Sexta-feira",
+            "Sábado",
+            "Domingo",
+        )
+        return tuple(
+            BookingOption(id=str(value), label=labels[value])
+            for value in self.operating_weekdays
+        )
+
+    async def list_suggested_dates(
+        self,
+        _: uuid.UUID,
+        __: uuid.UUID,
+        ___: BookingRequirements = BookingRequirements(),
+        *,
+        weekday: int | None = None,
+        limit: int = 3,
+    ):
+        self.calls.append("suggested_dates")
+        matches = tuple(
+            option
+            for option in self.dates
+            if weekday is None or date.fromisoformat(option.id).weekday() == weekday
+        )
+        return matches[:limit]
 
     async def list_times(self, _: uuid.UUID, __: uuid.UUID, selected_date: str, ___: BookingRequirements = BookingRequirements()):
         self.calls.append("times")
