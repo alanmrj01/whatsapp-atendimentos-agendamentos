@@ -384,7 +384,7 @@ _BARE_NAME_REJECT_WORDS = frozenset(
     {
         # Tempo, lugar e conectores de conversa.
         "agora", "aqui", "ai", "ali", "la", "hoje", "amanha", "ontem",
-        "cedo", "tarde", "noite", "antes", "depois", "ainda", "ja",
+        "cedo", "manha", "tarde", "noite", "antes", "depois", "ainda", "ja",
         "pra", "para", "por", "com", "sem", "que", "quem", "e",
         # Pronomes, possessivos e referências cotidianas.
         "eu", "voce", "vc", "voces", "vcs", "ele", "ela", "eles", "elas",
