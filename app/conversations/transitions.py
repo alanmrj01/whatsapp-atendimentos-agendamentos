@@ -9215,6 +9215,8 @@ async def _offer_times_for_date(
     *,
     customer_name: str | None = None,
 ) -> ConversationTransition:
+    context = dict(context)
+    context.pop("last_assistant_topic", None)
     try:
         times = _snapshot_options(
             await port.list_times(
