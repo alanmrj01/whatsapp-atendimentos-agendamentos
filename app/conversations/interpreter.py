@@ -82,6 +82,11 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
         "lavagem do ar",
         "sanitizacao",
         "sanitizar",
+        "fedendo",
+        "fede",
+        "fedor",
+        "mau cheiro",
+        "cheiro ruim",
     ),
     "preventive-maintenance": (
         "preventiva",
