@@ -362,7 +362,8 @@ async def test_answer_plus_price_question_uses_context_updated_in_same_turn() ->
     body = _combined_body(repository)
     assert repository.context["quantity"] == 2
     assert repository.context["equipment_quantity"] == 2
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert "service_address" not in repository.context
     assert "r$ 200,00" in body
     assert "r$ 100,00" not in body
 

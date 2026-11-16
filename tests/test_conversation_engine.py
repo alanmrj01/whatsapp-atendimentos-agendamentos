@@ -1718,14 +1718,11 @@ async def test_booking_collects_only_simple_required_information() -> None:
     )
     assert repository.state == ConversationState.BOOKING_ACCESS
     await engine.process(inbound(4, action="access.unknown"))
-    assert repository.state == ConversationState.BOOKING_ADDRESS
-    await engine.process(
-        inbound(5, body="Rua das Flores, 10, São José dos Campos - SP")
-    )
     assert repository.state == ConversationState.BOOKING_SITE_LIMIT
-    await engine.process(inbound(6, action="site_limit.17:00"))
+    await engine.process(inbound(5, action="site_limit.17:00"))
 
     assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert "service_address" not in repository.context
     assert repository.context["quantity"] == 3
     assert repository.context["access_condition"] == "unknown"
     assert repository.context["site_allowed_end"] == "17:00"
@@ -1734,7 +1731,7 @@ async def test_booking_collects_only_simple_required_information() -> None:
     ).casefold()
     assert "quantos itens ou aparelhos" in questions
     assert "antes de pedir o endereço" in questions
-    assert "endereço completo" in questions
+    assert "endereço completo" not in questions
     assert "horário limite" in questions
     for forbidden in (
         "linha frigorígena",
@@ -3561,15 +3558,11 @@ async def test_noise_diagnostic_collects_model_photo_and_video_before_agenda() -
     )
 
     assert repository.context["issue_video_received"] is True
-    assert repository.state == ConversationState.BOOKING_ADDRESS
-    assert "endereço" in (
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert "service_address" not in repository.context
+    assert "endereço" not in (
         repository.outbounds[-1].transition.outbound.body or ""
     ).casefold()
-
-    await engine.process(
-        inbound(947, body="Rua A, 10, Centro, SJC")
-    )
-    assert repository.state == ConversationState.BOOKING_WEEKDAY
 
 
 @mark.asyncio
@@ -3596,8 +3589,9 @@ async def test_gas_recharge_collects_existing_equipment_before_agenda() -> None:
         inbound(949, body="LG Dual Inverter 12000 BTU")
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["equipment_model"] == "LG Dual Inverter 12000 BTU"
+    assert "service_address" not in repository.context
 
 
 @mark.asyncio
@@ -5217,7 +5211,7 @@ async def test_off_catalog_purchase_model_offers_similar_options_before_profile(
             *repository.outbounds[-1].transition.follow_ups,
         )
     ).casefold()
-    assert "alternativa semelhante" in combined
+    assert "capacidade mais próxima" in combined
     assert "quantas pessoas" in combined
 
     await engine.process(inbound(1204, body="1"))
@@ -5294,7 +5288,8 @@ async def test_generic_ac_problem_is_diagnostics_and_never_turns_into_installati
     await engine.process(
         inbound(1205, body="LG Dual Inverter 12000 BTU")
     )
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert "service_address" not in repository.context
 
 
 @mark.asyncio
@@ -6309,7 +6304,7 @@ async def test_generic_configured_service_is_qualified_before_address() -> None:
         )
     )
 
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["service_details_text"].startswith("preciso verificar")
     assert "service_address" not in repository.context
 

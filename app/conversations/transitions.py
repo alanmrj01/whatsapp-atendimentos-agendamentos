@@ -1809,7 +1809,7 @@ def _name_request_transition(
         body = f"{greeting} Como posso te chamar?"
     else:
         greeting = daypart_greeting(conversation.business_timezone)
-        body = f"{greeting}! Claro. Como posso te chamar?"
+        body = f"{greeting}! Como posso te chamar?"
     return _transition(
         ConversationState.CUSTOMER_NAME,
         context,
@@ -2324,6 +2324,24 @@ def _requested_equipment_brand(body: str | None) -> str | None:
     )
 
 
+def _requested_capacity_btu(body: str | None) -> int | None:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return None
+
+    full = re.search(r"\b(\d{4,6})\s*btu(?:s)?\b", normalized)
+    if full:
+        return int(full.group(1))
+
+    thousands = re.search(
+        r"\b(\d{1,2})(?:[\s.-]*mil)\s*btu(?:s)?\b",
+        normalized,
+    )
+    if thousands:
+        return int(thousands.group(1)) * 1000
+    return None
+
+
 def _catalog_entry_matching_customer_request(
     body: str | None,
     catalog: Sequence[Any],
@@ -2332,8 +2350,7 @@ def _catalog_entry_matching_customer_request(
     if not normalized:
         return None
 
-    capacity_match = re.search(r"\b(\d{4,6})\s*btu\b", normalized)
-    capacity = int(capacity_match.group(1)) if capacity_match else None
+    capacity = _requested_capacity_btu(body)
     requested_brand = _requested_equipment_brand(body)
 
     explicitly_mentioned_lines = {
@@ -7140,6 +7157,88 @@ async def _handle_equipment_model(
             updated.pop("equipment_model", None)
             updated.pop("recommended_equipment", None)
             updated.pop("recommendation_presented", None)
+
+            try:
+                catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
+            except BookingRequiresHandoff as exc:
+                return _handoff_for_reason(str(exc))
+
+            requested_capacity = context.get("catalog_mismatch_capacity_btu")
+            if not isinstance(requested_capacity, int):
+                requested_capacity = _requested_capacity_btu(mismatch_query)
+
+            if isinstance(requested_capacity, int) and catalog:
+                exact_capacity = tuple(
+                    item for item in catalog
+                    if item.capacity_btu == requested_capacity
+                )
+                if exact_capacity:
+                    options = exact_capacity[:5]
+                    option_lines = [
+                        f"• {_catalog_equipment_label(item)}"
+                        + (
+                            f" — {_format_brl(Decimal(str(item.price)))}"
+                            if item.price is not None
+                            else " — valor a confirmar"
+                        )
+                        for item in options
+                    ]
+                    capacity_label = f"{requested_capacity:,}".replace(",", ".")
+                    return _transition(
+                        ConversationState.BOOKING_EQUIPMENT_MODEL,
+                        updated,
+                        _text_message(
+                            "Sim. Tenho opções no catálogo com a capacidade que você pediu "
+                            f"({capacity_label} BTU):\n"
+                            + "\n".join(option_lines)
+                            + "\n\nQual delas você gostaria de avaliar?"
+                        ),
+                    )
+
+                nearest_capacity = min(
+                    {item.capacity_btu for item in catalog},
+                    key=lambda value: (abs(value - requested_capacity), value),
+                )
+                nearest = tuple(
+                    item for item in catalog
+                    if item.capacity_btu == nearest_capacity
+                )[:5]
+                requested_label = f"{requested_capacity:,}".replace(",", ".")
+                nearest_label = f"{nearest_capacity:,}".replace(",", ".")
+                option_lines = [
+                    f"• {_catalog_equipment_label(item)}"
+                    + (
+                        f" — {_format_brl(Decimal(str(item.price)))}"
+                        if item.price is not None
+                        else " — valor a confirmar"
+                    )
+                    for item in nearest
+                ]
+                updated["catalog_nearest_capacity_btu"] = nearest_capacity
+                transition = await _advance_intake(
+                    inbound,
+                    port,
+                    intake,
+                    updated,
+                    services=services,
+                    customer_name=customer_name,
+                )
+                return _prepend_transition_body(
+                    transition,
+                    (
+                        f"Não encontrei {requested_label} BTU no catálogo ativo. "
+                        f"A capacidade mais próxima disponível é {nearest_label} BTU"
+                        + (
+                            ":\n" + "\n".join(option_lines)
+                            if option_lines
+                            else "."
+                        )
+                        + "\n\nComo não é a mesma capacidade que você pediu, "
+                        "vou confirmar rapidamente o perfil do ambiente antes de indicar "
+                        "qual opção faz sentido."
+                    ),
+                )
+
             transition = await _advance_intake(
                 inbound,
                 port,
@@ -7151,9 +7250,9 @@ async def _handle_equipment_model(
             return _prepend_transition_body(
                 transition,
                 (
-                    "Claro. Vou buscar uma alternativa semelhante no catálogo. "
-                    "Para indicar uma opção adequada ao ambiente, preciso de algumas "
-                    "informações rápidas."
+                    "Posso te mostrar alternativas do catálogo. "
+                    "Como você não informou uma capacidade que eu consiga comparar com segurança, "
+                    "vou confirmar rapidamente o perfil do ambiente para filtrar as opções certas."
                 ),
             )
 
@@ -7239,6 +7338,11 @@ async def _handle_equipment_model(
                 "catalog_mismatch_attempts": 1,
                 "catalog_mismatch_query": normalize_portuguese(raw),
             }
+            requested_capacity = _requested_capacity_btu(raw)
+            if requested_capacity is not None:
+                updated["catalog_mismatch_capacity_btu"] = requested_capacity
+            else:
+                updated.pop("catalog_mismatch_capacity_btu", None)
             updated.pop("equipment_model", None)
             updated.pop("recommended_equipment", None)
             updated.pop("recommendation_presented", None)
@@ -9840,10 +9944,20 @@ async def _advance_intake(
             access_selection_message(),
         )
 
-    if (
+    missing_service_address = (
         intake.requires_address
         and ServiceAddress.from_snapshot(context.get("service_address")) is None
-    ):
+    )
+    selected_date = _context_string(context, "selected_date")
+    selected_time = _context_string(context, "selected_time")
+    address_needed_now = (
+        missing_service_address
+        and (
+            context.get("request_mode") == "quote"
+            or (selected_date is not None and selected_time is not None)
+        )
+    )
+    if address_needed_now:
         return _transition(
             ConversationState.BOOKING_ADDRESS,
             context,
@@ -9861,6 +9975,14 @@ async def _advance_intake(
             port,
             context,
             service_id,
+            customer_name=customer_name,
+        )
+
+    if selected_date is not None and selected_time is not None:
+        return await _advance_preconfirmation(
+            inbound,
+            port,
+            context,
             customer_name=customer_name,
         )
 
@@ -10737,6 +10859,24 @@ async def _advance_preconfirmation(
     *,
     customer_name: str | None,
 ) -> ConversationTransition:
+    if context.get("purchase_only") is not True:
+        try:
+            _service_id, intake = await _context_intake(inbound, context, port)
+        except BookingRequiresHandoff as exc:
+            return _handoff_for_reason(str(exc))
+        if (
+            intake.requires_address
+            and ServiceAddress.from_snapshot(context.get("service_address")) is None
+        ):
+            return _transition(
+                ConversationState.BOOKING_ADDRESS,
+                context,
+                address_request_message(
+                    "Perfeito, data e horário definidos. Agora me passe o endereço completo "
+                    "do serviço, incluindo a cidade."
+                ),
+            )
+
     mode = _context_string(context, "onsite_contact_mode")
     if mode not in {"customer", "other"}:
         return _transition(
