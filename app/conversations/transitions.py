@@ -4673,6 +4673,11 @@ def _should_preserve_pending_message(
         return False
     if _has_substantive_intent(interpretation):
         return True
+    if (
+        interpretation.has(ConversationIntent.GREETING)
+        or interpretation.has_act(ConversationAct.SOCIAL)
+    ):
+        return False
     normalized = interpretation.normalized_text
     social_only = {
         "oi",
@@ -6534,7 +6539,7 @@ async def _handle_quantity(
             ConversationState.BOOKING_QUANTITY,
             context,
             _text_message(
-                "Certo. Quantos aparelhos de ar-condicionado são ao todo?"
+                "Certo. Quantos itens ou aparelhos são ao todo?"
             ),
         )
 
