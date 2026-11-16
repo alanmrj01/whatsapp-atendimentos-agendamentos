@@ -549,3 +549,84 @@ async def test_real_invalid_slot_answer_gets_one_retry_then_handoff() -> None:
     assert repository.state == ConversationState.HUMAN_HANDOFF
     assert repository.automation_enabled is False
     assert repository.handoff_status == "waiting"
+
+@pytest.mark.asyncio
+async def test_service_details_side_question_answers_and_resumes_without_repair() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE_DETAILS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "service_qualification_version": 2,
+        },
+        customer_name="Joao",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Atendimento técnico especial")
+    ]
+    port.intake = replace(port.intake, requires_address=True)
+    engine = ConversationEngine(repository, port)
+
+    await engine.process(inbound(3090, body="quanto custa esse serviço?"))
+
+    body = _combined_body(repository)
+    assert repository.state == ConversationState.BOOKING_SERVICE_DETAILS
+    assert "repair_attempts" not in repository.context
+    assert "100,00" in body
+    assert "antes de pedir o endereço" in body or "o que precisa ser feito" in body
+
+
+@pytest.mark.asyncio
+async def test_service_details_social_detour_resumes_without_repair() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE_DETAILS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "service_qualification_version": 2,
+        },
+        customer_name="Joao",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Atendimento técnico especial")
+    ]
+    port.intake = replace(port.intake, requires_address=True)
+    engine = ConversationEngine(repository, port)
+
+    await engine.process(inbound(3091, body="valeu, só um minuto"))
+
+    body = _combined_body(repository)
+    assert repository.state == ConversationState.BOOKING_SERVICE_DETAILS
+    assert "repair_attempts" not in repository.context
+    assert "continu" in body or "o que precisa ser feito" in body
+
+
+@pytest.mark.asyncio
+async def test_service_details_real_failure_retries_once_then_handoffs() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE_DETAILS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "service_qualification_version": 2,
+        },
+        customer_name="Joao",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Atendimento técnico especial")
+    ]
+    port.intake = replace(port.intake, requires_address=True)
+    engine = ConversationEngine(repository, port)
+
+    await engine.process(inbound(3092, body="banana"))
+
+    assert repository.state == ConversationState.BOOKING_SERVICE_DETAILS
+    assert repository.context["repair_attempts"]["service_details"] == 1
+    assert repository.automation_enabled is True
+
+    await engine.process(inbound(3093, body="abacaxi"))
+
+    assert repository.state == ConversationState.HUMAN_HANDOFF
+    assert repository.automation_enabled is False
+    assert repository.handoff_status == "waiting"
+
