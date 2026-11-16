@@ -95,14 +95,27 @@ def test_manual_lab_exposes_copy_conversation_button() -> None:
 
 
 @pytest.mark.parametrize(
-    ("body", "expected_service_id"),
+    ("body", "expected_service_id", "expected_state"),
     [
-        ("minha geladeira não está gelando", REFRIGERATOR_SERVICE_ID),
-        ("meu freezer não congela", REFRIGERATOR_SERVICE_ID),
-        ("a tomada da cozinha queimou", ELECTRICAL_SERVICE_ID),
+        (
+            "minha geladeira não está gelando",
+            REFRIGERATOR_SERVICE_ID,
+            ConversationState.BOOKING_ADDRESS,
+        ),
+        (
+            "meu freezer não congela",
+            REFRIGERATOR_SERVICE_ID,
+            ConversationState.BOOKING_ADDRESS,
+        ),
+        (
+            "a tomada da cozinha queimou",
+            ELECTRICAL_SERVICE_ID,
+            ConversationState.BOOKING_ADDRESS,
+        ),
         (
             "meu ar condicionado não está gelando e preciso de manutenção",
             DIAGNOSTICS_SERVICE_ID,
+            ConversationState.BOOKING_EQUIPMENT_MODEL,
         ),
     ],
 )
@@ -110,6 +123,7 @@ def test_manual_lab_exposes_copy_conversation_button() -> None:
 async def test_manual_lab_uses_r9_catalog_driven_service_selection(
     body: str,
     expected_service_id,
+    expected_state: ConversationState,
 ) -> None:
     session_id, _ = await _new_named_session()
 
@@ -118,7 +132,7 @@ async def test_manual_lab_uses_r9_catalog_driven_service_selection(
         ManualInput(text=body),
     )
 
-    assert snapshot["state"] == ConversationState.BOOKING_ADDRESS.value
+    assert snapshot["state"] == expected_state.value
     assert snapshot["context"]["service_id"] == str(expected_service_id)
     assert "services" in snapshot["dry_run_calls"]
     assert any(item["role"] == "assistant" for item in snapshot["history"])
