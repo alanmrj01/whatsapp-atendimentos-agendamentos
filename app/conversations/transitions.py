@@ -1528,6 +1528,23 @@ def _address_correction_value(body: str) -> str:
     return candidate.strip()
 
 
+def _declines_customer_name(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    return any(
+        phrase in normalized
+        for phrase in (
+            "prefiro nao falar meu nome",
+            "prefiro nao dizer meu nome",
+            "nao quero falar meu nome",
+            "nao quero dizer meu nome",
+            "pode seguir sem meu nome",
+            "pode continuar sem meu nome",
+            "sem nome",
+            "nao precisa do meu nome",
+        )
+    )
+
+
 async def _handle_customer_name(
     conversation: ConversationSnapshot,
     inbound: ConversationInput,
@@ -1553,12 +1570,72 @@ async def _handle_customer_name(
         or extract_customer_name(inbound.body, allow_bare=True)
     )
     if customer_name is None:
-        return await _continue_without_customer_name(
-            conversation,
-            inbound,
+        if is_referral_message(inbound.body):
+            transition = _transition(
+                ConversationState.CUSTOMER_NAME,
+                context,
+                name_request_message("Que bom que chegou por indicação. Como posso te chamar?"),
+            )
+            return _prepend_transition_body(
+                transition,
+                referral_acknowledgement(None),
+            )
+
+        if interpretation.has_act(ConversationAct.SIDE_QUESTION):
+            question_answer = await _service_question_answer(
+                inbound,
+                context,
+                interpretation,
+                booking_port,
+            )
+            if question_answer is not None:
+                return _prepend_transition_body(
+                    _transition(
+                        ConversationState.CUSTOMER_NAME,
+                        context,
+                        name_request_message("E como posso te chamar?"),
+                    ),
+                    question_answer,
+                )
+
+        if interpretation.has_act(ConversationAct.SOCIAL):
+            return _transition(
+                ConversationState.CUSTOMER_NAME,
+                context,
+                name_request_message("Tudo certo. Como posso te chamar?"),
+            )
+
+        if interpretation.has_act(ConversationAct.PAUSE):
+            return _transition(
+                ConversationState.CUSTOMER_NAME,
+                context,
+                name_request_message(
+                    "Sem problema. Quando quiser continuar, me diga como posso te chamar."
+                ),
+            )
+
+        if _declines_customer_name(inbound.body) or _has_substantive_intent(
+            interpretation
+        ):
+            return await _continue_without_customer_name(
+                conversation,
+                inbound,
+                context,
+                interpretation,
+                booking_port,
+            )
+
+        return _retry_or_handoff(
+            ConversationState.CUSTOMER_NAME,
             context,
-            interpretation,
-            booking_port,
+            "customer_name",
+            name_request_message(
+                "Não consegui pegar seu nome. Como você gostaria de ser chamado?"
+            ),
+            handoff_body=(
+                "Não consegui confirmar como você gostaria de ser chamado. "
+                "Vou pedir para uma pessoa da equipe continuar com você."
+            ),
         )
 
     pending_body = _context_string(context, "pending_customer_message")
