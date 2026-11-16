@@ -597,39 +597,6 @@ async def _route_named_conversation(
             prefix=confirmation_text,
         )
 
-    if (
-        action is None
-        and _context_string(context, "equipment_ownership") == "needs_equipment"
-        and int(context.get("catalog_mismatch_attempts") or 0) >= 1
-        and (
-            _looks_like_specific_equipment_request(inbound.body)
-            or _repeats_catalog_mismatch(inbound.body, context)
-        )
-    ):
-        try:
-            port = _require_booking_port(booking_port)
-            catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
-        except (BookingPortUnavailable, BookingRequiresHandoff):
-            catalog = ()
-        if _catalog_entry_matching_customer_request(inbound.body, catalog) is None:
-            updated = {
-                **context,
-                "catalog_mismatch_attempts": int(
-                    context.get("catalog_mismatch_attempts") or 0
-                ) + 1,
-            }
-            return _transition(
-                ConversationState.HUMAN_HANDOFF,
-                updated,
-                _text_message(
-                    "Esse equipamento continua fora do catálogo ativo, então vou encaminhar "
-                    "seu atendimento para uma pessoa da equipe confirmar modelo, preço e "
-                    "disponibilidade."
-                ),
-                automation_enabled=False,
-                handoff_status="waiting",
-            )
-
     if interpretation.intent is ConversationIntent.RESCHEDULE and state is not ConversationState.RESCHEDULE:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
     if interpretation.intent is ConversationIntent.CANCEL and state is not ConversationState.CANCEL:
@@ -7091,6 +7058,82 @@ async def _handle_equipment_model(
         )
 
     normalized = normalize_portuguese(inbound.body or "")
+    mismatch_query = _context_string(context, "catalog_mismatch_query")
+    if mismatch_query is not None:
+        wants_exact_model = (
+            action == EQUIPMENT_MODEL_EXACT_CHECK
+            or any(
+                phrase in normalized
+                for phrase in (
+                    "quero esse modelo",
+                    "quero esse mesmo",
+                    "prefiro esse modelo",
+                    "prefiro esse",
+                    "quero exatamente esse",
+                    "tem que ser esse",
+                    "esse mesmo",
+                )
+            )
+        )
+        if wants_exact_model:
+            preserved = dict(context)
+            preserved.pop("equipment_model", None)
+            preserved.pop("recommended_equipment", None)
+            preserved.pop("recommendation_presented", None)
+            return _transition(
+                ConversationState.HUMAN_HANDOFF,
+                preserved,
+                _text_message(
+                    "Entendi. Como você prefere esse modelo específico e ele não está "
+                    "no catálogo ativo, vou pedir para a equipe verificar disponibilidade "
+                    "e valor para você."
+                ),
+                automation_enabled=False,
+                handoff_status="waiting",
+            )
+
+        accepts_alternative = (
+            action == EQUIPMENT_MODEL_RECOMMEND
+            or normalized in {
+                "sim",
+                "sim pode",
+                "pode",
+                "pode sim",
+                "quero ver",
+                "me mostra",
+                "mostra",
+                "pode mostrar",
+                "sim quero",
+                "quero semelhantes",
+                "quero ver semelhantes",
+            }
+        )
+        if accepts_alternative:
+            updated = {
+                **_clear_repair_attempt(context, "equipment_model"),
+                "equipment_model_known": False,
+                "catalog_mismatch_attempts": 0,
+            }
+            updated.pop("equipment_model", None)
+            updated.pop("recommended_equipment", None)
+            updated.pop("recommendation_presented", None)
+            transition = await _advance_intake(
+                inbound,
+                port,
+                intake,
+                updated,
+                services=services,
+                customer_name=customer_name,
+            )
+            return _prepend_transition_body(
+                transition,
+                (
+                    "Claro. Vou buscar uma alternativa semelhante no catálogo. "
+                    "Para indicar uma opção adequada ao ambiente, preciso de algumas "
+                    "informações rápidas."
+                ),
+            )
+
     unknown_model = (
         action == EQUIPMENT_MODEL_RECOMMEND
         or normalized in {
@@ -7167,49 +7210,19 @@ async def _handle_equipment_model(
             return _handoff_for_reason(str(exc))
         matched_catalog = _catalog_entry_matching_customer_request(raw, catalog)
         if matched_catalog is None:
-            attempts = int(context.get("catalog_mismatch_attempts") or 0) + 1
-            if attempts >= 2:
-                preserved = {
-                    **context,
-                    "catalog_mismatch_attempts": attempts,
-                }
-                preserved.pop("equipment_model", None)
-                preserved.pop("recommended_equipment", None)
-                preserved.pop("recommendation_presented", None)
-                return _transition(
-                    ConversationState.HUMAN_HANDOFF,
-                    preserved,
-                    _text_message(
-                        "Esse equipamento não está no catálogo ativo, então vou encaminhar "
-                        "seu atendimento para a equipe confirmar modelo, preço e disponibilidade."
-                    ),
-                    automation_enabled=False,
-                    handoff_status="waiting",
-                )
             updated = {
                 **context,
                 "equipment_model_known": False,
-                "catalog_mismatch_attempts": attempts,
+                "catalog_mismatch_attempts": 1,
                 "catalog_mismatch_query": normalize_portuguese(raw),
             }
             updated.pop("equipment_model", None)
             updated.pop("recommended_equipment", None)
             updated.pop("recommendation_presented", None)
-            transition = await _advance_intake(
-                inbound,
-                port,
-                intake,
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_MODEL,
                 updated,
-                services=services,
-                customer_name=customer_name,
-            )
-            return _prepend_transition_body(
-                transition,
-                (
-                    f"Não encontrei “{raw}” no catálogo ativo. Para não inventar um aparelho "
-                    "ou indicar uma capacidade inadequada, vou confirmar o perfil do ambiente "
-                    "e te oferecer uma opção realmente cadastrada."
-                ),
+                equipment_alternative_offer_message(),
             )
 
         selected_cycle = (
@@ -7457,7 +7470,12 @@ async def _handle_equipment_profile(
         if isinstance(recommendation, dict)
         else None
     )
+    alternative_requested = (
+        _context_string(recommended, "catalog_mismatch_query") is not None
+    )
     recommended = {**recommended, "recommendation_presented": True}
+    recommended.pop("catalog_mismatch_query", None)
+    recommended.pop("catalog_mismatch_attempts", None)
     transition = await _advance_intake(
         inbound,
         port,
@@ -7500,7 +7518,11 @@ async def _handle_equipment_profile(
         details.append(f"{capacity:,}".replace(",", ".") + " BTU")
     if cycle in {"cold", "heat_cool"} and "frio" not in normalize_portuguese(label):
         details.append("ciclo só frio" if cycle == "cold" else "ciclo quente/frio")
-    intro_body = "Uma boa referência é " + ", ".join(details)
+    intro_body = (
+        "Pelo que você me passou, uma alternativa semelhante que faz sentido é "
+        if alternative_requested
+        else "Pelo que você me passou, uma opção que faz sentido é "
+    ) + ", ".join(details)
     intro_body += f", por {price_text}." if price_text else ", com valor a confirmar."
     within_budget = (
         recommendation.get("within_budget")
