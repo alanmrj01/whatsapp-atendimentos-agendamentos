@@ -5259,6 +5259,11 @@ async def _handle_natural_start(
     active_context = _clean_context(
         conversation.context if initial_context is None else initial_context
     )
+    referral_prefix = (
+        referral_acknowledgement(conversation.customer_name)
+        if is_referral_message(inbound.body)
+        else None
+    )
     if interpretation.intent is ConversationIntent.RESCHEDULE:
         return await _begin_existing_booking_flow(inbound, booking_port, purpose="reschedule")
     if interpretation.intent is ConversationIntent.CANCEL:
@@ -5332,6 +5337,8 @@ async def _handle_natural_start(
                         include_help=False,
                     ),
                 )
+            if referral_prefix is not None:
+                transition = _prepend_transition_body(transition, referral_prefix)
             return transition
 
         if catalog_candidates:
@@ -5363,6 +5370,8 @@ async def _handle_natural_start(
                         include_help=False,
                     ),
                 )
+            if referral_prefix is not None:
+                transition = _prepend_transition_body(transition, referral_prefix)
             return transition
 
     if route_to_service:
@@ -5400,6 +5409,8 @@ async def _handle_natural_start(
                     include_help=False,
                 ),
             )
+        if referral_prefix is not None:
+            transition = _prepend_transition_body(transition, referral_prefix)
         return transition
     if (
         interpretation.intent is ConversationIntent.GREETING
@@ -5416,6 +5427,41 @@ async def _handle_natural_start(
                     include_help=True,
                 )
             ),
+        )
+
+    turn_orchestration = classify_pending_turn(
+        body=inbound.body,
+        interpretation=interpretation,
+        can_answer_pending=False,
+        has_question_answer=False,
+        is_clarification=_is_pending_question_clarification(inbound.body),
+    )
+    if turn_orchestration.relation is TurnRelation.REFERRAL:
+        clean_context = dict(active_context)
+        clean_context.pop("fallback_variant", None)
+        return _transition(
+            ConversationState.MENU,
+            clean_context,
+            _text_message(
+                f"{referral_prefix or referral_acknowledgement(conversation.customer_name)} "
+                "Me conta, como posso te ajudar?"
+            ),
+        )
+    if turn_orchestration.relation is TurnRelation.SOCIAL:
+        clean_context = dict(active_context)
+        clean_context.pop("fallback_variant", None)
+        return _transition(
+            ConversationState.MENU,
+            clean_context,
+            _text_message("Tudo certo. Como posso te ajudar?"),
+        )
+    if turn_orchestration.relation is TurnRelation.PAUSE:
+        clean_context = dict(active_context)
+        clean_context.pop("fallback_variant", None)
+        return _transition(
+            ConversationState.MENU,
+            clean_context,
+            _text_message("Sem problema. Quando quiser continuar, estou por aqui."),
         )
 
     fallback_context = dict(active_context)
