@@ -667,6 +667,19 @@ def date_selection_message(
     )
 
 
+def slot_selection_message(
+    options: Sequence[BookingOption],
+    *,
+    body: str,
+) -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_list",
+        body=body,
+        interactive_id="booking.suggested_slots",
+        outbound_payload=_list_payload("Opções de agenda", options, prefix="slot:"),
+    )
+
+
 def quantity_selection_message(*, installation: bool = False) -> OutboundMessage:
     options = tuple(
         BookingOption(f"quantity:{value}", str(value))
