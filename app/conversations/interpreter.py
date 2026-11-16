@@ -1022,6 +1022,28 @@ def extract_customer_name(
 
     if not allow_bare:
         return None
+
+    # Replies to a pending name question are allowed to be conversational,
+    # but only after stripping the wrapper and validating the remaining words.
+    contextual_patterns = (
+        r"^\s*pode\s+ser\s+(.+?)(?:\s+mesmo)?\s*[.!]?$",
+        r"^\s*(?:me\s+chama\s+de|pode\s+me\s+chamar(?:\s+de)?)\s+(.+?)\s*[.!]?$",
+        r"^\s*sou(?:\s+o|\s+a)?\s+(.+?)\s*[.!]?$",
+        r"^\s*(.+?)\s+mesmo\s*[.!]?$",
+    )
+    for pattern in contextual_patterns:
+        match = re.search(pattern, raw, flags=re.IGNORECASE)
+        if match:
+            candidate = _clean_name(match.group(1))
+            if candidate is None:
+                continue
+            normalized_candidate = normalize_portuguese(candidate)
+            if any(
+                word in _BARE_NAME_REJECT_WORDS
+                for word in normalized_candidate.split()
+            ):
+                continue
+            return candidate
     normalized = normalize_portuguese(raw)
     if any(
         normalized == prefix.rstrip() or normalized.startswith(prefix)
