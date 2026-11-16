@@ -1993,6 +1993,77 @@ async def _is_ac_purchase_or_installation_context(
     return interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
 
 
+async def _assistant_claim_explanation(
+    inbound: ConversationInput,
+    context: dict[str, Any],
+    booking_port: BookingAvailabilityPort | None,
+) -> str | None:
+    """Explain the last deterministic claim before explaining the active field."""
+
+    if _context_string(context, "last_assistant_topic") != "estimated_service_price":
+        return None
+
+    service_id = _context_service_id(context)
+    if service_id is None:
+        return None
+
+    try:
+        port = _require_booking_port(booking_port)
+        services = _snapshot_options(await port.list_services(inbound.business_id))
+        plan = await port.estimate(
+            inbound.business_id,
+            service_id,
+            _requirements_from_context(context),
+        )
+    except (BookingPortUnavailable, BookingRequiresHandoff):
+        return None
+
+    amount = plan.service.estimated_price
+    if amount is None:
+        return (
+            "Quando eu disse que o valor pode variar, quis dizer que o preço final "
+            "depende do que for confirmado no atendimento. Não tenho um valor máximo "
+            "cadastrado com segurança para informar sem inventar."
+        )
+
+    service_kind = _service_kind(services, service_id)
+    normalized = normalize_portuguese(inbound.body or "")
+    asks_ceiling = bool(
+        re.search(
+            r"\b(?:ate\s+quanto|chegar\s+ate\s+quanto|valor\s+maximo|"
+            r"preco\s+maximo|qual\s+o\s+maximo|quanto\s+pode\s+chegar)\b",
+            normalized,
+        )
+    )
+
+    formatted = _format_brl(amount)
+    if service_kind == "diagnostics":
+        if asks_ceiling:
+            return (
+                "Não tenho um valor máximo cadastrado com segurança. "
+                f"{formatted} é o valor base do atendimento técnico. "
+                "O valor final é confirmado depois do diagnóstico e pode variar "
+                "se houver necessidade de peças, materiais ou um reparo mais complexo."
+            )
+        return (
+            f"Quer dizer que {formatted} é o valor base do atendimento técnico. "
+            "Depois do diagnóstico, o valor final pode mudar se forem necessárias "
+            "peças, materiais ou um reparo mais complexo."
+        )
+
+    if asks_ceiling:
+        return (
+            "Não tenho um valor máximo cadastrado com segurança. "
+            f"A estimativa atual é {formatted}; se a execução real exigir algo "
+            "diferente do que foi informado, o valor precisa ser recalculado."
+        )
+    return (
+        f"Quer dizer que {formatted} é uma estimativa com base nas informações "
+        "que você passou. Se a execução real exigir algo diferente do que foi "
+        "informado, o valor pode ser recalculado."
+    )
+
+
 async def _commercial_negotiation_handoff_if_applicable(
     conversation: ConversationSnapshot,
     inbound: ConversationInput,
