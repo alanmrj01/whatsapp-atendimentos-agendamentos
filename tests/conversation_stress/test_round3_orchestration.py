@@ -368,6 +368,56 @@ async def test_answer_plus_price_question_uses_context_updated_in_same_turn() ->
 
 
 @pytest.mark.asyncio
+async def test_real_quote_journey_keeps_sales_intent_until_installation_qualification() -> None:
+    repository = FakeConversationRepository(
+        customer_name=None,
+        business_name="Empresa Sintética Alovia",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    port.intake = replace(
+        port.intake,
+        requires_address=True,
+    )
+    engine = ConversationEngine(repository, port)
+
+    await engine.process(
+        inbound(
+            3079,
+            body="Boa tarde! Tudo bem? Precisava retomar a cotação do ar condicionado",
+        )
+    )
+
+    assert repository.state == ConversationState.CUSTOMER_NAME
+    assert "cotação" in repository.context["pending_customer_message"].casefold()
+
+    await engine.process(inbound(3080, body="Joao"))
+
+    assert repository.customer_name == "Joao"
+    assert repository.state == ConversationState.BOOKING_SERVICE
+    assert repository.context["request_mode"] == "quote"
+    assert repository.context["service_clarification"] == "equipment_purchase"
+
+    await engine.process(
+        inbound(
+            3081,
+            action="equipment.installation",
+            body="Só instalação",
+        )
+    )
+
+    body = _combined_body(repository)
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["request_mode"] == "quote"
+    assert repository.context["equipment_ownership"] == "has_equipment"
+    assert "service_address" not in repository.context
+    assert "marca e o modelo" in body
+    assert "endereço" not in body
+
+
+@pytest.mark.asyncio
 async def test_installation_quote_preserves_quote_and_qualifies_before_address() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_SERVICE,
