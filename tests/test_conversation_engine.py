@@ -2691,10 +2691,28 @@ async def test_installation_quote_collects_tubing_before_address_and_pricing() -
     assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
 
     await engine.process(inbound(403, body="LG Dual Inverter 12000 BTU"))
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    transition = repository.outbounds[-1].transition
+    combined = " ".join(
+        [
+            transition.outbound.body or "",
+            *(item.body or "" for item in transition.follow_ups),
+        ]
+    ).casefold()
+    assert "não encontrei esse modelo" in combined
+    assert "semelhantes" in combined
+
+    await engine.process(
+        inbound(
+            404,
+            action="equipment.model.exact_check",
+            body="Instalar este",
+        )
+    )
     assert repository.state == ConversationState.BOOKING_INSTALLATION_HEIGHT
 
     await engine.process(
-        inbound(404, action="height.at_most_3m", body="Até 3 metros")
+        inbound(405, action="height.at_most_3m", body="Até 3 metros")
     )
     transition = repository.outbounds[-1].transition
     combined = " ".join(
@@ -2711,12 +2729,12 @@ async def test_installation_quote_collects_tubing_before_address_and_pricing() -
     assert "endereço" not in combined
     assert "tubing_length_answered" not in repository.context
 
-    await engine.process(inbound(405, body="5 metros"))
+    await engine.process(inbound(406, body="5 metros"))
     assert repository.context["tubing_meters"] == "5"
     assert repository.context["tubing_length_answered"] is True
     assert repository.state == ConversationState.BOOKING_PROPERTY
 
-    await engine.process(inbound(406, action="property.house", body="Casa"))
+    await engine.process(inbound(407, action="property.house", body="Casa"))
     assert repository.state == ConversationState.BOOKING_ADDRESS
     address_body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
     assert "finalizar a cotação" in address_body
