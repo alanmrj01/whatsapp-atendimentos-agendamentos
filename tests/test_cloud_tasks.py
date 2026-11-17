@@ -421,6 +421,81 @@ async def test_worker_executes_engine_once_and_marks_processed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_worker_transcribes_audio_before_conversation_engine() -> None:
+    repository = FakeTaskRepository(
+        stored_event(event_type="message.inbound.audio")
+    )
+    repository.inbound = replace(
+        repository.inbound,
+        message_type="audio",
+        body=None,
+        media_id="meta-audio-123",
+        media_mime_type="audio/ogg",
+    )
+    engine = AsyncMock()
+    engine.process.return_value = True
+    seen: list[ConversationInput] = []
+
+    async def audio_resolver(value: ConversationInput) -> ConversationInput:
+        seen.append(value)
+        return replace(
+            value,
+            message_type="text",
+            body="Quero fazer uma limpeza no meu ar-condicionado",
+            interactive_id=None,
+        )
+
+    processed = await process_cloud_task_event(
+        FakeTaskSession(),
+        EVENT_KEY,
+        repository,
+        engine,
+        audio_input_resolver=audio_resolver,
+    )
+
+    assert processed is True
+    assert seen == [repository.inbound]
+    delivered = engine.process.await_args.args[0]
+    assert delivered.message_type == "text"
+    assert delivered.body == "Quero fazer uma limpeza no meu ar-condicionado"
+    assert delivered.media_id == "meta-audio-123"
+    assert repository.inbound.message_type == "audio"
+    assert repository.inbound.body is None
+    assert repository.completed == [(EVENT_KEY, "processed")]
+
+
+@pytest.mark.asyncio
+async def test_worker_keeps_original_audio_when_transcription_falls_back() -> None:
+    repository = FakeTaskRepository(
+        stored_event(event_type="message.inbound.audio")
+    )
+    repository.inbound = replace(
+        repository.inbound,
+        message_type="audio",
+        body=None,
+        media_id="meta-audio-456",
+        media_mime_type="audio/ogg",
+    )
+    engine = AsyncMock()
+    engine.process.return_value = True
+
+    async def audio_resolver(value: ConversationInput) -> ConversationInput:
+        return value
+
+    processed = await process_cloud_task_event(
+        FakeTaskSession(),
+        EVENT_KEY,
+        repository,
+        engine,
+        audio_input_resolver=audio_resolver,
+    )
+
+    assert processed is True
+    engine.process.assert_awaited_once_with(repository.inbound)
+    assert repository.completed == [(EVENT_KEY, "processed")]
+
+
+@pytest.mark.asyncio
 async def test_worker_rechecks_legacy_local_exclusion_before_engine() -> None:
     repository = FakeTaskRepository(stored_event())
     repository.inbound = replace(
