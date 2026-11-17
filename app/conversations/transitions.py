@@ -210,6 +210,35 @@ from app.conversations.types import (
 _CUSTOMER_NAME_SKIPPED_KEY = "customer_name_skipped"
 
 
+def _catalog_alternative_reference_action(
+    context: dict[str, Any],
+    body: str | None,
+    action: str | None,
+) -> str | None:
+    if action is not None:
+        return action
+    if (
+        not isinstance(context.get("catalog_alternative_suggestion"), dict)
+        or _context_string(context, "catalog_mismatch_query") is None
+    ):
+        return None
+    normalized = normalize_portuguese(body or "")
+    if normalized in {
+        "esse",
+        "esse mesmo",
+        "quero esse",
+        "quero esse mesmo",
+        "quero esse modelo",
+        "pode ser esse",
+        "prefiro esse",
+        "fico com esse",
+        "vou ficar com esse",
+        "escolher este",
+    }:
+        return EQUIPMENT_MODEL_SUGGESTED_SELECT
+    return None
+
+
 async def determine_transition(
     conversation: ConversationSnapshot,
     inbound: ConversationInput,
@@ -221,8 +250,12 @@ async def determine_transition(
     state = _canonical_state(conversation.state)
     interpreter = DeterministicConversationInterpreter()
     interpretation = interpreter.interpret(inbound.body)
-    action = inbound.interactive_id
     base_context = _clean_context(conversation.context)
+    action = _catalog_alternative_reference_action(
+        base_context,
+        inbound.body,
+        inbound.interactive_id,
+    )
     normalized_inbound = normalize_portuguese(inbound.body or "")
 
     if (
@@ -391,29 +424,6 @@ async def determine_transition(
         context = dict(context)
         context.pop("equipment_model", None)
 
-    if (
-        state is ConversationState.BOOKING_EQUIPMENT_MODEL
-        and action is None
-        and isinstance(context.get("catalog_alternative_suggestion"), dict)
-        and _context_string(context, "catalog_mismatch_query") is not None
-        and normalized_inbound in {
-            "esse",
-            "esse mesmo",
-            "quero esse",
-            "quero esse mesmo",
-            "quero esse modelo",
-            "pode ser esse",
-            "prefiro esse",
-            "fico com esse",
-            "vou ficar com esse",
-            "escolher este",
-        }
-    ):
-        # A deictic confirmation immediately after a concrete catalog
-        # alternative refers to that presented item. Resolve it before generic
-        # turn orchestration can treat the short reply as social/ambiguous.
-        action = EQUIPMENT_MODEL_SUGGESTED_SELECT
-
     if action == MEDIA_HANDOFF and context.get("media_handoff_pending") is True:
         return _handoff_transition(
             "Vou encaminhar você para uma pessoa da equipe. "
@@ -580,7 +590,11 @@ async def _route_named_conversation(
     booking_port: BookingAvailabilityPort | None,
 ) -> ConversationTransition | None:
     state = _canonical_state(conversation.state)
-    action = inbound.interactive_id
+    action = _catalog_alternative_reference_action(
+        context,
+        inbound.body,
+        inbound.interactive_id,
+    )
     customer_name = conversation.customer_name
 
     suggestion = context.get("equipment_suggestion")
