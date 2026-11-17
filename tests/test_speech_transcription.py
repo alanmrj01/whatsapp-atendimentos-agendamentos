@@ -7,6 +7,7 @@ from app.speech.transcription import (
     SpeechTranscriptionError,
     _extract_transcript,
     _payload,
+    _project_id,
 )
 
 
@@ -37,3 +38,11 @@ def test_speech_extracts_sequential_top_transcripts() -> None:
         _extract_transcript(response)
         == "preciso limpar meu ar amanhã de manhã"
     )
+
+
+def test_speech_project_prefers_production_gcp_project_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CONVERSATION_LAB_SPEECH_PROJECT_ID", raising=False)
+    monkeypatch.setenv("GCP_PROJECT_ID", "whatsapp-automacao-prod")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "other-project")
+
+    assert _project_id("detected-project") == "whatsapp-automacao-prod"
