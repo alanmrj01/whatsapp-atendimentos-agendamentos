@@ -27,6 +27,7 @@ class SpeechTranscriptionError(RuntimeError):
 def _project_id(detected_project_id: str | None) -> str:
     project_id = (
         os.getenv("CONVERSATION_LAB_SPEECH_PROJECT_ID")
+        or os.getenv("GCP_PROJECT_ID")
         or os.getenv("GOOGLE_CLOUD_PROJECT")
         or detected_project_id
         or ""
