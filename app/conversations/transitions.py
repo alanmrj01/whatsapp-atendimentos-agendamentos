@@ -391,6 +391,29 @@ async def determine_transition(
         context = dict(context)
         context.pop("equipment_model", None)
 
+    if (
+        state is ConversationState.BOOKING_EQUIPMENT_MODEL
+        and action is None
+        and isinstance(context.get("catalog_alternative_suggestion"), dict)
+        and _context_string(context, "catalog_mismatch_query") is not None
+        and normalized_inbound in {
+            "esse",
+            "esse mesmo",
+            "quero esse",
+            "quero esse mesmo",
+            "quero esse modelo",
+            "pode ser esse",
+            "prefiro esse",
+            "fico com esse",
+            "vou ficar com esse",
+            "escolher este",
+        }
+    ):
+        # A deictic confirmation immediately after a concrete catalog
+        # alternative refers to that presented item. Resolve it before generic
+        # turn orchestration can treat the short reply as social/ambiguous.
+        action = EQUIPMENT_MODEL_SUGGESTED_SELECT
+
     if action == MEDIA_HANDOFF and context.get("media_handoff_pending") is True:
         return _handoff_transition(
             "Vou encaminhar você para uma pessoa da equipe. "
@@ -3952,10 +3975,19 @@ def _message_can_answer_pending_state(
                 "sim quero",
                 "quero semelhantes",
                 "quero ver semelhantes",
+                "ver outros",
+                "ver outros similares",
+                "ver outros equipamentos semelhantes",
+                "esse",
+                "quero esse",
                 "quero esse modelo",
                 "quero esse mesmo",
+                "pode ser esse",
                 "prefiro esse modelo",
                 "prefiro esse",
+                "fico com esse",
+                "vou ficar com esse",
+                "escolher este",
                 "quero exatamente esse",
                 "tem que ser esse",
                 "esse mesmo",
