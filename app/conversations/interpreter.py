@@ -1335,6 +1335,13 @@ def _is_pause_message(value: str) -> bool:
 
 
 def _contains_greeting(value: str) -> bool:
+    if (
+        (value == "fala" or value.startswith("fala "))
+        and not value.startswith(
+            ("fala com ", "fala sobre ", "fala de ", "fala pra ", "fala para ")
+        )
+    ):
+        return True
     padded = f" {value} "
     return any(
         padded.startswith(f" {phrase} ")
