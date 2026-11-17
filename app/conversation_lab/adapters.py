@@ -445,6 +445,7 @@ class DryRunBookingPort:
         return self.service_intakes.get(service_id, self.intake)
 
     async def list_equipment_catalog(self, _: uuid.UUID):
+        self.calls.append("equipment_catalog")
         return tuple(self.equipment_catalog)
 
     async def estimate(
