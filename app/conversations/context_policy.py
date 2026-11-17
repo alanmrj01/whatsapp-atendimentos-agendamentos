@@ -150,6 +150,7 @@ def invalidate_changed_facts(
             "delivery_installation_match_pending",
             "quote_presented",
             "last_assistant_topic",
+            "last_presented_service_price",
             *_SCHEDULING_FIELDS,
         ):
             updated.pop(field, None)
