@@ -5398,7 +5398,15 @@ def _address_success_context(
     updated.pop("pending_service_address", None)
     updated.pop("pending_address_city_guess", None)
     updated.pop("awaiting_address_city", None)
-    return invalidate_changed_facts(context, updated)
+
+    preserved_schedule = (
+        _context_string(context, "selected_date") is not None
+        and _context_string(context, "selected_time") is not None
+    )
+    updated = invalidate_changed_facts(context, updated)
+    if preserved_schedule:
+        updated["schedule_revalidation_required"] = True
+    return updated
 
 
 def _installation_service_option(
@@ -11380,6 +11388,101 @@ async def _advance_preconfirmation(
                     "do serviço, incluindo a cidade."
                 ),
             )
+
+    if context.get("schedule_revalidation_required") is True:
+        service_id = _context_service_id(context)
+        selected_date = _context_string(context, "selected_date")
+        selected_time = _context_string(context, "selected_time")
+        if (
+            service_id is not None
+            and selected_date is not None
+            and selected_time is not None
+        ):
+            requirements = _requirements_from_context(context)
+            try:
+                times = _snapshot_options(
+                    await port.list_times(
+                        inbound.business_id,
+                        service_id,
+                        selected_date,
+                        requirements,
+                    )
+                )
+                plan = await port.estimate(
+                    inbound.business_id,
+                    service_id,
+                    requirements,
+                )
+            except BookingRequiresHandoff as exc:
+                return _handoff_for_reason(str(exc))
+
+            if plan.requires_handoff:
+                return _handoff_for_reason(plan.handoff_reason)
+
+            revalidated = dict(context)
+            revalidated.pop("schedule_revalidation_required", None)
+
+            if not _option_exists(times, selected_time):
+                revalidated.pop("selected_time", None)
+                revalidated.pop("candidate_booking", None)
+                if times:
+                    return _transition(
+                        ConversationState.BOOKING_TIME,
+                        revalidated,
+                        time_selection_message(
+                            times,
+                            body=(
+                                "Com os dados atualizados, o horário que você escolheu "
+                                "não está mais disponível. Qual destes horários fica melhor?"
+                            ),
+                        ),
+                    )
+                return await _return_to_dates(
+                    inbound,
+                    port,
+                    service_id,
+                    revalidated,
+                    requirements,
+                    customer_name=customer_name,
+                )
+
+            price_update: str | None = None
+            current_price = plan.service.estimated_price
+            previous_price: Decimal | None = None
+            raw_previous_price = context.get("last_presented_service_price")
+            if isinstance(raw_previous_price, (str, int, float, Decimal)):
+                try:
+                    previous_price = Decimal(str(raw_previous_price))
+                except Exception:
+                    previous_price = None
+            if current_price is not None:
+                revalidated["last_presented_service_price"] = str(current_price)
+                if previous_price is not None and previous_price != current_price:
+                    price_update = (
+                        (
+                            "Com as informações atualizadas, o valor do serviço agora é "
+                            f"{_format_brl(current_price)}."
+                        )
+                        if plan.service.pricing_type is PricingType.FIXED
+                        else (
+                            "Com as informações atualizadas, o valor estimado agora é "
+                            f"{_format_brl(current_price)}. "
+                            "Ele pode mudar se houver uma condição diferente no local."
+                        )
+                    )
+            context = revalidated
+        else:
+            context = dict(context)
+            context.pop("schedule_revalidation_required", None)
+
+        if price_update is not None:
+            transition = await _advance_preconfirmation(
+                inbound,
+                port,
+                context,
+                customer_name=customer_name,
+            )
+            return _prepend_transition_body(transition, price_update)
 
     mode = _context_string(context, "onsite_contact_mode")
     if mode not in {"customer", "other"}:
