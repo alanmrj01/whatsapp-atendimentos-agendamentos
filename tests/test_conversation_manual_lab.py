@@ -427,6 +427,41 @@ async def test_manual_lab_real_audio_is_transcribed_before_engine(
 
 
 @pytest.mark.asyncio
+async def test_manual_lab_real_audio_keeps_name_and_service_from_same_turn(
+    monkeypatch,
+) -> None:
+    from app.conversation_lab import manual as manual_lab
+
+    session_id, _ = await _new_session()
+
+    async def fake_transcribe(_: bytes) -> str:
+        return (
+            "Boa tarde, aqui é o Alan. "
+            "Preciso fazer uma limpeza no meu ar-condicionado."
+        )
+
+    monkeypatch.setattr(manual_lab, "SPEECH_ENABLED", True)
+    monkeypatch.setattr(manual_lab, "transcribe_short_audio", fake_transcribe)
+
+    snapshot = await _send_transcribed_audio(
+        session_id,
+        b"audio-fixture-composite",
+        "audio/ogg",
+    )
+
+    assert snapshot["customer_name"] == "Alan"
+    assert snapshot["state"] == ConversationState.BOOKING_QUANTITY.value
+    assert snapshot["context"]["service_id"] == str(SERVICE_ID)
+    joined = " ".join(
+        item["body"]
+        for item in snapshot["history"]
+        if item["role"] == "assistant"
+    ).casefold()
+    assert "como posso te ajudar" not in joined
+    assert "como posso te chamar" not in joined
+
+
+@pytest.mark.asyncio
 async def test_manual_lab_real_audio_is_disabled_by_default() -> None:
     session_id, _ = await _new_named_session()
 
