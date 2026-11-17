@@ -24,6 +24,7 @@ from app.conversations.service_semantics import generate_service_intent_examples
 from app.conversations.ports import (
     BookingConfirmation,
     BookingOption,
+    BookingRequiresHandoff,
     ExistingBooking,
     ServiceDetails,
 )
@@ -461,6 +462,8 @@ class DryRunBookingPort:
             additional_units = max(quantity - 1, 0)
             additional_price = Decimal("80") * additional_units
             applied_rules = ["conversation_lab"]
+            if self.service_intakes[SERVICE_ID].requires_address and requirements.address is None:
+                applied_rules.append("address_pending_provisional")
             if additional_price:
                 applied_rules.append(f"additional_units_price:{additional_price}")
             return BookingPlan(
@@ -483,6 +486,11 @@ class DryRunBookingPort:
             extra_meters = max(tubing - Decimal("3"), Decimal("0"))
             extra_price = extra_meters * Decimal("50")
             applied_rules = ["conversation_lab"]
+            if (
+                self.service_intakes[INSTALLATION_SERVICE_ID].requires_address
+                and requirements.address is None
+            ):
+                applied_rules.append("address_pending_provisional")
             if extra_price:
                 applied_rules.append(f"extra_tubing_price:{extra_price}")
             return BookingPlan(
@@ -607,8 +615,23 @@ class DryRunBookingPort:
         self.calls.append("times")
         return tuple(self.times)
 
-    async def confirm(self, *args: Any, **kwargs: Any):
+    async def confirm(
+        self,
+        _: uuid.UUID,
+        __: uuid.UUID,
+        service_id: uuid.UUID,
+        ___: str,
+        ____: str,
+        requirements: BookingRequirements = BookingRequirements(),
+    ):
         self.calls.append("confirm_dry_run")
+        intake = self.service_intakes.get(service_id, self.intake)
+        if intake.requires_address and requirements.address is None:
+            raise BookingRequiresHandoff("address_required")
+        if intake.requires_quantity and requirements.quantity is None:
+            raise BookingRequiresHandoff("quantity_required")
+        if not intake.automatic_booking or intake.pricing_type is PricingType.HUMAN_QUOTE:
+            raise BookingRequiresHandoff("human_quote_configuration")
         return self.confirmation
 
     async def list_customer_bookings(self, _: uuid.UUID, __: uuid.UUID):
