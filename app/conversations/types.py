@@ -18,6 +18,8 @@ class ConversationInput:
     body: str | None
     interactive_id: str | None
     whatsapp_id: str | None = None
+    media_id: str | None = None
+    media_mime_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
