@@ -170,6 +170,8 @@ class StubAvailability(PostgresBookingAvailabilityPort):
         _: Business,
         __: Service,
         ___: BookingRequirements,
+        *,
+        allow_missing_address_for_planning: bool = False,
     ) -> BookingPlan:
         return self.booking_plan
 
@@ -184,6 +186,42 @@ class StubAvailability(PostgresBookingAvailabilityPort):
         return self.capacity.employee_ids
 
 
+class RealPlanningAvailability(PostgresBookingAvailabilityPort):
+    minimum_full_booking_lead_days = -1
+
+    def __init__(
+        self,
+        *,
+        company: Business | None = None,
+        catalog_service: Service | None = None,
+        capacity_data: _CapacityData | None = None,
+    ) -> None:
+        super().__init__(object(), now_provider=lambda: NOW)  # type: ignore[arg-type]
+        self.company = company or business()
+        self.catalog_service = catalog_service or service()
+        self.capacity_data = capacity_data or _CapacityData(
+            (EMPLOYEE_A,),
+            (working(EMPLOYEE_A, time(8), time(18)),),
+            (),
+            (),
+        )
+
+    async def _load_business_service(
+        self, _: uuid.UUID, __: uuid.UUID
+    ) -> tuple[Business, Service]:
+        return self.company, self.catalog_service
+
+    async def _require_eligible_employees(
+        self,
+        _: uuid.UUID,
+        __: uuid.UUID,
+    ) -> tuple[uuid.UUID, ...]:
+        return self.capacity_data.employee_ids
+
+    async def _load_capacity(self, *args: Any, **kwargs: Any) -> _CapacityData:
+        return self.capacity_data
+
+
 def capacity(
     *hours: WorkingHours,
     employees: tuple[uuid.UUID, ...] = (EMPLOYEE_A,),
@@ -191,6 +229,90 @@ def capacity(
     appointments: tuple[Appointment, ...] = (),
 ) -> _CapacityData:
     return _CapacityData(employees, hours, blocks, appointments)
+
+
+@pytest.mark.asyncio
+async def test_real_planning_estimate_is_provisional_before_required_address() -> None:
+    port = RealPlanningAvailability()
+
+    result = await port.estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(),
+    )
+
+    assert result.requires_handoff is False
+    assert result.service.requires_human_quote is False
+    assert result.service.estimated_price == Decimal("100.00")
+    assert "address_pending_provisional" in result.service.applied_rules
+    assert result.travel.travel_minutes == 0
+
+
+@pytest.mark.asyncio
+async def test_real_planning_can_offer_dates_before_required_address() -> None:
+    port = RealPlanningAvailability()
+
+    dates = await port.list_suggested_dates(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(),
+        weekday=2,
+        limit=3,
+    )
+
+    assert dates
+    assert all(date.fromisoformat(item.id).weekday() == 2 for item in dates)
+
+
+@pytest.mark.asyncio
+async def test_real_confirmation_still_rejects_missing_required_address() -> None:
+    port = RealPlanningAvailability()
+
+    with pytest.raises(BookingRequiresHandoff):
+        await port.confirm(
+            BUSINESS_ID,
+            CUSTOMER_ID,
+            SERVICE_ID,
+            "2026-09-02",
+            "09:00",
+            BookingRequirements(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_real_planning_does_not_bypass_true_human_quote_configuration() -> None:
+    catalog_service = service()
+    catalog_service.pricing_type = "human_quote"
+    catalog_service.automatic_booking = False
+    port = RealPlanningAvailability(catalog_service=catalog_service)
+
+    result = await port.estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(),
+    )
+
+    assert result.requires_handoff is True
+    assert result.service.requires_human_quote is True
+    assert result.handoff_reason == "service_estimate_requires_human_quote"
+
+
+@pytest.mark.asyncio
+async def test_real_planning_does_not_bypass_unknown_access_handoff() -> None:
+    catalog_service = service()
+    catalog_service.considers_difficult_access = True
+    catalog_service.unknown_access_policy = "human_quote"
+    port = RealPlanningAvailability(catalog_service=catalog_service)
+
+    result = await port.estimate(
+        BUSINESS_ID,
+        SERVICE_ID,
+        BookingRequirements(),
+    )
+
+    assert result.requires_handoff is True
+    assert result.service.requires_human_quote is True
+    assert result.handoff_reason == "service_estimate_requires_human_quote"
 
 
 @pytest.mark.asyncio
