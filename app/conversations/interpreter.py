@@ -71,6 +71,7 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "cleaning": (
         "limpar",
+        "limpada",
         "limpeza",
         "limpeza de ar",
         "limpeza do ar",
@@ -1023,6 +1024,7 @@ def extract_customer_name(
         r"\bmeu\s+nome\s+(?:e|é)\s+(.+?)(?=\s+e\s+(?:quero|preciso|gostaria|vim|estou)\b|[,;.!?]|$)",
         r"\bme\s+chamo\s+(.+?)(?=\s+e\s+(?:quero|preciso|gostaria|vim|estou)\b|[,;.!?]|$)",
         r"\bpode\s+me\s+chamar\s+de\s+(.+?)(?=\s+e\s+(?:quero|preciso|gostaria|vim|estou)\b|[,;.!?]|$)",
+        r"\baqui\s+(?:e|é)(?:\s+o|\s+a)?\s+(.+?)(?=\s+e\s+(?:quero|preciso|gostaria|vim|estou)\b|[,;.!?]|$)",
     )
     for pattern in explicit_patterns:
         match = re.search(pattern, raw, flags=re.IGNORECASE)
