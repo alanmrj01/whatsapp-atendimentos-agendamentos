@@ -2776,10 +2776,12 @@ async def test_installation_quote_collects_tubing_before_address_and_pricing() -
     assert repository.state == ConversationState.BOOKING_PROPERTY
 
     await engine.process(inbound(407, action="property.house", body="Casa"))
-    assert repository.state == ConversationState.BOOKING_ADDRESS
-    address_body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "finalizar a cotação" in address_body
-    assert "endereço completo" in address_body
+    assert repository.state == ConversationState.QUOTE_DECISION
+    quote_body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "endereço completo" not in quote_body
+    assert "finalizar a cotação" not in quote_body
+    assert repository.context["quote_presented"] is True
+    assert "service_address" not in repository.context
 
 
 @mark.asyncio
@@ -2893,6 +2895,42 @@ async def test_building_information_is_collected_before_availability() -> None:
     assert repository.context["building_hours_start"] == "08:00"
     assert repository.context["building_hours_end"] == "17:00"
     assert "Bloco B" in repository.context["gate_instructions"]
+
+
+@mark.asyncio
+async def test_required_service_address_is_collected_only_after_date_and_time() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "equipment_ownership": "has_equipment",
+            "equipment_model_known": True,
+            "equipment_model": "Split Inverter 18000",
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização de ar-condicionado")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(41101, body="09:00", whatsapp_id="5512981359722")
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert "service_address" not in repository.context
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "data e horário definidos" in body
+    assert "endereço completo" in body
+    assert "pessoa no local" not in body
 
 
 @mark.asyncio
@@ -6753,6 +6791,11 @@ async def test_explicit_name_correction_during_booking_updates_name_and_keeps_ch
     [
         "Limpeza e higienização de ar-condicionado",
         "Manutenção corretiva de ar-condicionado",
+        "Manutenção de ar-condicionado",
+        "Conserto de ar-condicionado",
+        "Assistência técnica de ar-condicionado",
+        "Revisão preventiva de ar-condicionado",
+        "Recarga de gás de ar-condicionado",
     ],
 )
 @mark.asyncio
