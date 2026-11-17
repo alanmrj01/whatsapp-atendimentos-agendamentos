@@ -6613,3 +6613,65 @@ async def test_round9_commercial_negotiation_roots_handoff(body: str) -> None:
     response = repository.outbounds[-1].transition.outbound.body or ""
     assert "equipe" in response.casefold()
     assert "negoci" in response.casefold()
+
+
+@mark.asyncio
+async def test_first_turn_captures_natural_name_and_colloquial_cleaning_request() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(
+            20003,
+            body=(
+                "Fala, André, beleza? Aqui é o Alan. "
+                "Preciso dar uma limpada no meu ar-condicionado."
+            ),
+        )
+    )
+
+    assert repository.customer_name == "Alan"
+    assert repository.state == ConversationState.BOOKING_QUANTITY
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    combined = " ".join(
+        message.body or ""
+        for stored in repository.outbounds
+        for message in (stored.transition.outbound, *stored.transition.follow_ups)
+    ).casefold()
+    assert "como posso te chamar" not in combined
+    assert "escolha o serviço" not in combined
+
+
+@mark.asyncio
+async def test_greeting_third_party_name_is_not_confused_with_self_identification() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=True,
+    )
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(
+            20004,
+            body=(
+                "Fala, André, beleza? Aqui é o Alan. "
+                "Preciso dar uma limpada no meu ar-condicionado."
+            ),
+        )
+    )
+
+    assert repository.customer_name != "André"
+    assert repository.customer_name == "Alan"
