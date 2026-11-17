@@ -36,6 +36,8 @@ class _InboundRow:
     message_type: str
     body: str | None
     interactive_id: str | None
+    media_id: str | None
+    media_mime_type: str | None
     whatsapp_id: str
     created_at: datetime
 
@@ -85,6 +87,8 @@ class CloudTaskEventRepository:
                 Message.message_type,
                 Message.body,
                 Message.interactive_id,
+                Message.media_id,
+                Message.media_mime_type,
                 Customer.whatsapp_id,
                 Message.created_at,
             )
@@ -118,6 +122,8 @@ class CloudTaskEventRepository:
             message_type=row.message_type,
             body=row.body,
             interactive_id=row.interactive_id,
+            media_id=row.media_id,
+            media_mime_type=row.media_mime_type,
             whatsapp_id=row.whatsapp_id,
             created_at=row.created_at,
         )
@@ -133,6 +139,8 @@ class CloudTaskEventRepository:
             body=row.body if body is None else body,
             interactive_id=row.interactive_id,
             whatsapp_id=row.whatsapp_id,
+            media_id=row.media_id,
+            media_mime_type=row.media_mime_type,
         )
 
     async def load_inbound(self, provider_message_id: str) -> ConversationInput | None:
