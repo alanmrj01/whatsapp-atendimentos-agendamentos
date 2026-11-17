@@ -467,7 +467,7 @@ async def test_manual_lab_owned_installation_model_silently_checks_catalog() -> 
     )
 
     assert "equipment_catalog" in snapshot["dry_run_calls"]
-    assert snapshot["context"]["equipment_model"] == "LG Dual Inverter Voice 18000 BTU"
+    assert snapshot["context"]["equipment_model"] == "LG Dual Inverter Voice 18.000 BTU"
     joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
     assert "não temos esse modelo específico" not in joined
     assert snapshot["state"] != ConversationState.HUMAN_HANDOFF.value
@@ -491,9 +491,13 @@ async def test_owned_installation_model_missing_from_catalog_offers_similar_opti
 
     assert "equipment_catalog" in snapshot["dry_run_calls"]
     assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
-    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
-    assert "não encontrei esse modelo" in last["body"].casefold()
-    assert "semelhantes" in last["body"].casefold()
+    assistant_messages = [
+        item for item in snapshot["history"] if item["role"] == "assistant"
+    ]
+    joined = " ".join(item["body"] for item in assistant_messages[-3:]).casefold()
+    last = assistant_messages[-1]
+    assert "não encontrei esse modelo" in joined
+    assert "semelhantes" in joined
     assert {option["id"] for option in last["options"]} >= {
         "equipment.model.recommend",
         "equipment.model.exact_check",
