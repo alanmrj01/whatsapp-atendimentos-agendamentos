@@ -41,6 +41,75 @@ def test_real_whatsapp_availability_language_is_understood(body: str) -> None:
     assert interpretation.has(ConversationIntent.AVAILABILITY)
 
 
+@pytest.mark.asyncio
+async def test_initial_schedule_prompt_uses_all_configured_company_weekdays() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        customer_name="Cliente Teste",
+    )
+    port = FakeBookingPort()
+    port.operating_weekdays = [0, 1, 2, 3, 4, 5, 6]
+    port.dates = [
+        BookingOption("2026-10-14", "quarta-feira, 14 de outubro"),
+    ]
+
+    await ConversationEngine(repository, port).process(
+        inbound(2298, action=f"service:{SERVICE_ID}")
+    )
+
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    rows = repository.outbounds[-1].transition.outbound.outbound_payload[
+        "sections"
+    ][0]["rows"]
+    assert [row["id"] for row in rows] == [
+        "weekday:0",
+        "weekday:1",
+        "weekday:2",
+        "weekday:3",
+        "weekday:4",
+        "weekday:5",
+        "weekday:6",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_selected_weekday_can_offer_three_dates_across_months() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_WEEKDAY,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Teste",
+    )
+    port = FakeBookingPort()
+    port.operating_weekdays = [0, 1, 2, 3, 4, 5, 6]
+    port.dates = [
+        BookingOption("2026-10-14", "quarta-feira, 14 de outubro"),
+        BookingOption("2026-10-21", "quarta-feira, 21 de outubro"),
+        BookingOption("2026-11-04", "quarta-feira, 4 de novembro"),
+        BookingOption("2026-11-06", "sexta-feira, 6 de novembro"),
+    ]
+    port.list_times = AsyncMock(
+        return_value=(
+            BookingOption("09:00", "09:00"),
+            BookingOption("14:30", "14:30"),
+            BookingOption("18:00", "18:00"),
+        )
+    )
+
+    await ConversationEngine(repository, port).process(
+        inbound(2299, body="quarta-feira")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    rows = repository.outbounds[-1].transition.outbound.outbound_payload[
+        "sections"
+    ][0]["rows"]
+    assert [row["id"] for row in rows] == [
+        "slot:2026-10-14|09:00",
+        "slot:2026-10-21|14:30",
+        "slot:2026-11-04|18:00",
+    ]
+
+
 def _date_repository() -> FakeConversationRepository:
     return FakeConversationRepository(
         state=ConversationState.BOOKING_DATE,
@@ -56,6 +125,7 @@ def _date_port(dates: list[BookingOption]) -> FakeBookingPort:
         return_value=(
             BookingOption("09:00", "09:00"),
             BookingOption("14:30", "14:30"),
+            BookingOption("18:00", "18:00"),
         )
     )
     return port
@@ -168,13 +238,13 @@ async def test_weekday_with_two_offered_dates_only_filters_real_options(body: st
         "sections"
     ][0]["rows"]
     assert [row["id"] for row in rows] == [
-        "date:2026-10-14",
-        "date:2026-10-21",
+        "slot:2026-10-14|09:00",
+        "slot:2026-10-21|14:30",
     ]
 
 
 @pytest.mark.asyncio
-async def test_weekday_with_one_offered_date_can_advance() -> None:
+async def test_weekday_with_one_offered_date_still_offers_real_combined_slot() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_WEEKDAY,
         context={"service_id": str(SERVICE_ID)},
@@ -188,8 +258,69 @@ async def test_weekday_with_one_offered_date_can_advance() -> None:
 
     await ConversationEngine(repository, port).process(inbound(2311, body="quarta"))
 
-    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert "selected_date" not in repository.context
+    rows = repository.outbounds[-1].transition.outbound.outbound_payload[
+        "sections"
+    ][0]["rows"]
+    assert [row["id"] for row in rows] == ["slot:2026-10-14|09:00"]
+
+
+@pytest.mark.asyncio
+async def test_any_day_offers_three_nearest_real_slots_with_varied_times() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_WEEKDAY,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Teste",
+    )
+    port = _date_port(
+        [
+            BookingOption("2026-10-14", "quarta-feira, 14 de outubro"),
+            BookingOption("2026-10-16", "sexta-feira, 16 de outubro"),
+            BookingOption("2026-10-21", "quarta-feira, 21 de outubro"),
+            BookingOption("2026-10-23", "sexta-feira, 23 de outubro"),
+        ]
+    )
+
+    await ConversationEngine(repository, port).process(
+        inbound(2312, body="qualquer dia serve")
+    )
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    rows = repository.outbounds[-1].transition.outbound.outbound_payload[
+        "sections"
+    ][0]["rows"]
+    assert [row["id"] for row in rows] == [
+        "slot:2026-10-14|09:00",
+        "slot:2026-10-16|14:30",
+        "slot:2026-10-21|18:00",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_combined_slot_is_revalidated_before_advancing() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_DATE,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Teste",
+    )
+    port = _date_port(
+        [
+            BookingOption("2026-10-14", "quarta-feira, 14 de outubro"),
+            BookingOption("2026-10-21", "quarta-feira, 21 de outubro"),
+        ]
+    )
+
+    await ConversationEngine(repository, port).process(
+        inbound(2313, action="slot:2026-10-14|14:30", body="quarta, 14/10 às 14:30")
+    )
+
     assert repository.context["selected_date"] == "2026-10-14"
+    assert repository.context["selected_time"] == "14:30"
+    assert repository.state not in {
+        ConversationState.BOOKING_DATE,
+        ConversationState.BOOKING_TIME,
+    }
 
 
 def _time_scenario(

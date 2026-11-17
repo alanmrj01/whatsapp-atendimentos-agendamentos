@@ -13,6 +13,8 @@ from app.conversations.constants import (
     EQUIPMENT_INSTALLATION,
     EQUIPMENT_MODEL_KNOWN,
     EQUIPMENT_MODEL_RECOMMEND,
+    EQUIPMENT_MODEL_EXACT_CHECK,
+    EQUIPMENT_MODEL_SUGGESTED_SELECT,
     EQUIPMENT_NEEDS,
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
@@ -116,26 +118,42 @@ def service_selection_message(
 def equipment_purchase_clarification_message(
     *,
     retry: bool = False,
+    purchase_already_known: bool = False,
 ) -> OutboundMessage:
-    body = (
-        "Você quer apenas comprar o aparelho ou gostaria de contratar a instalação também?"
-        if not retry
-        else (
-            "Para eu seguir com a opção certa: você quer comprar somente o aparelho, "
-            "fazer somente a instalação ou comprar e instalar?"
+    if purchase_already_known:
+        body = (
+            "Entendi que você quer comprar o aparelho. "
+            "Você também gostaria de contratar a instalação?"
+            if not retry
+            else (
+                "Só para confirmar: você quer apenas comprar o aparelho "
+                "ou comprar e contratar a instalação também?"
+            )
         )
-    )
+        options = (
+            BookingOption(EQUIPMENT_PURCHASE, "Só o aparelho"),
+            BookingOption(EQUIPMENT_BOTH, "Compra + instalação"),
+        )
+    else:
+        body = (
+            "Para eu entender sua cotação: você quer cotar só o aparelho, "
+            "só a instalação ou os dois juntos?"
+            if not retry
+            else (
+                "Para eu seguir com a opção certa: você quer cotar somente o aparelho, "
+                "fazer somente a instalação ou cotar os dois juntos?"
+            )
+        )
+        options = (
+            BookingOption(EQUIPMENT_INSTALLATION, "Só instalação"),
+            BookingOption(EQUIPMENT_PURCHASE, "Comprar aparelho"),
+            BookingOption(EQUIPMENT_BOTH, "Compra + instalação"),
+        )
     return OutboundMessage(
         message_type="interactive_button",
         body=body,
         interactive_id="service.purchase_clarification",
-        outbound_payload=_button_payload(
-            (
-                BookingOption(EQUIPMENT_INSTALLATION, "Só instalação"),
-                BookingOption(EQUIPMENT_PURCHASE, "Comprar aparelho"),
-                BookingOption(EQUIPMENT_BOTH, "Compra + instalação"),
-            )
-        ),
+        outbound_payload=_button_payload(options),
     )
 
 
@@ -177,6 +195,55 @@ def equipment_model_request_message(
     ),
 ) -> OutboundMessage:
     return OutboundMessage(message_type="text", body=body)
+
+
+def equipment_alternative_offer_message(
+    *,
+    alternative_text: str | None = None,
+    allow_select_alternative: bool = False,
+) -> OutboundMessage:
+    body = "Entendi. Não temos esse modelo específico no catálogo."
+    if alternative_text:
+        body += f" {alternative_text}"
+    body += (
+        " Se quiser, posso te ajudar a comparar outros equipamentos semelhantes."
+    )
+
+    options: list[BookingOption] = []
+    if allow_select_alternative:
+        options.append(
+            BookingOption(EQUIPMENT_MODEL_SUGGESTED_SELECT, "Escolher este")
+        )
+    options.extend(
+        (
+            BookingOption(EQUIPMENT_MODEL_RECOMMEND, "Ver outros similares"),
+            BookingOption(EQUIPMENT_MODEL_EXACT_CHECK, "Quero o original"),
+        )
+    )
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=body,
+        interactive_id="booking.equipment_alternative",
+        outbound_payload=_button_payload(tuple(options)),
+    )
+
+
+def owned_equipment_alternative_offer_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            "Entendi. Não encontrei esse modelo entre as opções disponíveis por aqui. "
+            "Se quiser, posso te apresentar alguns aparelhos semelhantes e te ajudar "
+            "a escolher uma alternativa. Gostaria?"
+        ),
+        interactive_id="booking.owned_equipment_alternative",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_MODEL_RECOMMEND, "Ver semelhantes"),
+                BookingOption(EQUIPMENT_MODEL_EXACT_CHECK, "Instalar este"),
+            )
+        ),
+    )
 
 
 def equipment_profile_message(
@@ -233,8 +300,8 @@ def equipment_profile_intro_message() -> OutboundMessage:
     return OutboundMessage(
         message_type="text",
         body=(
-            "Como você ainda não escolheu um aparelho, vou fazer algumas perguntas rápidas "
-            "para te ajudar a encontrar a opção mais adequada para o ambiente."
+            "Para te indicar uma opção que faça sentido para o ambiente, "
+            "vou fazer algumas perguntas rápidas."
         ),
     )
 
@@ -508,6 +575,7 @@ def tubing_variation_message(
     extra_meter_price: Decimal | None,
     unit_label: str | None = "metro",
 ) -> OutboundMessage:
+    del extra_meter_price, unit_label
     included = included_meters if included_meters is not None else Decimal("3")
     included_label = (
         str(int(included))
@@ -515,18 +583,10 @@ def tubing_variation_message(
         else str(included).replace(".", ",")
     )
     body = (
-        f"Importante: a instalação considera até {included_label} metros de "
-        "tubulação. Se o comprimento necessário for maior, o valor pode variar."
+        f"A instalação inclui até {included_label} metros de tubulação. "
+        "Se o comprimento necessário for maior, a tubulação adicional entra "
+        "como adicional no orçamento."
     )
-    if extra_meter_price is not None and extra_meter_price > 0:
-        body = (
-            f"A instalação inclui até {included_label} metros de tubulação. "
-            + _additional_material_price_sentence(
-                extra_meter_price,
-                unit_label,
-                material_label="tubulação adicional",
-            )
-        )
     return OutboundMessage(message_type="text", body=body)
 
 
@@ -658,17 +718,36 @@ def date_selection_message(
     )
 
 
-def quantity_selection_message() -> OutboundMessage:
+def slot_selection_message(
+    options: Sequence[BookingOption],
+    *,
+    body: str,
+) -> OutboundMessage:
     return OutboundMessage(
         message_type="interactive_list",
-        body="Quantos itens ou aparelhos são?",
+        body=body,
+        interactive_id="booking.suggested_slots",
+        outbound_payload=_list_payload("Opções de agenda", options, prefix="slot:"),
+    )
+
+
+def quantity_selection_message(*, installation: bool = False) -> OutboundMessage:
+    options = tuple(
+        BookingOption(f"quantity:{value}", str(value))
+        for value in range(1, QUANTITY_OPTION_LIMIT + 1)
+    )
+    options = (*options, BookingOption("quantity:more", "6 ou mais"))
+    return OutboundMessage(
+        message_type="interactive_list",
+        body=(
+            "Quantos aparelhos de ar-condicionado são?"
+            if installation
+            else "Quantos itens ou aparelhos são?"
+        ),
         interactive_id="booking.quantity",
         outbound_payload=_list_payload(
             "Quantidade",
-            tuple(
-                BookingOption(f"quantity:{value}", str(value))
-                for value in range(1, QUANTITY_OPTION_LIMIT + 1)
-            ),
+            options,
         ),
     )
 
@@ -723,6 +802,7 @@ def tubing_guidance_message(
     extra_meter_price: Decimal | None,
     unit_label: str | None = "metro",
 ) -> OutboundMessage:
+    del extra_meter_price, unit_label
     included = included_meters if included_meters is not None else Decimal("3")
     if included == included.to_integral():
         included_label = str(int(included))
@@ -731,16 +811,8 @@ def tubing_guidance_message(
 
     body = (
         f"A instalação inclui até {included_label} metros de tubulação. "
-    )
-    if extra_meter_price is not None and extra_meter_price > 0:
-        body += _additional_material_price_sentence(
-            extra_meter_price,
-            unit_label,
-            material_label="tubulação adicional",
-        ) + " "
-    else:
-        body += "Se precisar de material adicional, o valor pode variar. "
-    body += (
+        "Se precisar de tubulação adicional, ela entra como adicional no orçamento "
+        "e o valor pode variar conforme a metragem. "
         "Se você não souber a medida exata, sem problema: o técnico pode "
         "conferir no local."
     )

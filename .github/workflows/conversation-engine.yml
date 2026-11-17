@@ -18,6 +18,8 @@ on:
       - 'app/tasks/worker.py'
       - 'app/whatsapp/processor.py'
       - 'tests/test_conversation_*.py'
+      - 'tests/conversation_stress/test_round3_orchestration.py'
+      - 'tests/test_service_semantics.py'
       - 'tests/test_cloud_tasks.py'
       - 'tests/test_automation_policy.py'
       - 'tests/integration/test_automation_postgresql.py'
@@ -79,7 +81,9 @@ jobs:
           pytest
           tests/test_conversation_interpreter.py
           tests/test_conversation_engine.py
+          tests/conversation_stress/test_round3_orchestration.py
           tests/test_conversation_repository.py
+          tests/test_service_semantics.py
           tests/test_handoff_reactivation.py
           tests/test_cloud_tasks.py
           tests/test_automation_policy.py

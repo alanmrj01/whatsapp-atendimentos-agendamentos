@@ -176,6 +176,13 @@ class StubAvailability(PostgresBookingAvailabilityPort):
     async def _load_capacity(self, *args: Any, **kwargs: Any) -> _CapacityData:
         return self.capacity
 
+    async def _require_eligible_employees(
+        self,
+        _: uuid.UUID,
+        __: uuid.UUID,
+    ) -> tuple[uuid.UUID, ...]:
+        return self.capacity.employee_ids
+
 
 def capacity(
     *hours: WorkingHours,
@@ -184,6 +191,61 @@ def capacity(
     appointments: tuple[Appointment, ...] = (),
 ) -> _CapacityData:
     return _CapacityData(employees, hours, blocks, appointments)
+
+
+@pytest.mark.asyncio
+async def test_operating_weekdays_follow_company_configuration() -> None:
+    company = business(
+        operating_weekdays=[0, 1, 2, 3, 4],
+        weekday_start_time=time(8),
+        weekday_end_time=time(18),
+        weekend_holiday_enabled=True,
+        weekend_holiday_start_time=time(8),
+        weekend_holiday_end_time=time(13),
+    )
+    port = StubAvailability(
+        capacity=capacity(
+            working(EMPLOYEE_A, time(8), time(18), weekday=2)
+        ),
+        booking_plan=plan(),
+        company=company,
+    )
+
+    options = await port.list_operating_weekdays(BUSINESS_ID, SERVICE_ID)
+
+    assert [item.id for item in options] == [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_suggested_dates_filter_weekday_and_return_three_nearest() -> None:
+    port = StubAvailability(
+        capacity=capacity(
+            working(EMPLOYEE_A, time(8), time(18), weekday=2)
+        ),
+        booking_plan=plan(),
+    )
+
+    options = await port.list_suggested_dates(
+        BUSINESS_ID,
+        SERVICE_ID,
+        weekday=2,
+        limit=3,
+    )
+
+    assert [item.id for item in options] == [
+        "2026-09-02",
+        "2026-09-09",
+        "2026-09-16",
+    ]
+    assert all(date.fromisoformat(item.id).weekday() == 2 for item in options)
 
 
 @pytest.mark.asyncio

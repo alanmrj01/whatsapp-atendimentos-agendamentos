@@ -1,0 +1,21 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ENVIRONMENT=test \
+    CONVERSATION_LAB_ALLOW_EXTERNAL_IO=false
+
+WORKDIR /app
+
+RUN addgroup --system app && adduser --system --ingroup app app
+
+COPY requirements-prod.txt .
+RUN pip install --disable-pip-version-check -r requirements-prod.txt
+
+COPY --chown=app:app app ./app
+COPY --chown=app:app data ./data
+
+USER app
+
+ENTRYPOINT ["python", "-m", "app.conversation_lab.runner"]
+CMD ["--mode", "regression"]

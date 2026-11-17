@@ -206,9 +206,28 @@ def enrich_context_from_message(
         _assign_fact(updated, "room_people_max", people, is_correction)
 
     preference = _preference(assertion)
-    if preference is not None and (
-        preference != "economy"
-        or _should_capture_equipment_preference(updated, normalized)
+    exploratory_preference_question = (
+        "?" in raw
+        and preference is not None
+        and any(
+            phrase in normalized
+            for phrase in (
+                "mais barato",
+                "mais em conta",
+                "preco menor",
+                "valor menor",
+                "melhor preco",
+                "melhor valor",
+            )
+        )
+    )
+    if (
+        preference is not None
+        and not exploratory_preference_question
+        and (
+            preference != "economy"
+            or _should_capture_equipment_preference(updated, normalized)
+        )
     ):
         _assign_fact(updated, "equipment_preference", preference, is_correction)
 
@@ -382,6 +401,29 @@ def _equipment_quantity(normalized: str) -> int | None:
             if not _is_compact_number_answer(candidate):
                 continue
             value = parse_number_answer(candidate)
+            prefix = " ".join(prefix_tokens[:-width])
+            singular_article_is_ambiguous = (
+                value is not None
+                and value.is_integer()
+                and int(value) == 1
+                and candidate in {"um", "uma"}
+                and (
+                    re.search(
+                        r"\b(?:comprar|adquirir|cotar)\b",
+                        prefix,
+                    )
+                    or re.fullmatch(
+                        r"(?:eu\s+)?(?:quero|queria|preciso|gostaria)(?:\s+de)?",
+                        prefix,
+                    )
+                )
+            )
+            if singular_article_is_ambiguous:
+                # Em pedidos como "quero comprar um ar-condicionado" ou
+                # "preciso de um ar-condicionado", "um" é normalmente artigo
+                # indefinido. Já em "preciso limpar uma unidade", a unidade é
+                # uma quantidade explícita do serviço.
+                continue
             if value is not None and value.is_integer() and 1 <= value <= 99:
                 return int(value)
     return None
@@ -395,9 +437,26 @@ def parse_equipment_quantity_answer(
     """Parse an equipment count without consuming unrelated numeric roles."""
 
     normalized = normalize_portuguese(value or "")
+    normalized = re.sub(r"[?!.,]+$", "", normalized).strip()
+    normalized = re.sub(
+        r"^(?:(?:oi|ola|opa|blz|e ai|amigo|moco|seguinte|bom dia|boa tarde|boa noite|rapidinho)\s*[,;:-]?\s+)+",
+        "",
+        normalized,
+    ).strip()
+    normalized = re.sub(
+        r"\s+(?:por favor|pfv|valeu|blz)$",
+        "",
+        normalized,
+    ).strip()
     explicit = _equipment_quantity(normalized)
     if explicit is not None:
         return explicit
+    if allow_bare and re.fullmatch(
+        r"(?:(?:so|apenas|somente)\s+)?(?:um|uma|1)(?:\s+(?:so|apenas|somente))?"
+        r"(?:\s+(?:ar|aparelho|equipamento|split|unidade))?",
+        normalized,
+    ):
+        return 1
     if not allow_bare or not _is_compact_number_answer(normalized):
         return None
     number = parse_number_answer(normalized)
@@ -617,6 +676,7 @@ def _height_over_three_meters(normalized: str) -> bool | None:
             "condensadora",
             "unidade interna",
             "unidade externa",
+            "escada",
         )
     )
     if not relevant:
@@ -641,7 +701,7 @@ def _height_over_three_meters(normalized: str) -> bool | None:
         )
     ):
         return False
-    match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:m|metro|metros)\b", normalized)
+    match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:m|mts?|mtrs?|metro|metros)\b", normalized)
     if match:
         return float(match.group(1).replace(",", ".")) > 3
     return None

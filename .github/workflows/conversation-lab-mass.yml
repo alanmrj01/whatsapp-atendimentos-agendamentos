@@ -1,0 +1,76 @@
+name: Conversation Lab Mass
+
+on:
+  push:
+    branches:
+      - test/discovery-round9-language-catalog-professionalism
+    paths:
+      - '.github/workflows/conversation-lab-mass.yml'
+      - 'app/conversation_lab/**'
+      - 'app/conversations/interpreter.py'
+      - 'app/conversations/service_semantics.py'
+      - 'app/conversations/transitions.py'
+      - 'tests/test_conversation_interpreter.py'
+      - 'tests/test_service_semantics.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discovery-mass:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { stage: semantic, per_seed: 120, shard_index: 0, shard_count: 1 }
+          - { stage: context, per_seed: 120, shard_index: 0, shard_count: 6 }
+          - { stage: context, per_seed: 120, shard_index: 1, shard_count: 6 }
+          - { stage: context, per_seed: 120, shard_index: 2, shard_count: 6 }
+          - { stage: context, per_seed: 120, shard_index: 3, shard_count: 6 }
+          - { stage: context, per_seed: 120, shard_index: 4, shard_count: 6 }
+          - { stage: context, per_seed: 120, shard_index: 5, shard_count: 6 }
+          - { stage: flow, per_seed: 60, shard_index: 0, shard_count: 8 }
+          - { stage: flow, per_seed: 60, shard_index: 1, shard_count: 8 }
+          - { stage: flow, per_seed: 60, shard_index: 2, shard_count: 8 }
+          - { stage: flow, per_seed: 60, shard_index: 3, shard_count: 8 }
+          - { stage: flow, per_seed: 60, shard_index: 4, shard_count: 8 }
+          - { stage: flow, per_seed: 60, shard_index: 5, shard_count: 8 }
+          - { stage: flow, per_seed: 60, shard_index: 6, shard_count: 8 }
+          - { stage: flow, per_seed: 60, shard_index: 7, shard_count: 8 }
+          - { stage: journey, per_seed: 24, shard_index: 0, shard_count: 10 }
+          - { stage: journey, per_seed: 24, shard_index: 1, shard_count: 10 }
+          - { stage: journey, per_seed: 24, shard_index: 2, shard_count: 10 }
+          - { stage: journey, per_seed: 24, shard_index: 3, shard_count: 10 }
+          - { stage: journey, per_seed: 24, shard_index: 4, shard_count: 10 }
+          - { stage: journey, per_seed: 24, shard_index: 5, shard_count: 10 }
+          - { stage: journey, per_seed: 24, shard_index: 6, shard_count: 10 }
+          - { stage: journey, per_seed: 24, shard_index: 7, shard_count: 10 }
+          - { stage: journey, per_seed: 24, shard_index: 8, shard_count: 10 }
+          - { stage: journey, per_seed: 24, shard_index: 9, shard_count: 10 }
+    env:
+      ENVIRONMENT: test
+      CONVERSATION_LAB_ALLOW_EXTERNAL_IO: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r requirements-prod.txt
+      - name: Run mass discovery and fail on any gap
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.conversation_lab.runner \
+            --mode discovery \
+            --per-seed ${{ matrix.per_seed }} \
+            --stage ${{ matrix.stage }} \
+            --shard-index ${{ matrix.shard_index }} \
+            --shard-count ${{ matrix.shard_count }} | tee conversation-lab-mass.log
+          if grep -q '^CONVERSATION_LAB_GAP ' conversation-lab-mass.log; then
+            echo 'Discovery mass encontrou gap; falhando o shard.'
+            exit 1
+          fi
