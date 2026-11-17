@@ -707,6 +707,45 @@ async def test_manual_lab_off_catalog_model_offers_alternatives_and_keeps_automa
 
 
 @pytest.mark.asyncio
+async def test_manual_lab_catalog_alternative_button_selects_presented_item() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
+    session.repository.context = {
+        "service_id": str(INSTALLATION_SERVICE_ID),
+        "request_mode": "quote",
+        "purchase_mode": "purchase",
+        "purchase_only": True,
+        "equipment_ownership": "needs_equipment",
+        "equipment_model_known": True,
+        "quantity": 1,
+    }
+
+    offer = await send_message(
+        session_id,
+        ManualInput(text="Midea 18 mil BTUs Split Hi Wall"),
+    )
+
+    assert (
+        offer["context"]["catalog_alternative_suggestion"]["item_id"]
+        == "lab-lg-18000-cold"
+    )
+
+    selected = await send_message(
+        session_id,
+        ManualInput(
+            text="Escolher este",
+            action="equipment.model.suggested_select",
+        ),
+    )
+
+    assert selected["automation_enabled"] is True
+    assert selected["handoff_status"] == "none"
+    assert selected["state"] == ConversationState.BOOKING_EQUIPMENT_DELIVERY.value
+    assert selected["context"]["recommended_equipment"]["item_id"] == "lab-lg-18000-cold"
+    assert "LG Dual Inverter Voice" in selected["context"]["equipment_model"]
+
+
+@pytest.mark.asyncio
 async def test_manual_lab_partial_criteria_then_brand_never_contradicts_catalog() -> None:
     session_id, session = await _new_named_session()
     session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
