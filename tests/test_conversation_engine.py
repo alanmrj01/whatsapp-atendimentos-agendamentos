@@ -6744,3 +6744,151 @@ async def test_explicit_name_correction_during_booking_updates_name_and_keeps_ch
     assert "Perfeito, Alan. Corrigi seu nome." in body
     assert "Quantos itens ou aparelhos são?" in body
     assert "preservar o que já foi preenchido" not in body.casefold()
+
+
+@mark.parametrize(
+    "service_label",
+    [
+        "Limpeza e higienização de ar-condicionado",
+        "Manutenção corretiva de ar-condicionado",
+    ],
+)
+@mark.asyncio
+async def test_existing_ac_service_model_does_not_query_equipment_catalog_or_profile(
+    service_label: str,
+) -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "equipment_ownership": "has_equipment",
+            "equipment_model_known": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), service_label)
+    ]
+    booking_port.plan = replace(
+        booking_port.plan,
+        service=replace(
+            booking_port.plan.service,
+            estimated_price=Decimal("180.00"),
+        ),
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(20007, body="Split Inverter 18000")
+    )
+
+    assert repository.context["equipment_model"] == "Split Inverter 18000"
+    assert repository.context["last_presented_service_price"] == "180.00"
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert "equipment_catalog" not in booking_port.calls
+
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "r$ 180,00" in body
+    assert "catálogo" not in body
+    assert "perfil do ambiente" not in body
+    assert "capacidade necessária em btu" not in body
+    assert "indicar um modelo" not in body
+
+
+@mark.asyncio
+async def test_address_revalidation_does_not_repeat_same_presented_service_price() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "equipment_ownership": "has_equipment",
+            "equipment_model_known": True,
+            "equipment_model": "Split Inverter 18000",
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "last_presented_service_price": "180.00",
+            "pending_service_address": "Rua Mauricio Cardoso 201, Jardim Sul",
+            "awaiting_address_city": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Limpeza e higienização de ar-condicionado",
+        )
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.plan = replace(
+        booking_port.plan,
+        service=replace(
+            booking_port.plan.service,
+            estimated_price=Decimal("180.00"),
+        ),
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(20008, body="sjc")
+    )
+
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert repository.context["last_presented_service_price"] == "180.00"
+    assert "selected_date" not in repository.context
+    assert "selected_time" not in repository.context
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "R$ 180,00" not in body
+    assert "valor estimado" not in body.casefold()
+    assert "qual dia da semana" in body.casefold()
+
+
+@mark.asyncio
+async def test_address_revalidation_reports_price_only_when_estimate_changes() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "equipment_ownership": "has_equipment",
+            "equipment_model_known": True,
+            "equipment_model": "Split Inverter 18000",
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "last_presented_service_price": "180.00",
+            "pending_service_address": "Rua Mauricio Cardoso 201, Jardim Sul",
+            "awaiting_address_city": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Limpeza e higienização de ar-condicionado",
+        )
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.plan = replace(
+        booking_port.plan,
+        service=replace(
+            booking_port.plan.service,
+            estimated_price=Decimal("200.00"),
+        ),
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(20009, body="sjc")
+    )
+
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert repository.context["last_presented_service_price"] == "200.00"
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "valor estimado agora é R$ 200,00" in body
+    assert "qual dia da semana" in body.casefold()
