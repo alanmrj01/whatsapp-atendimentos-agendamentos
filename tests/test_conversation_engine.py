@@ -5205,7 +5205,7 @@ async def test_off_catalog_purchase_model_offers_similar_options_before_profile(
     transition = repository.outbounds[-1].transition
     body = transition.outbound.body or ""
     assert "não temos esse modelo específico" in body.casefold()
-    assert "opções semelhantes" in body.casefold()
+    assert "equipamentos semelhantes" in body.casefold()
     button_ids = {
         row["id"]
         for row in transition.outbound.outbound_payload["buttons"]
@@ -5231,8 +5231,8 @@ async def test_off_catalog_purchase_model_offers_similar_options_before_profile(
             *repository.outbounds[-1].transition.follow_ups,
         )
     ).casefold()
-    assert "capacidade mais próxima" in combined
     assert "quantas pessoas" in combined
+    assert "qual delas você gostaria de avaliar" not in combined
 
     await engine.process(inbound(1204, body="1"))
 
@@ -5563,7 +5563,7 @@ async def test_arbitrary_off_catalog_name_offers_alternatives_and_insistence_han
     assert repository.context["catalog_mismatch_attempts"] == 1
     assert repository.context["catalog_mismatch_query"] == "frostmaster x ultra"
     assert "equipment_model" not in repository.context
-    assert "opções semelhantes" in (
+    assert "equipamentos semelhantes" in (
         repository.outbounds[-1].transition.outbound.body or ""
     ).casefold()
 
@@ -5649,9 +5649,105 @@ async def test_purchase_model_brand_and_capacity_must_match_same_catalog_item() 
         message.body or ""
         for message in (transition.outbound, *transition.follow_ups)
     ).casefold()
-    assert "gree" not in combined
+    assert "gree" in combined
     assert "não temos esse modelo específico" in combined
-    assert "opções semelhantes" in combined
+    assert "equipamentos semelhantes" in combined
+    assert repository.context["catalog_alternative_suggestion"]["item_id"] == "gree-only"
+    button_ids = {
+        row["id"]
+        for row in transition.outbound.outbound_payload["buttons"]
+    }
+    assert {
+        "equipment.model.suggested_select",
+        "equipment.model.recommend",
+        "equipment.model.exact_check",
+    } <= button_ids
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(1218, body="esse mesmo")
+    )
+
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_DELIVERY
+    assert repository.context["recommended_equipment"]["item_id"] == "gree-only"
+    assert "Gree G-Top Auto Inverter" in repository.context["equipment_model"]
+
+
+@mark.asyncio
+async def test_partial_equipment_criteria_waits_for_identity_before_catalog_claim() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_EQUIPMENT_MODEL,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "purchase_mode": "purchase",
+            "purchase_only": True,
+            "equipment_ownership": "needs_equipment",
+            "equipment_model_known": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Instalação de ar-condicionado split")
+    ]
+    booking_port.equipment_catalog = [
+        EquipmentCatalogEntry(
+            item_id="lg-18000",
+            brand="LG",
+            line="Dual Inverter Voice",
+            capacity_btu=18000,
+            segment="modern",
+            cycles=("cold",),
+            features=("inverter", "wifi"),
+            price=3899.0,
+        )
+    ]
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(
+        inbound(1219, body="Split Inverter 18000 BTUs")
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["equipment_request_query"] == "Split Inverter 18000 BTUs"
+    first_body = repository.outbounds[-1].transition.outbound.body or ""
+    normalized_first = first_body.casefold()
+    assert "ainda não identifica um modelo específico" in normalized_first
+    assert "encontrei opções com inverter" not in normalized_first
+    assert "não temos esse modelo específico" not in normalized_first
+    assert "lg dual inverter voice" not in normalized_first
+
+    await engine.process(inbound(1220, body="Electrolux"))
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["catalog_mismatch_attempts"] == 1
+    assert repository.context["catalog_mismatch_capacity_btu"] == 18000
+    assert repository.context["catalog_alternative_suggestion"]["item_id"] == "lg-18000"
+    second = repository.outbounds[-1].transition
+    second_body = (second.outbound.body or "").casefold()
+    assert "não temos esse modelo específico" in second_body
+    assert "lg dual inverter voice 18.000 btu" in second_body
+    assert "r$ 3.899,00" in second_body
+    assert "encontrei esse equipamento no catálogo ativo" not in second_body
+
+    await engine.process(
+        inbound(
+            1221,
+            action="equipment.model.recommend",
+            body="Ver outros similares",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_PROFILE
+    profile = repository.outbounds[-1].transition
+    profile_body = " ".join(
+        item.body or "" for item in (profile.outbound, *profile.follow_ups)
+    ).casefold()
+    assert "quantas pessoas" in profile_body
+    assert "qual delas você gostaria de avaliar" not in profile_body
+
 
 @mark.asyncio
 async def test_known_equipment_technical_question_answers_from_catalog_and_resumes_time() -> None:
