@@ -113,6 +113,7 @@ from app.conversations.outbound import (
     equipment_model_known_message,
     equipment_model_request_message,
     equipment_alternative_offer_message,
+    owned_equipment_alternative_offer_message,
     equipment_preference_message,
     equipment_profile_intro_message,
     equipment_profile_message,
@@ -7116,6 +7117,25 @@ async def _handle_equipment_model(
             )
         )
         if wants_exact_model:
+            if _context_string(context, "equipment_ownership") == "has_equipment":
+                preserved = {
+                    **_clear_repair_attempt(context, "equipment_model"),
+                    "equipment_model_known": True,
+                    "equipment_model": mismatch_query,
+                }
+                preserved.pop("catalog_mismatch_query", None)
+                preserved.pop("catalog_mismatch_capacity_btu", None)
+                preserved.pop("recommended_equipment", None)
+                preserved.pop("recommendation_presented", None)
+                return await _advance_intake(
+                    inbound,
+                    port,
+                    intake,
+                    preserved,
+                    services=services,
+                    customer_name=customer_name,
+                )
+
             preserved = dict(context)
             preserved.pop("equipment_model", None)
             preserved.pop("recommended_equipment", None)
@@ -7149,6 +7169,30 @@ async def _handle_equipment_model(
             }
         )
         if accepts_alternative:
+            if _context_string(context, "equipment_ownership") == "has_equipment":
+                updated = {
+                    **_clear_repair_attempt(context, "equipment_model"),
+                    "equipment_ownership": "needs_equipment",
+                    "equipment_model_known": False,
+                    "request_mode": "quote",
+                    "purchase_mode": "both",
+                    "purchase_only": False,
+                    "catalog_mismatch_attempts": 0,
+                }
+                updated.pop("catalog_mismatch_query", None)
+                updated.pop("catalog_mismatch_capacity_btu", None)
+                updated.pop("equipment_model", None)
+                updated.pop("recommended_equipment", None)
+                updated.pop("recommendation_presented", None)
+                return await _advance_intake(
+                    inbound,
+                    port,
+                    intake,
+                    updated,
+                    services=services,
+                    customer_name=customer_name,
+                )
+
             updated = {
                 **_clear_repair_attempt(context, "equipment_model"),
                 "equipment_model_known": False,
@@ -7412,6 +7456,26 @@ async def _handle_equipment_model(
             )
             if matched_catalog is not None:
                 equipment_model = _catalog_equipment_label(matched_catalog)
+            elif service_kind == "installation" and catalog:
+                updated = {
+                    **_clear_repair_attempt(context, "equipment_model"),
+                    "equipment_model_known": True,
+                    "catalog_mismatch_attempts": 1,
+                    "catalog_mismatch_query": equipment_model,
+                }
+                requested_capacity = _requested_capacity_btu(equipment_model)
+                if requested_capacity is not None:
+                    updated["catalog_mismatch_capacity_btu"] = requested_capacity
+                else:
+                    updated.pop("catalog_mismatch_capacity_btu", None)
+                updated.pop("equipment_model", None)
+                updated.pop("recommended_equipment", None)
+                updated.pop("recommendation_presented", None)
+                return _transition(
+                    ConversationState.BOOKING_EQUIPMENT_MODEL,
+                    updated,
+                    owned_equipment_alternative_offer_message(),
+                )
 
         updated = {
             **_clear_repair_attempt(context, "equipment_model"),
