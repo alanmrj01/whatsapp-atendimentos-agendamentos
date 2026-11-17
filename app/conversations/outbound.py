@@ -213,6 +213,24 @@ def equipment_alternative_offer_message() -> OutboundMessage:
     )
 
 
+def owned_equipment_alternative_offer_message() -> OutboundMessage:
+    return OutboundMessage(
+        message_type="interactive_button",
+        body=(
+            "Entendi. Não encontrei esse modelo entre as opções disponíveis por aqui. "
+            "Se quiser, posso te apresentar alguns aparelhos semelhantes e te ajudar "
+            "a escolher uma alternativa. Gostaria?"
+        ),
+        interactive_id="booking.owned_equipment_alternative",
+        outbound_payload=_button_payload(
+            (
+                BookingOption(EQUIPMENT_MODEL_RECOMMEND, "Ver semelhantes"),
+                BookingOption(EQUIPMENT_MODEL_EXACT_CHECK, "Instalar este"),
+            )
+        ),
+    )
+
+
 def equipment_profile_message(
     missing: Sequence[str],
     *,
