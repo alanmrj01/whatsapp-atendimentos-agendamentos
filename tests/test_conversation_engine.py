@@ -1089,6 +1089,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         "service_id": str(SERVICE_ID),
         "service_qualification_version": 2,
         "selected_date": "2026-09-02",
+        "last_presented_service_price": "100.00",
     }
 
     assert await engine.process(
