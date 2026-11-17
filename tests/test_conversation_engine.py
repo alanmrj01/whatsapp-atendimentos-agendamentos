@@ -1078,6 +1078,7 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         "service_id": str(SERVICE_ID),
         "service_qualification_version": 2,
         "last_assistant_topic": "estimated_service_price",
+        "last_presented_service_price": "100.00",
     }
 
     assert await engine.process(
@@ -3649,7 +3650,7 @@ async def test_gas_recharge_collects_existing_equipment_before_agenda() -> None:
 
     assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["equipment_model"] == "LG Dual Inverter 12000 BTU"
-    assert "equipment_catalog" in booking_port.calls
+    assert "equipment_catalog" not in booking_port.calls
     assert "service_address" not in repository.context
 
 
