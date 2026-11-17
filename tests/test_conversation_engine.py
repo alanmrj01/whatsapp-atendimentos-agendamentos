@@ -300,6 +300,7 @@ class FakeBookingPort:
         self,
         _: uuid.UUID,
     ) -> tuple[EquipmentCatalogEntry, ...]:
+        self.calls.append("equipment_catalog")
         return tuple(self.equipment_catalog)
 
     async def estimate(
