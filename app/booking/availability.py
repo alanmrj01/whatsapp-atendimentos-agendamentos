@@ -540,7 +540,12 @@ class PostgresBookingAvailabilityPort:
         business, service = await self._load_business_service(
             business_id, service_id
         )
-        plan = await self._build_plan(business, service, requirements)
+        plan = await self._build_plan(
+            business,
+            service,
+            requirements,
+            allow_missing_address_for_planning=True,
+        )
         self._require_automatic_plan(plan)
         first_date = self._minimum_bookable_date(business)
         last_date = first_date + timedelta(days=SUGGESTED_DATE_HORIZON_DAYS - 1)
@@ -580,7 +585,12 @@ class PostgresBookingAvailabilityPort:
         )
         if parsed_date < self._minimum_bookable_date(business):
             return ()
-        plan = await self._build_plan(business, service, requirements)
+        plan = await self._build_plan(
+            business,
+            service,
+            requirements,
+            allow_missing_address_for_planning=True,
+        )
         self._require_automatic_plan(plan)
         starts = await self._available_starts(
             business,
