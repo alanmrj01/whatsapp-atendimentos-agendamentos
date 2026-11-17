@@ -6787,6 +6787,45 @@ async def test_explicit_name_correction_during_booking_updates_name_and_keeps_ch
 
 
 @mark.parametrize(
+    ("service_label", "expected_state"),
+    [
+        ("Manutenção de ar-condicionado", ConversationState.BOOKING_EQUIPMENT_MODEL),
+        ("Conserto de ar-condicionado", ConversationState.BOOKING_EQUIPMENT_MODEL),
+        ("Assistência técnica", ConversationState.BOOKING_EQUIPMENT_MODEL),
+        ("Revisão preventiva", ConversationState.BOOKING_EQUIPMENT_MODEL),
+        ("Instalação", ConversationState.BOOKING_EQUIPMENT_OWNERSHIP),
+    ],
+)
+@mark.asyncio
+async def test_real_world_service_labels_enter_domain_specific_intake(
+    service_label: str,
+    expected_state: ConversationState,
+) -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_SERVICE,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [BookingOption(str(SERVICE_ID), service_label)]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            200065,
+            action=f"service:{SERVICE_ID}",
+            body=service_label,
+        )
+    )
+
+    assert repository.state == expected_state
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.state != ConversationState.BOOKING_SERVICE_DETAILS
+
+
+@mark.parametrize(
     "service_label",
     [
         "Limpeza e higienização de ar-condicionado",
