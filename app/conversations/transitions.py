@@ -11390,6 +11390,7 @@ async def _advance_preconfirmation(
             )
 
     if context.get("schedule_revalidation_required") is True:
+        price_update: str | None = None
         service_id = _context_service_id(context)
         selected_date = _context_string(context, "selected_date")
         selected_time = _context_string(context, "selected_time")
@@ -11446,7 +11447,6 @@ async def _advance_preconfirmation(
                     customer_name=customer_name,
                 )
 
-            price_update: str | None = None
             current_price = plan.service.estimated_price
             previous_price: Decimal | None = None
             raw_previous_price = context.get("last_presented_service_price")
