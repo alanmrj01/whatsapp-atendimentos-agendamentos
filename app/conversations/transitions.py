@@ -7709,27 +7709,60 @@ async def _handle_equipment_model(
                 catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
             except BookingRequiresHandoff:
                 catalog = ()
+
+            prior_query = _context_string(context, "equipment_request_query")
+            lookup_query = " ".join(
+                part for part in (prior_query, equipment_model) if part
+            ).strip()
+
+            if (
+                service_kind == "installation"
+                and catalog
+                and not _equipment_request_has_identity(lookup_query, catalog)
+            ):
+                updated = {
+                    **_clear_repair_attempt(context, "equipment_model"),
+                    "equipment_model_known": True,
+                    "equipment_request_query": lookup_query,
+                }
+                updated.pop("equipment_model", None)
+                return _transition(
+                    ConversationState.BOOKING_EQUIPMENT_MODEL,
+                    updated,
+                    _text_message(
+                        "Entendi as características do aparelho. Para confirmar o "
+                        "equipamento sem assumir um modelo errado, qual é a marca ou o "
+                        "modelo? Se não souber, pode me mandar uma foto."
+                    ),
+                )
+
             matched_catalog = _catalog_entry_matching_customer_request(
-                equipment_model,
+                lookup_query,
                 catalog,
             )
             if matched_catalog is not None:
                 equipment_model = _catalog_equipment_label(matched_catalog)
+                context = dict(context)
+                context.pop("equipment_request_query", None)
             elif service_kind == "installation" and catalog:
                 updated = {
                     **_clear_repair_attempt(context, "equipment_model"),
                     "equipment_model_known": True,
                     "catalog_mismatch_attempts": 1,
-                    "catalog_mismatch_query": equipment_model,
+                    "catalog_mismatch_query": lookup_query,
                 }
-                requested_capacity = _requested_capacity_btu(equipment_model)
+                requested_capacity = _requested_capacity_btu(lookup_query)
                 if requested_capacity is not None:
                     updated["catalog_mismatch_capacity_btu"] = requested_capacity
                 else:
                     updated.pop("catalog_mismatch_capacity_btu", None)
-                updated.pop("equipment_model", None)
-                updated.pop("recommended_equipment", None)
-                updated.pop("recommendation_presented", None)
+                for key in (
+                    "equipment_request_query",
+                    "equipment_model",
+                    "recommended_equipment",
+                    "recommendation_presented",
+                ):
+                    updated.pop(key, None)
                 return _transition(
                     ConversationState.BOOKING_EQUIPMENT_MODEL,
                     updated,
