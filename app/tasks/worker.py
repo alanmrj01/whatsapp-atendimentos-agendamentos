@@ -242,9 +242,18 @@ async def _transcribe_production_audio(
         if not transcript:
             return inbound
 
+        interpretation = DeterministicConversationInterpreter().interpret(
+            transcript
+        )
         logger.info(
             "whatsapp_audio_transcribed",
-            extra={"business_id": str(inbound.business_id)},
+            extra={
+                "business_id": str(inbound.business_id),
+                "service_key": interpretation.service_key or "",
+                "primary_intent": interpretation.intent.value,
+                "customer_name_detected": interpretation.customer_name is not None,
+                "transcript_chars": len(transcript),
+            },
         )
         return replace(
             inbound,
