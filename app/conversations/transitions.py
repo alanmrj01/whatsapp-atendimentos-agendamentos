@@ -2865,6 +2865,29 @@ async def _equipment_question_answer(
         and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
     ):
         return None
+    active_service_id = _context_service_id(context)
+    if (
+        active_service_id is not None
+        and not interpretation.has(ConversationIntent.EQUIPMENT_PURCHASE)
+    ):
+        try:
+            active_port = _require_booking_port(booking_port)
+            active_services = _snapshot_options(
+                await active_port.list_services(inbound.business_id)
+            )
+        except BookingPortUnavailable:
+            active_services = ()
+        if active_services and _service_kind(
+            active_services,
+            active_service_id,
+        ) in {
+            "cleaning",
+            "gas_recharge",
+            "diagnostics",
+            "preventive",
+            "refrigeration_appliance",
+        }:
+            return None
     normalized = normalize_portuguese(inbound.body or "")
     equipment_terms = (
         "ar condicionado",
@@ -7782,7 +7805,7 @@ async def _handle_equipment_model(
         )
     ):
         equipment_model = model_value or raw
-        if existing_equipment:
+        if existing_equipment and service_kind == "installation":
             try:
                 catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
             except BookingRequiresHandoff:
@@ -10586,21 +10609,48 @@ async def _offer_dates(
             ),
         )
 
-    estimate = (
-        _fulfillment_schedule_intro(plan, context)
-        if fulfillment_type in {"equipment_delivery", "equipment_pickup"}
-        else (
-            ""
-            if context.get("quote_presented") is True
-            else _estimate_message(plan)
+    previous_presented_price: Decimal | None = None
+    raw_previous_presented_price = context.get("last_presented_service_price")
+    if isinstance(raw_previous_presented_price, (str, int, float, Decimal)):
+        try:
+            previous_presented_price = Decimal(str(raw_previous_presented_price))
+        except Exception:
+            previous_presented_price = None
+
+    current_service_price = plan.service.estimated_price
+    if fulfillment_type in {"equipment_delivery", "equipment_pickup"}:
+        estimate = _fulfillment_schedule_intro(plan, context)
+    elif context.get("quote_presented") is True:
+        estimate = ""
+    elif (
+        current_service_price is not None
+        and previous_presented_price == current_service_price
+    ):
+        estimate = ""
+    elif (
+        current_service_price is not None
+        and previous_presented_price is not None
+        and previous_presented_price != current_service_price
+    ):
+        estimate = (
+            "Com as informações atualizadas, o valor estimado agora é "
+            f"{_format_brl(current_service_price)}. "
+            "Ele pode mudar se houver uma condição diferente no local."
         )
-    )
+    else:
+        estimate = _estimate_message(plan)
+
     prefix = f"{estimate}\n\n" if estimate else ""
     next_context = _intake_context(context)
     if (
+        fulfillment_type not in {"equipment_delivery", "equipment_pickup"}
+        and current_service_price is not None
+    ):
+        next_context["last_presented_service_price"] = str(current_service_price)
+    if (
         estimate
         and fulfillment_type not in {"equipment_delivery", "equipment_pickup"}
-        and plan.service.estimated_price is not None
+        and current_service_price is not None
         and plan.service.pricing_type is not PricingType.FIXED
     ):
         next_context["last_assistant_topic"] = "estimated_service_price"
