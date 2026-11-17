@@ -345,7 +345,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;max-width:1
 .options{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}.options button{border:1px solid #0b63f6;background:white;color:#0b63f6;border-radius:9px;padding:7px 9px;cursor:pointer}
 .composer{border-top:1px solid #dce4ef;padding:10px;display:flex;gap:8px}.composer input{flex:1;border:1px solid #cbd5e1;border-radius:10px;padding:10px;font-size:15px}
 button.primary{border:0;background:#0b63f6;color:white;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
-.toolbar{padding:8px 10px;display:flex;gap:8px;border-top:1px solid #eef2f7}.toolbar button,.side button{border:1px solid #cbd5e1;background:white;border-radius:9px;padding:7px 9px;cursor:pointer}
+.toolbar{padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid #eef2f7}.toolbar button,.side button{border:1px solid #cbd5e1;background:white;border-radius:9px;padding:7px 9px;cursor:pointer}.recording{font-size:12px;font-weight:700;color:#b42318}.recording:empty{display:none}
 .side{padding:14px}.side h3{margin:0 0 10px}.kv{display:grid;grid-template-columns:120px 1fr;gap:6px;font-size:13px;margin-bottom:12px}.ok{color:#087a35;font-weight:700}.warn{color:#a33300;font-weight:700}
 pre{background:#0f172a;color:#dbeafe;border-radius:10px;padding:10px;overflow:auto;max-height:34vh;font-size:11px}
 .small{font-size:12px;color:#64748b;line-height:1.45}.danger{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px;margin-bottom:12px;font-size:12px}
@@ -362,7 +362,9 @@ pre{background:#0f172a;color:#dbeafe;border-radius:10px;padding:10px;overflow:au
 <button onclick="sendMedia('image')">📷 Foto sintética</button>
 <button onclick="sendMedia('video')">🎥 Vídeo sintético</button>
 <button onclick="sendMedia('audio')">🎙️ Áudio sintético</button>
-<button onclick="document.getElementById('audioFile').click()">🎤 Enviar áudio real</button>
+<button id="recordAudioButton" onclick="toggleAudioRecording()">🎤 Gravar áudio</button>
+<span id="recordingStatus" class="recording"></span>
+<button onclick="document.getElementById('audioFile').click()">📎 Enviar arquivo de áudio</button>
 <input id="audioFile" type="file" accept="audio/*,.ogg,.mp3,.wav,.m4a,.webm" style="display:none" onchange="sendAudioFile(this)">
 <button id="copyButton" onclick="copyConversation()">📋 Copiar conversa</button>
 <button onclick="resetSession()">Nova conversa</button>
@@ -386,12 +388,133 @@ pre{background:#0f172a;color:#dbeafe;border-radius:10px;padding:10px;overflow:au
 <script>
 let sessionId=null;
 let lastSnapshot=null;
+let mediaRecorder=null;
+let recordingStream=null;
+let audioChunks=[];
+let recordingStartedAt=0;
+let recordingTimer=null;
+let recordingAutoStop=null;
 async function api(path,options={}){const r=await fetch(path,{headers:{'Content-Type':'application/json'},...options});if(!r.ok){throw new Error(await r.text())}return r.json()}
 async function start(){const d=await api('/api/session',{method:'POST'});sessionId=d.session_id;render(d)}
 async function resetSession(){if(sessionId)await fetch('/api/session/'+sessionId,{method:'DELETE'});await start()}
 async function sendText(){const input=document.getElementById('input');const text=input.value.trim();if(!text)return;input.value='';await send({text,message_type:'text'})}
 async function sendAction(id,title){await send({text:title,action:id,message_type:'text'})}
 async function sendMedia(type){await send({message_type:type})}
+function preferredAudioMimeType(){
+ const candidates=[
+   'audio/webm;codecs=opus',
+   'audio/webm',
+   'audio/mp4'
+ ];
+ if(typeof MediaRecorder==='undefined')return '';
+ for(const type of candidates){
+   if(MediaRecorder.isTypeSupported(type))return type;
+ }
+ return '';
+}
+function stopRecordingUi(){
+ if(recordingTimer){clearInterval(recordingTimer);recordingTimer=null}
+ if(recordingAutoStop){clearTimeout(recordingAutoStop);recordingAutoStop=null}
+ const status=document.getElementById('recordingStatus');
+ const button=document.getElementById('recordAudioButton');
+ if(status)status.textContent='';
+ if(button){button.textContent='🎤 Gravar áudio';button.disabled=false}
+}
+async function sendRecordedAudio(blob){
+ if(!blob||blob.size===0){alert('Não consegui capturar o áudio. Tente novamente.');return}
+ if(blob.size>10*1024*1024){alert('O áudio ficou acima do limite de 10 MB.');return}
+ try{
+   const r=await fetch('/api/session/'+sessionId+'/audio',{
+     method:'POST',
+     headers:{'Content-Type':blob.type||'application/octet-stream'},
+     body:blob
+   });
+   if(!r.ok)throw new Error(await r.text());
+   render(await r.json());
+ }catch(e){
+   alert('Falha ao transcrever o áudio: '+e.message);
+ }
+}
+async function toggleAudioRecording(){
+ const button=document.getElementById('recordAudioButton');
+ const status=document.getElementById('recordingStatus');
+
+ if(mediaRecorder&&mediaRecorder.state==='recording'){
+   button.disabled=true;
+   button.textContent='Enviando...';
+   mediaRecorder.stop();
+   return;
+ }
+
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||typeof MediaRecorder==='undefined'){
+   alert('Este navegador não permite gravação de áudio pelo microfone.');
+   return;
+ }
+
+ try{
+   recordingStream=await navigator.mediaDevices.getUserMedia({audio:true});
+   audioChunks=[];
+   const mimeType=preferredAudioMimeType();
+   mediaRecorder=mimeType
+     ? new MediaRecorder(recordingStream,{mimeType})
+     : new MediaRecorder(recordingStream);
+
+   mediaRecorder.ondataavailable=(event)=>{
+     if(event.data&&event.data.size>0)audioChunks.push(event.data);
+   };
+
+   mediaRecorder.onerror=()=>{
+     if(recordingStream)recordingStream.getTracks().forEach(track=>track.stop());
+     recordingStream=null;
+     mediaRecorder=null;
+     stopRecordingUi();
+     alert('Falha ao gravar o áudio. Tente novamente.');
+   };
+
+   mediaRecorder.onstop=async()=>{
+     const finalType=mediaRecorder.mimeType||mimeType||'application/octet-stream';
+     const blob=new Blob(audioChunks,{type:finalType});
+     if(recordingStream)recordingStream.getTracks().forEach(track=>track.stop());
+     recordingStream=null;
+     mediaRecorder=null;
+     audioChunks=[];
+     stopRecordingUi();
+     await sendRecordedAudio(blob);
+   };
+
+   recordingStartedAt=Date.now();
+   mediaRecorder.start();
+   button.textContent='⏹️ Parar e enviar';
+   status.textContent='Gravando 0:00';
+
+   recordingTimer=setInterval(()=>{
+     const seconds=Math.floor((Date.now()-recordingStartedAt)/1000);
+     const minutes=Math.floor(seconds/60);
+     const rest=String(seconds%60).padStart(2,'0');
+     status.textContent='Gravando '+minutes+':'+rest;
+   },500);
+
+   recordingAutoStop=setTimeout(()=>{
+     if(mediaRecorder&&mediaRecorder.state==='recording'){
+       button.disabled=true;
+       button.textContent='Enviando...';
+       mediaRecorder.stop();
+     }
+   },55000);
+ }catch(e){
+   if(recordingStream)recordingStream.getTracks().forEach(track=>track.stop());
+   recordingStream=null;
+   mediaRecorder=null;
+   stopRecordingUi();
+   const denied=e&&(
+     e.name==='NotAllowedError'
+     || e.name==='PermissionDeniedError'
+   );
+   alert(denied
+     ? 'Permita o uso do microfone para gravar o áudio no laboratório.'
+     : 'Não foi possível acessar o microfone deste dispositivo.');
+ }
+}
 async function sendAudioFile(input){
  const file=input.files&&input.files[0];
  if(!file)return;
