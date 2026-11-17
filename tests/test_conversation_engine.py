@@ -915,6 +915,45 @@ async def test_explicit_name_reply_also_resumes_pending_service_request() -> Non
 
 
 @mark.asyncio
+async def test_natural_self_identification_with_followup_captures_customer_name() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.CUSTOMER_NAME,
+        customer_name=None,
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(
+        inbound(
+            20001,
+            body="Eu sou o Alan, pô. Você não lembra de mim, não?",
+        )
+    )
+
+    assert repository.customer_name == "Alan"
+    assert repository.state == ConversationState.MENU
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert body == "Prazer, Alan. Como posso te ajudar?"
+
+
+@mark.asyncio
+async def test_name_mentioned_as_third_party_is_not_captured_as_customer_name() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.CUSTOMER_NAME,
+        customer_name=None,
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(
+        inbound(
+            20002,
+            body="Falei com o André, ele me passou seu contato",
+        )
+    )
+
+    assert repository.customer_name is None
+
+
+@mark.asyncio
 async def test_social_detour_during_name_does_not_spend_retry_or_block_service() -> None:
     repository = FakeConversationRepository(customer_name=None)
     booking_port = FakeBookingPort()
