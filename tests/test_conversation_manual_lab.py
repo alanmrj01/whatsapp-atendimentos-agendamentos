@@ -474,6 +474,75 @@ async def test_manual_lab_owned_installation_model_silently_checks_catalog() -> 
 
 
 @pytest.mark.asyncio
+async def test_owned_installation_model_missing_from_catalog_offers_similar_options() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
+    session.repository.context = {
+        "service_id": str(INSTALLATION_SERVICE_ID),
+        "equipment_ownership": "has_equipment",
+        "equipment_model_known": True,
+        "quantity": 1,
+    }
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="Samsung WindFree 24000 BTU"),
+    )
+
+    assert "equipment_catalog" in snapshot["dry_run_calls"]
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert "não encontrei esse modelo" in last["body"].casefold()
+    assert "semelhantes" in last["body"].casefold()
+    assert {option["id"] for option in last["options"]} >= {
+        "equipment.model.recommend",
+        "equipment.model.exact_check",
+    }
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="Ver semelhantes", action="equipment.model.recommend"),
+    )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_PROFILE.value
+    assert snapshot["context"]["equipment_ownership"] == "needs_equipment"
+    assert snapshot["context"]["purchase_mode"] == "both"
+    assert snapshot["context"]["purchase_only"] is False
+    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
+    assert (
+        "perfil do ambiente" in last["body"].casefold()
+        or "quantas pessoas" in last["body"].casefold()
+    )
+
+
+@pytest.mark.asyncio
+async def test_owned_installation_model_missing_from_catalog_can_keep_current_unit() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
+    session.repository.context = {
+        "service_id": str(INSTALLATION_SERVICE_ID),
+        "equipment_ownership": "has_equipment",
+        "equipment_model_known": True,
+        "quantity": 1,
+    }
+
+    await send_message(
+        session_id,
+        ManualInput(text="Samsung WindFree 24000 BTU"),
+    )
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="Instalar este", action="equipment.model.exact_check"),
+    )
+
+    assert snapshot["automation_enabled"] is True
+    assert snapshot["handoff_status"] == "none"
+    assert snapshot["state"] != ConversationState.HUMAN_HANDOFF.value
+    assert snapshot["context"]["equipment_ownership"] == "has_equipment"
+    assert snapshot["context"]["equipment_model"] == "Samsung WindFree 24000 BTU"
+
+
+@pytest.mark.asyncio
 async def test_manual_lab_off_catalog_capacity_filters_catalog_before_extra_questions() -> None:
     session_id, session = await _new_named_session()
     session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
