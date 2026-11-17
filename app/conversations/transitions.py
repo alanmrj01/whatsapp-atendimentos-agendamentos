@@ -7184,13 +7184,14 @@ async def _handle_equipment_model(
                 updated.pop("equipment_model", None)
                 updated.pop("recommended_equipment", None)
                 updated.pop("recommendation_presented", None)
-                return await _advance_intake(
-                    inbound,
-                    port,
-                    intake,
+                missing = missing_equipment_profile_fields(updated)
+                prompt = _equipment_profile_prompt(missing)
+                updated["equipment_profile_intro_sent"] = True
+                return _transition(
+                    ConversationState.BOOKING_EQUIPMENT_PROFILE,
                     updated,
-                    services=services,
-                    customer_name=customer_name,
+                    equipment_profile_intro_message(),
+                    follow_ups=(prompt,),
                 )
 
             updated = {
