@@ -40,6 +40,15 @@ _SCHEDULING_FIELDS = frozenset(
     }
 )
 
+# Endereço pode alterar disponibilidade/preço, mas não deve apagar uma escolha
+# de agenda já feita. A escolha é preservada e revalidada explicitamente.
+_SCHEDULE_REVALIDATING_INPUTS = frozenset(
+    {
+        "service_address",
+        "delivery_address",
+    }
+)
+
 _PLANNING_INPUTS = frozenset(
     {
         "quantity",
@@ -124,7 +133,7 @@ def invalidate_changed_facts(
         updated.pop("quote_presented", None)
         updated.pop("last_assistant_topic", None)
 
-    if changed & _PLANNING_INPUTS:
+    if changed & (_PLANNING_INPUTS - _SCHEDULE_REVALIDATING_INPUTS):
         for field in _SCHEDULING_FIELDS:
             updated.pop(field, None)
 
