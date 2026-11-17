@@ -422,7 +422,12 @@ class PostgresBookingAvailabilityPort:
             business_id, service_id
         )
         await self._require_eligible_employees(business_id, service_id)
-        return await self._build_plan(business, service, requirements)
+        return await self._build_plan(
+            business,
+            service,
+            requirements,
+            allow_missing_address_for_planning=True,
+        )
 
     async def list_dates(
         self,
@@ -433,7 +438,12 @@ class PostgresBookingAvailabilityPort:
         business, service = await self._load_business_service(
             business_id, service_id
         )
-        plan = await self._build_plan(business, service, requirements)
+        plan = await self._build_plan(
+            business,
+            service,
+            requirements,
+            allow_missing_address_for_planning=True,
+        )
         self._require_automatic_plan(plan)
         local_now = self._local_now(business.timezone)
         first_date = self._minimum_bookable_date(business)
@@ -955,6 +965,8 @@ class PostgresBookingAvailabilityPort:
         business: Business,
         service: Service,
         requirements: BookingRequirements,
+        *,
+        allow_missing_address_for_planning: bool = False,
     ) -> BookingPlan:
         fulfillment_type = requirements.operational_details.get("fulfillment_type")
         is_fulfillment = fulfillment_type in {
@@ -994,7 +1006,13 @@ class PostgresBookingAvailabilityPort:
                         if service.additional_unit_price is not None
                         else None
                     ),
-                    requires_address=service.requires_address,
+                    requires_address=(
+                        service.requires_address
+                        and not (
+                            allow_missing_address_for_planning
+                            and requirements.address is None
+                        )
+                    ),
                     requires_quantity=service.requires_quantity,
                     considers_difficult_access=service.considers_difficult_access,
                     difficult_access_duration_minutes=(
@@ -1014,6 +1032,23 @@ class PostgresBookingAvailabilityPort:
                 raise BookingRequiresHandoff("Invalid service configuration") from None
 
             service_estimate = self.estimator.estimate(configuration, requirements)
+            if (
+                allow_missing_address_for_planning
+                and service.requires_address
+                and requirements.address is None
+                and not service_estimate.requires_human_quote
+            ):
+                service_estimate = replace(
+                    service_estimate,
+                    applied_rules=(
+                        *service_estimate.applied_rules,
+                        "address_pending_provisional",
+                    ),
+                    qualifier=(
+                        "Estimativa provisória; endereço e deslocamento serão "
+                        "validados antes da confirmação."
+                    ),
+                )
             service_estimate = await self._apply_catalog_additions(
                 business.id,
                 service,
