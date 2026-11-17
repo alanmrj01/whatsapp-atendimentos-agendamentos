@@ -5478,22 +5478,26 @@ def _service_kind(
         )
     ):
         return "hvac_scope"
-    if (
-        "instal" in normalized
-        and any(
-            token in normalized
-            for token in ("ar condicionado", "split", "climat")
-        )
-    ):
+    if "instal" in normalized:
         return "installation"
     if any(token in normalized for token in ("limpeza", "higien", "lavagem")):
         return "cleaning"
     if any(token in normalized for token in ("recarga", "gas", "vazamento")):
         return "gas_recharge"
-    if any(token in normalized for token in ("diagnost", "corretiv")):
-        return "diagnostics"
     if "preventiv" in normalized or "revis" in normalized:
         return "preventive"
+    if any(
+        token in normalized
+        for token in (
+            "diagnost",
+            "corretiv",
+            "manutencao",
+            "conserto",
+            "reparo",
+            "assistencia tecnica",
+        )
+    ):
+        return "diagnostics"
     return "other"
 
 
