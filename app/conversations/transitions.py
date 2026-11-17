@@ -10767,7 +10767,7 @@ async def _suggested_slot_options(
         options.append(
             BookingOption(
                 id=f"{date_option.id}|{selected.id}",
-                label=f"{date_short_label(date_option.id)} às {selected.label}",
+                label=f"{date.fromisoformat(date_option.id).strftime('%d/%m')} às {selected.label}",
             )
         )
 
