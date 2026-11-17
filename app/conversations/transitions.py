@@ -49,6 +49,7 @@ from app.conversations.constants import (
     EQUIPMENT_MODEL_KNOWN,
     EQUIPMENT_MODEL_RECOMMEND,
     EQUIPMENT_MODEL_EXACT_CHECK,
+    EQUIPMENT_MODEL_SUGGESTED_SELECT,
     EQUIPMENT_NEEDS,
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
@@ -2352,6 +2353,155 @@ def _requested_capacity_btu(body: str | None) -> int | None:
     return None
 
 
+def _requested_equipment_features(body: str | None) -> tuple[str, ...]:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return ()
+    features: list[str] = []
+    if "inverter" in normalized:
+        features.append("inverter")
+    if any(token in normalized for token in ("wifi", "wi fi")):
+        features.append("wifi")
+    if "alexa" in normalized:
+        features.append("alexa")
+    if "bluetooth" in normalized:
+        features.append("bluetooth")
+    return tuple(features)
+
+
+def _equipment_request_has_identity(
+    body: str | None,
+    catalog: Sequence[Any],
+) -> bool:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+    if _requested_equipment_brand(body) is not None:
+        return True
+    if any(
+        len(normalize_portuguese(item.line)) >= 4
+        and normalize_portuguese(item.line) in normalized
+        for item in catalog
+    ):
+        return True
+
+    reduced = re.sub(r"\b\d{1,6}\b", " ", normalized)
+    generic_tokens = {
+        "ar",
+        "condicionado",
+        "aparelho",
+        "equipamento",
+        "modelo",
+        "split",
+        "inverter",
+        "hi",
+        "wall",
+        "btu",
+        "btus",
+        "mil",
+        "frio",
+        "quente",
+        "wifi",
+        "wi",
+        "fi",
+        "alexa",
+        "bluetooth",
+    }
+    remaining = [
+        token
+        for token in reduced.split()
+        if token not in generic_tokens
+    ]
+    return bool(remaining)
+
+
+def _catalog_item_has_feature(item: Any, feature: str) -> bool:
+    values = (
+        normalize_portuguese(item.line),
+        *(normalize_portuguese(value) for value in item.features),
+    )
+    return any(feature in value for value in values)
+
+
+def _catalog_alternative_for_request(
+    body: str | None,
+    catalog: Sequence[Any],
+) -> tuple[Any | None, bool]:
+    if not catalog:
+        return None, False
+
+    capacity = _requested_capacity_btu(body)
+    features = _requested_equipment_features(body)
+    normalized = normalize_portuguese(body or "")
+    requested_cycle = (
+        "heat_cool"
+        if "quente frio" in normalized or "quente e frio" in normalized
+        else (
+            "cold"
+            if "so frio" in normalized or "somente frio" in normalized
+            else None
+        )
+    )
+    if capacity is None and not features and requested_cycle is None:
+        return None, False
+
+    candidates = list(catalog)
+    same_capacity = False
+    if capacity is not None:
+        exact_capacity = [item for item in candidates if item.capacity_btu == capacity]
+        if exact_capacity:
+            candidates = exact_capacity
+            same_capacity = True
+        else:
+            nearest_capacity = min(
+                {item.capacity_btu for item in candidates},
+                key=lambda value: (abs(value - capacity), value),
+            )
+            candidates = [
+                item for item in candidates
+                if item.capacity_btu == nearest_capacity
+            ]
+
+    def score(item: Any) -> tuple[int, int, float, str, str]:
+        feature_misses = sum(
+            1 for feature in features
+            if not _catalog_item_has_feature(item, feature)
+        )
+        cycle_miss = (
+            0
+            if requested_cycle is None or requested_cycle in item.cycles
+            else 1
+        )
+        price = (
+            float(item.price)
+            if item.price is not None
+            else float("inf")
+        )
+        return (
+            cycle_miss,
+            feature_misses,
+            price,
+            normalize_portuguese(item.brand),
+            normalize_portuguese(item.line),
+        )
+
+    selected = min(candidates, key=score)
+    feature_match = all(
+        _catalog_item_has_feature(selected, feature)
+        for feature in features
+    )
+    cycle_match = (
+        requested_cycle is None or requested_cycle in selected.cycles
+    )
+    selectable = (
+        capacity is not None
+        and same_capacity
+        and feature_match
+        and cycle_match
+    )
+    return selected, selectable
+
+
 def _catalog_entry_matching_customer_request(
     body: str | None,
     catalog: Sequence[Any],
@@ -2371,6 +2521,12 @@ def _catalog_entry_matching_customer_request(
             and normalize_portuguese(item.line) in normalized
         )
     }
+
+    # Capacity/features alone describe criteria, not a unique model identity.
+    # Never claim an exact catalog match only because one item happens to share
+    # the requested BTU value.
+    if requested_brand is None and not explicitly_mentioned_lines:
+        return None
 
     matches: list[Any] = []
     for item in catalog:
@@ -2448,7 +2604,7 @@ def _equipment_purchase_explicitly_known(body: str | None) -> bool:
 def _looks_like_specific_equipment_request(body: str | None) -> bool:
     normalized = normalize_portuguese(body or "")
     return bool(
-        re.search(r"\b\d{4,6}\s*btu\b", normalized)
+        _requested_capacity_btu(body) is not None
         or any(
             token in normalized
             for token in (
@@ -2482,7 +2638,7 @@ def _catalog_item_from_context(
     context: dict[str, Any],
     catalog: Sequence[Any],
 ) -> Any | None:
-    for key in ("recommended_equipment", "equipment_suggestion"):
+    for key in ("recommended_equipment", "equipment_suggestion", "catalog_alternative_suggestion"):
         snapshot = context.get(key)
         if not isinstance(snapshot, dict):
             continue
@@ -2793,10 +2949,12 @@ async def _equipment_question_answer(
         requested_brand is not None or mentioned_lines
     ) else []
 
-    requested_capacity = re.search(r"\b(\d{4,6})\s*btu\b", normalized)
-    if requested_capacity:
-        capacity = int(requested_capacity.group(1))
-        candidates = [item for item in candidates if item.capacity_btu == capacity]
+    requested_capacity = _requested_capacity_btu(inbound.body)
+    if requested_capacity is not None:
+        candidates = [
+            item for item in candidates
+            if item.capacity_btu == requested_capacity
+        ]
 
     cycle = _context_string(context, "equipment_cycle")
     if "quente frio" in normalized or "quente e frio" in normalized:
