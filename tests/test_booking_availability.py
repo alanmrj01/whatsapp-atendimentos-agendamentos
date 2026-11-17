@@ -307,7 +307,7 @@ async def test_real_planning_does_not_bypass_unknown_access_handoff() -> None:
     result = await port.estimate(
         BUSINESS_ID,
         SERVICE_ID,
-        BookingRequirements(),
+        BookingRequirements(access_condition=AccessCondition.UNKNOWN),
     )
 
     assert result.requires_handoff is True
