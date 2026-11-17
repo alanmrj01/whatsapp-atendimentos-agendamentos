@@ -139,9 +139,19 @@ def test_manual_lab_exposes_copy_conversation_button() -> None:
 
 
 def test_manual_lab_exposes_real_audio_upload() -> None:
-    assert "Enviar áudio real" in HTML
+    assert "Enviar arquivo de áudio" in HTML
     assert 'id="audioFile"' in HTML
     assert "sendAudioFile" in HTML
+
+
+def test_manual_lab_exposes_in_browser_audio_recording() -> None:
+    assert "Gravar áudio" in HTML
+    assert 'id="recordAudioButton"' in HTML
+    assert "toggleAudioRecording()" in HTML
+    assert "navigator.mediaDevices.getUserMedia({audio:true})" in HTML
+    assert "new MediaRecorder" in HTML
+    assert "audio/webm;codecs=opus" in HTML
+    assert "Parar e enviar" in HTML
 
 
 @pytest.mark.parametrize(
