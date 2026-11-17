@@ -10633,9 +10633,16 @@ async def _offer_dates(
         and previous_presented_price != current_service_price
     ):
         estimate = (
-            "Com as informações atualizadas, o valor estimado agora é "
-            f"{_format_brl(current_service_price)}. "
-            "Ele pode mudar se houver uma condição diferente no local."
+            (
+                "Com as informações atualizadas, o valor do serviço agora é "
+                f"{_format_brl(current_service_price)}."
+            )
+            if plan.service.pricing_type is PricingType.FIXED
+            else (
+                "Com as informações atualizadas, o valor estimado agora é "
+                f"{_format_brl(current_service_price)}. "
+                "Ele pode mudar se houver uma condição diferente no local."
+            )
         )
     else:
         estimate = _estimate_message(plan)
