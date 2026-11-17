@@ -28,8 +28,10 @@ from app.main import app
 from app.repositories.automation import ConversationAutomationControl
 from app.repositories.cloud_tasks import StoredTaskEvent
 from app.schemas.cloud_tasks import BillingPixExpiryTaskPayload, WhatsAppEventTaskPayload
+from app.speech.transcription import SpeechTranscriptionError
 from app.tasks import auth as task_auth
 from app.tasks import cloud_tasks as cloud_tasks_module
+from app.tasks import worker as task_worker
 from app.tasks.auth import require_cloud_tasks_oidc, require_scheduled_job_oidc
 from app.tasks.cloud_tasks import (
     CloudTasksBillingPixExpiryEnqueuer,
@@ -493,6 +495,95 @@ async def test_worker_keeps_original_audio_when_transcription_falls_back() -> No
     assert processed is True
     engine.process.assert_awaited_once_with(repository.inbound)
     assert repository.completed == [(EVENT_KEY, "processed")]
+
+
+@pytest.mark.asyncio
+async def test_production_audio_helper_downloads_transcribes_and_closes_sender(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    inbound_audio = ConversationInput(
+        business_id=uuid.UUID(int=10),
+        customer_id=uuid.UUID(int=11),
+        conversation_id=uuid.UUID(int=12),
+        provider_message_id="provider-audio",
+        message_type="audio",
+        body=None,
+        interactive_id=None,
+        whatsapp_id="5511999999999",
+        media_id="meta-audio-real",
+        media_mime_type="audio/ogg",
+    )
+    client = AsyncMock()
+    client.download_media.return_value = (b"audio-bytes", "audio/ogg")
+    resolver = AsyncMock()
+    resolver.resolve.return_value = client
+
+    monkeypatch.setattr(
+        task_worker,
+        "build_business_sender_resolver",
+        lambda *_args, **_kwargs: resolver,
+    )
+    transcription = AsyncMock(return_value="  preciso limpar meu ar  ")
+    monkeypatch.setattr(
+        task_worker,
+        "transcribe_short_audio",
+        transcription,
+    )
+
+    converted = await task_worker._transcribe_production_audio(  # type: ignore[arg-type]
+        object(),
+        inbound_audio,
+    )
+
+    client.download_media.assert_awaited_once_with("meta-audio-real")
+    transcription.assert_awaited_once_with(b"audio-bytes")
+    client.aclose.assert_awaited_once_with()
+    assert converted.message_type == "text"
+    assert converted.body == "preciso limpar meu ar"
+    assert converted.media_id == "meta-audio-real"
+    assert inbound_audio.message_type == "audio"
+    assert inbound_audio.body is None
+
+
+@pytest.mark.asyncio
+async def test_production_audio_helper_preserves_audio_on_speech_failure(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    inbound_audio = ConversationInput(
+        business_id=uuid.UUID(int=20),
+        customer_id=uuid.UUID(int=21),
+        conversation_id=uuid.UUID(int=22),
+        provider_message_id="provider-audio-fail",
+        message_type="audio",
+        body=None,
+        interactive_id=None,
+        whatsapp_id="5511999999999",
+        media_id="meta-audio-fail",
+        media_mime_type="audio/ogg",
+    )
+    client = AsyncMock()
+    client.download_media.return_value = (b"audio-bytes", "audio/ogg")
+    resolver = AsyncMock()
+    resolver.resolve.return_value = client
+
+    monkeypatch.setattr(
+        task_worker,
+        "build_business_sender_resolver",
+        lambda *_args, **_kwargs: resolver,
+    )
+    monkeypatch.setattr(
+        task_worker,
+        "transcribe_short_audio",
+        AsyncMock(side_effect=SpeechTranscriptionError("sanitized")),
+    )
+
+    converted = await task_worker._transcribe_production_audio(  # type: ignore[arg-type]
+        object(),
+        inbound_audio,
+    )
+
+    assert converted is inbound_audio
+    client.aclose.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
