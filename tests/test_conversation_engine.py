@@ -6675,3 +6675,72 @@ async def test_greeting_third_party_name_is_not_confused_with_self_identificatio
 
     assert repository.customer_name != "André"
     assert repository.customer_name == "Alan"
+
+
+@mark.asyncio
+async def test_colloquial_fala_opener_greets_before_resuming_cleaning_flow() -> None:
+    repository = FakeConversationRepository(customer_name=None)
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            20005,
+            body=(
+                "Fala, André, beleza? Aqui é o Adão. "
+                "Preciso dar uma limpada no meu ar-condicionado."
+            ),
+        )
+    )
+
+    assert repository.customer_name == "Adão"
+    assert repository.state == ConversationState.BOOKING_QUANTITY
+    assert repository.context["service_id"] == str(SERVICE_ID)
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert any(
+        greeting in body
+        for greeting in (
+            "Bom dia, Adão!",
+            "Boa tarde, Adão!",
+            "Boa noite, Adão!",
+        )
+    )
+    assert "Quantos itens ou aparelhos são?" in body
+    assert "Como posso te chamar?" not in body
+
+
+@mark.asyncio
+async def test_explicit_name_correction_during_booking_updates_name_and_keeps_checkpoint() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_QUANTITY,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Adão",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_quantity=True,
+    )
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(20006, body="me chamo Alan")
+    )
+
+    assert repository.customer_name == "Alan"
+    assert repository.state == ConversationState.BOOKING_QUANTITY
+    assert repository.context["service_id"] == str(SERVICE_ID)
+
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "Perfeito, Alan. Corrigi seu nome." in body
+    assert "Quantos itens ou aparelhos são?" in body
+    assert "preservar o que já foi preenchido" not in body.casefold()
