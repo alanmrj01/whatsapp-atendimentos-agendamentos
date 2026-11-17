@@ -451,6 +451,29 @@ async def test_cleaning_quantity_also_supports_six_or_more_and_exact_count() -> 
 
 
 @pytest.mark.asyncio
+async def test_manual_lab_owned_installation_model_silently_checks_catalog() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
+    session.repository.context = {
+        "service_id": str(INSTALLATION_SERVICE_ID),
+        "equipment_ownership": "has_equipment",
+        "equipment_model_known": True,
+        "quantity": 1,
+    }
+
+    snapshot = await send_message(
+        session_id,
+        ManualInput(text="LG Dual Inverter Voice 18000 BTU"),
+    )
+
+    assert "equipment_catalog" in snapshot["dry_run_calls"]
+    assert snapshot["context"]["equipment_model"] == "LG Dual Inverter Voice 18.000 BTU"
+    joined = " ".join(item["body"] for item in snapshot["history"]).casefold()
+    assert "não temos esse modelo específico" not in joined
+    assert snapshot["state"] != ConversationState.HUMAN_HANDOFF.value
+
+
+@pytest.mark.asyncio
 async def test_manual_lab_off_catalog_capacity_filters_catalog_before_extra_questions() -> None:
     session_id, session = await _new_named_session()
     session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
