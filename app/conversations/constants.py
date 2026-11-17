@@ -6,6 +6,7 @@ class ConversationState(StrEnum):
     CUSTOMER_NAME = "CUSTOMER_NAME"
     MENU = "MENU"
     BOOKING_SERVICE = "BOOKING_SERVICE"
+    BOOKING_SERVICE_DETAILS = "BOOKING_SERVICE_DETAILS"
     BOOKING_QUANTITY = "BOOKING_QUANTITY"
     BOOKING_ACCESS = "BOOKING_ACCESS"
     BOOKING_ADDRESS = "BOOKING_ADDRESS"
@@ -55,6 +56,8 @@ EQUIPMENT_HAS = "equipment.has"
 EQUIPMENT_NEEDS = "equipment.needs"
 EQUIPMENT_MODEL_KNOWN = "equipment.model.known"
 EQUIPMENT_MODEL_RECOMMEND = "equipment.model.recommend"
+EQUIPMENT_MODEL_EXACT_CHECK = "equipment.model.exact_check"
+EQUIPMENT_MODEL_SUGGESTED_SELECT = "equipment.model.suggested_select"
 EQUIPMENT_PREF_MODERN = "equipment.preference.modern"
 EQUIPMENT_PREF_COST_BENEFIT = "equipment.preference.cost_benefit"
 EQUIPMENT_PREF_ECONOMY = "equipment.preference.economy"
@@ -119,6 +122,10 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "issue_video_requested",
         "issue_video_received",
         "reported_issue",
+        "service_details_text",
+        "service_issue_category",
+        "appliance_type",
+        "service_qualification_version",
         "equipment_quantity",
         "equipment_profile_intro_sent",
         "room_area_m2",
@@ -135,6 +142,8 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "outdoor_space_unrestricted",
         "recommended_equipment",
         "equipment_suggestion",
+        "equipment_request_query",
+        "catalog_alternative_suggestion",
         "recommendation_presented",
         "delivery_method",
         "fulfillment_type",
@@ -166,6 +175,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "quote_presented",
         "quote_paused",
         "fallback_variant",
+        "last_assistant_topic",
         "catalog_mismatch_attempts",
         "catalog_mismatch_query",
         "purchase_mode",

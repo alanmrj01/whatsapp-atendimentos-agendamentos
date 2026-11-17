@@ -313,6 +313,7 @@ def test_catalog_semantics_cover_common_refrigeration_service_synonyms() -> None
         ),
         "relocation": (
             "quero mudar o ar de lugar",
+            "preciso trocar o split de lugar",
             "preciso remanejar o aparelho",
             "quero retirar e instalar em outro lugar",
         ),
@@ -329,6 +330,7 @@ def test_catalog_semantics_cover_common_refrigeration_service_synonyms() -> None
             "meu ar não liga",
             "preciso de assistência técnica",
             "o aparelho não resfria",
+            "meu ar condicionado não está gelando e preciso de manutenção",
         ),
         "gas": (
             "preciso repor gás",
@@ -364,4 +366,100 @@ def test_catalog_semantics_keep_generic_request_ambiguous_instead_of_guessing() 
     assert _service_for_interpretation(
         (preventive, corrective),
         interpretation,
+    ) is None
+
+
+def test_catalog_semantics_support_refrigerator_only_when_catalog_has_it() -> None:
+    refrigerator = BookingOption(
+        "1",
+        "Conserto e manutenção de geladeira e freezer",
+        generate_service_intent_examples(
+            "Conserto e manutenção de geladeira e freezer"
+        ),
+    )
+    hvac = BookingOption(
+        "2",
+        "Diagnóstico e manutenção corretiva de ar condicionado",
+        generate_service_intent_examples(
+            "Diagnóstico e manutenção corretiva de ar condicionado"
+        ),
+    )
+    interpreter = DeterministicConversationInterpreter()
+
+    for phrase in (
+        "minha geladeira não está gelando",
+        "a geladeira parou de gelar",
+        "meu freezer não congela",
+        "preciso consertar a geladeira",
+    ):
+        interpretation = interpreter.interpret(phrase)
+        assert _service_for_interpretation(
+            (refrigerator, hvac),
+            interpretation,
+        ) == refrigerator
+
+    assert _service_for_interpretation(
+        (hvac,),
+        interpreter.interpret("minha geladeira não está gelando"),
+    ) is None
+
+
+def test_explicit_hvac_request_excludes_other_catalog_domains() -> None:
+    diagnostics = BookingOption(
+        "1",
+        "Diagnóstico / manutenção corretiva",
+        generate_service_intent_examples("Diagnóstico / manutenção corretiva"),
+    )
+    refrigerator = BookingOption(
+        "2",
+        "Conserto e manutenção de geladeira e freezer",
+        generate_service_intent_examples(
+            "Conserto e manutenção de geladeira e freezer"
+        ),
+    )
+    electrical = BookingOption(
+        "3",
+        "Elétrica residencial",
+        generate_service_intent_examples("Elétrica residencial"),
+    )
+    interpreter = DeterministicConversationInterpreter()
+
+    for phrase in (
+        "meu ar condicionado não está gelando e preciso de manutenção",
+        "meu split não liga e preciso de manutenção",
+    ):
+        assert _service_for_interpretation(
+            (diagnostics, refrigerator, electrical),
+            interpreter.interpret(phrase),
+        ) == diagnostics
+
+
+def test_catalog_semantics_support_residential_electrical_only_when_catalog_has_it() -> None:
+    electrical = BookingOption(
+        "1",
+        "Elétrica residencial",
+        generate_service_intent_examples("Elétrica residencial"),
+    )
+    hvac = BookingOption(
+        "2",
+        "Manutenção corretiva de ar condicionado",
+        generate_service_intent_examples("Manutenção corretiva de ar condicionado"),
+    )
+    interpreter = DeterministicConversationInterpreter()
+
+    for phrase in (
+        "a tomada da cozinha queimou",
+        "meu disjuntor fica desarmando",
+        "o chuveiro não liga",
+        "preciso de um eletricista",
+    ):
+        interpretation = interpreter.interpret(phrase)
+        assert _service_for_interpretation(
+            (electrical, hvac),
+            interpretation,
+        ) == electrical
+
+    assert _service_for_interpretation(
+        (hvac,),
+        interpreter.interpret("o chuveiro não liga"),
     ) is None

@@ -286,7 +286,7 @@ async def test_building_hours_accept_only_explicit_property_windows(
         ConversationState.BOOKING_BUILDING_HOURS,
         context={
             "property_type": "building",
-            "request_mode": "quote",
+            "quote_presented": True,
             "service_address": SERVICE_ADDRESS,
         },
     )
@@ -312,7 +312,7 @@ async def test_building_hours_without_explicit_window_do_not_invent_hours(
         ConversationState.BOOKING_BUILDING_HOURS,
         context={
             "property_type": "building",
-            "request_mode": "quote",
+            "quote_presented": True,
             "service_address": SERVICE_ADDRESS,
         },
     )
@@ -327,12 +327,16 @@ async def test_building_hours_without_explicit_window_do_not_invent_hours(
 
 
 @pytest.mark.parametrize(
-    ("body", "expected"),
+    ("body", "expected", "expected_state"),
     [
-        ("condomínio permite serviço até 17h", "17:00"),
-        ("o limite é 18:00", "18:00"),
-        ("não pode depois das 16h", "16:00"),
-        ("serviço só até 15h", "15:00"),
+        (
+            "condomínio permite serviço até 17h",
+            "17:00",
+            ConversationState.BOOKING_BUILDING_HOURS,
+        ),
+        ("o limite é 18:00", "18:00", ConversationState.BOOKING_DATE),
+        ("não pode depois das 16h", "16:00", ConversationState.BOOKING_DATE),
+        ("serviço só até 15h", "15:00", ConversationState.BOOKING_DATE),
     ],
     ids=["until-17", "limit-18", "not-after-16", "service-until-15"],
 )
@@ -340,6 +344,7 @@ async def test_building_hours_without_explicit_window_do_not_invent_hours(
 async def test_site_limit_accepts_only_unambiguous_property_restriction(
     body: str,
     expected: str,
+    expected_state: ConversationState,
 ) -> None:
     repository, engine = _scenario(
         ConversationState.BOOKING_SITE_LIMIT,
@@ -351,7 +356,32 @@ async def test_site_limit_accepts_only_unambiguous_property_restriction(
 
     assert repository.context["site_limit_answered"] is True
     assert repository.context["site_allowed_end"] == expected
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == expected_state
+
+
+@pytest.mark.asyncio
+async def test_explicit_site_limit_survives_broader_building_hours() -> None:
+    repository, engine = _scenario(
+        ConversationState.BOOKING_SITE_LIMIT,
+        context={"service_address": SERVICE_ADDRESS},
+        site_limit=True,
+    )
+
+    await engine.process(
+        inbound(2081, body="condomínio permite serviço até 17h")
+    )
+
+    assert repository.state == ConversationState.BOOKING_BUILDING_HOURS
+    assert repository.context["site_allowed_end"] == "17:00"
+
+    await engine.process(
+        inbound(2082, body="Portaria libera entre 9 e 18 horas")
+    )
+
+    assert repository.context["building_hours_start"] == "09:00"
+    assert repository.context["building_hours_end"] == "18:00"
+    assert repository.context["site_allowed_end"] == "17:00"
+    assert repository.state == ConversationState.BOOKING_GATE_DETAILS
 
 
 @pytest.mark.parametrize(

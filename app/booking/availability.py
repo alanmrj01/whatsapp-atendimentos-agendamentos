@@ -63,6 +63,7 @@ from app.models import (
 )
 
 AVAILABILITY_HORIZON_DAYS = 30
+SUGGESTED_DATE_HORIZON_DAYS = 92
 MIN_FULL_BOOKING_LEAD_DAYS = 3
 APPOINTMENT_EXCLUSION_CONSTRAINT = (
     "excl_appointments_employee_confirmed_overlap"
@@ -452,6 +453,108 @@ class PostgresBookingAvailabilityPort:
                 label=_portuguese_date_label(value),
             )
             for value in available_dates
+        )
+
+    async def list_operating_weekdays(
+        self,
+        business_id: uuid.UUID,
+        service_id: uuid.UUID,
+    ) -> Sequence[BookingOption]:
+        business, _ = await self._load_business_service(
+            business_id, service_id
+        )
+        employee_ids = await self._require_eligible_employees(
+            business_id, service_id
+        )
+        configured_weekdays = {
+            int(value)
+            for value in (business.operating_weekdays or [])
+            if isinstance(value, int) and 0 <= value <= 4
+        }
+        company_hours_configured = bool(
+            configured_weekdays
+            and business.weekday_start_time is not None
+            and business.weekday_end_time is not None
+        )
+        if company_hours_configured:
+            weekdays = set(configured_weekdays)
+            if (
+                business.weekend_holiday_enabled
+                and business.weekend_holiday_start_time is not None
+                and business.weekend_holiday_end_time is not None
+            ):
+                weekdays.update((5, 6))
+        else:
+            rows = (
+                await self.session.scalars(
+                    select(WorkingHours.weekday).where(
+                        WorkingHours.business_id == business_id,
+                        WorkingHours.employee_id.in_(employee_ids),
+                    )
+                )
+            ).all()
+            weekdays = {
+                int(value)
+                for value in rows
+                if isinstance(value, int) and 0 <= value <= 6
+            }
+
+        labels = (
+            "Segunda-feira",
+            "Terça-feira",
+            "Quarta-feira",
+            "Quinta-feira",
+            "Sexta-feira",
+            "Sábado",
+            "Domingo",
+        )
+        return tuple(
+            BookingOption(id=str(value), label=labels[value])
+            for value in sorted(weekdays)
+        )
+
+    async def list_suggested_dates(
+        self,
+        business_id: uuid.UUID,
+        service_id: uuid.UUID,
+        requirements: BookingRequirements = BookingRequirements(),
+        *,
+        weekday: int | None = None,
+        limit: int = 3,
+    ) -> Sequence[BookingOption]:
+        if weekday is not None and not 0 <= weekday <= 6:
+            return ()
+        if limit <= 0:
+            return ()
+
+        business, service = await self._load_business_service(
+            business_id, service_id
+        )
+        plan = await self._build_plan(business, service, requirements)
+        self._require_automatic_plan(plan)
+        first_date = self._minimum_bookable_date(business)
+        last_date = first_date + timedelta(days=SUGGESTED_DATE_HORIZON_DAYS - 1)
+        starts = await self._available_starts(
+            business,
+            service,
+            requirements,
+            plan,
+            first_date,
+            last_date,
+        )
+        available_dates = sorted(
+            {
+                value.date()
+                for value in starts
+                if weekday is None or value.date().weekday() == weekday
+            }
+        )
+        return tuple(
+            BookingOption(
+                id=value.isoformat(),
+                label=_portuguese_date_label(value),
+            )
+            for value in available_dates[:limit]
         )
 
     async def list_times(
