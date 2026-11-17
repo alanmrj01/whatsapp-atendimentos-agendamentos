@@ -7400,10 +7400,23 @@ async def _handle_equipment_model(
             or existing_equipment
         )
     ):
+        equipment_model = model_value or raw
+        if existing_equipment:
+            try:
+                catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
+            except BookingRequiresHandoff:
+                catalog = ()
+            matched_catalog = _catalog_entry_matching_customer_request(
+                equipment_model,
+                catalog,
+            )
+            if matched_catalog is not None:
+                equipment_model = _catalog_equipment_label(matched_catalog)
+
         updated = {
             **_clear_repair_attempt(context, "equipment_model"),
             "equipment_model_known": True,
-            "equipment_model": model_value or raw,
+            "equipment_model": equipment_model,
         }
         updated.pop("equipment_photo_requested", None)
         return await _advance_intake(
