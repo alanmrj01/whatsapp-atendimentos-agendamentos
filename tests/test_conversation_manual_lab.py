@@ -571,9 +571,15 @@ async def test_manual_lab_off_catalog_capacity_offers_grounded_similar_before_pr
         snapshot["context"]["catalog_alternative_suggestion"]["item_id"]
         == "lab-lg-18000-cold"
     )
-    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
-    assert "não temos esse modelo específico" in last["body"].casefold()
-    assert "lg dual inverter voice 18.000 btu" in last["body"].casefold()
+    assistant_messages = [
+        item for item in snapshot["history"] if item["role"] == "assistant"
+    ]
+    joined_offer = " ".join(
+        item["body"] for item in assistant_messages[-3:]
+    ).casefold()
+    last = assistant_messages[-1]
+    assert "não temos esse modelo específico" in joined_offer
+    assert "lg dual inverter voice 18.000 btu" in joined_offer
     assert {option["id"] for option in last["options"]} >= {
         "equipment.model.suggested_select",
         "equipment.model.recommend",
@@ -616,9 +622,12 @@ async def test_manual_lab_nearest_capacity_is_explained_before_profile_questions
     )
 
     assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
-    mismatch = [
+    assistant_messages = [
         item for item in snapshot["history"] if item["role"] == "assistant"
-    ][-1]["body"].casefold()
+    ]
+    mismatch = " ".join(
+        item["body"] for item in assistant_messages[-3:]
+    ).casefold()
     assert "50.000 btu" in mismatch
     assert "mais próxima em capacidade" in mismatch
     assert "18.000 btu" in mismatch
@@ -659,9 +668,15 @@ async def test_manual_lab_off_catalog_model_offers_alternatives_and_keeps_automa
 
     assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
     assert snapshot["automation_enabled"] is True
-    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
-    assert "não temos esse modelo específico" in last["body"].casefold()
-    assert "equipamentos semelhantes" in last["body"].casefold()
+    assistant_messages = [
+        item for item in snapshot["history"] if item["role"] == "assistant"
+    ]
+    joined_offer = " ".join(
+        item["body"] for item in assistant_messages[-3:]
+    ).casefold()
+    last = assistant_messages[-1]
+    assert "não temos esse modelo específico" in joined_offer
+    assert "equipamentos semelhantes" in joined_offer
     assert {option["id"] for option in last["options"]} >= {
         "equipment.model.recommend",
         "equipment.model.exact_check",
@@ -712,9 +727,12 @@ async def test_manual_lab_partial_criteria_then_brand_never_contradicts_catalog(
 
     assert first["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
     assert first["context"]["equipment_request_query"] == "Split Inverter 18000 BTUs"
-    first_body = [
+    first_messages = [
         item for item in first["history"] if item["role"] == "assistant"
-    ][-1]["body"].casefold()
+    ]
+    first_body = " ".join(
+        item["body"] for item in first_messages[-3:]
+    ).casefold()
     assert "ainda não identifica um modelo específico" in first_body
     assert "encontrei opções com inverter" not in first_body
     assert "não temos esse modelo específico" not in first_body
@@ -730,10 +748,13 @@ async def test_manual_lab_partial_criteria_then_brand_never_contradicts_catalog(
         second["context"]["catalog_alternative_suggestion"]["item_id"]
         == "lab-lg-18000-cold"
     )
-    second_last = [
+    second_messages = [
         item for item in second["history"] if item["role"] == "assistant"
-    ][-1]
-    second_body = second_last["body"].casefold()
+    ]
+    second_last = second_messages[-1]
+    second_body = " ".join(
+        item["body"] for item in second_messages[-3:]
+    ).casefold()
     assert "não temos esse modelo específico" in second_body
     assert "lg dual inverter voice 18.000 btu" in second_body
     assert "r$ 3.899,00" in second_body
