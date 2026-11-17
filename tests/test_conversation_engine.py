@@ -5203,12 +5203,19 @@ async def test_off_catalog_purchase_model_offers_similar_options_before_profile(
     assert "equipment_model" not in repository.context
     assert "recommended_equipment" not in repository.context
     transition = repository.outbounds[-1].transition
-    body = transition.outbound.body or ""
-    assert "não temos esse modelo específico" in body.casefold()
-    assert "equipamentos semelhantes" in body.casefold()
+    messages = (transition.outbound, *transition.follow_ups)
+    combined = " ".join(message.body or "" for message in messages).casefold()
+    assert "não temos esse modelo específico" in combined
+    assert "equipamentos semelhantes" in combined
+    interactive = next(
+        message
+        for message in messages
+        if isinstance(message.outbound_payload, dict)
+        and "buttons" in message.outbound_payload
+    )
     button_ids = {
         row["id"]
-        for row in transition.outbound.outbound_payload["buttons"]
+        for row in interactive.outbound_payload["buttons"]
     }
     assert "equipment.model.recommend" in button_ids
     assert "equipment.model.exact_check" in button_ids
@@ -5653,9 +5660,16 @@ async def test_purchase_model_brand_and_capacity_must_match_same_catalog_item() 
     assert "não temos esse modelo específico" in combined
     assert "equipamentos semelhantes" in combined
     assert repository.context["catalog_alternative_suggestion"]["item_id"] == "gree-only"
+    messages = (transition.outbound, *transition.follow_ups)
+    interactive = next(
+        message
+        for message in messages
+        if isinstance(message.outbound_payload, dict)
+        and "buttons" in message.outbound_payload
+    )
     button_ids = {
         row["id"]
-        for row in transition.outbound.outbound_payload["buttons"]
+        for row in interactive.outbound_payload["buttons"]
     }
     assert {
         "equipment.model.suggested_select",
