@@ -4462,6 +4462,7 @@ def _stale_interactive_transition(
             EQUIPMENT_MODEL_KNOWN,
             EQUIPMENT_MODEL_RECOMMEND,
             EQUIPMENT_MODEL_EXACT_CHECK,
+            EQUIPMENT_MODEL_SUGGESTED_SELECT,
         },
         ConversationState.BOOKING_EQUIPMENT_PROFILE: {
             EQUIPMENT_PREF_MODERN,
