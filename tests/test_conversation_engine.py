@@ -776,6 +776,13 @@ async def test_weekday_choice_narrows_dates_then_selected_date_offers_times() ->
         "slot:2026-10-01|11:00",
         "slot:2026-10-08|11:30",
     ]
+    assert [row["title"] for row in date_rows] == [
+        "24/09 às 10:30",
+        "01/10 às 11:00",
+        "08/10 às 11:30",
+    ]
+    assert all(len(row["title"]) <= 24 for row in date_rows)
+    assert repository.outbounds[-1].transition.outbound.message_type == "interactive_list"
 
     await engine.process(
         inbound(
