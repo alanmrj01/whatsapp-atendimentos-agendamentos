@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -14,6 +14,11 @@ from pydantic import BaseModel, Field
 from app.conversation_lab.adapters import DryRunBookingPort, LabConversationRepository, inbound
 from app.conversations.engine import ConversationEngine
 from app.conversations.outbound import OutboundMessage
+from app.speech.transcription import (
+    MAX_SHORT_AUDIO_BYTES,
+    SpeechTranscriptionError,
+    transcribe_short_audio,
+)
 
 SESSION_TTL_SECONDS = 2 * 60 * 60
 MAX_SESSIONS = 50
@@ -21,6 +26,10 @@ MAX_HISTORY_ITEMS = 300
 
 if os.getenv("CONVERSATION_LAB_ALLOW_EXTERNAL_IO", "false").lower() == "true":
     raise RuntimeError("conversation_lab_external_io_must_remain_disabled")
+
+SPEECH_ENABLED = (
+    os.getenv("CONVERSATION_LAB_SPEECH_ENABLED", "false").lower() == "true"
+)
 
 
 class ManualInput(BaseModel):
@@ -125,6 +134,7 @@ def _snapshot(session_id: str, session: ManualSession) -> dict[str, Any]:
             "history": session.history[-MAX_HISTORY_ITEMS:],
             "lab": {
                 "external_io": False,
+                "speech_to_text": SPEECH_ENABLED,
                 "database": False,
                 "meta_whatsapp": False,
                 "billing": False,
@@ -199,14 +209,26 @@ async def send_message(session_id: str, payload: ManualInput) -> dict[str, Any]:
             "audio": "[áudio sintético]",
         }[payload.message_type]
 
-    session.history.append(
+    return await _complete_turn(
+        session_id,
+        session,
+        event,
         {
             "role": "user",
             "message_type": payload.message_type,
             "body": user_label,
             "action": action,
-        }
+        },
     )
+
+
+async def _complete_turn(
+    session_id: str,
+    session: ManualSession,
+    event,
+    history_item: dict[str, Any],
+) -> dict[str, Any]:
+    session.history.append(history_item)
 
     before = len(session.repository.outbounds)
     await ConversationEngine(session.repository, session.port).process(event)
@@ -221,6 +243,86 @@ async def send_message(session_id: str, payload: ManualInput) -> dict[str, Any]:
     session.history = session.history[-MAX_HISTORY_ITEMS:]
     session.updated_at = time.monotonic()
     return _snapshot(session_id, session)
+
+
+async def _send_transcribed_audio(
+    session_id: str,
+    audio_bytes: bytes,
+    content_type: str | None,
+) -> dict[str, Any]:
+    if not SPEECH_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Transcrição de áudio não habilitada neste laboratório",
+        )
+    if not audio_bytes:
+        raise HTTPException(status_code=422, detail="Áudio vazio")
+    if len(audio_bytes) > MAX_SHORT_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Áudio acima do limite de 10 MB",
+        )
+
+    normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_type and not (
+        normalized_type.startswith("audio/")
+        or normalized_type in {"video/webm", "application/octet-stream"}
+    ):
+        raise HTTPException(
+            status_code=415,
+            detail="Formato de áudio não suportado no laboratório",
+        )
+
+    session = _session_or_404(session_id)
+    try:
+        transcript = await transcribe_short_audio(audio_bytes)
+    except SpeechTranscriptionError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Não foi possível transcrever este áudio",
+        ) from exc
+
+    text = " ".join(transcript.split()).strip()
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail="Não foi possível identificar fala neste áudio",
+        )
+
+    event = inbound(session.sequence, body=text)
+    return await _complete_turn(
+        session_id,
+        session,
+        event,
+        {
+            "role": "user",
+            "message_type": "audio",
+            "body": f"🎙️ {text}",
+            "transcription": text,
+        },
+    )
+
+
+@app.post("/api/session/{session_id}/audio")
+async def send_audio(session_id: str, request: Request) -> dict[str, Any]:
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_size = int(content_length)
+        except ValueError:
+            declared_size = 0
+        if declared_size > MAX_SHORT_AUDIO_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Áudio acima do limite de 10 MB",
+            )
+
+    audio_bytes = await request.body()
+    return await _send_transcribed_audio(
+        session_id,
+        audio_bytes,
+        request.headers.get("content-type"),
+    )
 
 
 HTML = r"""<!doctype html>
@@ -260,6 +362,8 @@ pre{background:#0f172a;color:#dbeafe;border-radius:10px;padding:10px;overflow:au
 <button onclick="sendMedia('image')">📷 Foto sintética</button>
 <button onclick="sendMedia('video')">🎥 Vídeo sintético</button>
 <button onclick="sendMedia('audio')">🎙️ Áudio sintético</button>
+<button onclick="document.getElementById('audioFile').click()">🎤 Enviar áudio real</button>
+<input id="audioFile" type="file" accept="audio/*,.ogg,.mp3,.wav,.m4a,.webm" style="display:none" onchange="sendAudioFile(this)">
 <button id="copyButton" onclick="copyConversation()">📋 Copiar conversa</button>
 <button onclick="resetSession()">Nova conversa</button>
 </div>
@@ -288,6 +392,24 @@ async function resetSession(){if(sessionId)await fetch('/api/session/'+sessionId
 async function sendText(){const input=document.getElementById('input');const text=input.value.trim();if(!text)return;input.value='';await send({text,message_type:'text'})}
 async function sendAction(id,title){await send({text:title,action:id,message_type:'text'})}
 async function sendMedia(type){await send({message_type:type})}
+async function sendAudioFile(input){
+ const file=input.files&&input.files[0];
+ if(!file)return;
+ if(file.size>10*1024*1024){alert('O áudio deve ter no máximo 10 MB.');input.value='';return}
+ try{
+   const r=await fetch('/api/session/'+sessionId+'/audio',{
+     method:'POST',
+     headers:{'Content-Type':file.type||'application/octet-stream'},
+     body:file
+   });
+   if(!r.ok)throw new Error(await r.text());
+   render(await r.json());
+ }catch(e){
+   alert('Falha ao transcrever o áudio: '+e.message);
+ }finally{
+   input.value='';
+ }
+}
 async function send(payload){try{const d=await api('/api/session/'+sessionId+'/message',{method:'POST',body:JSON.stringify(payload)});render(d)}catch(e){alert('Falha no laboratório: '+e.message)}}
 async function copyConversation(){
  const history=(lastSnapshot&&lastSnapshot.history)||[];

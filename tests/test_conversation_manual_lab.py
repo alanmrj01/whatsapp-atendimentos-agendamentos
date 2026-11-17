@@ -21,6 +21,7 @@ from app.conversation_lab.manual import (
     create_session,
     health,
     send_message,
+    _send_transcribed_audio,
 )
 from app.conversations.constants import (
     EQUIPMENT_BOTH,
@@ -59,6 +60,7 @@ async def test_manual_lab_health_and_isolation_flags() -> None:
     assert snapshot["session_id"] != session_id
     assert snapshot["lab"] == {
         "external_io": False,
+        "speech_to_text": False,
         "database": False,
         "meta_whatsapp": False,
         "billing": False,
@@ -134,6 +136,12 @@ async def test_manual_lab_has_fixed_isolated_equipment_catalog() -> None:
 def test_manual_lab_exposes_copy_conversation_button() -> None:
     assert "Copiar conversa" in HTML
     assert "copyConversation()" in HTML
+
+
+def test_manual_lab_exposes_real_audio_upload() -> None:
+    assert "Enviar áudio real" in HTML
+    assert 'id="audioFile"' in HTML
+    assert "sendAudioFile" in HTML
 
 
 @pytest.mark.parametrize(
@@ -375,6 +383,51 @@ async def test_manual_lab_commercial_negotiation_hands_off_without_losing_candid
     assert snapshot["automation_enabled"] is False
     assert snapshot["handoff_status"] == "waiting"
     assert snapshot["context"]["candidate_booking"] == candidate
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_real_audio_is_transcribed_before_engine(
+    monkeypatch,
+) -> None:
+    from app.conversation_lab import manual as manual_lab
+
+    session_id, _ = await _new_named_session()
+
+    async def fake_transcribe(_: bytes) -> str:
+        return "quero fazer uma limpeza no ar condicionado"
+
+    monkeypatch.setattr(manual_lab, "SPEECH_ENABLED", True)
+    monkeypatch.setattr(manual_lab, "transcribe_short_audio", fake_transcribe)
+
+    snapshot = await _send_transcribed_audio(
+        session_id,
+        b"audio-fixture",
+        "audio/ogg",
+    )
+
+    user_messages = [
+        item for item in snapshot["history"] if item["role"] == "user"
+    ]
+    assert user_messages[-1]["message_type"] == "audio"
+    assert (
+        user_messages[-1]["transcription"]
+        == "quero fazer uma limpeza no ar condicionado"
+    )
+    assert snapshot["state"] == ConversationState.BOOKING_QUANTITY.value
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_real_audio_is_disabled_by_default() -> None:
+    session_id, _ = await _new_named_session()
+
+    with pytest.raises(Exception) as exc_info:
+        await _send_transcribed_audio(
+            session_id,
+            b"audio-fixture",
+            "audio/ogg",
+        )
+
+    assert getattr(exc_info.value, "status_code", None) == 503
 
 
 @pytest.mark.asyncio
