@@ -547,7 +547,7 @@ async def test_owned_installation_model_missing_from_catalog_can_keep_current_un
 
 
 @pytest.mark.asyncio
-async def test_manual_lab_off_catalog_capacity_filters_catalog_before_extra_questions() -> None:
+async def test_manual_lab_off_catalog_capacity_offers_grounded_similar_before_profile() -> None:
     session_id, session = await _new_named_session()
     session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
     session.repository.context = {
@@ -567,19 +567,39 @@ async def test_manual_lab_off_catalog_capacity_filters_catalog_before_extra_ques
 
     assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
     assert snapshot["context"]["catalog_mismatch_capacity_btu"] == 18000
-    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
-    assert "não temos esse modelo específico" in last["body"].casefold()
+    assert (
+        snapshot["context"]["catalog_alternative_suggestion"]["item_id"]
+        == "lab-lg-18000-cold"
+    )
+    assistant_messages = [
+        item for item in snapshot["history"] if item["role"] == "assistant"
+    ]
+    joined_offer = " ".join(
+        item["body"] for item in assistant_messages[-3:]
+    ).casefold()
+    last = assistant_messages[-1]
+    assert "não temos esse modelo específico" in joined_offer
+    assert "lg dual inverter voice 18.000 btu" in joined_offer
+    assert {option["id"] for option in last["options"]} >= {
+        "equipment.model.suggested_select",
+        "equipment.model.recommend",
+        "equipment.model.exact_check",
+    }
 
     snapshot = await send_message(
         session_id,
-        ManualInput(text="sim", action="equipment.model.recommend"),
+        ManualInput(text="Ver outros similares", action="equipment.model.recommend"),
     )
 
-    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
-    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
-    assert "18.000 btu" in last["body"].casefold()
-    assert "qual delas você gostaria de avaliar" in last["body"].casefold()
-    assert "quantas pessoas" not in last["body"].casefold()
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_PROFILE.value
+    last_messages = [
+        item["body"]
+        for item in snapshot["history"]
+        if item["role"] == "assistant"
+    ][-2:]
+    joined = " ".join(last_messages).casefold()
+    assert "quantas pessoas" in joined
+    assert "qual delas você gostaria de avaliar" not in joined
 
 
 @pytest.mark.asyncio
@@ -600,17 +620,31 @@ async def test_manual_lab_nearest_capacity_is_explained_before_profile_questions
         session_id,
         ManualInput(text="Midea 50 mil BTUs"),
     )
+
+    assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
+    assistant_messages = [
+        item for item in snapshot["history"] if item["role"] == "assistant"
+    ]
+    mismatch = " ".join(
+        item["body"] for item in assistant_messages[-3:]
+    ).casefold()
+    assert "50.000 btu" in mismatch
+    assert "mais próxima em capacidade" in mismatch
+    assert "18.000 btu" in mismatch
+    assert "catalog_alternative_suggestion" not in snapshot["context"]
+
     snapshot = await send_message(
         session_id,
-        ManualInput(text="sim", action="equipment.model.recommend"),
+        ManualInput(text="Ver outros similares", action="equipment.model.recommend"),
     )
 
     assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_PROFILE.value
-    joined = " ".join(item["body"] for item in snapshot["history"][-3:]).casefold()
-    assert "50.000 btu" in joined
-    assert "capacidade mais próxima" in joined
-    assert "18.000 btu" in joined
-    assert "perfil do ambiente" in joined
+    joined = " ".join(
+        item["body"]
+        for item in snapshot["history"]
+        if item["role"] == "assistant"
+    )[-400:].casefold()
+    assert "perfil do ambiente" in joined or "quantas pessoas" in joined
 
 
 @pytest.mark.asyncio
@@ -634,9 +668,15 @@ async def test_manual_lab_off_catalog_model_offers_alternatives_and_keeps_automa
 
     assert snapshot["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
     assert snapshot["automation_enabled"] is True
-    last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
-    assert "não temos esse modelo específico" in last["body"].casefold()
-    assert "opções semelhantes" in last["body"].casefold()
+    assistant_messages = [
+        item for item in snapshot["history"] if item["role"] == "assistant"
+    ]
+    joined_offer = " ".join(
+        item["body"] for item in assistant_messages[-3:]
+    ).casefold()
+    last = assistant_messages[-1]
+    assert "não temos esse modelo específico" in joined_offer
+    assert "equipamentos semelhantes" in joined_offer
     assert {option["id"] for option in last["options"]} >= {
         "equipment.model.recommend",
         "equipment.model.exact_check",
@@ -664,6 +704,116 @@ async def test_manual_lab_off_catalog_model_offers_alternatives_and_keeps_automa
     assert snapshot["handoff_status"] == "none"
     last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
     assert "tamanho aproximado" in last["body"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_catalog_alternative_button_selects_presented_item() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
+    session.repository.context = {
+        "service_id": str(INSTALLATION_SERVICE_ID),
+        "request_mode": "quote",
+        "purchase_mode": "purchase",
+        "purchase_only": True,
+        "equipment_ownership": "needs_equipment",
+        "equipment_model_known": True,
+        "quantity": 1,
+    }
+
+    offer = await send_message(
+        session_id,
+        ManualInput(text="Midea 18 mil BTUs Split Hi Wall"),
+    )
+
+    assert (
+        offer["context"]["catalog_alternative_suggestion"]["item_id"]
+        == "lab-lg-18000-cold"
+    )
+
+    selected = await send_message(
+        session_id,
+        ManualInput(
+            text="Escolher este",
+            action="equipment.model.suggested_select",
+        ),
+    )
+
+    assert selected["automation_enabled"] is True
+    assert selected["handoff_status"] == "none"
+    assert selected["state"] == ConversationState.BOOKING_EQUIPMENT_DELIVERY.value
+    assert selected["context"]["recommended_equipment"]["item_id"] == "lab-lg-18000-cold"
+    assert "LG Dual Inverter Voice" in selected["context"]["equipment_model"]
+
+
+@pytest.mark.asyncio
+async def test_manual_lab_partial_criteria_then_brand_never_contradicts_catalog() -> None:
+    session_id, session = await _new_named_session()
+    session.repository.state = ConversationState.BOOKING_EQUIPMENT_MODEL
+    session.repository.context = {
+        "service_id": str(INSTALLATION_SERVICE_ID),
+        "request_mode": "quote",
+        "purchase_mode": "purchase",
+        "purchase_only": True,
+        "equipment_ownership": "needs_equipment",
+        "equipment_model_known": True,
+        "quantity": 1,
+    }
+
+    first = await send_message(
+        session_id,
+        ManualInput(text="Split Inverter 18000 BTUs"),
+    )
+
+    assert first["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
+    assert first["context"]["equipment_request_query"] == "Split Inverter 18000 BTUs"
+    first_messages = [
+        item for item in first["history"] if item["role"] == "assistant"
+    ]
+    first_body = " ".join(
+        item["body"] for item in first_messages[-3:]
+    ).casefold()
+    assert "ainda não identifica um modelo específico" in first_body
+    assert "encontrei opções com inverter" not in first_body
+    assert "não temos esse modelo específico" not in first_body
+
+    second = await send_message(
+        session_id,
+        ManualInput(text="Electrolux"),
+    )
+
+    assert second["state"] == ConversationState.BOOKING_EQUIPMENT_MODEL.value
+    assert second["context"]["catalog_mismatch_capacity_btu"] == 18000
+    assert (
+        second["context"]["catalog_alternative_suggestion"]["item_id"]
+        == "lab-lg-18000-cold"
+    )
+    second_messages = [
+        item for item in second["history"] if item["role"] == "assistant"
+    ]
+    second_last = second_messages[-1]
+    second_body = " ".join(
+        item["body"] for item in second_messages[-3:]
+    ).casefold()
+    assert "não temos esse modelo específico" in second_body
+    assert "lg dual inverter voice 18.000 btu" in second_body
+    assert "r$ 3.899,00" in second_body
+    assert "encontrei esse equipamento no catálogo ativo" not in second_body
+    assert {option["id"] for option in second_last["options"]} >= {
+        "equipment.model.suggested_select",
+        "equipment.model.recommend",
+        "equipment.model.exact_check",
+    }
+
+    selected = await send_message(
+        session_id,
+        ManualInput(text="esse mesmo"),
+    )
+
+    assert selected["automation_enabled"] is True
+    assert selected["handoff_status"] == "none"
+    assert selected["state"] == ConversationState.BOOKING_EQUIPMENT_DELIVERY.value
+    assert selected["context"]["recommended_equipment"]["item_id"] == "lab-lg-18000-cold"
+    assert "LG Dual Inverter Voice" in selected["context"]["equipment_model"]
 
 
 @pytest.mark.asyncio

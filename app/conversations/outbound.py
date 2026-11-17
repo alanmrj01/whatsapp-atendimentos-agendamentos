@@ -14,6 +14,7 @@ from app.conversations.constants import (
     EQUIPMENT_MODEL_KNOWN,
     EQUIPMENT_MODEL_RECOMMEND,
     EQUIPMENT_MODEL_EXACT_CHECK,
+    EQUIPMENT_MODEL_SUGGESTED_SELECT,
     EQUIPMENT_NEEDS,
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
@@ -196,20 +197,34 @@ def equipment_model_request_message(
     return OutboundMessage(message_type="text", body=body)
 
 
-def equipment_alternative_offer_message() -> OutboundMessage:
+def equipment_alternative_offer_message(
+    *,
+    alternative_text: str | None = None,
+    allow_select_alternative: bool = False,
+) -> OutboundMessage:
+    body = "Entendi. Não temos esse modelo específico no catálogo."
+    if alternative_text:
+        body += f" {alternative_text}"
+    body += (
+        " Se quiser, posso te ajudar a comparar outros equipamentos semelhantes."
+    )
+
+    options: list[BookingOption] = []
+    if allow_select_alternative:
+        options.append(
+            BookingOption(EQUIPMENT_MODEL_SUGGESTED_SELECT, "Escolher este")
+        )
+    options.extend(
+        (
+            BookingOption(EQUIPMENT_MODEL_RECOMMEND, "Ver outros similares"),
+            BookingOption(EQUIPMENT_MODEL_EXACT_CHECK, "Quero o original"),
+        )
+    )
     return OutboundMessage(
         message_type="interactive_button",
-        body=(
-            "Desculpe, não temos esse modelo específico no catálogo. "
-            "Posso te apresentar opções semelhantes que temos disponíveis?"
-        ),
+        body=body,
         interactive_id="booking.equipment_alternative",
-        outbound_payload=_button_payload(
-            (
-                BookingOption(EQUIPMENT_MODEL_RECOMMEND, "Ver semelhantes"),
-                BookingOption(EQUIPMENT_MODEL_EXACT_CHECK, "Quero esse modelo"),
-            )
-        ),
+        outbound_payload=_button_payload(tuple(options)),
     )
 
 

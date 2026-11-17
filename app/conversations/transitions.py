@@ -49,6 +49,7 @@ from app.conversations.constants import (
     EQUIPMENT_MODEL_KNOWN,
     EQUIPMENT_MODEL_RECOMMEND,
     EQUIPMENT_MODEL_EXACT_CHECK,
+    EQUIPMENT_MODEL_SUGGESTED_SELECT,
     EQUIPMENT_NEEDS,
     EQUIPMENT_PREF_COST_BENEFIT,
     EQUIPMENT_PREF_ECONOMY,
@@ -209,6 +210,35 @@ from app.conversations.types import (
 _CUSTOMER_NAME_SKIPPED_KEY = "customer_name_skipped"
 
 
+def _catalog_alternative_reference_action(
+    context: dict[str, Any],
+    body: str | None,
+    action: str | None,
+) -> str | None:
+    if action is not None:
+        return action
+    if (
+        not isinstance(context.get("catalog_alternative_suggestion"), dict)
+        or _context_string(context, "catalog_mismatch_query") is None
+    ):
+        return None
+    normalized = normalize_portuguese(body or "")
+    if normalized in {
+        "esse",
+        "esse mesmo",
+        "quero esse",
+        "quero esse mesmo",
+        "quero esse modelo",
+        "pode ser esse",
+        "prefiro esse",
+        "fico com esse",
+        "vou ficar com esse",
+        "escolher este",
+    }:
+        return EQUIPMENT_MODEL_SUGGESTED_SELECT
+    return None
+
+
 async def determine_transition(
     conversation: ConversationSnapshot,
     inbound: ConversationInput,
@@ -220,8 +250,12 @@ async def determine_transition(
     state = _canonical_state(conversation.state)
     interpreter = DeterministicConversationInterpreter()
     interpretation = interpreter.interpret(inbound.body)
-    action = inbound.interactive_id
     base_context = _clean_context(conversation.context)
+    action = _catalog_alternative_reference_action(
+        base_context,
+        inbound.body,
+        inbound.interactive_id,
+    )
     normalized_inbound = normalize_portuguese(inbound.body or "")
 
     if (
@@ -556,7 +590,11 @@ async def _route_named_conversation(
     booking_port: BookingAvailabilityPort | None,
 ) -> ConversationTransition | None:
     state = _canonical_state(conversation.state)
-    action = inbound.interactive_id
+    action = _catalog_alternative_reference_action(
+        context,
+        inbound.body,
+        inbound.interactive_id,
+    )
     customer_name = conversation.customer_name
 
     suggestion = context.get("equipment_suggestion")
@@ -2352,6 +2390,155 @@ def _requested_capacity_btu(body: str | None) -> int | None:
     return None
 
 
+def _requested_equipment_features(body: str | None) -> tuple[str, ...]:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return ()
+    features: list[str] = []
+    if "inverter" in normalized:
+        features.append("inverter")
+    if any(token in normalized for token in ("wifi", "wi fi")):
+        features.append("wifi")
+    if "alexa" in normalized:
+        features.append("alexa")
+    if "bluetooth" in normalized:
+        features.append("bluetooth")
+    return tuple(features)
+
+
+def _equipment_request_has_identity(
+    body: str | None,
+    catalog: Sequence[Any],
+) -> bool:
+    normalized = normalize_portuguese(body or "")
+    if not normalized:
+        return False
+    if _requested_equipment_brand(body) is not None:
+        return True
+    if any(
+        len(normalize_portuguese(item.line)) >= 4
+        and normalize_portuguese(item.line) in normalized
+        for item in catalog
+    ):
+        return True
+
+    reduced = re.sub(r"\b\d{1,6}\b", " ", normalized)
+    generic_tokens = {
+        "ar",
+        "condicionado",
+        "aparelho",
+        "equipamento",
+        "modelo",
+        "split",
+        "inverter",
+        "hi",
+        "wall",
+        "btu",
+        "btus",
+        "mil",
+        "frio",
+        "quente",
+        "wifi",
+        "wi",
+        "fi",
+        "alexa",
+        "bluetooth",
+    }
+    remaining = [
+        token
+        for token in reduced.split()
+        if token not in generic_tokens
+    ]
+    return bool(remaining)
+
+
+def _catalog_item_has_feature(item: Any, feature: str) -> bool:
+    values = (
+        normalize_portuguese(item.line),
+        *(normalize_portuguese(value) for value in item.features),
+    )
+    return any(feature in value for value in values)
+
+
+def _catalog_alternative_for_request(
+    body: str | None,
+    catalog: Sequence[Any],
+) -> tuple[Any | None, bool]:
+    if not catalog:
+        return None, False
+
+    capacity = _requested_capacity_btu(body)
+    features = _requested_equipment_features(body)
+    normalized = normalize_portuguese(body or "")
+    requested_cycle = (
+        "heat_cool"
+        if "quente frio" in normalized or "quente e frio" in normalized
+        else (
+            "cold"
+            if "so frio" in normalized or "somente frio" in normalized
+            else None
+        )
+    )
+    if capacity is None and not features and requested_cycle is None:
+        return None, False
+
+    candidates = list(catalog)
+    same_capacity = False
+    if capacity is not None:
+        exact_capacity = [item for item in candidates if item.capacity_btu == capacity]
+        if exact_capacity:
+            candidates = exact_capacity
+            same_capacity = True
+        else:
+            nearest_capacity = min(
+                {item.capacity_btu for item in candidates},
+                key=lambda value: (abs(value - capacity), value),
+            )
+            candidates = [
+                item for item in candidates
+                if item.capacity_btu == nearest_capacity
+            ]
+
+    def score(item: Any) -> tuple[int, int, float, str, str]:
+        feature_misses = sum(
+            1 for feature in features
+            if not _catalog_item_has_feature(item, feature)
+        )
+        cycle_miss = (
+            0
+            if requested_cycle is None or requested_cycle in item.cycles
+            else 1
+        )
+        price = (
+            float(item.price)
+            if item.price is not None
+            else float("inf")
+        )
+        return (
+            cycle_miss,
+            feature_misses,
+            price,
+            normalize_portuguese(item.brand),
+            normalize_portuguese(item.line),
+        )
+
+    selected = min(candidates, key=score)
+    feature_match = all(
+        _catalog_item_has_feature(selected, feature)
+        for feature in features
+    )
+    cycle_match = (
+        requested_cycle is None or requested_cycle in selected.cycles
+    )
+    selectable = (
+        capacity is not None
+        and same_capacity
+        and feature_match
+        and cycle_match
+    )
+    return selected, selectable
+
+
 def _catalog_entry_matching_customer_request(
     body: str | None,
     catalog: Sequence[Any],
@@ -2371,6 +2558,12 @@ def _catalog_entry_matching_customer_request(
             and normalize_portuguese(item.line) in normalized
         )
     }
+
+    # Capacity/features alone describe criteria, not a unique model identity.
+    # Never claim an exact catalog match only because one item happens to share
+    # the requested BTU value.
+    if requested_brand is None and not explicitly_mentioned_lines:
+        return None
 
     matches: list[Any] = []
     for item in catalog:
@@ -2448,7 +2641,7 @@ def _equipment_purchase_explicitly_known(body: str | None) -> bool:
 def _looks_like_specific_equipment_request(body: str | None) -> bool:
     normalized = normalize_portuguese(body or "")
     return bool(
-        re.search(r"\b\d{4,6}\s*btu\b", normalized)
+        _requested_capacity_btu(body) is not None
         or any(
             token in normalized
             for token in (
@@ -2482,7 +2675,7 @@ def _catalog_item_from_context(
     context: dict[str, Any],
     catalog: Sequence[Any],
 ) -> Any | None:
-    for key in ("recommended_equipment", "equipment_suggestion"):
+    for key in ("recommended_equipment", "equipment_suggestion", "catalog_alternative_suggestion"):
         snapshot = context.get(key)
         if not isinstance(snapshot, dict):
             continue
@@ -2793,10 +2986,12 @@ async def _equipment_question_answer(
         requested_brand is not None or mentioned_lines
     ) else []
 
-    requested_capacity = re.search(r"\b(\d{4,6})\s*btu\b", normalized)
-    if requested_capacity:
-        capacity = int(requested_capacity.group(1))
-        candidates = [item for item in candidates if item.capacity_btu == capacity]
+    requested_capacity = _requested_capacity_btu(inbound.body)
+    if requested_capacity is not None:
+        candidates = [
+            item for item in candidates
+            if item.capacity_btu == requested_capacity
+        ]
 
     cycle = _context_string(context, "equipment_cycle")
     if "quente frio" in normalized or "quente e frio" in normalized:
@@ -3794,10 +3989,19 @@ def _message_can_answer_pending_state(
                 "sim quero",
                 "quero semelhantes",
                 "quero ver semelhantes",
+                "ver outros",
+                "ver outros similares",
+                "ver outros equipamentos semelhantes",
+                "esse",
+                "quero esse",
                 "quero esse modelo",
                 "quero esse mesmo",
+                "pode ser esse",
                 "prefiro esse modelo",
                 "prefiro esse",
+                "fico com esse",
+                "vou ficar com esse",
+                "escolher este",
                 "quero exatamente esse",
                 "tem que ser esse",
                 "esse mesmo",
@@ -4258,6 +4462,7 @@ def _stale_interactive_transition(
             EQUIPMENT_MODEL_KNOWN,
             EQUIPMENT_MODEL_RECOMMEND,
             EQUIPMENT_MODEL_EXACT_CHECK,
+            EQUIPMENT_MODEL_SUGGESTED_SELECT,
         },
         ConversationState.BOOKING_EQUIPMENT_PROFILE: {
             EQUIPMENT_PREF_MODERN,
@@ -7110,18 +7315,74 @@ async def _handle_equipment_model(
     normalized = normalize_portuguese(inbound.body or "")
     mismatch_query = _context_string(context, "catalog_mismatch_query")
     if mismatch_query is not None:
+        suggested_alternative = context.get("catalog_alternative_suggestion")
+        suggestion_active = isinstance(suggested_alternative, dict)
+        wants_suggested_alternative = (
+            suggestion_active
+            and (
+                action == EQUIPMENT_MODEL_SUGGESTED_SELECT
+                or normalized in {
+                    "esse",
+                    "esse mesmo",
+                    "quero esse",
+                    "quero esse mesmo",
+                    "quero esse modelo",
+                    "pode ser esse",
+                    "prefiro esse",
+                    "fico com esse",
+                    "vou ficar com esse",
+                    "escolher este",
+                }
+            )
+        )
+        if wants_suggested_alternative:
+            label = suggested_alternative.get("label")
+            if isinstance(label, str) and label:
+                updated = {
+                    **_clear_repair_attempt(context, "equipment_model"),
+                    "equipment_model_known": True,
+                    "equipment_model": label,
+                    "recommended_equipment": dict(suggested_alternative),
+                    "recommendation_presented": True,
+                    "catalog_mismatch_attempts": 0,
+                }
+                for key in (
+                    "catalog_mismatch_query",
+                    "catalog_mismatch_capacity_btu",
+                    "catalog_alternative_suggestion",
+                    "equipment_request_query",
+                ):
+                    updated.pop(key, None)
+                return await _advance_intake(
+                    inbound,
+                    port,
+                    intake,
+                    updated,
+                    services=services,
+                    customer_name=customer_name,
+                )
+
         wants_exact_model = (
             action == EQUIPMENT_MODEL_EXACT_CHECK
-            or any(
-                phrase in normalized
-                for phrase in (
-                    "quero esse modelo",
-                    "quero esse mesmo",
-                    "prefiro esse modelo",
-                    "prefiro esse",
-                    "quero exatamente esse",
-                    "tem que ser esse",
-                    "esse mesmo",
+            or normalized in {
+                "quero o original",
+                "prefiro o original",
+                "quero exatamente o original",
+                "tem que ser o original",
+            }
+            or (
+                not suggestion_active
+                and any(
+                    phrase in normalized
+                    for phrase in (
+                        "quero esse modelo",
+                        "quero esse mesmo",
+                        "prefiro esse modelo",
+                        "prefiro esse",
+                        "quero exatamente esse",
+                        "tem que ser esse",
+                        "esse mesmo",
+                    )
                 )
             )
         )
@@ -7132,10 +7393,15 @@ async def _handle_equipment_model(
                     "equipment_model_known": True,
                     "equipment_model": mismatch_query,
                 }
-                preserved.pop("catalog_mismatch_query", None)
-                preserved.pop("catalog_mismatch_capacity_btu", None)
-                preserved.pop("recommended_equipment", None)
-                preserved.pop("recommendation_presented", None)
+                for key in (
+                    "catalog_mismatch_query",
+                    "catalog_mismatch_capacity_btu",
+                    "catalog_alternative_suggestion",
+                    "equipment_request_query",
+                    "recommended_equipment",
+                    "recommendation_presented",
+                ):
+                    preserved.pop(key, None)
                 return await _advance_intake(
                     inbound,
                     port,
@@ -7146,9 +7412,14 @@ async def _handle_equipment_model(
                 )
 
             preserved = dict(context)
-            preserved.pop("equipment_model", None)
-            preserved.pop("recommended_equipment", None)
-            preserved.pop("recommendation_presented", None)
+            for key in (
+                "equipment_model",
+                "recommended_equipment",
+                "recommendation_presented",
+                "catalog_alternative_suggestion",
+                "equipment_request_query",
+            ):
+                preserved.pop(key, None)
             return _transition(
                 ConversationState.HUMAN_HANDOFF,
                 preserved,
@@ -7175,139 +7446,44 @@ async def _handle_equipment_model(
                 "sim quero",
                 "quero semelhantes",
                 "quero ver semelhantes",
+                "ver outros",
+                "ver outros similares",
+                "ver outros equipamentos semelhantes",
             }
         )
         if accepts_alternative:
-            if _context_string(context, "equipment_ownership") == "has_equipment":
-                updated = {
-                    **_clear_repair_attempt(context, "equipment_model"),
-                    "equipment_ownership": "needs_equipment",
-                    "equipment_model_known": False,
-                    "request_mode": "quote",
-                    "purchase_mode": "both",
-                    "purchase_only": False,
-                    "catalog_mismatch_attempts": 0,
-                }
-                updated.pop("catalog_mismatch_query", None)
-                updated.pop("catalog_mismatch_capacity_btu", None)
-                updated.pop("equipment_model", None)
-                updated.pop("recommended_equipment", None)
-                updated.pop("recommendation_presented", None)
-                missing = missing_equipment_profile_fields(updated)
-                prompt = _equipment_profile_prompt(missing)
-                updated["equipment_profile_intro_sent"] = True
-                return _transition(
-                    ConversationState.BOOKING_EQUIPMENT_PROFILE,
-                    updated,
-                    equipment_profile_intro_message(),
-                    follow_ups=(prompt,),
-                )
-
             updated = {
                 **_clear_repair_attempt(context, "equipment_model"),
                 "equipment_model_known": False,
                 "catalog_mismatch_attempts": 0,
             }
-            updated.pop("equipment_model", None)
-            updated.pop("recommended_equipment", None)
-            updated.pop("recommendation_presented", None)
-
-            try:
-                catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
-            except BookingRequiresHandoff as exc:
-                return _handoff_for_reason(str(exc))
-
-            requested_capacity = context.get("catalog_mismatch_capacity_btu")
-            if not isinstance(requested_capacity, int):
-                requested_capacity = _requested_capacity_btu(mismatch_query)
-
-            if isinstance(requested_capacity, int) and catalog:
-                exact_capacity = tuple(
-                    item for item in catalog
-                    if item.capacity_btu == requested_capacity
+            if _context_string(context, "equipment_ownership") == "has_equipment":
+                updated.update(
+                    {
+                        "equipment_ownership": "needs_equipment",
+                        "request_mode": "quote",
+                        "purchase_mode": "both",
+                        "purchase_only": False,
+                    }
                 )
-                if exact_capacity:
-                    options = exact_capacity[:5]
-                    option_lines = [
-                        f"• {_catalog_equipment_label(item)}"
-                        + (
-                            f" — {_format_brl(Decimal(str(item.price)))}"
-                            if item.price is not None
-                            else " — valor a confirmar"
-                        )
-                        for item in options
-                    ]
-                    capacity_label = f"{requested_capacity:,}".replace(",", ".")
-                    return _transition(
-                        ConversationState.BOOKING_EQUIPMENT_MODEL,
-                        updated,
-                        _text_message(
-                            "Sim. Tenho opções no catálogo com a capacidade que você pediu "
-                            f"({capacity_label} BTU):\n"
-                            + "\n".join(option_lines)
-                            + "\n\nQual delas você gostaria de avaliar?"
-                        ),
-                    )
-
-                nearest_capacity = min(
-                    {item.capacity_btu for item in catalog},
-                    key=lambda value: (abs(value - requested_capacity), value),
-                )
-                nearest = tuple(
-                    item for item in catalog
-                    if item.capacity_btu == nearest_capacity
-                )[:5]
-                requested_label = f"{requested_capacity:,}".replace(",", ".")
-                nearest_label = f"{nearest_capacity:,}".replace(",", ".")
-                option_lines = [
-                    f"• {_catalog_equipment_label(item)}"
-                    + (
-                        f" — {_format_brl(Decimal(str(item.price)))}"
-                        if item.price is not None
-                        else " — valor a confirmar"
-                    )
-                    for item in nearest
-                ]
-                updated["catalog_nearest_capacity_btu"] = nearest_capacity
-                transition = await _advance_intake(
-                    inbound,
-                    port,
-                    intake,
-                    updated,
-                    services=services,
-                    customer_name=customer_name,
-                )
-                return _prepend_transition_body(
-                    transition,
-                    (
-                        f"Não encontrei {requested_label} BTU no catálogo ativo. "
-                        f"A capacidade mais próxima disponível é {nearest_label} BTU"
-                        + (
-                            ":\n" + "\n".join(option_lines)
-                            if option_lines
-                            else "."
-                        )
-                        + "\n\nComo não é a mesma capacidade que você pediu, "
-                        "vou confirmar rapidamente o perfil do ambiente antes de indicar "
-                        "qual opção faz sentido."
-                    ),
-                )
-
-            transition = await _advance_intake(
-                inbound,
-                port,
-                intake,
+            for key in (
+                "catalog_mismatch_query",
+                "catalog_mismatch_capacity_btu",
+                "catalog_alternative_suggestion",
+                "equipment_request_query",
+                "equipment_model",
+                "recommended_equipment",
+                "recommendation_presented",
+            ):
+                updated.pop(key, None)
+            missing = missing_equipment_profile_fields(updated)
+            prompt = _equipment_profile_prompt(missing)
+            updated["equipment_profile_intro_sent"] = True
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_PROFILE,
                 updated,
-                services=services,
-                customer_name=customer_name,
-            )
-            return _prepend_transition_body(
-                transition,
-                (
-                    "Posso te mostrar alternativas do catálogo. "
-                    "Como você não informou uma capacidade que eu consiga comparar com segurança, "
-                    "vou confirmar rapidamente o perfil do ambiente para filtrar as opções certas."
-                ),
+                equipment_profile_intro_message(),
+                follow_ups=(prompt,),
             )
 
     unknown_model = (
@@ -7328,6 +7504,8 @@ async def _handle_equipment_model(
             "equipment_model_known": False,
         }
         updated.pop("equipment_model", None)
+        updated.pop("equipment_request_query", None)
+        updated.pop("catalog_alternative_suggestion", None)
         if existing_equipment:
             updated["equipment_photo_requested"] = True
             return _transition(
@@ -7384,31 +7562,143 @@ async def _handle_equipment_model(
             catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
         except BookingRequiresHandoff as exc:
             return _handoff_for_reason(str(exc))
-        matched_catalog = _catalog_entry_matching_customer_request(raw, catalog)
+
+        prior_query = _context_string(context, "equipment_request_query")
+        lookup_query = " ".join(
+            part for part in (prior_query, raw) if part
+        ).strip()
+
+        if not _equipment_request_has_identity(lookup_query, catalog):
+            updated = {
+                **_clear_repair_attempt(context, "equipment_model"),
+                "equipment_model_known": True,
+                "equipment_request_query": lookup_query,
+            }
+            for key in (
+                "equipment_model",
+                "catalog_mismatch_query",
+                "catalog_mismatch_capacity_btu",
+                "catalog_alternative_suggestion",
+                "recommended_equipment",
+                "recommendation_presented",
+            ):
+                updated.pop(key, None)
+
+            capacity = _requested_capacity_btu(lookup_query)
+            features = _requested_equipment_features(lookup_query)
+            details: list[str] = []
+            if capacity is not None:
+                details.append(
+                    f"{capacity:,} BTU".replace(",", ".")
+                )
+            if features:
+                details.append("com " + ", ".join(features))
+            criteria = " ".join(details)
+            prefix = (
+                f"Entendi: você procura um aparelho de {criteria}. "
+                if criteria
+                else "Entendi as características que você passou. "
+            )
+            return _transition(
+                ConversationState.BOOKING_EQUIPMENT_MODEL,
+                updated,
+                _text_message(
+                    prefix
+                    + "Isso ainda não identifica um modelo específico. "
+                    "Qual marca ou modelo você tem em mente? Se não tiver preferência, "
+                    "diga “sem preferência” e eu te ajudo a escolher."
+                ),
+            )
+
+        matched_catalog = _catalog_entry_matching_customer_request(
+            lookup_query,
+            catalog,
+        )
         if matched_catalog is None:
             updated = {
                 **context,
                 "equipment_model_known": False,
                 "catalog_mismatch_attempts": 1,
-                "catalog_mismatch_query": normalize_portuguese(raw),
+                "catalog_mismatch_query": normalize_portuguese(lookup_query),
             }
-            requested_capacity = _requested_capacity_btu(raw)
+            requested_capacity = _requested_capacity_btu(lookup_query)
             if requested_capacity is not None:
                 updated["catalog_mismatch_capacity_btu"] = requested_capacity
             else:
                 updated.pop("catalog_mismatch_capacity_btu", None)
-            updated.pop("equipment_model", None)
-            updated.pop("recommended_equipment", None)
-            updated.pop("recommendation_presented", None)
+            for key in (
+                "equipment_request_query",
+                "equipment_model",
+                "recommended_equipment",
+                "recommendation_presented",
+                "catalog_alternative_suggestion",
+            ):
+                updated.pop(key, None)
+
+            alternative, selectable = _catalog_alternative_for_request(
+                lookup_query,
+                catalog,
+            )
+            alternative_text: str | None = None
+            if alternative is not None:
+                alternative_label = _catalog_equipment_label(alternative)
+                alternative_price = (
+                    _format_brl(Decimal(str(alternative.price)))
+                    if alternative.price is not None
+                    else "valor a confirmar"
+                )
+                if (
+                    requested_capacity is not None
+                    and alternative.capacity_btu == requested_capacity
+                ):
+                    alternative_text = (
+                        "Uma opção bem semelhante disponível é "
+                        f"{alternative_label} — {alternative_price}."
+                    )
+                elif requested_capacity is not None:
+                    requested_label = f"{requested_capacity:,}".replace(",", ".")
+                    alternative_text = (
+                        "A opção mais próxima em capacidade que encontrei é "
+                        f"{alternative_label} — {alternative_price}, mas ela não tem "
+                        f"a mesma capacidade de {requested_label} BTU que você pediu."
+                    )
+                else:
+                    alternative_text = (
+                        "Uma opção do catálogo que compartilha as características "
+                        f"informadas é {alternative_label} — {alternative_price}."
+                    )
+
+                if selectable:
+                    lookup_normalized = normalize_portuguese(lookup_query)
+                    selected_cycle = (
+                        "heat_cool"
+                        if (
+                            "quente frio" in lookup_normalized
+                            or "quente e frio" in lookup_normalized
+                        )
+                        else "cold"
+                    )
+                    updated["catalog_alternative_suggestion"] = (
+                        _equipment_suggestion_snapshot(
+                            alternative,
+                            required_btu=None,
+                            selected_cycle=selected_cycle,
+                        )
+                    )
+
             return _transition(
                 ConversationState.BOOKING_EQUIPMENT_MODEL,
                 updated,
-                equipment_alternative_offer_message(),
+                equipment_alternative_offer_message(
+                    alternative_text=alternative_text,
+                    allow_select_alternative=selectable,
+                ),
             )
 
+        lookup_normalized = normalize_portuguese(lookup_query)
         selected_cycle = (
             "heat_cool"
-            if "quente frio" in normalized or "quente e frio" in normalized
+            if "quente frio" in lookup_normalized or "quente e frio" in lookup_normalized
             else "cold"
         )
         recommendation = _equipment_suggestion_snapshot(
@@ -7424,7 +7714,13 @@ async def _handle_equipment_model(
             "recommendation_presented": True,
             "catalog_mismatch_attempts": 0,
         }
-        updated.pop("catalog_mismatch_query", None)
+        for key in (
+            "catalog_mismatch_query",
+            "catalog_mismatch_capacity_btu",
+            "catalog_alternative_suggestion",
+            "equipment_request_query",
+        ):
+            updated.pop(key, None)
         transition = await _advance_intake(
             inbound,
             port,
@@ -7460,27 +7756,60 @@ async def _handle_equipment_model(
                 catalog = tuple(await port.list_equipment_catalog(inbound.business_id))
             except BookingRequiresHandoff:
                 catalog = ()
+
+            prior_query = _context_string(context, "equipment_request_query")
+            lookup_query = " ".join(
+                part for part in (prior_query, equipment_model) if part
+            ).strip()
+
+            if (
+                service_kind == "installation"
+                and catalog
+                and not _equipment_request_has_identity(lookup_query, catalog)
+            ):
+                updated = {
+                    **_clear_repair_attempt(context, "equipment_model"),
+                    "equipment_model_known": True,
+                    "equipment_request_query": lookup_query,
+                }
+                updated.pop("equipment_model", None)
+                return _transition(
+                    ConversationState.BOOKING_EQUIPMENT_MODEL,
+                    updated,
+                    _text_message(
+                        "Entendi as características do aparelho. Para confirmar o "
+                        "equipamento sem assumir um modelo errado, qual é a marca ou o "
+                        "modelo? Se não souber, pode me mandar uma foto."
+                    ),
+                )
+
             matched_catalog = _catalog_entry_matching_customer_request(
-                equipment_model,
+                lookup_query,
                 catalog,
             )
             if matched_catalog is not None:
                 equipment_model = _catalog_equipment_label(matched_catalog)
+                context = dict(context)
+                context.pop("equipment_request_query", None)
             elif service_kind == "installation" and catalog:
                 updated = {
                     **_clear_repair_attempt(context, "equipment_model"),
                     "equipment_model_known": True,
                     "catalog_mismatch_attempts": 1,
-                    "catalog_mismatch_query": equipment_model,
+                    "catalog_mismatch_query": lookup_query,
                 }
-                requested_capacity = _requested_capacity_btu(equipment_model)
+                requested_capacity = _requested_capacity_btu(lookup_query)
                 if requested_capacity is not None:
                     updated["catalog_mismatch_capacity_btu"] = requested_capacity
                 else:
                     updated.pop("catalog_mismatch_capacity_btu", None)
-                updated.pop("equipment_model", None)
-                updated.pop("recommended_equipment", None)
-                updated.pop("recommendation_presented", None)
+                for key in (
+                    "equipment_request_query",
+                    "equipment_model",
+                    "recommended_equipment",
+                    "recommendation_presented",
+                ):
+                    updated.pop(key, None)
                 return _transition(
                     ConversationState.BOOKING_EQUIPMENT_MODEL,
                     updated,

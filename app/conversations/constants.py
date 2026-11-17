@@ -57,6 +57,7 @@ EQUIPMENT_NEEDS = "equipment.needs"
 EQUIPMENT_MODEL_KNOWN = "equipment.model.known"
 EQUIPMENT_MODEL_RECOMMEND = "equipment.model.recommend"
 EQUIPMENT_MODEL_EXACT_CHECK = "equipment.model.exact_check"
+EQUIPMENT_MODEL_SUGGESTED_SELECT = "equipment.model.suggested_select"
 EQUIPMENT_PREF_MODERN = "equipment.preference.modern"
 EQUIPMENT_PREF_COST_BENEFIT = "equipment.preference.cost_benefit"
 EQUIPMENT_PREF_ECONOMY = "equipment.preference.economy"
@@ -141,6 +142,8 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "outdoor_space_unrestricted",
         "recommended_equipment",
         "equipment_suggestion",
+        "equipment_request_query",
+        "catalog_alternative_suggestion",
         "recommendation_presented",
         "delivery_method",
         "fulfillment_type",
