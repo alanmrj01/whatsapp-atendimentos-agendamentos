@@ -6889,6 +6889,12 @@ async def test_address_revalidation_reports_price_only_when_estimate_changes() -
     assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["last_presented_service_price"] == "200.00"
 
-    body = repository.outbounds[-1].transition.outbound.body or ""
+    transition = repository.outbounds[-1].transition
+    messages = (transition.outbound, *transition.follow_ups)
+    body = " ".join(message.body or "" for message in messages)
     assert "valor estimado agora é R$ 200,00" in body
     assert "qual dia da semana" in body.casefold()
+    assert any(
+        message.interactive_id == "booking.weekdays"
+        for message in messages
+    )
