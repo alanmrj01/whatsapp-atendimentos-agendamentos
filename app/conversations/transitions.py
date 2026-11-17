@@ -381,6 +381,15 @@ async def determine_transition(
             {**context, **budget_updates},
         )
 
+    if (
+        state is ConversationState.BOOKING_EQUIPMENT_MODEL
+        and action is None
+        and _context_string(base_context, "equipment_model") is None
+        and _context_string(context, "equipment_model") is not None
+    ):
+        context = dict(context)
+        context.pop("equipment_model", None)
+
     if action == MEDIA_HANDOFF and context.get("media_handoff_pending") is True:
         return _handoff_transition(
             "Vou encaminhar você para uma pessoa da equipe. "
