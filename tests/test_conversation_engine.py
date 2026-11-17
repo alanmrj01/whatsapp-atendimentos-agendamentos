@@ -6837,15 +6837,19 @@ async def test_address_revalidation_does_not_repeat_same_presented_service_price
         inbound(20008, body="sjc")
     )
 
-    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert repository.state == ConversationState.BOOKING_ATTENDEE
     assert repository.context["last_presented_service_price"] == "180.00"
-    assert "selected_date" not in repository.context
-    assert "selected_time" not in repository.context
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert "schedule_revalidation_required" not in repository.context
 
-    body = repository.outbounds[-1].transition.outbound.body or ""
+    outbound = repository.outbounds[-1].transition.outbound
+    body = outbound.body or ""
+    assert outbound.interactive_id == "booking.attendee"
     assert "R$ 180,00" not in body
     assert "valor estimado" not in body.casefold()
-    assert "qual dia da semana" in body.casefold()
+    assert "qual dia da semana" not in body.casefold()
+    assert "qual fica melhor para o seu atendimento" not in body.casefold()
 
 
 @mark.asyncio
@@ -6888,15 +6892,65 @@ async def test_address_revalidation_reports_price_only_when_estimate_changes() -
         inbound(20009, body="sjc")
     )
 
-    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert repository.state == ConversationState.BOOKING_ATTENDEE
     assert repository.context["last_presented_service_price"] == "200.00"
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert "schedule_revalidation_required" not in repository.context
 
     transition = repository.outbounds[-1].transition
-    messages = (transition.outbound, *transition.follow_ups)
-    body = " ".join(message.body or "" for message in messages)
+    body = transition.outbound.body or ""
+    assert transition.outbound.interactive_id == "booking.attendee"
     assert "valor estimado agora é R$ 200,00" in body
-    assert "qual dia da semana" in body.casefold()
-    assert any(
-        message.interactive_id == "booking.weekdays"
-        for message in messages
+    assert "qual dia da semana" not in body.casefold()
+    assert "qual fica melhor para o seu atendimento" not in body.casefold()
+
+
+@mark.asyncio
+async def test_address_revalidation_requests_only_new_time_when_selected_slot_changed() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "equipment_ownership": "has_equipment",
+            "equipment_model_known": True,
+            "equipment_model": "Split Inverter 18000",
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "last_presented_service_price": "180.00",
+            "pending_service_address": "Rua Mauricio Cardoso 201, Jardim Sul",
+            "awaiting_address_city": True,
+        },
+        customer_name="Alan",
     )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Limpeza e higienização de ar-condicionado",
+        )
+    ]
+    booking_port.intake = replace(
+        booking_port.intake,
+        requires_address=True,
+    )
+    booking_port.times = [
+        BookingOption("14:30", "14:30"),
+        BookingOption("18:00", "18:00"),
+    ]
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(20010, body="sjc")
+    )
+
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert "selected_time" not in repository.context
+    assert "schedule_revalidation_required" not in repository.context
+
+    outbound = repository.outbounds[-1].transition.outbound
+    body = outbound.body or ""
+    assert outbound.interactive_id == "booking.times"
+    assert "horário que você escolheu não está mais disponível" in body
+    assert "qual dia da semana" not in body.casefold()
+    assert "R$ 180,00" not in body
