@@ -1037,7 +1037,7 @@ def extract_customer_name(
     contextual_patterns = (
         r"^\s*pode\s+ser\s+(.+?)(?:\s+mesmo)?\s*[.!]?$",
         r"^\s*(?:me\s+chama\s+de|pode\s+me\s+chamar(?:\s+de)?)\s+(.+?)\s*[.!]?$",
-        r"^\s*sou(?:\s+o|\s+a)?\s+(.+?)\s*[.!]?$",
+        r"^\s*(?:eu\s+)?sou(?:\s+o|\s+a)?\s+(.+?)(?=\s*[,;.!?]|$)",
         r"^\s*(.+?)\s+mesmo\s*[.!]?$",
     )
     for pattern in contextual_patterns:
