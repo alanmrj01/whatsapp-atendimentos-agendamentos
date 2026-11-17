@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
+from dataclasses import replace
 from uuid import UUID
 from typing import Any, Protocol, cast
 
@@ -17,17 +20,29 @@ from app.conversations.interpreter import (
 )
 from app.conversations.ports import BookingAvailabilityPort
 from app.conversations.types import ConversationInput
+from app.core.config import get_settings
 from app.repositories.cloud_tasks import (
     CloudTaskEventRepository,
     StoredTaskEvent,
 )
 from app.repositories.automation import AutomationRepository
+from app.repositories.whatsapp_connections import WhatsAppConnectionRepository
+from app.speech.transcription import (
+    SpeechTranscriptionError,
+    transcribe_short_audio,
+)
+from app.whatsapp.client import WhatsAppClientError
 from app.whatsapp.processor import (
     ConversationProcessor,
     PermissiveAutomationRepository,
     build_conversation_engine,
 )
+from app.whatsapp.sender import build_business_sender_resolver
 from app.whatsapp.webhook import SUPPORTED_MESSAGE_STATUSES
+
+
+logger = logging.getLogger(__name__)
+AudioInputResolver = Callable[[ConversationInput], Awaitable[ConversationInput]]
 
 
 class TaskEventDataUnavailable(RuntimeError):
@@ -67,6 +82,7 @@ async def process_cloud_task_event(
     conversation_engine: ConversationProcessor | None = None,
     booking_port: BookingAvailabilityPort | None = None,
     automation_repository: AutomationPolicyRepository | None = None,
+    audio_input_resolver: AudioInputResolver | None = None,
 ) -> bool:
     event_repository = repository or CloudTaskEventRepository(
         cast(AsyncSession, session)
@@ -135,6 +151,15 @@ async def process_cloud_task_event(
                         decision.value,
                     )
                     return False
+            if inbound.message_type == "audio":
+                if audio_input_resolver is not None:
+                    inbound = await audio_input_resolver(inbound)
+                elif isinstance(session, AsyncSession):
+                    inbound = await _transcribe_production_audio(
+                        session,
+                        inbound,
+                    )
+
             active_engine = conversation_engine or build_conversation_engine(
                 cast(AsyncSession, session),
                 booking_port,
@@ -175,6 +200,73 @@ async def process_cloud_task_event(
         )
         return False
 
+
+
+async def _transcribe_production_audio(
+    session: AsyncSession,
+    inbound: ConversationInput,
+) -> ConversationInput:
+    """Transforma áudio WhatsApp em texto apenas para interpretação automática.
+
+    O Message original continua persistido como áudio. Em qualquer falha
+    esperada de Meta ou Speech, o input original é devolvido para que o motor
+    aplique o fallback seguro já existente.
+    """
+    if inbound.message_type != "audio" or not inbound.media_id:
+        return inbound
+
+    resolver = build_business_sender_resolver(
+        WhatsAppConnectionRepository(session),
+        get_settings(),
+    )
+    client = None
+    try:
+        client = await resolver.resolve(inbound.business_id)
+        audio_bytes, resolved_mime = await client.download_media(
+            inbound.media_id
+        )
+        normalized_mime = (resolved_mime or "").split(";", 1)[0].strip().lower()
+        if normalized_mime and not (
+            normalized_mime.startswith("audio/")
+            or normalized_mime == "application/octet-stream"
+        ):
+            logger.warning(
+                "whatsapp_audio_media_type_rejected",
+                extra={"business_id": str(inbound.business_id)},
+            )
+            return inbound
+
+        transcript = " ".join(
+            (await transcribe_short_audio(audio_bytes)).split()
+        ).strip()
+        if not transcript:
+            return inbound
+
+        logger.info(
+            "whatsapp_audio_transcribed",
+            extra={"business_id": str(inbound.business_id)},
+        )
+        return replace(
+            inbound,
+            message_type="text",
+            body=transcript,
+            interactive_id=None,
+        )
+    except (WhatsAppClientError, SpeechTranscriptionError) as exc:
+        logger.warning(
+            "whatsapp_audio_transcription_failed",
+            extra={
+                "business_id": str(inbound.business_id),
+                "error_type": type(exc).__name__,
+            },
+        )
+        return inbound
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
 
 def _prefer_latest_substantive_fragment(
     latest: ConversationInput,
