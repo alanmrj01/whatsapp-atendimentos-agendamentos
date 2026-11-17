@@ -10430,10 +10430,8 @@ async def _advance_intake(
     selected_time = _context_string(context, "selected_time")
     address_needed_now = (
         missing_service_address
-        and (
-            context.get("request_mode") == "quote"
-            or (selected_date is not None and selected_time is not None)
-        )
+        and selected_date is not None
+        and selected_time is not None
     )
     if address_needed_now:
         return _transition(
