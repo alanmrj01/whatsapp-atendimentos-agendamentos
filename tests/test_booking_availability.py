@@ -265,6 +265,21 @@ async def test_real_planning_can_offer_dates_before_required_address() -> None:
 
 
 @pytest.mark.asyncio
+async def test_real_planning_can_offer_times_before_required_address() -> None:
+    port = RealPlanningAvailability()
+
+    times = await port.list_times(
+        BUSINESS_ID,
+        SERVICE_ID,
+        "2026-09-02",
+        BookingRequirements(),
+    )
+
+    assert times
+    assert "09:00" in {item.id for item in times}
+
+
+@pytest.mark.asyncio
 async def test_real_confirmation_still_rejects_missing_required_address() -> None:
     port = RealPlanningAvailability()
 
