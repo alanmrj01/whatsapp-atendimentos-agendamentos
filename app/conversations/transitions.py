@@ -517,6 +517,13 @@ async def determine_transition(
         return stale_action
 
     captured_name: str | None = interpretation.customer_name
+    previous_customer_name = conversation.customer_name
+    name_correction = bool(
+        captured_name is not None
+        and previous_customer_name is not None
+        and normalize_portuguese(captured_name)
+        != normalize_portuguese(previous_customer_name)
+    )
 
     if state is ConversationState.CUSTOMER_NAME:
         transition = await _handle_customer_name(
@@ -529,6 +536,30 @@ async def determine_transition(
         if captured_name is not None:
             transition = replace(transition, customer_name=captured_name)
         return transition
+
+    if (
+        name_correction
+        and action is None
+        and (
+            state.value.startswith("BOOKING_")
+            or state is ConversationState.QUOTE_DECISION
+        )
+        and not _has_substantive_intent(interpretation)
+    ):
+        corrected_conversation = replace(
+            conversation,
+            customer_name=captured_name,
+        )
+        corrected_context = dict(context)
+        corrected_context.pop(_CUSTOMER_NAME_SKIPPED_KEY, None)
+        transition = await _resume_pending_question(
+            corrected_conversation,
+            inbound,
+            corrected_context,
+            booking_port,
+            prefix=f"Perfeito, {captured_name}. Corrigi seu nome.",
+        )
+        return replace(transition, customer_name=captured_name)
 
     if captured_name is not None:
         conversation = replace(conversation, customer_name=captured_name)
