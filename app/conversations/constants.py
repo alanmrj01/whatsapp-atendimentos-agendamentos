@@ -176,6 +176,7 @@ ALLOWED_CONTEXT_KEYS = frozenset(
         "quote_paused",
         "fallback_variant",
         "last_assistant_topic",
+        "last_presented_service_price",
         "catalog_mismatch_attempts",
         "catalog_mismatch_query",
         "purchase_mode",
