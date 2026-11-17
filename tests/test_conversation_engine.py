@@ -3592,6 +3592,7 @@ async def test_gas_recharge_collects_existing_equipment_before_agenda() -> None:
 
     assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["equipment_model"] == "LG Dual Inverter 12000 BTU"
+    assert "equipment_catalog" in booking_port.calls
     assert "service_address" not in repository.context
 
 
