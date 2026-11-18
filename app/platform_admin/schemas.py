@@ -54,6 +54,7 @@ class PlatformBusinessResponse(BaseModel):
     name: str
     timezone: str
     active: bool
+    created_at: datetime | None = None
     # Administrative/legacy access flag. Commercial subscription state is
     # reported separately so the admin UI never confuses billing with an override.
     access_mode: AccessMode = "paid"
@@ -77,8 +78,51 @@ class PlatformBusinessResponse(BaseModel):
     commercial_contact_email: str | None = None
     commercial_contact_phone: str | None = None
     commercial_refund_deadline_at: datetime | None = None
+    commercial_payment_method: Literal["credit_card", "pix", "pix_automatic"] | None = None
+    commercial_amount_cents: int | None = None
+    commercial_paid_at: datetime | None = None
+    commercial_payment_status: Literal[
+        "creating", "active", "paid", "canceled", "expired", "failed"
+    ] | None = None
+    contact_whatsapp: str | None = None
     owners: list[str]
     whatsapp_status: Literal["disconnected", "pending", "connected", "error"]
+
+
+class PlatformBusinessDetailResponse(PlatformBusinessResponse):
+    responsible_name: str | None = None
+    lead_name: str | None = None
+    lead_source: str | None = None
+    lead_created_at: datetime | None = None
+    whatsapp_mode: Literal["coexistence", "api_only"] | None = None
+    whatsapp_display_phone: str | None = None
+    whatsapp_connected_at: datetime | None = None
+    whatsapp_disconnected_at: datetime | None = None
+    whatsapp_last_error_code: str | None = None
+    whatsapp_meta_review_status: Literal["approved", "rejected"] | None = None
+    commercial_checkout_status: Literal[
+        "creating", "active", "paid", "canceled", "expired", "failed"
+    ] | None = None
+    commercial_provider_customer_id: str | None = None
+    commercial_checkout_created_at: datetime | None = None
+    commercial_subscription_created_at: datetime | None = None
+    acquisition_source: str | None = None
+    acquisition_medium: str | None = None
+    acquisition_campaign: str | None = None
+    acquisition_content: str | None = None
+    acquisition_term: str | None = None
+    acquisition_campaign_id: str | None = None
+    acquisition_adset_id: str | None = None
+    acquisition_ad_id: str | None = None
+    acquisition_placement: str | None = None
+    acquisition_angle: str | None = None
+    acquisition_quiz_profile: str | None = None
+    signup_completed_at: datetime | None = None
+    demo_started_at: datetime | None = None
+    checkout_started_at: datetime | None = None
+    payment_confirmed_at: datetime | None = None
+    whatsapp_connected_event_at: datetime | None = None
+    last_activity_at: datetime | None = None
 
 
 class PlatformBusinessListResponse(BaseModel):
