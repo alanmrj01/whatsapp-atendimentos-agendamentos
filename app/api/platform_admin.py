@@ -12,6 +12,7 @@ from app.platform_admin.schemas import (
     PlatformBusinessAccessRequest,
     PlatformBusinessAccessResponse,
     PlatformBusinessCreateRequest,
+    PlatformBusinessDetailResponse,
     PlatformBusinessListResponse,
     PlatformBusinessResponse,
     PlatformBusinessStatusRequest,
@@ -30,6 +31,18 @@ Config = Annotated[Settings, Depends(get_settings)]
 @router.get("/businesses", response_model=PlatformBusinessListResponse)
 async def list_businesses(_: Admin, db: Db) -> PlatformBusinessListResponse:
     return await PlatformAdminService(db).list_businesses()
+
+
+@router.get(
+    "/businesses/{business_id}",
+    response_model=PlatformBusinessDetailResponse,
+)
+async def get_business_detail(
+    business_id: UUID,
+    _: Admin,
+    db: Db,
+) -> PlatformBusinessDetailResponse:
+    return await PlatformAdminService(db).get_business_detail(business_id)
 
 
 @router.get("/analytics/summary", response_model=PlatformAnalyticsSummaryResponse)
