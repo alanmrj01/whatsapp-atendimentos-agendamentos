@@ -637,13 +637,14 @@ def build_platform_analytics_summary(
     lead_recovery_checkouts = lead_recovery_checkouts or paid_checkouts
 
     raw_quiz_visitors = _visitor_ids(events, "quiz_viewed")
+    meta_attribution_active = meta_report.status == "ready"
     meta_ad_ids = {item.ad_id for item in meta_report.ads}
     attributed_quiz_events = [
         event
         for event in events
         if event.event_name == "quiz_viewed"
         and (
-            not meta_ad_ids
+            not meta_attribution_active
             or (_property(event, "ad_id") in meta_ad_ids)
         )
     ]
@@ -1095,7 +1096,7 @@ def build_platform_analytics_summary(
         visitor = str(event.visitor_id)
         business = str(event.business_id) if event.business_id is not None else visitor
         if event.event_name == "quiz_viewed":
-            if not meta_ad_ids or _property(event, "ad_id") in meta_ad_ids:
+            if not meta_attribution_active or _property(event, "ad_id") in meta_ad_ids:
                 bucket["quiz_views"].add(visitor)
         elif event.event_name == "quiz_completed":
             bucket["quiz_completed"].add(visitor)
