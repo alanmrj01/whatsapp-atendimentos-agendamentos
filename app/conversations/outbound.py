@@ -711,7 +711,7 @@ def date_selection_message(
     *,
     body: str = "Escolha uma data para o atendimento.",
 ) -> OutboundMessage:
-    safe_body = _append_hidden_options_hint(body, options, "data")
+    safe_body = _append_hidden_options_hint(body, options, "a data")
     return OutboundMessage(
         message_type="interactive_list",
         body=safe_body,
@@ -1109,11 +1109,10 @@ def _append_hidden_options_hint(
 ) -> str:
     if len(options) <= MAX_LIST_ROWS:
         return body
-    labels = ", ".join(option.label for option in options)
     expanded = (
-        f"{body.rstrip()}\n\nOpções disponíveis: {labels}. "
-        f"Se o {noun} que você prefere não aparecer em “Ver opções”, "
-        f"responda digitando o {noun}."
+        f"{body.rstrip()} "
+        f"Se {noun} que você prefere não aparecer em “Ver opções”, "
+        "pode me dizer qual prefere."
     )
     return expanded[:1024]
 

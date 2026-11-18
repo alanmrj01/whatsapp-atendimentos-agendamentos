@@ -4300,17 +4300,27 @@ async def _resume_pending_question(
                     _requirements_from_context(context),
                 )
             )
-            date_labels = ", ".join(option.label for option in dates)
-            resume_body = (
-                f"Datas disponíveis: {date_labels}. Escolha a melhor para você."
-                if date_labels
-                else "Escolha uma data para o atendimento."
-            )
-            transition = _transition(
-                ConversationState.BOOKING_DATE,
-                context,
-                date_selection_message(dates, body=resume_body),
-            )
+            if len(dates) > 10:
+                transition = _transition(
+                    ConversationState.BOOKING_WEEKDAY,
+                    context,
+                    weekday_selection_message(
+                        weekday_options(dates),
+                        body=(
+                            "Tenho disponibilidade em vários dias. "
+                            "Qual dia da semana fica melhor para o seu atendimento?"
+                        ),
+                    ),
+                )
+            else:
+                transition = _transition(
+                    ConversationState.BOOKING_DATE,
+                    context,
+                    date_selection_message(
+                        dates,
+                        body="Qual destas datas fica melhor para você?",
+                    ),
+                )
     elif state is ConversationState.BOOKING_TIME:
         service_id = _context_service_id(context)
         selected_date = _context_string(context, "selected_date")
