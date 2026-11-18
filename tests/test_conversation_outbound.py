@@ -5,6 +5,7 @@ from decimal import Decimal
 from app.conversations.outbound import (
     WHATSAPP_REPLY_BUTTON_TITLE_MAX,
     _button_payload,
+    date_selection_message,
     equipment_delivery_message,
     media_received_message,
     unsupported_media_message,
@@ -12,6 +13,30 @@ from app.conversations.outbound import (
     tubing_variation_message,
 )
 from app.conversations.ports import BookingOption
+
+
+def test_date_selection_never_enumerates_hidden_overflow_options() -> None:
+    options = tuple(
+        BookingOption(
+            f"2026-12-{day:02d}",
+            f"{day:02d}/12/2026",
+        )
+        for day in range(1, 13)
+    )
+
+    message = date_selection_message(
+        options,
+        body="Escolha uma data para o atendimento.",
+    )
+    body = message.body or ""
+    rows = (message.outbound_payload or {})["sections"][0]["rows"]
+
+    assert "Opções disponíveis:" not in body
+    assert "01/12/2026, 02/12/2026" not in body
+    assert "Se a data que você prefere não aparecer em “Ver opções”" in body
+    assert len(rows) == 10
+    assert rows[0]["id"] == "date:2026-12-01"
+    assert rows[-1]["id"] == "date:2026-12-10"
 
 
 def test_purchase_and_install_delivery_button_is_meta_compatible() -> None:
