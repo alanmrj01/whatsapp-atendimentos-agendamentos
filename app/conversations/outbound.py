@@ -1109,11 +1109,10 @@ def _append_hidden_options_hint(
 ) -> str:
     if len(options) <= MAX_LIST_ROWS:
         return body
-    labels = ", ".join(option.label for option in options)
     expanded = (
-        f"{body.rstrip()}\n\nOpções disponíveis: {labels}. "
+        f"{body.rstrip()} "
         f"Se o {noun} que você prefere não aparecer em “Ver opções”, "
-        f"responda digitando o {noun}."
+        f"pode me dizer o {noun}."
     )
     return expanded[:1024]
 
