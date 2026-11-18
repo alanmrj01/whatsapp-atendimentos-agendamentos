@@ -30,6 +30,7 @@ from app.conversations.engine import (
 )
 from app.conversations.outbound import (
     WHATSAPP_LIST_ROW_TITLE_MAX,
+    date_selection_message,
     service_selection_message,
 )
 from app.conversations.service_semantics import generate_service_intent_examples
@@ -1199,6 +1200,30 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         button["id"]
         for button in interactive["booking.confirmation"].outbound_payload["buttons"]
     ] == ["booking.confirm", "booking.back", "booking.cancel"]
+
+
+def test_date_selection_never_enumerates_hidden_overflow_options() -> None:
+    options = tuple(
+        BookingOption(
+            f"2026-12-{day:02d}",
+            f"{day:02d}/12/2026",
+        )
+        for day in range(1, 13)
+    )
+
+    message = date_selection_message(
+        options,
+        body="Escolha uma data para o atendimento.",
+    )
+    body = message.body or ""
+    rows = (message.outbound_payload or {})["sections"][0]["rows"]
+
+    assert "Opções disponíveis:" not in body
+    assert "01/12/2026, 02/12/2026" not in body
+    assert "Se a data que você prefere não aparecer em “Ver opções”" in body
+    assert len(rows) == 10
+    assert rows[0]["id"] == "date:2026-12-01"
+    assert rows[-1]["id"] == "date:2026-12-10"
 
 
 def test_service_list_titles_are_meta_safe_and_keep_original_ids() -> None:
