@@ -253,6 +253,10 @@ async def determine_transition(
     interpreter = DeterministicConversationInterpreter()
     interpretation = interpreter.interpret(inbound.body)
     base_context = _clean_context(conversation.context)
+    raw_social_resume = conversation.context.get(_SOCIAL_RESUME_PENDING_KEY)
+    if raw_social_resume in {_SOCIAL_RESUME_QUOTE, state.value}:
+        base_context[_SOCIAL_RESUME_PENDING_KEY] = raw_social_resume
+
     action = _catalog_alternative_reference_action(
         base_context,
         inbound.body,
