@@ -1054,7 +1054,13 @@ def _safe_list_row_title(value: str) -> str:
     if head_budget <= 0:
         return normalized[: WHATSAPP_LIST_ROW_TITLE_MAX - 1].rstrip() + "…"
 
-    head = normalized[:head_budget].rstrip(" -/,:;")
+    head_words: list[str] = []
+    for word in words:
+        candidate = " ".join((*head_words, word))
+        if len(candidate) > head_budget:
+            break
+        head_words.append(word)
+    head = " ".join(head_words).rstrip(" -/,:;")
     if not head:
         return normalized[: WHATSAPP_LIST_ROW_TITLE_MAX - 1].rstrip() + "…"
     return f"{head}…{suffix}"
