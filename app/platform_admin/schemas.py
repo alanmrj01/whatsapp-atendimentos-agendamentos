@@ -81,6 +81,9 @@ class PlatformBusinessResponse(BaseModel):
     commercial_payment_method: Literal["credit_card", "pix", "pix_automatic"] | None = None
     commercial_amount_cents: int | None = None
     commercial_paid_at: datetime | None = None
+    commercial_payment_status: Literal[
+        "creating", "active", "paid", "canceled", "expired", "failed"
+    ] | None = None
     contact_whatsapp: str | None = None
     owners: list[str]
     whatsapp_status: Literal["disconnected", "pending", "connected", "error"]
