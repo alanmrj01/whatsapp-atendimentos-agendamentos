@@ -711,7 +711,7 @@ def date_selection_message(
     *,
     body: str = "Escolha uma data para o atendimento.",
 ) -> OutboundMessage:
-    safe_body = _append_hidden_options_hint(body, options, "data")
+    safe_body = _append_hidden_options_hint(body, options, "a data")
     return OutboundMessage(
         message_type="interactive_list",
         body=safe_body,
@@ -1111,8 +1111,8 @@ def _append_hidden_options_hint(
         return body
     expanded = (
         f"{body.rstrip()} "
-        f"Se o {noun} que você prefere não aparecer em “Ver opções”, "
-        f"pode me dizer o {noun}."
+        f"Se {noun} que você prefere não aparecer em “Ver opções”, "
+        "pode me dizer qual prefere."
     )
     return expanded[:1024]
 
