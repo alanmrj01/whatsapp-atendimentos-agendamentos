@@ -188,6 +188,26 @@ class PlatformAdminService:
                 ),
             )
 
+        checkout_rows = await self.db.execute(
+            select(
+                BillingCheckout.business_id,
+                BillingCheckout.status,
+                BillingCheckout.created_at,
+            )
+            .where(
+                BillingCheckout.business_id.in_(ids),
+                BillingCheckout.provider_environment
+                == billing_provider_environment(),
+            )
+            .order_by(
+                BillingCheckout.business_id,
+                BillingCheckout.created_at.desc(),
+            )
+        )
+        payment_statuses: dict[UUID, str] = {}
+        for business_id, payment_status, _ in checkout_rows:
+            payment_statuses.setdefault(business_id, payment_status)
+
         lead_rows = await self.db.execute(
             select(
                 MarketingLeadContact.business_id,
@@ -309,6 +329,7 @@ class PlatformAdminService:
                     if business.id in subscriptions
                     else None
                 ),
+                commercial_payment_status=payment_statuses.get(business.id),
                 contact_whatsapp=(
                     lead_whatsapps.get(business.id)
                     or (
