@@ -70,6 +70,8 @@ from app.conversations.ports import BookingOption
 LIST_BUTTON_TEXT = "Ver opções"
 MAX_LIST_ROWS = 10
 WHATSAPP_REPLY_BUTTON_TITLE_MAX = 20
+WHATSAPP_LIST_ROW_TITLE_MAX = 24
+WHATSAPP_LIST_ROW_DESCRIPTION_MAX = 72
 
 
 @dataclass(frozen=True, slots=True)
@@ -1035,6 +1037,39 @@ def handoff_message() -> OutboundMessage:
     )
 
 
+def _safe_list_row_title(value: str) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= WHATSAPP_LIST_ROW_TITLE_MAX:
+        return normalized
+
+    words = normalized.split()
+    suffix = words[-1]
+    for word in reversed(words[:-1]):
+        candidate = f"{word} {suffix}"
+        if len(candidate) > 11:
+            break
+        suffix = candidate
+
+    head_budget = WHATSAPP_LIST_ROW_TITLE_MAX - len(suffix) - 1
+    if head_budget <= 0:
+        return normalized[: WHATSAPP_LIST_ROW_TITLE_MAX - 1].rstrip() + "…"
+
+    head = normalized[:head_budget].rstrip(" -/,:;")
+    if not head:
+        return normalized[: WHATSAPP_LIST_ROW_TITLE_MAX - 1].rstrip() + "…"
+    return f"{head}…{suffix}"
+
+
+def _safe_list_row_description(value: str) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= WHATSAPP_LIST_ROW_DESCRIPTION_MAX:
+        return normalized
+    return (
+        normalized[: WHATSAPP_LIST_ROW_DESCRIPTION_MAX - 1].rstrip()
+        + "…"
+    )
+
+
 def _list_payload(
     section_title: str,
     options: Sequence[BookingOption],
@@ -1042,15 +1077,20 @@ def _list_payload(
     prefix: str = "",
 ) -> dict[str, Any]:
     visible = tuple(options[:MAX_LIST_ROWS])
+    rows: list[dict[str, str]] = []
+    for option in visible:
+        normalized_label = " ".join(option.label.split())
+        title = _safe_list_row_title(normalized_label)
+        row = {"id": f"{prefix}{option.id}", "title": title}
+        if title != normalized_label:
+            row["description"] = _safe_list_row_description(normalized_label)
+        rows.append(row)
     return {
         "button": LIST_BUTTON_TEXT,
         "sections": [
             {
                 "title": section_title,
-                "rows": [
-                    {"id": f"{prefix}{option.id}", "title": option.label}
-                    for option in visible
-                ],
+                "rows": rows,
             }
         ],
     }
