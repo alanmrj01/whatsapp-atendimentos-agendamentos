@@ -98,6 +98,8 @@ async def test_platform_admin_lists_real_free_or_paid_access_without_inventing_p
             [],
             CursorLikeRows([(free_business.id, "free", False)]),
             [],
+            [],
+            [],
         ]),
     )
 
@@ -142,8 +144,13 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
                 "Alan Cliente",
                 "alan@example.test",
                 "11999999999",
+                "pix",
+                14_790,
+                datetime.now(UTC),
                 datetime.now(UTC),
             )],
+            [(business.id, "paid", datetime.now(UTC))],
+            [(business.id, "+5511999999999")],
         ]),
     )
 
@@ -166,8 +173,99 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
     assert item.commercial_contact_name == "Alan Cliente"
     assert item.commercial_contact_email == "alan@example.test"
     assert item.commercial_contact_phone == "11999999999"
+    assert item.commercial_payment_method == "pix"
+    assert item.commercial_amount_cents == 14_790
+    assert item.commercial_paid_at is not None
+    assert item.commercial_payment_status == "paid"
+    assert item.contact_whatsapp == "+5511999999999"
     assert item.commercial_refund_deadline_at is not None
     assert item.commercial_refund_deadline_at > item.commercial_refund_requested_at
+
+
+@pytest.mark.asyncio
+async def test_platform_admin_detail_consolidates_read_only_customer_data() -> None:
+    business = Business(
+        id=uuid4(),
+        name="Cliente Real",
+        responsible_name="Alan Cliente",
+        timezone="America/Sao_Paulo",
+        active=True,
+    )
+    base = PlatformBusinessResponse(
+        id=business.id,
+        name=business.name,
+        timezone=business.timezone,
+        active=True,
+        created_at=datetime.now(UTC),
+        contact_whatsapp="+5511999999999",
+        owners=["owner@example.test"],
+        whatsapp_status="connected",
+    )
+    lead = SimpleNamespace(
+        lead_name="Alan Cliente",
+        source="signup",
+        created_at=datetime.now(UTC),
+    )
+    connection = SimpleNamespace(
+        mode="coexistence",
+        display_phone_number="+5511988887777",
+        connected_at=datetime.now(UTC),
+        disconnected_at=None,
+        last_error_code=None,
+        meta_review_status="approved",
+    )
+    signup_event = SimpleNamespace(
+        properties={
+            "utm_source": "fb",
+            "utm_campaign": "ALOVIA | SALES",
+            "utm_content": "C03 | CAUS/CONSEQ | CLIENTE_ESPERANDO",
+            "campaign_id": "9001",
+            "adset_id": "9002",
+            "ad_id": "9003",
+            "angle": "cliente_esperando_whatsapp",
+            "quiz_profile": "at_risk",
+        }
+    )
+    commercial = SimpleNamespace(
+        first=lambda: (
+            datetime.now(UTC),
+            datetime.now(UTC),
+            "paid",
+            "cus_123",
+        )
+    )
+    funnel = [
+        ("signup_completed", datetime.now(UTC) - timedelta(minutes=5)),
+        ("preactivation_started", datetime.now(UTC) - timedelta(minutes=4)),
+        ("checkout_started", datetime.now(UTC) - timedelta(minutes=3)),
+        ("payment_confirmed", datetime.now(UTC) - timedelta(minutes=2)),
+        ("whatsapp_connection_completed", datetime.now(UTC) - timedelta(minutes=1)),
+    ]
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=business),
+        scalar=AsyncMock(side_effect=[lead, connection, signup_event]),
+        execute=AsyncMock(side_effect=[commercial, funnel]),
+    )
+    service = PlatformAdminService(db)
+    service.list_businesses = AsyncMock(
+        return_value=PlatformBusinessListResponse(businesses=[base])
+    )
+
+    detail = await service.get_business_detail(business.id)
+
+    assert detail.contact_whatsapp == "+5511999999999"
+    assert detail.whatsapp_mode == "coexistence"
+    assert detail.commercial_checkout_status == "paid"
+    assert detail.commercial_provider_customer_id == "cus_123"
+    assert detail.acquisition_source == "fb"
+    assert detail.acquisition_campaign == "ALOVIA | SALES"
+    assert detail.acquisition_content == "C03 | CAUS/CONSEQ | CLIENTE_ESPERANDO"
+    assert detail.acquisition_ad_id == "9003"
+    assert detail.acquisition_angle == "cliente_esperando_whatsapp"
+    assert detail.acquisition_quiz_profile == "at_risk"
+    assert detail.signup_completed_at is not None
+    assert detail.payment_confirmed_at is not None
+    assert detail.last_activity_at is not None
 
 
 def test_platform_business_create_forbids_extra_fields() -> None:
