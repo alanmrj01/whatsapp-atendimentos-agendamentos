@@ -208,6 +208,8 @@ from app.conversations.types import (
 
 
 _CUSTOMER_NAME_SKIPPED_KEY = "customer_name_skipped"
+_SOCIAL_RESUME_PENDING_KEY = "social_resume_pending"
+_SOCIAL_RESUME_QUOTE = "quote"
 
 
 def _catalog_alternative_reference_action(
@@ -628,6 +630,39 @@ async def _route_named_conversation(
     )
     customer_name = conversation.customer_name
 
+    pending_social_resume = context.get(_SOCIAL_RESUME_PENDING_KEY)
+    if action is None and pending_social_resume == state.value:
+        if _resume_choice_requested(
+            inbound,
+            interpretation,
+            action,
+            allow_bare_affirmative=True,
+        ):
+            updated = dict(context)
+            updated.pop(_SOCIAL_RESUME_PENDING_KEY, None)
+            return await _resume_pending_question(
+                conversation,
+                inbound,
+                updated,
+                booking_port,
+                prefix="Claro, vamos continuar.",
+            )
+        if _resume_choice_declined(inbound.body):
+            updated = dict(context)
+            updated.pop(_SOCIAL_RESUME_PENDING_KEY, None)
+            return _transition(
+                state,
+                updated,
+                _text_message("Tudo bem. Me diga do que você precisa agora."),
+            )
+        if not (
+            interpretation.intent is ConversationIntent.GREETING
+            or interpretation.has_act(ConversationAct.SOCIAL)
+            or is_contextual_social_message(inbound.body, interpretation)
+        ):
+            context = dict(context)
+            context.pop(_SOCIAL_RESUME_PENDING_KEY, None)
+
     suggestion = context.get("equipment_suggestion")
     normalized_turn = normalize_portuguese(inbound.body or "")
     if (
@@ -924,12 +959,17 @@ async def _route_named_conversation(
                 prefix=referral_acknowledgement(customer_name),
             )
         if turn_orchestration.relation is TurnRelation.SOCIAL:
-            return await _resume_pending_question(
-                conversation,
-                inbound,
-                context,
-                booking_port,
-                prefix="Tudo certo.",
+            updated = dict(context)
+            updated[_SOCIAL_RESUME_PENDING_KEY] = state.value
+            return _transition(
+                state,
+                updated,
+                _text_message(
+                    _social_resume_prompt(
+                        customer_name,
+                        quote=False,
+                    )
+                ),
             )
         if turn_orchestration.relation is TurnRelation.PAUSE:
             return await _resume_pending_question(
@@ -5926,14 +5966,26 @@ def _context_time(
     return parsed
 
 
-def _quote_resume_requested(
+def _resume_choice_requested(
     inbound: ConversationInput,
     interpretation: Interpretation,
     action: str | None,
+    *,
+    allow_bare_affirmative: bool,
 ) -> bool:
     if action in {QUOTE_SCHEDULE, MENU_BOOK}:
         return True
     normalized = normalize_portuguese(inbound.body or "")
+    if allow_bare_affirmative and normalized in {
+        "sim",
+        "sim quero",
+        "sim pode",
+        "pode",
+        "vamos",
+        "claro",
+        "quero",
+    }:
+        return True
     continuation_phrases = (
         "ok vamos seguir",
         "vamos seguir",
@@ -5955,6 +6007,56 @@ def _quote_resume_requested(
     )
 
 
+def _resume_choice_declined(body: str | None) -> bool:
+    normalized = normalize_portuguese(body or "")
+    return normalized in {
+        "nao",
+        "agora nao",
+        "nao agora",
+        "outra coisa",
+        "quero outra coisa",
+        "preciso de outra coisa",
+    } or any(
+        phrase in normalized
+        for phrase in (
+            "nao quero continuar",
+            "nao quero seguir",
+            "quero falar de outra coisa",
+            "preciso falar de outra coisa",
+        )
+    )
+
+
+def _social_resume_prompt(
+    customer_name: str | None,
+    *,
+    quote: bool,
+) -> str:
+    lead = f"Tudo certo, {customer_name}!" if customer_name else "Tudo certo!"
+    if quote:
+        return (
+            f"{lead} Sua cotação continua registrada. "
+            "Quer retomar o agendamento ou precisa de outra coisa?"
+        )
+    return (
+        f"{lead} Quer continuar de onde paramos no agendamento "
+        "ou precisa de outra coisa?"
+    )
+
+
+def _quote_resume_requested(
+    inbound: ConversationInput,
+    interpretation: Interpretation,
+    action: str | None,
+) -> bool:
+    return _resume_choice_requested(
+        inbound,
+        interpretation,
+        action,
+        allow_bare_affirmative=False,
+    )
+
+
 async def _resume_paused_quote_if_requested(
     conversation: ConversationSnapshot,
     inbound: ConversationInput,
@@ -5971,7 +6073,16 @@ async def _resume_paused_quote_if_requested(
     ):
         return None
 
-    if _quote_resume_requested(inbound, interpretation, action):
+    resume_prompted = context.get(_SOCIAL_RESUME_PENDING_KEY) == _SOCIAL_RESUME_QUOTE
+    if _quote_resume_requested(inbound, interpretation, action) or (
+        resume_prompted
+        and _resume_choice_requested(
+            inbound,
+            interpretation,
+            action,
+            allow_bare_affirmative=True,
+        )
+    ):
         try:
             port = _require_booking_port(booking_port)
         except BookingPortUnavailable:
@@ -5984,6 +6095,7 @@ async def _resume_paused_quote_if_requested(
             **context,
             "quote_presented": True,
         }
+        updated.pop(_SOCIAL_RESUME_PENDING_KEY, None)
         updated.pop("quote_paused", None)
         updated.pop("request_mode", None)
         return await _offer_dates(
@@ -5993,22 +6105,40 @@ async def _resume_paused_quote_if_requested(
             customer_name=conversation.customer_name,
         )
 
+    if resume_prompted and action is None and _resume_choice_declined(inbound.body):
+        updated = dict(context)
+        updated.pop(_SOCIAL_RESUME_PENDING_KEY, None)
+        return _transition(
+            state,
+            updated,
+            _text_message("Tudo bem. Me diga do que você precisa agora."),
+        )
+
+    social_turn = (
+        interpretation.intent is ConversationIntent.GREETING
+        or interpretation.has_act(ConversationAct.SOCIAL)
+        or is_contextual_social_message(inbound.body, interpretation)
+    )
     if (
         action is None
         and isinstance(inbound.body, str)
         and inbound.body.strip()
-        and (
-            interpretation.intent is ConversationIntent.UNKNOWN
-            or interpretation.has_act(ConversationAct.SOCIAL)
-        )
+        and (social_turn or interpretation.intent is ConversationIntent.UNKNOWN)
     ):
+        updated = dict(context)
+        updated[_SOCIAL_RESUME_PENDING_KEY] = _SOCIAL_RESUME_QUOTE
+        body = (
+            _social_resume_prompt(conversation.customer_name, quote=True)
+            if social_turn
+            else (
+                "Sua cotação continua registrada. "
+                "Quer retomar o agendamento ou precisa de outra coisa?"
+            )
+        )
         return _transition(
-            ConversationState.QUOTE_DECISION,
-            context,
-            quote_decision_message(
-                "Sua cotação continua registrada. Quer que eu consulte a agenda "
-                "para seguir com a instalação?"
-            ),
+            state,
+            updated,
+            _text_message(body),
         )
     return None
 
