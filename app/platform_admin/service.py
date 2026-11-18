@@ -20,6 +20,8 @@ from app.models import (
     BusinessWhatsAppConnection,
     BillingCheckout,
     CommercialSubscription,
+    MarketingFunnelEvent,
+    MarketingLeadContact,
     User,
 )
 from app.models.billing import billing_provider_environment
@@ -27,6 +29,7 @@ from app.operations.defaults import default_services_for_business
 from app.platform_admin.schemas import (
     PlatformBusinessCreateRequest,
     PlatformBusinessAccessResponse,
+    PlatformBusinessDetailResponse,
     PlatformBusinessListResponse,
     PlatformBusinessResponse,
     PlatformBusinessStatusResponse,
@@ -62,14 +65,18 @@ class PlatformAdminService:
             select(
                 BusinessWhatsAppConnection.business_id,
                 BusinessWhatsAppConnection.status,
+                BusinessWhatsAppConnection.display_phone_number,
                 BusinessWhatsAppConnection.created_at,
             )
             .where(BusinessWhatsAppConnection.business_id.in_(ids))
             .order_by(BusinessWhatsAppConnection.created_at.desc())
         )
         statuses: dict[UUID, str] = {}
-        for business_id, status, _ in connection_rows:
+        whatsapp_numbers: dict[UUID, str] = {}
+        for business_id, status, display_phone_number, _ in connection_rows:
             statuses.setdefault(business_id, status)
+            if display_phone_number:
+                whatsapp_numbers.setdefault(business_id, display_phone_number)
 
         access_rows = await self.db.execute(
             select(
@@ -99,6 +106,9 @@ class PlatformAdminService:
                 BillingCheckout.payer_name,
                 BillingCheckout.payer_email,
                 BillingCheckout.payer_phone,
+                CommercialSubscription.payment_method,
+                BillingCheckout.amount_cents,
+                BillingCheckout.paid_at,
                 CommercialSubscription.created_at,
             )
             .join(
@@ -131,6 +141,9 @@ class PlatformAdminService:
                 str | None,
                 str | None,
                 str | None,
+                str,
+                int,
+                datetime | None,
             ],
         ] = {}
         for (
@@ -148,6 +161,9 @@ class PlatformAdminService:
             payer_name,
             payer_email,
             payer_phone,
+            payment_method,
+            amount_cents,
+            paid_at,
             _,
         ) in subscription_rows:
             subscriptions.setdefault(
@@ -166,8 +182,23 @@ class PlatformAdminService:
                     payer_name,
                     payer_email,
                     payer_phone,
+                    payment_method,
+                    amount_cents,
+                    paid_at,
                 ),
             )
+
+        lead_rows = await self.db.execute(
+            select(
+                MarketingLeadContact.business_id,
+                MarketingLeadContact.whatsapp_e164,
+            ).where(MarketingLeadContact.business_id.in_(ids))
+        )
+        lead_whatsapps = {
+            business_id: whatsapp_e164
+            for business_id, whatsapp_e164 in lead_rows
+            if whatsapp_e164
+        }
 
         now = datetime.now(UTC)
         return PlatformBusinessListResponse(businesses=[
@@ -176,6 +207,7 @@ class PlatformAdminService:
                 name=business.name,
                 timezone=business.timezone,
                 active=business.active,
+                created_at=business.created_at,
                 # Businesses created before explicit access rows retain the
                 # existing paid compatibility used by AuthService. This flag is
                 # deliberately not overwritten by commercial billing.
@@ -262,11 +294,185 @@ class PlatformAdminService:
                     and subscriptions[business.id][5] in {"requested", "reconcile_required"}
                     else None
                 ),
+                commercial_payment_method=(
+                    subscriptions[business.id][13]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_amount_cents=(
+                    subscriptions[business.id][14]
+                    if business.id in subscriptions
+                    else None
+                ),
+                commercial_paid_at=(
+                    subscriptions[business.id][15]
+                    if business.id in subscriptions
+                    else None
+                ),
+                contact_whatsapp=(
+                    lead_whatsapps.get(business.id)
+                    or (
+                        subscriptions[business.id][12]
+                        if business.id in subscriptions
+                        else None
+                    )
+                    or whatsapp_numbers.get(business.id)
+                ),
                 owners=owners.get(business.id, []),
                 whatsapp_status=statuses.get(business.id, "disconnected"),
             )
             for business in businesses
         ])
+
+
+    async def get_business_detail(
+        self, business_id: UUID
+    ) -> PlatformBusinessDetailResponse:
+        business = await self.db.get(Business, business_id)
+        if business is None:
+            raise HTTPException(404, "Business not found")
+
+        listing = await self.list_businesses()
+        base = next(
+            (item for item in listing.businesses if item.id == business_id),
+            None,
+        )
+        if base is None:
+            raise HTTPException(404, "Business not found")
+
+        lead = await self.db.scalar(
+            select(MarketingLeadContact)
+            .where(MarketingLeadContact.business_id == business_id)
+            .limit(1)
+        )
+        connection = await self.db.scalar(
+            select(BusinessWhatsAppConnection)
+            .where(BusinessWhatsAppConnection.business_id == business_id)
+            .order_by(BusinessWhatsAppConnection.created_at.desc())
+            .limit(1)
+        )
+
+        commercial_row = (
+            await self.db.execute(
+                select(
+                    CommercialSubscription.created_at,
+                    BillingCheckout.created_at,
+                    BillingCheckout.status,
+                    BillingCheckout.provider_customer_id,
+                )
+                .join(
+                    BillingCheckout,
+                    BillingCheckout.id == CommercialSubscription.checkout_id,
+                )
+                .where(
+                    CommercialSubscription.business_id == business_id,
+                    CommercialSubscription.provider_environment
+                    == billing_provider_environment(),
+                )
+                .order_by(CommercialSubscription.created_at.desc())
+                .limit(1)
+            )
+        ).first()
+
+        signup_event = await self.db.scalar(
+            select(MarketingFunnelEvent)
+            .where(
+                MarketingFunnelEvent.business_id == business_id,
+                MarketingFunnelEvent.event_name == "signup_completed",
+            )
+            .order_by(MarketingFunnelEvent.occurred_at.asc())
+            .limit(1)
+        )
+        funnel_rows = await self.db.execute(
+            select(
+                MarketingFunnelEvent.event_name,
+                MarketingFunnelEvent.occurred_at,
+            )
+            .where(MarketingFunnelEvent.business_id == business_id)
+            .order_by(MarketingFunnelEvent.occurred_at.asc())
+        )
+        milestone_names = {
+            "signup_completed",
+            "preactivation_started",
+            "checkout_started",
+            "payment_confirmed",
+            "whatsapp_connection_completed",
+        }
+        milestones: dict[str, datetime] = {}
+        last_activity_at: datetime | None = None
+        for event_name, occurred_at in funnel_rows:
+            last_activity_at = occurred_at
+            if event_name in milestone_names:
+                milestones.setdefault(event_name, occurred_at)
+
+        properties = signup_event.properties if signup_event is not None else {}
+        if not isinstance(properties, dict):
+            properties = {}
+
+        def acquisition_value(key: str) -> str | None:
+            value = properties.get(key)
+            if not isinstance(value, str):
+                return None
+            normalized = value.strip()
+            return normalized or None
+
+        return PlatformBusinessDetailResponse(
+            **base.model_dump(),
+            responsible_name=business.responsible_name,
+            lead_name=lead.lead_name if lead is not None else None,
+            lead_source=lead.source if lead is not None else None,
+            lead_created_at=lead.created_at if lead is not None else None,
+            whatsapp_mode=connection.mode if connection is not None else None,
+            whatsapp_display_phone=(
+                connection.display_phone_number if connection is not None else None
+            ),
+            whatsapp_connected_at=(
+                connection.connected_at if connection is not None else None
+            ),
+            whatsapp_disconnected_at=(
+                connection.disconnected_at if connection is not None else None
+            ),
+            whatsapp_last_error_code=(
+                connection.last_error_code if connection is not None else None
+            ),
+            whatsapp_meta_review_status=(
+                connection.meta_review_status if connection is not None else None
+            ),
+            commercial_checkout_status=(
+                commercial_row[2] if commercial_row is not None else None
+            ),
+            commercial_provider_customer_id=(
+                commercial_row[3] if commercial_row is not None else None
+            ),
+            commercial_checkout_created_at=(
+                commercial_row[1] if commercial_row is not None else None
+            ),
+            commercial_subscription_created_at=(
+                commercial_row[0] if commercial_row is not None else None
+            ),
+            acquisition_source=acquisition_value("utm_source"),
+            acquisition_medium=acquisition_value("utm_medium"),
+            acquisition_campaign=acquisition_value("utm_campaign"),
+            acquisition_content=acquisition_value("utm_content"),
+            acquisition_term=acquisition_value("utm_term"),
+            acquisition_campaign_id=acquisition_value("campaign_id"),
+            acquisition_adset_id=acquisition_value("adset_id"),
+            acquisition_ad_id=acquisition_value("ad_id"),
+            acquisition_placement=acquisition_value("placement"),
+            acquisition_angle=acquisition_value("angle"),
+            acquisition_quiz_profile=(
+                acquisition_value("quiz_profile")
+                or acquisition_value("result_profile")
+            ),
+            signup_completed_at=milestones.get("signup_completed"),
+            demo_started_at=milestones.get("preactivation_started"),
+            checkout_started_at=milestones.get("checkout_started"),
+            payment_confirmed_at=milestones.get("payment_confirmed"),
+            whatsapp_connected_event_at=milestones.get(
+                "whatsapp_connection_completed"
+            ),
+            last_activity_at=last_activity_at or business.updated_at,
+        )
 
     async def _idempotent_replay(
         self, payload: PlatformBusinessCreateRequest, idempotency_key: UUID
