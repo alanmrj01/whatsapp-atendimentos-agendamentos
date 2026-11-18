@@ -5089,8 +5089,61 @@ async def test_debounced_social_fragments_preserve_active_booking_without_replay
     assert repository.state == ConversationState.BOOKING_DATE
     assert repository.context["service_id"] == str(SERVICE_ID)
     assert "social_resume_pending" not in repository.context
-    resumed = (repository.outbounds[-1].transition.outbound.body or "").casefold()
-    assert "02/09/2026" in resumed
+    resumed_message = repository.outbounds[-1].transition.outbound
+    resumed = (resumed_message.body or "").casefold()
+    assert "qual destas datas fica melhor para você" in resumed
+    assert "datas disponíveis:" not in resumed
+    assert "opções disponíveis:" not in resumed
+    rows = (resumed_message.outbound_payload or {})["sections"][0]["rows"]
+    assert rows == [
+        {"id": "date:2026-09-02", "title": "02/09/2026"}
+    ]
+
+
+@mark.asyncio
+async def test_social_resume_with_many_dates_uses_weekday_selection_without_dumping_agenda() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_DATE,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    start = date(2026, 11, 23)
+    booking_port.dates = [
+        BookingOption(
+            (start + timedelta(days=offset)).isoformat(),
+            (start + timedelta(days=offset)).strftime("%d/%m/%Y"),
+        )
+        for offset in range(21)
+    ]
+    engine = ConversationEngine(repository, booking_port)
+
+    assert await engine.process(
+        inbound(118671, body="boa cachorro\nna paz")
+    ) is True
+    assert repository.context["social_resume_pending"] == (
+        ConversationState.BOOKING_DATE.value
+    )
+
+    assert await engine.process(
+        inbound(118672, body="vamos continuar")
+    ) is True
+
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "social_resume_pending" not in repository.context
+    resumed_message = repository.outbounds[-1].transition.outbound
+    body = (resumed_message.body or "").casefold()
+    assert "claro, vamos continuar" in body
+    assert "tenho disponibilidade em vários dias" in body
+    assert "qual dia da semana fica melhor" in body
+    assert "datas disponíveis:" not in body
+    assert "opções disponíveis:" not in body
+    assert "23/11/2026" not in body
+    assert resumed_message.interactive_id == "booking.weekdays"
+    rows = (resumed_message.outbound_payload or {})["sections"][0]["rows"]
+    assert 1 <= len(rows) <= 7
+    assert all(row["id"].startswith("weekday:") for row in rows)
 
 
 @mark.asyncio
