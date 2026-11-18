@@ -99,6 +99,7 @@ async def test_platform_admin_lists_real_free_or_paid_access_without_inventing_p
             CursorLikeRows([(free_business.id, "free", False)]),
             [],
             [],
+            [],
         ]),
     )
 
@@ -148,6 +149,7 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
                 datetime.now(UTC),
                 datetime.now(UTC),
             )],
+            [(business.id, "paid", datetime.now(UTC))],
             [(business.id, "+5511999999999")],
         ]),
     )
@@ -174,6 +176,7 @@ async def test_platform_admin_reports_active_commercial_subscription_without_mut
     assert item.commercial_payment_method == "pix"
     assert item.commercial_amount_cents == 14_790
     assert item.commercial_paid_at is not None
+    assert item.commercial_payment_status == "paid"
     assert item.contact_whatsapp == "+5511999999999"
     assert item.commercial_refund_deadline_at is not None
     assert item.commercial_refund_deadline_at > item.commercial_refund_requested_at
