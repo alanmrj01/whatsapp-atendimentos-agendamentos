@@ -129,7 +129,13 @@ def is_contextual_social_message(
         return False
 
     return bool(
-        re.match(
+        re.fullmatch(
+            r"(?:boa\s+(?:cachorro|meu\s+amigo|amigo|irmao|meu\s+irmao|"
+            r"chefe|meu\s+chefe)|na\s+paz|tudo\s+na\s+paz|de\s+boa|suave|"
+            r"salve(?:\s+(?:amigo|irmao|chefe))?)",
+            normalized,
+        )
+        or re.match(
             r"^(?:tudo\s+certo|ta\s+tudo\s+certo|beleza|tranquilo|show|"
             r"valeu|obrigad[oa]|nossa)\b",
             normalized,
