@@ -1176,10 +1176,11 @@ async def test_manual_lab_weekday_choice_offers_three_cross_month_slots() -> Non
     assert snapshot["state"] == ConversationState.BOOKING_DATE.value
     last = [item for item in snapshot["history"] if item["role"] == "assistant"][-1]
     assert [option["title"] for option in last["options"]] == [
-        "quarta-feira, 18/11 às 09:00",
-        "quarta-feira, 25/11 às 14:30",
-        "quarta-feira, 02/12 às 18:00",
+        "18/11 às 09:00",
+        "25/11 às 14:30",
+        "02/12 às 18:00",
     ]
+    assert all(len(option["title"]) <= 24 for option in last["options"])
 
 
 def test_apartment_address_fact_infers_building_for_short_term_memory() -> None:
