@@ -631,7 +631,10 @@ async def _route_named_conversation(
     customer_name = conversation.customer_name
 
     pending_social_resume = context.get(_SOCIAL_RESUME_PENDING_KEY)
-    if action is None and pending_social_resume == state.value:
+    if pending_social_resume == state.value and action is not None:
+        context = dict(context)
+        context.pop(_SOCIAL_RESUME_PENDING_KEY, None)
+    elif action is None and pending_social_resume == state.value:
         if _resume_choice_requested(
             inbound,
             interpretation,
