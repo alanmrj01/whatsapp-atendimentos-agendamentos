@@ -88,6 +88,34 @@ def is_referral_message(body: str | None) -> bool:
     )
 
 
+def _is_contextual_social_fragment(normalized: str) -> bool:
+    if not normalized:
+        return False
+    vocative = (
+        r"(?:cachorro|mano|meu\s+mano|meu\s+amigo|amigo|irmao|"
+        r"meu\s+irmao|chefe|meu\s+chefe|parceiro|meu\s+parceiro)"
+    )
+    status = r"(?:na\s+paz|tudo\s+na\s+paz|de\s+boa|suave|tranquilo|beleza)"
+    return bool(
+        re.fullmatch(
+            rf"(?:oi|ola|bom\s+dia|boa\s+tarde|boa\s+noite|e\s+ai|"
+            rf"boa(?:\s+{vocative})?(?:\s+{status})?|{status}|"
+            rf"salve(?:\s+{vocative})?)",
+            normalized,
+        )
+        or re.match(
+            r"^(?:tudo\s+certo|ta\s+tudo\s+certo|beleza|tranquilo|show|"
+            r"valeu|obrigad[oa]|nossa)\b",
+            normalized,
+        )
+        or re.fullmatch(
+            r"(?:eu\s+)?(?:estou|to)\s+(?:no\s+)?(?:trabalho|trabalhando|"
+            r"ocupado|ocupada|na\s+rua|dirigindo)",
+            normalized,
+        )
+    )
+
+
 def is_contextual_social_message(
     body: str | None,
     interpretation: Interpretation,
@@ -124,28 +152,23 @@ def is_contextual_social_message(
     ):
         return False
 
-    normalized = normalize_portuguese(body or "")
+    raw = body or ""
+    normalized = normalize_portuguese(raw)
     if not normalized:
         return False
 
-    return bool(
-        re.fullmatch(
-            r"(?:boa\s+(?:cachorro|meu\s+amigo|amigo|irmao|meu\s+irmao|"
-            r"chefe|meu\s+chefe)|na\s+paz|tudo\s+na\s+paz|de\s+boa|suave|"
-            r"salve(?:\s+(?:amigo|irmao|chefe))?)",
-            normalized,
-        )
-        or re.match(
-            r"^(?:tudo\s+certo|ta\s+tudo\s+certo|beleza|tranquilo|show|"
-            r"valeu|obrigad[oa]|nossa)\b",
-            normalized,
-        )
-        or re.fullmatch(
-            r"(?:eu\s+)?(?:estou|to)\s+(?:no\s+)?(?:trabalho|trabalhando|"
-            r"ocupado|ocupada|na\s+rua|dirigindo)",
-            normalized,
-        )
-    )
+    fragments = [
+        normalize_portuguese(fragment)
+        for fragment in raw.splitlines()
+        if fragment.strip()
+    ]
+    if len(fragments) > 1 and all(
+        _is_contextual_social_fragment(fragment)
+        for fragment in fragments
+    ):
+        return True
+
+    return _is_contextual_social_fragment(normalized)
 
 
 def referral_acknowledgement(customer_name: str | None = None) -> str:
