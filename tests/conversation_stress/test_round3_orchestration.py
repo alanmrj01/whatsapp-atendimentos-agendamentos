@@ -491,7 +491,7 @@ async def test_cleaning_lead_is_qualified_before_service_address() -> None:
 
 
 @pytest.mark.asyncio
-async def test_quote_address_is_requested_with_clear_commercial_reason() -> None:
+async def test_quote_is_presented_before_service_address() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.BOOKING_PROPERTY,
         context={
@@ -521,11 +521,13 @@ async def test_quote_address_is_requested_with_clear_commercial_reason() -> None
     )
 
     body = _combined_body(repository)
-    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.state == ConversationState.QUOTE_DECISION
     assert repository.context["property_type"] == "house"
-    assert "agora que já entendi o serviço" in body
-    assert "finalizar a cotação" in body
-    assert "endereço completo" in body
+    assert repository.context["quote_presented"] is True
+    assert "service_address" not in repository.context
+    assert "cotação" in body.casefold()
+    assert "agendar a instalação" in body.casefold()
+    assert "endereço completo" not in body.casefold()
 
 
 @pytest.mark.asyncio

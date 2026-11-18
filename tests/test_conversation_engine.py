@@ -5000,6 +5000,138 @@ async def test_informal_greeting_with_service_request_is_processed_same_turn() -
 
 
 @mark.asyncio
+async def test_debounced_social_fragments_preserve_active_booking_without_replaying_checkpoint() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_DATE,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    engine = ConversationEngine(repository, booking_port)
+
+    assert await engine.process(
+        inbound(11866, body="boa cachorro\nna paz")
+    ) is True
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["social_resume_pending"] == ConversationState.BOOKING_DATE.value
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "tudo certo, alan" in body
+    assert "continuar de onde paramos" in body
+    assert "precisa de outra coisa" in body
+    assert "02/09/2026" not in body
+    assert "vou preservar" not in body
+
+    assert await engine.process(inbound(11867, body="sim")) is True
+
+    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "social_resume_pending" not in repository.context
+    resumed = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "02/09/2026" in resumed
+
+
+@mark.asyncio
+async def test_debounced_social_plus_service_request_keeps_operational_intent_same_turn() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.START,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(
+            11868,
+            body="boa cachorro\npreciso fazer uma limpeza no ar condicionado",
+        )
+    )
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "social_resume_pending" not in repository.context
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "marca e o modelo" in body
+    assert "como posso te ajudar" not in body
+
+
+@mark.asyncio
+async def test_paused_quote_social_reentry_asks_intent_before_resuming_agenda() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "quote_presented": True,
+            "quote_paused": True,
+        },
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(
+            str(SERVICE_ID),
+            "Instalação de ar-condicionado split",
+        )
+    ]
+    engine = ConversationEngine(repository, booking_port)
+
+    await engine.process(inbound(11869, body="Boa mano\nSuave?"))
+
+    assert repository.state == ConversationState.COMPLETED
+    assert repository.context["quote_paused"] is True
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert repository.context["social_resume_pending"] == "quote"
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "tudo certo, alan" in body
+    assert "cotação continua registrada" in body
+    assert "retomar o agendamento" in body
+    assert "precisa de outra coisa" in body
+    assert "dia da semana" not in body
+
+    await engine.process(inbound(11870, body="sim"))
+
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "quote_paused" not in repository.context
+    assert "social_resume_pending" not in repository.context
+    resumed = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "dia da semana" in resumed
+
+
+@mark.asyncio
+async def test_paused_quote_social_reentry_can_decline_resume_without_losing_quote() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.COMPLETED,
+        context={
+            "service_id": str(SERVICE_ID),
+            "request_mode": "quote",
+            "quote_presented": True,
+            "quote_paused": True,
+        },
+        customer_name="Alan",
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    await engine.process(inbound(11871, body="Boa mano"))
+    await engine.process(inbound(11872, body="agora não"))
+
+    assert repository.state == ConversationState.COMPLETED
+    assert repository.context["quote_paused"] is True
+    assert repository.context["service_id"] == str(SERVICE_ID)
+    assert "social_resume_pending" not in repository.context
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "me diga do que você precisa agora" in body
+    assert "agenda" not in body
+
+
+@mark.asyncio
 async def test_generic_unknown_is_sent_once_then_handoffs_to_human() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.START,
