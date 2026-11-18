@@ -4300,10 +4300,16 @@ async def _resume_pending_question(
                     _requirements_from_context(context),
                 )
             )
+            date_labels = ", ".join(option.label for option in dates)
+            resume_body = (
+                f"Datas disponíveis: {date_labels}. Escolha a melhor para você."
+                if date_labels
+                else "Escolha uma data para o atendimento."
+            )
             transition = _transition(
                 ConversationState.BOOKING_DATE,
                 context,
-                date_selection_message(dates),
+                date_selection_message(dates, body=resume_body),
             )
     elif state is ConversationState.BOOKING_TIME:
         service_id = _context_service_id(context)
