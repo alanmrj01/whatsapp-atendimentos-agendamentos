@@ -28,6 +28,10 @@ from app.conversations.engine import (
     ConversationEngine,
     build_outbound_idempotency_key,
 )
+from app.conversations.outbound import (
+    WHATSAPP_LIST_ROW_TITLE_MAX,
+    service_selection_message,
+)
 from app.conversations.service_semantics import generate_service_intent_examples
 from app.conversations.ports import (
     BookingConfirmation,
@@ -1195,6 +1199,61 @@ async def test_full_booking_flow_persists_canonical_states_and_context() -> None
         button["id"]
         for button in interactive["booking.confirmation"].outbound_payload["buttons"]
     ] == ["booking.confirm", "booking.back", "booking.cancel"]
+
+
+def test_service_list_titles_are_meta_safe_and_keep_original_ids() -> None:
+    options = (
+        BookingOption("diag", "Diagnóstico / manutenção corretiva"),
+        BookingOption(
+            "infra",
+            "Instalação ar condicionado com infra estrutura pronta",
+        ),
+        BookingOption(
+            "split24",
+            "Instalação ar condicionado split 24 mil btus",
+        ),
+        BookingOption(
+            "split18",
+            "Instalação de ar condicionado split 18 mil btus",
+        ),
+        BookingOption(
+            "split9",
+            "Instalação de ar-condicionado split 9 mil btus",
+        ),
+        BookingOption(
+            "split12",
+            "Instalação de ar-condicionado split 12 mil btus",
+        ),
+        BookingOption("clean", "Limpeza e higienização"),
+    )
+
+    outbound = service_selection_message(
+        options,
+        body="Claro. Qual serviço você quer agendar?",
+    )
+    rows = outbound.outbound_payload["sections"][0]["rows"]
+
+    assert outbound.body == "Claro. Qual serviço você quer agendar?"
+    assert [row["id"] for row in rows] == [
+        "service:diag",
+        "service:infra",
+        "service:split24",
+        "service:split18",
+        "service:split9",
+        "service:split12",
+        "service:clean",
+    ]
+    assert all(
+        len(row["title"]) <= WHATSAPP_LIST_ROW_TITLE_MAX
+        for row in rows
+    )
+    assert len({row["title"] for row in rows}) == len(rows)
+    assert rows[-1] == {
+        "id": "service:clean",
+        "title": "Limpeza e higienização",
+    }
+    for row, option in zip(rows[:-1], options[:-1], strict=True):
+        assert row["description"] == option.label
 
 
 @mark.asyncio
