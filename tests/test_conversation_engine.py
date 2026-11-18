@@ -4944,6 +4944,62 @@ async def test_paused_quote_menu_agendar_resumes_instead_of_restarting_service()
 
 
 @mark.asyncio
+async def test_informal_social_only_opening_waits_for_subject_without_handoff() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.START,
+        customer_name="Alan",
+        business_name="Clima Forte Refrigeração",
+    )
+    engine = ConversationEngine(repository, FakeBookingPort())
+
+    assert await engine.process(inbound(1185, body="boa cachorro")) is True
+
+    first = repository.outbounds[-1].transition
+    assert repository.state == ConversationState.MENU
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert "fallback_variant" not in repository.context
+    assert first.outbound.body == "Tudo certo. Como posso te ajudar?"
+
+    assert await engine.process(inbound(1186, body="na paz")) is True
+
+    second = repository.outbounds[-1].transition
+    assert repository.state == ConversationState.MENU
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert "fallback_variant" not in repository.context
+    assert second.outbound.body == "Tudo certo."
+    assert "como posso te ajudar" not in second.outbound.body.casefold()
+
+
+@mark.asyncio
+async def test_informal_greeting_with_service_request_is_processed_same_turn() -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.START,
+        customer_name="Alan",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização")
+    ]
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    engine = ConversationEngine(repository, booking_port)
+
+    assert await engine.process(
+        inbound(11865, body="boa cachorro, preciso fazer uma limpeza no ar condicionado")
+    ) is True
+
+    assert repository.state == ConversationState.BOOKING_EQUIPMENT_MODEL
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+    assert "fallback_variant" not in repository.context
+    body = (repository.outbounds[-1].transition.outbound.body or "").casefold()
+    assert "marca e o modelo" in body
+    assert "como posso te ajudar" not in body
+    assert "equipe" not in body
+
+
+@mark.asyncio
 async def test_generic_unknown_is_sent_once_then_handoffs_to_human() -> None:
     repository = FakeConversationRepository(
         state=ConversationState.START,
