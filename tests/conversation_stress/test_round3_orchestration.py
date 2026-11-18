@@ -525,7 +525,7 @@ async def test_quote_is_presented_before_service_address() -> None:
     assert repository.context["property_type"] == "house"
     assert repository.context["quote_presented"] is True
     assert "service_address" not in repository.context
-    assert "cotação" in body.casefold()
+    assert "valor do serviço" in body.casefold()
     assert "agendar a instalação" in body.casefold()
     assert "endereço completo" not in body.casefold()
 
