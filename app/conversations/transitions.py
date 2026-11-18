@@ -6340,10 +6340,15 @@ async def _handle_natural_start(
     if turn_orchestration.relation is TurnRelation.SOCIAL:
         clean_context = dict(active_context)
         clean_context.pop("fallback_variant", None)
+        social_body = (
+            "Tudo certo."
+            if conversation.state == ConversationState.MENU.value
+            else "Tudo certo. Como posso te ajudar?"
+        )
         return _transition(
             ConversationState.MENU,
             clean_context,
-            _text_message("Tudo certo. Como posso te ajudar?"),
+            _text_message(social_body),
         )
     if turn_orchestration.relation is TurnRelation.PAUSE:
         clean_context = dict(active_context)
