@@ -233,6 +233,39 @@ def test_dashboard_uses_unique_leads_and_current_quiz_funnel() -> None:
     assert ad.roas == 2.1
 
 
+def test_meta_quiz_views_ignore_unattributed_views_without_deleting_history() -> None:
+    other_visitor = UUID("00000000-0000-0000-0000-000000000199")
+    events = base_events() + [
+        AnalyticsEventRow(
+            visitor_id=other_visitor,
+            business_id=None,
+            user_id=None,
+            event_name="quiz_viewed",
+            occurred_at=NOW - timedelta(minutes=6),
+            properties={"funnel_stage": "quiz_viewed"},
+        )
+    ]
+
+    summary = build_platform_analytics_summary(
+        events=events,
+        paid_checkouts=[],
+        refunds=[],
+        active_subscriptions=[],
+        acquisition_by_business={},
+        activation_at_by_business={},
+        meta_report=meta_report(),
+        now=NOW,
+        days=7,
+    )
+
+    funnel = {item.key: item for item in summary.funnel}
+    assert funnel["quiz_views"].value == 1
+    assert funnel["quiz_views"].label == "Quiz aberto (Meta)"
+    assert "2 visitante(s)" in (funnel["quiz_views"].note or "")
+    assert metric(summary, "quiz_views").value == 1
+    assert "2 visitante(s)" in (metric(summary, "quiz_views").note or "")
+
+
 def test_refund_is_visible_and_removed_from_net_revenue() -> None:
     checkout = paid_checkout(refunded=True)
     summary = build_platform_analytics_summary(
