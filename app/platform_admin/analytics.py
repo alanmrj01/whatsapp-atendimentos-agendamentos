@@ -636,7 +636,18 @@ def build_platform_analytics_summary(
     connection_at_by_business = connection_at_by_business or {}
     lead_recovery_checkouts = lead_recovery_checkouts or paid_checkouts
 
-    quiz_visitors = _visitor_ids(events, "quiz_viewed")
+    raw_quiz_visitors = _visitor_ids(events, "quiz_viewed")
+    meta_ad_ids = {item.ad_id for item in meta_report.ads}
+    attributed_quiz_events = [
+        event
+        for event in events
+        if event.event_name == "quiz_viewed"
+        and (
+            not meta_ad_ids
+            or (_property(event, "ad_id") in meta_ad_ids)
+        )
+    ]
+    quiz_visitors = {event.visitor_id for event in attributed_quiz_events}
     quiz_completed_visitors = _visitor_ids(events, "quiz_completed")
     vsl_started_visitors = _visitor_ids(events, "quiz_demo_started")
     vsl_completed_visitors = _visitor_ids(events, "quiz_demo_completed")
@@ -682,13 +693,19 @@ def build_platform_analytics_summary(
         ),
         PlatformAnalyticsFunnelStep(
             key="quiz_views",
-            label="Quiz aberto",
+            label="Quiz aberto (Meta)" if meta_ready else "Quiz aberto",
             value=len(quiz_visitors),
             conversion_rate=_ratio(
                 len(quiz_visitors),
                 meta_link_clicks if meta_ready else None,
             ),
             status="ready",
+            note=(
+                "Visitantes únicos do quiz atribuídos aos anúncios retornados pela Meta Ads. "
+                f"O histórico bruto preserva {len(raw_quiz_visitors)} visitante(s) no período."
+                if meta_ready
+                else "Visitantes únicos do quiz em dados próprios da Alovia."
+            ),
         ),
         PlatformAnalyticsFunnelStep(
             key="quiz_completed",
@@ -854,9 +871,15 @@ def build_platform_analytics_summary(
         ),
         PlatformAnalyticsKpi(
             key="quiz_views",
-            label="Quiz aberto",
+            label="Quiz aberto (Meta)" if meta_ready else "Quiz aberto",
             value=len(quiz_visitors),
             format="count",
+            note=(
+                "Visitantes únicos atribuídos aos anúncios retornados pela Meta Ads; "
+                f"{len(raw_quiz_visitors)} visitante(s) permanecem no histórico bruto."
+                if meta_ready
+                else "Visitantes únicos do quiz em dados próprios da Alovia."
+            ),
         ),
         PlatformAnalyticsKpi(
             key="quiz_completion_rate",
@@ -1072,7 +1095,8 @@ def build_platform_analytics_summary(
         visitor = str(event.visitor_id)
         business = str(event.business_id) if event.business_id is not None else visitor
         if event.event_name == "quiz_viewed":
-            bucket["quiz_views"].add(visitor)
+            if not meta_ad_ids or _property(event, "ad_id") in meta_ad_ids:
+                bucket["quiz_views"].add(visitor)
         elif event.event_name == "quiz_completed":
             bucket["quiz_completed"].add(visitor)
         elif event.event_name == "quiz_demo_started":
