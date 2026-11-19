@@ -49,8 +49,9 @@ def build_mcp_v2_runtime(
 ) -> MCPRuntime:
     hosts = normalize_allowed_hosts(allowed_hosts)
 
-    issuer = _secure_http_url(
-        issuer_url,
+    issuer = issuer_url.strip()
+    _secure_http_url(
+        issuer,
         field="issuer URL",
     )
     resource = _secure_http_url(

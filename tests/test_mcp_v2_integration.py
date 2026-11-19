@@ -228,11 +228,8 @@ def test_v2_mount_exposes_root_metadata_and_requires_bearer(
 
         assert metadata.status_code == 200
         payload = metadata.json()
-        assert payload["resource"].rstrip("/") == RESOURCE
-        assert [
-            value.rstrip("/")
-            for value in payload["authorization_servers"]
-        ] == [ISSUER]
+        assert payload["resource"] == RESOURCE
+        assert payload["authorization_servers"] == [ISSUER]
         assert payload["scopes_supported"] == [
             "alovia.read"
         ]

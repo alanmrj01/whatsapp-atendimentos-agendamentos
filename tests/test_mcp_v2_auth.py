@@ -106,11 +106,8 @@ async def test_v2_protected_resource_metadata_is_rfc9728() -> None:
 
     payload = response.json()
 
-    assert payload["resource"].rstrip("/") == RESOURCE
-    assert [
-        value.rstrip("/")
-        for value in payload["authorization_servers"]
-    ] == [ISSUER]
+    assert payload["resource"] == RESOURCE
+    assert payload["authorization_servers"] == [ISSUER]
     assert payload["scopes_supported"] == ["alovia.read"]
     assert payload["bearer_methods_supported"] == ["header"]
 
