@@ -30,6 +30,7 @@ from app.api.whatsapp_webhook import router as whatsapp_webhook_router
 from app.core.config import Environment, get_settings
 from app.core.database import dispose_engine
 from app.core.logging import configure_logging
+from app.mcp_server.runtime import build_mcp_runtime
 from app.tasks.cloud_tasks import close_cloud_tasks_client
 
 settings = get_settings()
@@ -39,9 +40,14 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    mcp_runtime = getattr(application.state, "mcp_runtime", None)
     application.state.initialized = True
     try:
-        yield
+        if mcp_runtime is None:
+            yield
+        else:
+            async with mcp_runtime.server.session_manager.run():
+                yield
     finally:
         application.state.initialized = False
         try:
@@ -62,6 +68,14 @@ def create_app() -> FastAPI:
         redoc_url=None if production else "/redoc",
         openapi_url=None if production else "/openapi.json",
     )
+
+    application.state.mcp_runtime = None
+    if current_settings.mcp_enabled:
+        mcp_runtime = build_mcp_runtime(
+            allowed_hosts=current_settings.allowed_mcp_hosts(),
+        )
+        application.state.mcp_runtime = mcp_runtime
+        application.mount("/mcp", mcp_runtime.app, name="mcp")
 
     application.include_router(health_router)
     application.include_router(public_pwa_router)

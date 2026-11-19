@@ -126,6 +126,10 @@ class Settings(BaseSettings):
         default=None, validation_alias="VAPID_PRIVATE_KEY"
     )
     vapid_subject: str | None = Field(default=None, validation_alias="VAPID_SUBJECT")
+    mcp_enabled: bool = Field(default=False, validation_alias="MCP_ENABLED")
+    mcp_allowed_hosts: str = Field(
+        default="", validation_alias="MCP_ALLOWED_HOSTS"
+    )
 
     def allowed_pwa_origins(self) -> tuple[str, ...]:
         # Invalid auth configuration disables auth/CORS, never application startup.
@@ -142,6 +146,13 @@ class Settings(BaseSettings):
         except ValueError:
             return ()
         return origins
+
+    def allowed_mcp_hosts(self) -> tuple[str, ...]:
+        return tuple(
+            host.strip()
+            for host in self.mcp_allowed_hosts.split(",")
+            if host.strip()
+        )
 
     app_commit_sha: str | None = Field(default=None, validation_alias="APP_COMMIT_SHA")
     platform_analytics_start_at: datetime | None = Field(
