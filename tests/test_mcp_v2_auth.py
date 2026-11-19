@@ -74,18 +74,22 @@ class StaticTokenVerifier:
         return tokens.get(token)
 
 
-def _runtime(profile_loader=None):
+def _runtime(
+    profile_loader=None,
+    operations_read_loader=None,
+):
     return build_mcp_v2_runtime(
         allowed_hosts=("mcp.example.com",),
         issuer_url=ISSUER,
         resource_server_url=RESOURCE,
         token_verifier=StaticTokenVerifier(),
         profile_loader=profile_loader,
+        operations_read_loader=operations_read_loader,
     )
 
 
 @pytest.mark.asyncio
-async def test_v2_publishes_authenticated_profile_tool() -> None:
+async def test_v2_publishes_authenticated_read_tools() -> None:
     runtime = _runtime()
 
     async with Client(
@@ -94,44 +98,99 @@ async def test_v2_publishes_authenticated_profile_tool() -> None:
     ) as client:
         tools = await client.list_tools()
 
-    assert len(tools.tools) == 1
+    descriptors = {
+        item.name: item.model_dump(
+            by_alias=True
+        )
+        for item in tools.tools
+    }
 
-    descriptor = tools.tools[0].model_dump(
-        by_alias=True
+    expected_names = {
+        "get_profile",
+        "get_business",
+        "get_business_hours",
+        "list_working_hours",
+        "get_automation_settings",
+        "list_employees",
+        "list_services",
+        "list_customers",
+        "list_appointments",
+        "list_conversations",
+        "get_conversation",
+    }
+
+    assert set(descriptors) == expected_names
+
+    for name, descriptor in descriptors.items():
+        input_schema = descriptor["inputSchema"]
+
+        assert input_schema["type"] == "object"
+        assert (
+            "business_id"
+            not in input_schema.get(
+                "properties",
+                {},
+            )
+        )
+
+        assert descriptor["_meta"]["securitySchemes"] == [
+            {
+                "type": "oauth2",
+                "scopes": ["alovia.read"],
+            }
+        ]
+
+        annotations = descriptor["annotations"]
+
+        assert annotations["readOnlyHint"] is True
+        assert annotations["destructiveHint"] is False
+        assert annotations["idempotentHint"] is True
+        assert annotations["openWorldHint"] is False
+
+        if name != "get_profile":
+            assert (
+                descriptor["_meta"].get(
+                    "openai/profile"
+                )
+                is not True
+            )
+
+    profile = descriptors["get_profile"]
+
+    assert (
+        profile["inputSchema"].get(
+            "properties"
+        )
+        == {}
+    )
+    assert not profile["inputSchema"].get(
+        "required"
     )
 
-    assert descriptor["name"] == "get_profile"
+    output_schema = profile["outputSchema"]
 
-    input_schema = descriptor["inputSchema"]
-    assert input_schema["type"] == "object"
-    assert input_schema.get("properties") == {}
-    assert not input_schema.get("required")
-
-    output_schema = descriptor["outputSchema"]
     assert output_schema["type"] == "object"
-    assert output_schema["additionalProperties"] is False
-    assert set(output_schema["properties"]) == {
+    assert (
+        output_schema["additionalProperties"]
+        is False
+    )
+    assert set(
+        output_schema["properties"]
+    ) == {
         "id",
         "name",
     }
-    assert set(output_schema["required"]) == {
+    assert set(
+        output_schema["required"]
+    ) == {
         "id",
         "name",
     }
 
-    assert descriptor["_meta"]["openai/profile"] is True
-    assert descriptor["_meta"]["securitySchemes"] == [
-        {
-            "type": "oauth2",
-            "scopes": ["alovia.read"],
-        }
-    ]
-
-    annotations = descriptor["annotations"]
-    assert annotations["readOnlyHint"] is True
-    assert annotations["destructiveHint"] is False
-    assert annotations["idempotentHint"] is True
-    assert annotations["openWorldHint"] is False
+    assert (
+        profile["_meta"]["openai/profile"]
+        is True
+    )
 
 
 @pytest.mark.asyncio
@@ -428,3 +487,373 @@ def test_v2_rejects_insecure_or_invalid_urls(
             resource_server_url=resource,
             token_verifier=StaticTokenVerifier(),
         )
+
+
+@pytest.mark.asyncio
+async def test_read_tools_use_authenticated_business_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[
+        tuple[UUID, str, dict[str, object]]
+    ] = []
+
+    async def load_read(
+        business_id: UUID,
+        operation: str,
+        kwargs: dict[str, object],
+    ):
+        calls.append(
+            (
+                business_id,
+                operation,
+                kwargs,
+            )
+        )
+
+        if operation == "list_services":
+            return []
+
+        if operation == "list_appointments":
+            return []
+
+        if operation == "list_conversations":
+            return ([], 0)
+
+        raise AssertionError(
+            f"Unexpected operation: {operation}"
+        )
+
+    token = AccessToken(
+        token="valid",
+        client_id="chatgpt-test",
+        scopes=["alovia.read"],
+        resource=RESOURCE,
+        subject="user-test",
+        claims={
+            "iss": ISSUER,
+            "business_id": str(
+                BUSINESS_ID
+            ),
+        },
+    )
+
+    monkeypatch.setattr(
+        mcp_v2,
+        "get_access_token",
+        lambda: token,
+    )
+
+    runtime = _runtime(
+        operations_read_loader=load_read,
+    )
+
+    async with Client(
+        runtime.server,
+        raise_exceptions=True,
+    ) as client:
+        services = await client.call_tool(
+            "list_services",
+            {},
+        )
+
+        appointments = await client.call_tool(
+            "list_appointments",
+            {},
+        )
+
+        conversations = await client.call_tool(
+            "list_conversations",
+            {
+                "search": " Ana ",
+                "status": " waiting ",
+                "page": 2,
+                "page_size": 5,
+            },
+        )
+
+    assert calls == [
+        (
+            BUSINESS_ID,
+            "list_services",
+            {},
+        ),
+        (
+            BUSINESS_ID,
+            "list_appointments",
+            {
+                "selected_date": None,
+                "starts_at": None,
+                "ends_before": None,
+            },
+        ),
+        (
+            BUSINESS_ID,
+            "list_conversations",
+            {
+                "search": "Ana",
+                "status": "waiting",
+                "page": 2,
+                "page_size": 5,
+            },
+        ),
+    ]
+
+    assert (
+        services.model_dump(
+            by_alias=True
+        )["structuredContent"]
+        == {
+            "items": [],
+        }
+    )
+
+    assert (
+        appointments.model_dump(
+            by_alias=True
+        )["structuredContent"]
+        == {
+            "items": [],
+        }
+    )
+
+    assert (
+        conversations.model_dump(
+            by_alias=True
+        )["structuredContent"]
+        == {
+            "items": [],
+            "page": 2,
+            "page_size": 5,
+            "total": 0,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_read_tools_fail_closed_without_business_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader_called = False
+
+    async def load_read(
+        business_id: UUID,
+        operation: str,
+        kwargs: dict[str, object],
+    ):
+        nonlocal loader_called
+        loader_called = True
+
+        raise AssertionError(
+            "Loader must not be called"
+        )
+
+    token = AccessToken(
+        token="valid",
+        client_id="chatgpt-test",
+        scopes=["alovia.read"],
+        resource=RESOURCE,
+        subject="user-test",
+        claims={
+            "iss": ISSUER,
+        },
+    )
+
+    monkeypatch.setattr(
+        mcp_v2,
+        "get_access_token",
+        lambda: token,
+    )
+
+    runtime = _runtime(
+        operations_read_loader=load_read,
+    )
+
+    async with Client(
+        runtime.server,
+        raise_exceptions=False,
+    ) as client:
+        result = await client.call_tool(
+            "list_services",
+            {},
+        )
+
+    payload = result.model_dump(
+        by_alias=True
+    )
+
+    assert payload["isError"] is True
+    assert loader_called is False
+
+
+@pytest.mark.asyncio
+async def test_read_tools_fail_closed_for_invalid_business_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader_called = False
+
+    async def load_read(
+        business_id: UUID,
+        operation: str,
+        kwargs: dict[str, object],
+    ):
+        nonlocal loader_called
+        loader_called = True
+
+        raise AssertionError(
+            "Loader must not be called"
+        )
+
+    token = AccessToken(
+        token="valid",
+        client_id="chatgpt-test",
+        scopes=["alovia.read"],
+        resource=RESOURCE,
+        subject="user-test",
+        claims={
+            "iss": ISSUER,
+            "business_id": "not-a-uuid",
+        },
+    )
+
+    monkeypatch.setattr(
+        mcp_v2,
+        "get_access_token",
+        lambda: token,
+    )
+
+    runtime = _runtime(
+        operations_read_loader=load_read,
+    )
+
+    async with Client(
+        runtime.server,
+        raise_exceptions=False,
+    ) as client:
+        result = await client.call_tool(
+            "list_employees",
+            {},
+        )
+
+    payload = result.model_dump(
+        by_alias=True
+    )
+
+    assert payload["isError"] is True
+    assert loader_called is False
+
+
+@pytest.mark.asyncio
+async def test_customer_limit_rejects_unbounded_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader_called = False
+
+    async def load_read(
+        business_id: UUID,
+        operation: str,
+        kwargs: dict[str, object],
+    ):
+        nonlocal loader_called
+        loader_called = True
+        return []
+
+    token = AccessToken(
+        token="valid",
+        client_id="chatgpt-test",
+        scopes=["alovia.read"],
+        resource=RESOURCE,
+        subject="user-test",
+        claims={
+            "iss": ISSUER,
+            "business_id": str(
+                BUSINESS_ID
+            ),
+        },
+    )
+
+    monkeypatch.setattr(
+        mcp_v2,
+        "get_access_token",
+        lambda: token,
+    )
+
+    runtime = _runtime(
+        operations_read_loader=load_read,
+    )
+
+    async with Client(
+        runtime.server,
+        raise_exceptions=False,
+    ) as client:
+        result = await client.call_tool(
+            "list_customers",
+            {
+                "limit": 101,
+            },
+        )
+
+    payload = result.model_dump(
+        by_alias=True
+    )
+
+    assert payload["isError"] is True
+    assert loader_called is False
+
+
+@pytest.mark.asyncio
+async def test_conversation_page_size_rejects_unbounded_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader_called = False
+
+    async def load_read(
+        business_id: UUID,
+        operation: str,
+        kwargs: dict[str, object],
+    ):
+        nonlocal loader_called
+        loader_called = True
+        return ([], 0)
+
+    token = AccessToken(
+        token="valid",
+        client_id="chatgpt-test",
+        scopes=["alovia.read"],
+        resource=RESOURCE,
+        subject="user-test",
+        claims={
+            "iss": ISSUER,
+            "business_id": str(
+                BUSINESS_ID
+            ),
+        },
+    )
+
+    monkeypatch.setattr(
+        mcp_v2,
+        "get_access_token",
+        lambda: token,
+    )
+
+    runtime = _runtime(
+        operations_read_loader=load_read,
+    )
+
+    async with Client(
+        runtime.server,
+        raise_exceptions=False,
+    ) as client:
+        result = await client.call_tool(
+            "list_conversations",
+            {
+                "page": 1,
+                "page_size": 51,
+            },
+        )
+
+    payload = result.model_dump(
+        by_alias=True
+    )
+
+    assert payload["isError"] is True
+    assert loader_called is False
