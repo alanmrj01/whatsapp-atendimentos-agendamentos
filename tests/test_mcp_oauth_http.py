@@ -275,6 +275,10 @@ def test_authorize_validates_cimd_before_flow() -> None:
         == "DENY"
     )
 
+    csp = response.headers["content-security-policy"]
+    assert "form-action 'self';" in csp
+    assert "https://chatgpt.com" not in csp
+
 
 def test_invalid_client_does_not_start_flow() -> None:
     client, coordinator, _, verifier = (
@@ -316,6 +320,9 @@ def test_login_returns_escaped_business_consent() -> None:
     assert "&lt;Empresa A&gt;" in response.text
     assert "<Empresa A>" not in response.text
     assert str(coordinator.business_id) in response.text
+
+    csp = response.headers["content-security-policy"]
+    assert "form-action 'self' https://chatgpt.com;" in csp
 
 
 def test_approve_redirect_contains_code_state_and_iss() -> None:

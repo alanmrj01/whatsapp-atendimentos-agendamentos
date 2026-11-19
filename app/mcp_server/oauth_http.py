@@ -105,7 +105,16 @@ ServicesDependency = Callable[
 ]
 
 
-def _oauth_headers() -> dict[str, str]:
+def _oauth_headers(
+    *,
+    allow_chatgpt_form_action: bool = False,
+) -> dict[str, str]:
+    form_action = (
+        "'self' https://chatgpt.com"
+        if allow_chatgpt_form_action
+        else "'self'"
+    )
+
     return {
         "Cache-Control": "no-store",
         "Pragma": "no-cache",
@@ -114,7 +123,7 @@ def _oauth_headers() -> dict[str, str]:
         "Content-Security-Policy": (
             "default-src 'none'; "
             "style-src 'unsafe-inline'; "
-            "form-action 'self'; "
+            f"form-action {form_action}; "
             "base-uri 'none'; "
             "frame-ancestors 'none'"
         ),
@@ -137,11 +146,14 @@ def _html(
     body: str,
     *,
     status_code: int = 200,
+    allow_chatgpt_form_action: bool = False,
 ) -> HTMLResponse:
     return HTMLResponse(
         content=body,
         status_code=status_code,
-        headers=_oauth_headers(),
+        headers=_oauth_headers(
+            allow_chatgpt_form_action=allow_chatgpt_form_action
+        ),
     )
 
 
@@ -293,7 +305,8 @@ Cancelar
 </button>
 </form>
 """,
-        )
+        ),
+        allow_chatgpt_form_action=True,
     )
 
 
