@@ -32,6 +32,7 @@ from app.core.config import Environment, get_settings
 from app.core.database import dispose_engine
 from app.core.logging import configure_logging
 from app.mcp_server.runtime import MCPConfigurationError, build_mcp_runtime
+from app.mcp_server.oauth_http import build_oauth_router
 from app.mcp_server.v2 import build_mcp_v2_runtime
 from app.tasks.cloud_tasks import close_cloud_tasks_client
 
@@ -106,6 +107,29 @@ def create_app(
             token_verifier=mcp_v2_token_verifier,
         )
         application.state.mcp_v2_runtime = mcp_v2_runtime
+
+    if current_settings.mcp_oauth_enabled:
+        signing_secret = (
+            current_settings.mcp_oauth_signing_key
+        )
+
+        if signing_secret is None:
+            raise MCPConfigurationError(
+                "MCP OAuth signing key is required"
+            )
+
+        application.include_router(
+            build_oauth_router(
+                issuer=current_settings.mcp_v2_issuer_url,
+                resource=(
+                    current_settings
+                    .mcp_v2_resource_server_url
+                ),
+                signing_key=(
+                    signing_secret.get_secret_value()
+                ),
+            )
+        )
 
     application.include_router(health_router)
     application.include_router(public_pwa_router)

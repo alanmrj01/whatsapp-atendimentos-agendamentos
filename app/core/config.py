@@ -146,6 +146,14 @@ class Settings(BaseSettings):
         default="",
         validation_alias="MCP_V2_RESOURCE_SERVER_URL",
     )
+    mcp_oauth_enabled: bool = Field(
+        default=False,
+        validation_alias="MCP_OAUTH_ENABLED",
+    )
+    mcp_oauth_signing_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="MCP_OAUTH_SIGNING_KEY",
+    )
 
     def allowed_pwa_origins(self) -> tuple[str, ...]:
         # Invalid auth configuration disables auth/CORS, never application startup.
