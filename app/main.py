@@ -163,6 +163,11 @@ def create_app(
                 "and must be at least 32 characters"
             )
 
+        if not current_settings.mcp_v2_enabled:
+            raise MCPConfigurationError(
+                "MCP OAuth requires MCP V2 to be enabled"
+            )
+
         application.include_router(
             build_oauth_router(
                 issuer=current_settings.mcp_v2_issuer_url,
