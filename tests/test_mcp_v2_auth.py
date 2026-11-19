@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 import httpx
 import pytest
 from mcp import Client
 from mcp.server.auth.provider import AccessToken
 
+import app.mcp_server.v2 as mcp_v2
 from app.mcp_server.runtime import MCPConfigurationError
 from app.mcp_server.v2 import build_mcp_v2_runtime
 
 
 RESOURCE = "https://mcp.example.com/mcp-v2"
 ISSUER = "https://auth.example.com"
+BUSINESS_ID = UUID(
+    "11111111-1111-4111-8111-111111111111"
+)
 METADATA = (
     "https://mcp.example.com/"
     ".well-known/oauth-protected-resource/mcp-v2"
@@ -43,7 +49,10 @@ class StaticTokenVerifier:
                 scopes=["alovia.read"],
                 resource=RESOURCE,
                 subject="user-test",
-                claims={"iss": ISSUER},
+                claims={
+                    "iss": ISSUER,
+                    "business_id": str(BUSINESS_ID),
+                },
             ),
             "wrong-scope": AccessToken(
                 token="wrong-scope",
@@ -65,17 +74,18 @@ class StaticTokenVerifier:
         return tokens.get(token)
 
 
-def _runtime():
+def _runtime(profile_loader=None):
     return build_mcp_v2_runtime(
         allowed_hosts=("mcp.example.com",),
         issuer_url=ISSUER,
         resource_server_url=RESOURCE,
         token_verifier=StaticTokenVerifier(),
+        profile_loader=profile_loader,
     )
 
 
 @pytest.mark.asyncio
-async def test_v2_publishes_no_tools_yet() -> None:
+async def test_v2_publishes_authenticated_profile_tool() -> None:
     runtime = _runtime()
 
     async with Client(
@@ -84,7 +94,159 @@ async def test_v2_publishes_no_tools_yet() -> None:
     ) as client:
         tools = await client.list_tools()
 
-    assert tools.tools == []
+    assert len(tools.tools) == 1
+
+    descriptor = tools.tools[0].model_dump(
+        by_alias=True
+    )
+
+    assert descriptor["name"] == "get_profile"
+
+    input_schema = descriptor["inputSchema"]
+    assert input_schema["type"] == "object"
+    assert input_schema.get("properties") == {}
+    assert not input_schema.get("required")
+
+    output_schema = descriptor["outputSchema"]
+    assert output_schema["type"] == "object"
+    assert output_schema["additionalProperties"] is False
+    assert set(output_schema["properties"]) == {
+        "id",
+        "name",
+    }
+    assert set(output_schema["required"]) == {
+        "id",
+        "name",
+    }
+
+    assert descriptor["_meta"]["openai/profile"] is True
+    assert descriptor["_meta"]["securitySchemes"] == [
+        {
+            "type": "oauth2",
+            "scopes": ["alovia.read"],
+        }
+    ]
+
+    annotations = descriptor["annotations"]
+    assert annotations["readOnlyHint"] is True
+    assert annotations["destructiveHint"] is False
+    assert annotations["idempotentHint"] is True
+    assert annotations["openWorldHint"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_profile_uses_authenticated_business_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_business_ids: list[UUID] = []
+
+    async def load_profile(
+        business_id: UUID,
+    ) -> mcp_v2.MCPProfile:
+        requested_business_ids.append(business_id)
+
+        return mcp_v2.MCPProfile(
+            id=str(business_id),
+            name="Empresa A",
+        )
+
+    token = AccessToken(
+        token="valid",
+        client_id="chatgpt-test",
+        scopes=["alovia.read"],
+        resource=RESOURCE,
+        subject="user-test",
+        claims={
+            "iss": ISSUER,
+            "business_id": str(BUSINESS_ID),
+        },
+    )
+
+    monkeypatch.setattr(
+        mcp_v2,
+        "get_access_token",
+        lambda: token,
+    )
+
+    runtime = _runtime(load_profile)
+
+    async with Client(
+        runtime.server,
+        raise_exceptions=True,
+    ) as client:
+        result = await client.call_tool(
+            "get_profile",
+            {},
+        )
+
+    payload = result.model_dump(by_alias=True)
+
+    assert requested_business_ids == [BUSINESS_ID]
+    assert payload["isError"] is False
+    assert payload["structuredContent"] == {
+        "id": str(BUSINESS_ID),
+        "name": "Empresa A",
+    }
+
+
+@pytest.mark.parametrize(
+    "claims",
+    (
+        {"iss": ISSUER},
+        {
+            "iss": ISSUER,
+            "business_id": "not-a-uuid",
+        },
+    ),
+)
+@pytest.mark.asyncio
+async def test_get_profile_fails_closed_for_invalid_business_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    claims: dict[str, str],
+) -> None:
+    loader_called = False
+
+    async def load_profile(
+        business_id: UUID,
+    ) -> mcp_v2.MCPProfile:
+        nonlocal loader_called
+        loader_called = True
+
+        return mcp_v2.MCPProfile(
+            id=str(business_id),
+            name="Empresa errada",
+        )
+
+    token = AccessToken(
+        token="valid",
+        client_id="chatgpt-test",
+        scopes=["alovia.read"],
+        resource=RESOURCE,
+        subject="user-test",
+        claims=claims,
+    )
+
+    monkeypatch.setattr(
+        mcp_v2,
+        "get_access_token",
+        lambda: token,
+    )
+
+    runtime = _runtime(load_profile)
+
+    async with Client(
+        runtime.server,
+        raise_exceptions=False,
+    ) as client:
+        result = await client.call_tool(
+            "get_profile",
+            {},
+        )
+
+    payload = result.model_dump(by_alias=True)
+
+    assert payload["isError"] is True
+    assert loader_called is False
 
 
 @pytest.mark.asyncio
