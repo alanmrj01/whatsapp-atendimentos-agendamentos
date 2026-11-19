@@ -6,11 +6,19 @@ from typing import Iterable
 
 from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
+from pydantic import BaseModel
 from starlette.applications import Starlette
 
 
 class MCPConfigurationError(RuntimeError):
     """Configuração MCP ausente ou insegura."""
+
+
+class MCPServerStatus(BaseModel):
+    service: str
+    mcp_version: str
+    mode: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,10 +61,29 @@ def build_mcp_runtime(*, allowed_hosts: Iterable[str]) -> MCPRuntime:
         description="Servidor MCP da Alovia.",
         instructions=(
             "Use apenas as capacidades explicitamente publicadas pelo servidor. "
-            "A fundação V1 inicia sem ferramentas operacionais."
+            "A V1 não expõe dados privados sem autenticação."
         ),
         version="1.0.0",
     )
+
+    @server.tool(
+        name="server_status",
+        title="Alovia MCP status",
+        description=(
+            "Retorna somente metadados públicos e não sensíveis sobre o servidor "
+            "MCP. Não acessa banco, empresas, clientes ou integrações."
+        ),
+        annotations=ToolAnnotations(
+            read_only_hint=True,
+            open_world_hint=False,
+        ),
+    )
+    def server_status() -> MCPServerStatus:
+        return MCPServerStatus(
+            service="alovia",
+            mcp_version="1.0.0",
+            mode="diagnostic_only",
+        )
 
     app = server.streamable_http_app(
         streamable_http_path="/",

@@ -39,7 +39,7 @@ def test_mcp_rejects_unsafe_allowed_hosts(host: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_v1_bootstrap_negotiates_with_no_tools() -> None:
+async def test_mcp_v1_bootstrap_exposes_only_public_status_tool() -> None:
     runtime = build_mcp_runtime(
         allowed_hosts=("localhost", "localhost:*"),
     )
@@ -51,4 +51,18 @@ async def test_mcp_v1_bootstrap_negotiates_with_no_tools() -> None:
 
         tools = await client.list_tools()
 
-    assert tools.tools == []
+        assert [tool.name for tool in tools.tools] == ["server_status"]
+
+        tool = tools.tools[0]
+        assert tool.annotations is not None
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.open_world_hint is False
+
+        result = await client.call_tool("server_status", {})
+
+    assert result.is_error is False
+    assert result.structured_content == {
+        "service": "alovia",
+        "mcp_version": "1.0.0",
+        "mode": "diagnostic_only",
+    }
