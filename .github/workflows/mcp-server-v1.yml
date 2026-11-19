@@ -1,0 +1,82 @@
+name: MCP Server V1 validation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'app/mcp_server/**'
+      - 'app/main.py'
+      - 'app/core/config.py'
+      - 'requirements-prod.txt'
+      - 'requirements.txt'
+      - 'tests/test_mcp_server.py'
+      - 'tests/test_mcp_integration.py'
+      - 'tests/test_health.py'
+      - '.github/workflows/mcp-server-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      ENVIRONMENT: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Verify locked runtime versions
+        run: |
+          python - <<'PY'
+          from importlib.metadata import version
+
+          expected = {
+              "fastapi": "0.163.2",
+              "mcp": "2.3.0",
+          }
+
+          for package, wanted in expected.items():
+              actual = version(package)
+              print(f"{package}={actual}")
+              if actual != wanted:
+                  raise SystemExit(
+                      f"{package}: expected {wanted}, got {actual}"
+                  )
+          PY
+
+      - name: Compile MCP integration
+        run: >-
+          python -m compileall -q
+          app/mcp_server
+          app/main.py
+          app/core/config.py
+          tests/test_mcp_server.py
+          tests/test_mcp_integration.py
+          tests/test_health.py
+
+      - name: MCP focused tests
+        run: >-
+          pytest
+          tests/test_mcp_server.py
+          tests/test_mcp_integration.py
+          tests/test_health.py
+          -q -p no:cacheprovider
+
+      - name: Dependency check
+        run: python -m pip check
+
+      - name: Diff check
+        run: git diff --check
