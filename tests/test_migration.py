@@ -11,6 +11,8 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 
+from app.diagnostics.models import EXPECTED_SCHEMA_REVISION
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_PATH = (
@@ -172,7 +174,7 @@ def test_onboarding_booking_migration_is_the_only_alembic_head() -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20261111_0044"]
+    assert script.get_heads() == [EXPECTED_SCHEMA_REVISION]
 
 
 def test_marketing_lead_contacts_migration_is_isolated_additive_and_reversible() -> None:

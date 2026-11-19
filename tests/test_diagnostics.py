@@ -35,6 +35,9 @@ def settings() -> Settings:
 
 @pytest.mark.parametrize(("values", "code", "status"), [
     ([EXPECTED_SCHEMA_REVISION], Code.MIGRATION_OK, Status.OK),
+    (["20261118_0045"], Code.MIGRATION_OK, Status.OK),
+    (["20261111_0044"], Code.MIGRATION_OK, Status.OK),
+    (["20261107_0043"], Code.MIGRATION_OK, Status.OK),
     (["20260903_0006"], Code.MIGRATION_BEHIND, Status.ERROR),
     (["20260901_0001"], Code.MIGRATION_BEHIND, Status.ERROR),
     (["20260922_0012"], Code.MIGRATION_BEHIND, Status.ERROR),
