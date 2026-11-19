@@ -130,6 +130,22 @@ class Settings(BaseSettings):
     mcp_allowed_hosts: str = Field(
         default="", validation_alias="MCP_ALLOWED_HOSTS"
     )
+    mcp_v2_enabled: bool = Field(
+        default=False,
+        validation_alias="MCP_V2_ENABLED",
+    )
+    mcp_v2_allowed_hosts: str = Field(
+        default="",
+        validation_alias="MCP_V2_ALLOWED_HOSTS",
+    )
+    mcp_v2_issuer_url: str = Field(
+        default="",
+        validation_alias="MCP_V2_ISSUER_URL",
+    )
+    mcp_v2_resource_server_url: str = Field(
+        default="",
+        validation_alias="MCP_V2_RESOURCE_SERVER_URL",
+    )
 
     def allowed_pwa_origins(self) -> tuple[str, ...]:
         # Invalid auth configuration disables auth/CORS, never application startup.
@@ -151,6 +167,13 @@ class Settings(BaseSettings):
         return tuple(
             host.strip()
             for host in self.mcp_allowed_hosts.split(",")
+            if host.strip()
+        )
+
+    def allowed_mcp_v2_hosts(self) -> tuple[str, ...]:
+        return tuple(
+            host.strip()
+            for host in self.mcp_v2_allowed_hosts.split(",")
             if host.strip()
         )
 

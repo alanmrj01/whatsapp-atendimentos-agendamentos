@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from uuid import uuid4
 
+from mcp.server.auth.provider import TokenVerifier
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -30,7 +31,8 @@ from app.api.whatsapp_webhook import router as whatsapp_webhook_router
 from app.core.config import Environment, get_settings
 from app.core.database import dispose_engine
 from app.core.logging import configure_logging
-from app.mcp_server.runtime import build_mcp_runtime
+from app.mcp_server.runtime import MCPConfigurationError, build_mcp_runtime
+from app.mcp_server.v2 import build_mcp_v2_runtime
 from app.tasks.cloud_tasks import close_cloud_tasks_client
 
 settings = get_settings()
@@ -40,14 +42,22 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    mcp_runtime = getattr(application.state, "mcp_runtime", None)
+    runtimes = tuple(
+        runtime
+        for runtime in (
+            getattr(application.state, "mcp_runtime", None),
+            getattr(application.state, "mcp_v2_runtime", None),
+        )
+        if runtime is not None
+    )
     application.state.initialized = True
     try:
-        if mcp_runtime is None:
+        async with AsyncExitStack() as stack:
+            for runtime in runtimes:
+                await stack.enter_async_context(
+                    runtime.server.session_manager.run()
+                )
             yield
-        else:
-            async with mcp_runtime.server.session_manager.run():
-                yield
     finally:
         application.state.initialized = False
         try:
@@ -56,7 +66,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             await dispose_engine()
 
 
-def create_app() -> FastAPI:
+def create_app(
+    *,
+    mcp_v2_token_verifier: TokenVerifier | None = None,
+) -> FastAPI:
     current_settings = get_settings()
     production = current_settings.environment is Environment.production
     application = FastAPI(
@@ -76,6 +89,23 @@ def create_app() -> FastAPI:
         )
         application.state.mcp_runtime = mcp_runtime
         application.mount("/mcp", mcp_runtime.app, name="mcp")
+
+    application.state.mcp_v2_runtime = None
+    if current_settings.mcp_v2_enabled:
+        if mcp_v2_token_verifier is None:
+            raise MCPConfigurationError(
+                "MCP V2 token verifier is required"
+            )
+
+        mcp_v2_runtime = build_mcp_v2_runtime(
+            allowed_hosts=current_settings.allowed_mcp_v2_hosts(),
+            issuer_url=current_settings.mcp_v2_issuer_url,
+            resource_server_url=(
+                current_settings.mcp_v2_resource_server_url
+            ),
+            token_verifier=mcp_v2_token_verifier,
+        )
+        application.state.mcp_v2_runtime = mcp_v2_runtime
 
     application.include_router(health_router)
     application.include_router(public_pwa_router)
@@ -180,6 +210,15 @@ def create_app() -> FastAPI:
             response.headers["Cache-Control"] = "no-store"
             response.headers["Pragma"] = "no-cache"
         return response
+
+    if application.state.mcp_v2_runtime is not None:
+        # Must stay last: V2 needs root-level RFC 9728 discovery while
+        # all existing FastAPI routes retain precedence.
+        application.mount(
+            "/",
+            application.state.mcp_v2_runtime.app,
+            name="mcp-v2",
+        )
 
     return application
 
