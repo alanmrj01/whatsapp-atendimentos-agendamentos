@@ -228,7 +228,10 @@ class PlatformAnalyticsAdPerformanceItem(BaseModel):
     cpc: float | None = None
     cpm: float | None = None
     quiz_visitors: int = 0
+    quiz_started: int = 0
     quiz_completed: int = 0
+    vsl_started: int = 0
+    vsl_completed: int = 0
     accounts: int = 0
     subscriptions: int = 0
     activations: int = 0
@@ -258,6 +261,10 @@ class PlatformAnalyticsLeadRecoveryItem(BaseModel):
         "refunded",
     ]
     stage_label: str
+    whatsapp_connection_started_at: datetime | None = None
+    whatsapp_connection_last_event: str | None = None
+    whatsapp_connection_last_event_at: datetime | None = None
+    whatsapp_connected_at: datetime | None = None
     purchased: bool = False
     activated: bool = False
     needs_follow_up: bool = True
@@ -283,6 +290,40 @@ class PlatformAnalyticsSeriesPoint(BaseModel):
     activations: int = 0
 
 
+class PlatformAnalyticsTrafficFunnel(BaseModel):
+    key: str
+    label: str
+    quiz_views: int = 0
+    quiz_started: int = 0
+    quiz_completed: int = 0
+    vsl_started: int = 0
+    vsl_completed: int = 0
+    accounts: int = 0
+    demo_entries: int = 0
+    checkout_started: int = 0
+    subscriptions: int = 0
+    activations: int = 0
+
+
+class PlatformAnalyticsActivationProgress(BaseModel):
+    accounts: int = 0
+    demo_entries: int = 0
+    demo_interactions: int = 0
+    connection_attempted: int = 0
+    connection_failed: int = 0
+    connection_blocked: int = 0
+    connection_completed_event: int = 0
+    connection_confirmed: int = 0
+    plan_views: int = 0
+    plan_selected: int = 0
+    checkout_started: int = 0
+    checkout_created: int = 0
+    payment_submitted: int = 0
+    payment_failed: int = 0
+    paid_businesses: int = 0
+    commercially_activated: int = 0
+
+
 class PlatformAnalyticsSummaryResponse(BaseModel):
     generated_at: datetime
     period_days: int
@@ -298,6 +339,8 @@ class PlatformAnalyticsSummaryResponse(BaseModel):
     onboarding_issues: PlatformAnalyticsBreakdown
     quiz_questions: list[PlatformAnalyticsQuizQuestion]
     ad_performance: list[PlatformAnalyticsAdPerformanceItem]
+    traffic_funnels: list[PlatformAnalyticsTrafficFunnel] = Field(default_factory=list)
+    activation_progress: PlatformAnalyticsActivationProgress = Field(default_factory=PlatformAnalyticsActivationProgress)
     lead_recovery: list[PlatformAnalyticsLeadRecoveryItem]
     meta_ads_status: Literal["ready", "awaiting_integration"]
     meta_ads_note: str | None = None

@@ -16,6 +16,7 @@ from app.models import BillingCheckout, Business, BusinessWhatsAppConnection, Co
 from app.models.billing import billing_provider_environment
 from app.platform_admin.schemas import (
     PlatformAnalyticsAdPerformanceItem,
+    PlatformAnalyticsActivationProgress,
     PlatformAnalyticsBreakdown,
     PlatformAnalyticsBreakdownItem,
     PlatformAnalyticsConversionBreakdown,
@@ -27,6 +28,7 @@ from app.platform_admin.schemas import (
     PlatformAnalyticsQuizQuestion,
     PlatformAnalyticsSeriesPoint,
     PlatformAnalyticsSummaryResponse,
+    PlatformAnalyticsTrafficFunnel,
 )
 
 ANALYTICS_TZ = ZoneInfo("America/Sao_Paulo")
@@ -413,6 +415,25 @@ def _lead_recovery(
     for contact in contacts:
         business_events = events_by_business.get(contact.business_id, [])
         event_names = {event.event_name for event in business_events}
+        connection_events = [
+            event for event in business_events
+            if event.event_name in {
+                "whatsapp_connection_started",
+                "whatsapp_connection_failed",
+                "whatsapp_connection_blocked",
+                "whatsapp_connection_completed",
+            }
+        ]
+        last_connection_event = max(
+            connection_events,
+            key=lambda event: event.occurred_at,
+            default=None,
+        )
+        connection_started_at = max(
+            (event.occurred_at for event in connection_events
+             if event.event_name == "whatsapp_connection_started"),
+            default=None,
+        )
         checkouts = paid_by_business.get(contact.business_id, [])
         purchased = bool(checkouts)
         refund_requested = any(
@@ -480,6 +501,18 @@ def _lead_recovery(
                 last_activity_at=max(activity_candidates),
                 stage_key=stage_key,
                 stage_label=stage_label,
+                whatsapp_connection_started_at=connection_started_at,
+                whatsapp_connection_last_event=(
+                    last_connection_event.event_name
+                    if last_connection_event else None
+                ),
+                whatsapp_connection_last_event_at=(
+                    last_connection_event.occurred_at
+                    if last_connection_event else None
+                ),
+                whatsapp_connected_at=connection_at_by_business.get(
+                    contact.business_id
+                ),
                 purchased=purchased,
                 activated=activated,
                 needs_follow_up=(not purchased) or refund_requested or refunded,
@@ -510,15 +543,23 @@ def _ad_performance(
     *,
     events: list[AnalyticsEventRow],
     paid_checkouts: list[PaidCheckoutRow],
+    refunds: list[RefundRow],
     activation_businesses: set[UUID],
     acquisition_by_business: dict[UUID, dict[str, str]],
     meta_report: MetaAdsReport,
 ) -> list[PlatformAnalyticsAdPerformanceItem]:
     meta_by_ad = {item.ad_id: item for item in meta_report.ads}
     quiz_visitors: dict[str, set[UUID]] = defaultdict(set)
+    quiz_started: dict[str, set[UUID]] = defaultdict(set)
     quiz_completed: dict[str, set[UUID]] = defaultdict(set)
+    vsl_started: dict[str, set[UUID]] = defaultdict(set)
+    vsl_completed: dict[str, set[UUID]] = defaultdict(set)
     accounts: dict[str, set[UUID]] = defaultdict(set)
     subscriptions: Counter[str] = Counter()
+    new_paid_businesses: dict[str, set[UUID]] = defaultdict(set)
+    quiz_first_seen: dict[str, dict[UUID, datetime]] = defaultdict(dict)
+    signup_first_seen: dict[str, dict[UUID, AnalyticsEventRow]] = defaultdict(dict)
+    signup_businesses = _business_ids(events, "signup_completed")
     activations: dict[str, set[UUID]] = defaultdict(set)
     revenue_cents: Counter[str] = Counter()
     event_names: dict[str, dict[str, str]] = {}
@@ -530,10 +571,22 @@ def _ad_performance(
         event_names.setdefault(ad_id, _clean_acquisition(event.properties))
         if event.event_name == "quiz_viewed":
             quiz_visitors[ad_id].add(event.visitor_id)
+            previous = quiz_first_seen[ad_id].get(event.visitor_id)
+            if previous is None or event.occurred_at < previous:
+                quiz_first_seen[ad_id][event.visitor_id] = event.occurred_at
+        elif event.event_name == "quiz_started":
+            quiz_started[ad_id].add(event.visitor_id)
         elif event.event_name == "quiz_completed":
             quiz_completed[ad_id].add(event.visitor_id)
+        elif event.event_name == "quiz_demo_started":
+            vsl_started[ad_id].add(event.visitor_id)
+        elif event.event_name == "quiz_demo_completed":
+            vsl_completed[ad_id].add(event.visitor_id)
         elif event.event_name == "signup_completed" and event.business_id is not None:
             accounts[ad_id].add(event.business_id)
+            previous_signup = signup_first_seen[ad_id].get(event.business_id)
+            if previous_signup is None or event.occurred_at < previous_signup.occurred_at:
+                signup_first_seen[ad_id][event.business_id] = event
 
     for checkout in paid_checkouts:
         acquisition = acquisition_by_business.get(checkout.business_id, {})
@@ -542,8 +595,16 @@ def _ad_performance(
             continue
         event_names.setdefault(ad_id, acquisition)
         subscriptions[ad_id] += 1
-        if checkout.refund_status != "refunded":
-            revenue_cents[ad_id] += checkout.amount_cents
+        revenue_cents[ad_id] += checkout.amount_cents
+        if checkout.business_id in signup_businesses:
+            new_paid_businesses[ad_id].add(checkout.business_id)
+
+    for refund in refunds:
+        acquisition = acquisition_by_business.get(refund.business_id, {})
+        ad_id = acquisition.get("ad_id")
+        if ad_id:
+            event_names.setdefault(ad_id, acquisition)
+            revenue_cents[ad_id] -= refund.amount_cents
 
     for business_id in activation_businesses:
         acquisition = acquisition_by_business.get(business_id, {})
@@ -555,9 +616,13 @@ def _ad_performance(
     ad_ids = (
         set(meta_by_ad)
         | set(quiz_visitors)
+        | set(quiz_started)
         | set(quiz_completed)
+        | set(vsl_started)
+        | set(vsl_completed)
         | set(accounts)
         | set(subscriptions)
+        | set(revenue_cents)
         | set(activations)
     )
     rows: list[PlatformAnalyticsAdPerformanceItem] = []
@@ -566,6 +631,19 @@ def _ad_performance(
         acquisition = event_names.get(ad_id, {})
         spend = meta.spend_brl if meta is not None else None
         subscriptions_count = subscriptions[ad_id]
+        acquired_count = len(new_paid_businesses[ad_id])
+        signup_rows = signup_first_seen[ad_id].values()
+        linked_signups = {event.visitor_id for event in signup_rows}
+        identity_complete = all(
+            event.visitor_id in quiz_first_seen[ad_id]
+            and quiz_first_seen[ad_id][event.visitor_id] <= event.occurred_at
+            for event in signup_rows
+        )
+        account_rate = (
+            _ratio(len(linked_signups), len(quiz_visitors[ad_id]))
+            if identity_complete
+            else None
+        )
         revenue_brl = round(revenue_cents[ad_id] / 100, 2)
         rows.append(
             PlatformAnalyticsAdPerformanceItem(
@@ -583,17 +661,18 @@ def _ad_performance(
                 cpc=round(meta.cpc, 2) if meta and meta.cpc is not None else None,
                 cpm=round(meta.cpm, 2) if meta and meta.cpm is not None else None,
                 quiz_visitors=len(quiz_visitors[ad_id]),
+                quiz_started=len(quiz_started[ad_id]),
                 quiz_completed=len(quiz_completed[ad_id]),
+                vsl_started=len(vsl_started[ad_id]),
+                vsl_completed=len(vsl_completed[ad_id]),
                 accounts=len(accounts[ad_id]),
                 subscriptions=subscriptions_count,
                 activations=len(activations[ad_id]),
                 revenue_brl=revenue_brl,
-                account_conversion_rate=_ratio(
-                    len(accounts[ad_id]), len(quiz_visitors[ad_id])
-                ),
+                account_conversion_rate=account_rate,
                 cac_brl=(
-                    round(spend / subscriptions_count, 2)
-                    if spend is not None and subscriptions_count > 0
+                    round(spend / acquired_count, 2)
+                    if spend is not None and acquired_count > 0
                     else None
                 ),
                 roas=(
@@ -613,6 +692,101 @@ def _ad_performance(
         reverse=True,
     )
     return rows
+
+
+def _traffic_funnels(
+    *,
+    events: list[AnalyticsEventRow],
+    account_businesses: set[UUID],
+    demo_businesses: set[UUID],
+    checkout_businesses: set[UUID],
+    paid_checkouts: list[PaidCheckoutRow],
+    activation_businesses: set[UUID],
+    acquisition_by_business: dict[UUID, dict[str, str]],
+    meta_report: MetaAdsReport,
+) -> list[PlatformAnalyticsTrafficFunnel]:
+    labels = {
+        "meta_paid": "Meta Ads",
+        "organic": "Orgânico",
+        "paid_unverified": "Pago não conciliado",
+        "unattributed": "Sem atribuição",
+    }
+    meta_ad_ids = (
+        {item.ad_id for item in meta_report.ads}
+        if meta_report.status == "ready"
+        else set()
+    )
+
+    def classify(properties: dict[str, str]) -> str:
+        ad_id = properties.get("ad_id")
+        medium = properties.get("utm_medium", "").lower()
+
+        if ad_id and ad_id in meta_ad_ids:
+            return "meta_paid"
+        if ad_id or medium in {
+            "paid", "paid_social", "paid_search", "paid_video",
+            "cpc", "ppc", "cpm", "display",
+        }:
+            return "paid_unverified"
+        if medium in {
+            "organic", "organic_social", "organic_search", "organic_video",
+        }:
+            return "organic"
+        return "unattributed"
+
+    signup_acquisition = _signup_acquisition_from_events(events)
+
+    def business_source(business_id: UUID) -> str:
+        properties = (
+            acquisition_by_business.get(business_id)
+            or signup_acquisition.get(business_id, {})
+        )
+        return classify(properties)
+
+    visitor_stages = {
+        "quiz_viewed": "quiz_views",
+        "quiz_started": "quiz_started",
+        "quiz_completed": "quiz_completed",
+        "quiz_demo_started": "vsl_started",
+        "quiz_demo_completed": "vsl_completed",
+    }
+
+    counts: dict[str, dict[str, set[UUID]]] = {
+        key: defaultdict(set) for key in labels
+    }
+
+    for event in events:
+        stage = visitor_stages.get(event.event_name)
+        if stage:
+            key = classify(_clean_acquisition(event.properties))
+            counts[key][stage].add(event.visitor_id)
+
+    for stage, businesses in (
+        ("accounts", account_businesses),
+        ("demo_entries", demo_businesses),
+        ("checkout_started", checkout_businesses),
+        ("activations", activation_businesses),
+    ):
+        for business_id in businesses:
+            counts[business_source(business_id)][stage].add(business_id)
+
+    subscriptions = Counter(
+        business_source(checkout.business_id)
+        for checkout in paid_checkouts
+    )
+
+    return [
+        PlatformAnalyticsTrafficFunnel(
+            key=key,
+            label=label,
+            subscriptions=subscriptions[key],
+            **{
+                stage: len(identities)
+                for stage, identities in counts[key].items()
+            },
+        )
+        for key, label in labels.items()
+    ]
 
 
 def build_platform_analytics_summary(
@@ -654,9 +828,62 @@ def build_platform_analytics_summary(
     vsl_completed_visitors = _visitor_ids(events, "quiz_demo_completed")
     signup_cta_visitors = _visitor_ids(events, "quiz_signup_cta_clicked")
     account_businesses = _business_ids(events, "signup_completed")
-    demo_businesses = _demo_business_ids(events)
+    raw_demo_businesses = _demo_business_ids(events)
+    demo_businesses = raw_demo_businesses & account_businesses
     plan_businesses = _business_ids(events, "activation_paywall_viewed")
     checkout_businesses = _business_ids(events, "checkout_started")
+
+    def first_seen(event_name: str) -> dict[UUID, datetime]:
+        result: dict[UUID, datetime] = {}
+        for event in events:
+            if event.event_name != event_name:
+                continue
+            current = result.get(event.visitor_id)
+            if current is None or event.occurred_at < current:
+                result[event.visitor_id] = event.occurred_at
+        return result
+
+    signup_by_business: dict[UUID, AnalyticsEventRow] = {}
+    for event in sorted(
+        events,
+        key=lambda item: (item.occurred_at, str(item.visitor_id)),
+    ):
+        if event.event_name == "signup_completed" and event.business_id is not None:
+            signup_by_business.setdefault(event.business_id, event)
+
+    signup_visitors: dict[UUID, datetime] = {}
+    for event in signup_by_business.values():
+        current = signup_visitors.get(event.visitor_id)
+        if current is None or event.occurred_at < current:
+            signup_visitors[event.visitor_id] = event.occurred_at
+
+    def linked_rate(
+        previous: dict[UUID, datetime],
+        current: dict[UUID, datetime],
+    ) -> float | None:
+        if any(
+            visitor not in previous or previous[visitor] > occurred_at
+            for visitor, occurred_at in current.items()
+        ):
+            return None
+        return _ratio(len(current), len(previous))
+
+    quiz_seen = first_seen("quiz_viewed")
+    quiz_finished = first_seen("quiz_completed")
+    vsl_seen = first_seen("quiz_demo_started")
+    vsl_finished = first_seen("quiz_demo_completed")
+
+    quiz_completion_rate = linked_rate(quiz_seen, quiz_finished)
+    vsl_start_rate = linked_rate(quiz_finished, vsl_seen)
+    vsl_completion_rate = linked_rate(vsl_seen, vsl_finished)
+    vsl_signup_rate = linked_rate(vsl_seen, signup_visitors)
+    quiz_signup_rate = linked_rate(quiz_seen, signup_visitors)
+
+    visitor_conversion_note = (
+        "Todas as origens. Conversão por visitantes únicos com "
+        "identidade e ordem temporal compatíveis entre as etapas. "
+        "Taxa indisponível quando a relação não pode ser comprovada."
+    )
 
     sales = len(paid_checkouts)
     paid_businesses = {checkout.business_id for checkout in paid_checkouts}
@@ -677,9 +904,42 @@ def build_platform_analytics_summary(
         if meta_ready and meta_impressions > 0
         else None
     )
-    cac = _money_ratio(meta_spend, sales) if meta_ready else None
+    signup_acquisition = _signup_acquisition_from_events(events)
+    financial_acquisition = {
+        **signup_acquisition,
+        **acquisition_by_business,
+    }
+
+    def meta_attributed(business_id: UUID) -> bool:
+        return (
+            financial_acquisition.get(business_id, {}).get("ad_id")
+            in meta_ad_ids
+        )
+
+    meta_new_paid_businesses = {
+        business_id
+        for business_id in paid_businesses & account_businesses
+        if meta_attributed(business_id)
+    }
+    meta_net_revenue_cents = (
+        sum(
+            checkout.amount_cents
+            for checkout in paid_checkouts
+            if meta_attributed(checkout.business_id)
+        )
+        - sum(
+            refund.amount_cents
+            for refund in refunds
+            if meta_attributed(refund.business_id)
+        )
+    )
+    cac = (
+        _money_ratio(meta_spend, len(meta_new_paid_businesses))
+        if meta_ready
+        else None
+    )
     roas = (
-        round((net_revenue_cents / 100) / meta_spend, 2)
+        round((meta_net_revenue_cents / 100) / meta_spend, 2)
         if meta_ready and meta_spend > 0
         else None
     )
@@ -708,28 +968,43 @@ def build_platform_analytics_summary(
                 else "Visitantes únicos do quiz em dados próprios da Alovia."
             ),
         ),
+        *(
+            [
+                PlatformAnalyticsFunnelStep(
+                    key="quiz_views_all",
+                    label="Quiz aberto (total)",
+                    value=len(raw_quiz_visitors),
+                    conversion_rate=None,
+                    status="ready",
+                    note="Visitantes únicos de todas as origens.",
+                )
+            ]
+            if meta_ready
+            else []
+        ),
         PlatformAnalyticsFunnelStep(
             key="quiz_completed",
             label="Quiz concluído",
             value=len(quiz_completed_visitors),
-            conversion_rate=_ratio(len(quiz_completed_visitors), len(quiz_visitors)),
+            conversion_rate=quiz_completion_rate,
             status="ready",
+            note=visitor_conversion_note,
         ),
         PlatformAnalyticsFunnelStep(
             key="vsl_started",
             label="VSL iniciada",
             value=len(vsl_started_visitors),
-            conversion_rate=_ratio(
-                len(vsl_started_visitors), len(quiz_completed_visitors)
-            ),
+            conversion_rate=vsl_start_rate,
             status="ready",
+            note=visitor_conversion_note,
         ),
         PlatformAnalyticsFunnelStep(
             key="accounts",
             label="Conta criada",
             value=len(account_businesses),
-            conversion_rate=_ratio(len(account_businesses), len(vsl_started_visitors)),
+            conversion_rate=vsl_signup_rate,
             status="ready",
+            note=visitor_conversion_note + " Total exibido em empresas.",
         ),
         PlatformAnalyticsFunnelStep(
             key="demo_entries",
@@ -737,29 +1012,47 @@ def build_platform_analytics_summary(
             value=len(demo_businesses),
             conversion_rate=_ratio(len(demo_businesses), len(account_businesses)),
             status="ready",
+            note=(
+                "Demonstrações de contas criadas no período. "
+                f"O histórico bruto preserva {len(raw_demo_businesses)} empresa(s)."
+            ),
         ),
         PlatformAnalyticsFunnelStep(
             key="checkout_started",
             label="Checkout",
             value=len(checkout_businesses),
-            conversion_rate=_ratio(len(checkout_businesses), len(demo_businesses)),
+            conversion_rate=_ratio(
+                len(checkout_businesses & demo_businesses), len(demo_businesses)
+            ),
             status="ready",
+            note=(
+                "Total de checkouts no período. Conversão calculada apenas "
+                "entre as empresas elegíveis na demonstração."
+            ),
         ),
         PlatformAnalyticsFunnelStep(
             key="subscriptions",
             label="Compra",
             value=sales,
-            conversion_rate=_ratio(sales, len(checkout_businesses)),
+            conversion_rate=_ratio(
+                len(paid_businesses & checkout_businesses),
+                len(checkout_businesses),
+            ),
             status="ready",
-            note="Pagamentos confirmados no banco transacional.",
+            note=(
+                "Total de pagamentos confirmados no banco transacional. "
+                "Conversão entre empresas com checkout no período."
+            ),
         ),
         PlatformAnalyticsFunnelStep(
             key="activations",
             label="Ativação",
             value=len(activation_businesses),
-            conversion_rate=_ratio(len(activation_businesses), sales),
+            conversion_rate=_ratio(
+                len(activation_businesses), len(paid_businesses)
+            ),
             status="ready",
-            note="Pagamento confirmado + WhatsApp conectado: automação apta a operar.",
+            note="Empresas com pagamento e conexão registrados; não comprova atendimento realizado.",
         ),
     ]
 
@@ -827,14 +1120,14 @@ def build_platform_analytics_summary(
             "CAC",
             cac,
             "currency_brl",
-            "Customer Acquisition Cost / custo de aquisição por pagamento confirmado.",
+            "Customer Acquisition Cost / gasto Meta por empresa cadastrada e pagante no período, atribuída aos anúncios.",
         ),
         meta_kpi(
             "roas",
             "ROAS",
             roas,
             "ratio",
-            "Return on Ad Spend / retorno sobre investimento em anúncios usando receita líquida.",
+            "Return on Ad Spend / receita líquida atribuída aos anúncios Meta, dividida pelo investimento.",
         ),
         PlatformAnalyticsKpi(
             key="net_revenue",
@@ -883,10 +1176,18 @@ def build_platform_analytics_summary(
             ),
         ),
         PlatformAnalyticsKpi(
+            key="quiz_views_all",
+            label="Quiz aberto (total)",
+            value=len(raw_quiz_visitors),
+            format="count",
+            note="Visitantes únicos de todas as origens.",
+        ),
+        PlatformAnalyticsKpi(
             key="quiz_completion_rate",
             label="Conclusão do quiz",
-            value=_ratio(len(quiz_completed_visitors), len(quiz_visitors)),
+            value=quiz_completion_rate,
             format="percent",
+            note=visitor_conversion_note,
         ),
         PlatformAnalyticsKpi(
             key="vsl_started",
@@ -897,8 +1198,9 @@ def build_platform_analytics_summary(
         PlatformAnalyticsKpi(
             key="vsl_completion_rate",
             label="Conclusão da VSL",
-            value=_ratio(len(vsl_completed_visitors), len(vsl_started_visitors)),
+            value=vsl_completion_rate,
             format="percent",
+            note=visitor_conversion_note,
         ),
         PlatformAnalyticsKpi(
             key="signup_cta",
@@ -915,14 +1217,19 @@ def build_platform_analytics_summary(
         PlatformAnalyticsKpi(
             key="signup_conversion_rate",
             label="Quiz → conta",
-            value=_ratio(len(account_businesses), len(quiz_visitors)),
+            value=quiz_signup_rate,
             format="percent",
+            note=visitor_conversion_note,
         ),
         PlatformAnalyticsKpi(
             key="demo_entries",
             label="Demonstrações",
             value=len(demo_businesses),
             format="count",
+            note=(
+                "Contas criadas no período que acessaram a demonstração. "
+                f"O histórico bruto preserva {len(raw_demo_businesses)} empresa(s)."
+            ),
         ),
         PlatformAnalyticsKpi(
             key="plan_views",
@@ -939,9 +1246,12 @@ def build_platform_analytics_summary(
         PlatformAnalyticsKpi(
             key="trial_to_paid",
             label="Conta → pago",
-            value=_ratio(sales, len(account_businesses)),
+            value=_ratio(
+                len(paid_businesses & account_businesses),
+                len(account_businesses),
+            ),
             format="percent",
-            note="Conversão de conta gratuita para pagamento confirmado.",
+            note="Empresas cadastradas no período com pagamento confirmado.",
         ),
         PlatformAnalyticsKpi(
             key="activations",
@@ -953,8 +1263,9 @@ def build_platform_analytics_summary(
         PlatformAnalyticsKpi(
             key="activation_rate",
             label="Compra → ativação",
-            value=_ratio(len(activation_businesses), sales),
+            value=_ratio(len(activation_businesses), len(paid_businesses)),
             format="percent",
+            note="Conversão por empresa pagante, não por quantidade de pagamentos.",
         ),
     ]
 
@@ -1060,8 +1371,9 @@ def build_platform_analytics_summary(
     ad_performance = _ad_performance(
         events=events,
         paid_checkouts=paid_checkouts,
+        refunds=refunds,
         activation_businesses=activation_businesses,
-        acquisition_by_business=acquisition_by_business,
+        acquisition_by_business=financial_acquisition,
         meta_report=meta_report,
     )
     lead_recovery = _lead_recovery(
@@ -1107,7 +1419,8 @@ def build_platform_analytics_summary(
         elif event.event_name == "signup_completed":
             bucket["accounts"].add(business)
         elif event.event_name in {"preactivation_started", "demo_page_view"}:
-            bucket["demo_entries"].add(business)
+            if event.business_id in demo_businesses:
+                bucket["demo_entries"].add(business)
         elif event.event_name == "checkout_started":
             bucket["checkout_started"].add(business)
     for business_id, activated_at in activation_at_by_business.items():
@@ -1184,6 +1497,32 @@ def build_platform_analytics_summary(
         ),
     ]
 
+    def activation_stage(event_name: str) -> int:
+        return len(_business_ids(events, event_name) & account_businesses)
+
+    activation_progress = PlatformAnalyticsActivationProgress(
+        accounts=len(account_businesses),
+        demo_entries=len(demo_businesses),
+        demo_interactions=activation_stage("demo_interaction"),
+        connection_attempted=activation_stage("whatsapp_connection_started"),
+        connection_failed=activation_stage("whatsapp_connection_failed"),
+        connection_blocked=activation_stage("whatsapp_connection_blocked"),
+        connection_completed_event=activation_stage("whatsapp_connection_completed"),
+        connection_confirmed=len(
+            account_businesses & set(connection_at_by_business)
+        ),
+        plan_views=len(plan_businesses & account_businesses),
+        plan_selected=activation_stage("plan_selected"),
+        checkout_started=len(checkout_businesses & account_businesses),
+        checkout_created=activation_stage("checkout_created"),
+        payment_submitted=activation_stage("payment_submitted"),
+        payment_failed=activation_stage("payment_failed"),
+        paid_businesses=len(paid_businesses & account_businesses),
+        commercially_activated=len(
+            activation_businesses & account_businesses
+        ),
+    )
+
     return PlatformAnalyticsSummaryResponse(
         generated_at=now,
         period_days=days,
@@ -1199,7 +1538,18 @@ def build_platform_analytics_summary(
         onboarding_issues=onboarding_issues,
         quiz_questions=quiz_questions,
         ad_performance=ad_performance,
+        traffic_funnels=_traffic_funnels(
+            events=events,
+            account_businesses=account_businesses,
+            demo_businesses=demo_businesses,
+            checkout_businesses=checkout_businesses,
+            paid_checkouts=paid_checkouts,
+            activation_businesses=activation_businesses,
+            acquisition_by_business=acquisition_by_business,
+            meta_report=meta_report,
+        ),
         lead_recovery=lead_recovery,
+        activation_progress=activation_progress,
         meta_ads_status="ready" if meta_ready else "awaiting_integration",
         meta_ads_note=meta_report.note,
         series=series,
@@ -1471,7 +1821,11 @@ class PlatformAnalyticsService:
 
         paid_business_ids = {checkout.business_id for checkout in paid_checkouts}
         lead_business_ids = {lead.business_id for lead in lead_contacts}
-        connection_business_ids = paid_business_ids | lead_business_ids
+        connection_business_ids = (
+            paid_business_ids
+            | lead_business_ids
+            | _business_ids(events, "signup_completed")
+        )
         connection_at_by_business: dict[UUID, datetime] = {}
         if connection_business_ids:
             connection_rows = await self.db.execute(
