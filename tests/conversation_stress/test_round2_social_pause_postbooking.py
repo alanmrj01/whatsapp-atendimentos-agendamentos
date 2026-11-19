@@ -48,7 +48,10 @@ async def test_social_acknowledgement_preserves_checkpoint_without_retry(body: s
     await engine.process(inbound(2800, body=body))
 
     assert repository.state == ConversationState.BOOKING_ADDRESS
-    assert repository.context == before
+    assert repository.context == {
+        **before,
+        "social_resume_pending": ConversationState.BOOKING_ADDRESS.value,
+    }
     assert repository.automation_enabled is True
     assert repository.handoff_status == "none"
     assert "repair_attempts" not in repository.context

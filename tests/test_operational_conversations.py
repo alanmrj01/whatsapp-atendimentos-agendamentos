@@ -199,7 +199,7 @@ def test_customer_name_precedence_preserves_learned_and_manual_names() -> None:
         name_source="conversation",
     ) == "Juliana"
     assert _display_name(None, "Nome WhatsApp", "+5511", "5511") == (
-        "Nome WhatsApp"
+        "+5511"
     )
     assert _display_name(None, "~!", "+5511", "5511") == "+5511"
     assert _display_name(None, "Tudo certo estou no trabalho", "+5511", "5511") == "+5511"

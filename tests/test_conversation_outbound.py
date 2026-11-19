@@ -42,7 +42,7 @@ def test_button_payload_defensively_limits_future_long_titles() -> None:
     assert title.endswith("…")
 
 
-def test_tubing_price_copy_respects_configured_catalog_unit() -> None:
+def test_tubing_prequote_copy_defers_configured_catalog_price() -> None:
     fixed = tubing_variation_message(
         Decimal("3"),
         Decimal("50.00"),
@@ -59,14 +59,14 @@ def test_tubing_price_copy_respects_configured_catalog_unit() -> None:
         "unidade",
     )
 
-    assert "valor fixo de R$ 50,00" in (fixed.body or "")
-    assert "cada kit adicional custa r$ 30,00" in (kit.body or "").casefold()
-    assert "cada unidade adicional custa r$ 15,00" in (unit.body or "").casefold()
     for body in (fixed.body or "", kit.body or "", unit.body or ""):
-        assert "valor cadastrado" not in body.casefold()
+        normalized = body.casefold()
+        assert "r$" not in normalized
+        assert "adicional no orçamento" in normalized
+        assert "valor cadastrado" not in normalized
 
 
-def test_tubing_price_copy_is_customer_language_not_internal_configuration() -> None:
+def test_tubing_prequote_copy_is_customer_language_without_exact_price() -> None:
     variation = tubing_variation_message(
         Decimal("3"),
         Decimal("20.00"),
@@ -80,8 +80,8 @@ def test_tubing_price_copy_is_customer_language_not_internal_configuration() -> 
         normalized = body.casefold()
         assert "valor cadastrado" not in normalized
         assert "inclui até 3 metros" in normalized
-        assert "cada metro adicional custa r$ 20,00" in normalized
-        assert "entra no orçamento" in normalized
+        assert "r$ 20,00" not in normalized
+        assert "adicional no orçamento" in normalized
 
 
 

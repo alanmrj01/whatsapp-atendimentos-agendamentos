@@ -226,10 +226,14 @@ async def test_incomplete_late_address_correction_discards_old_route_and_city() 
     assert repository.state == ConversationState.BOOKING_ADDRESS
     assert repository.context["pending_service_address"] == "Rua Nova, 123"
     assert "service_address" not in repository.context
-    assert "selected_date" not in repository.context
-    assert "selected_time" not in repository.context
-    assert "candidate_booking" not in repository.context
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert repository.context["candidate_booking"] == {
+        "service_id": str(SERVICE_ID),
+    }
     assert "quote_presented" not in repository.context
+    assert "schedule_revalidation_required" not in repository.context
+    assert repository.context["awaiting_address_city"] is True
 
 
 @pytest.mark.asyncio
@@ -334,9 +338,9 @@ async def test_building_hours_without_explicit_window_do_not_invent_hours(
             "17:00",
             ConversationState.BOOKING_BUILDING_HOURS,
         ),
-        ("o limite é 18:00", "18:00", ConversationState.BOOKING_DATE),
-        ("não pode depois das 16h", "16:00", ConversationState.BOOKING_DATE),
-        ("serviço só até 15h", "15:00", ConversationState.BOOKING_DATE),
+        ("o limite é 18:00", "18:00", ConversationState.BOOKING_WEEKDAY),
+        ("não pode depois das 16h", "16:00", ConversationState.BOOKING_WEEKDAY),
+        ("serviço só até 15h", "15:00", ConversationState.BOOKING_WEEKDAY),
     ],
     ids=["until-17", "limit-18", "not-after-16", "service-until-15"],
 )

@@ -58,9 +58,11 @@ async def test_initial_schedule_prompt_uses_all_configured_company_weekdays() ->
     )
 
     assert repository.state == ConversationState.BOOKING_WEEKDAY
-    rows = repository.outbounds[-1].transition.outbound.outbound_payload[
-        "sections"
-    ][0]["rows"]
+    transition = repository.outbounds[-1].transition
+    assert transition.follow_ups
+    schedule = transition.follow_ups[-1]
+    assert schedule.interactive_id == "booking.weekdays"
+    rows = schedule.outbound_payload["sections"][0]["rows"]
     assert [row["id"] for row in rows] == [
         "weekday:0",
         "weekday:1",
@@ -258,12 +260,9 @@ async def test_weekday_with_one_offered_date_still_offers_real_combined_slot() -
 
     await ConversationEngine(repository, port).process(inbound(2311, body="quarta"))
 
-    assert repository.state == ConversationState.BOOKING_DATE
-    assert "selected_date" not in repository.context
-    rows = repository.outbounds[-1].transition.outbound.outbound_payload[
-        "sections"
-    ][0]["rows"]
-    assert [row["id"] for row in rows] == ["slot:2026-10-14|09:00"]
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-10-14"
+    assert "selected_time" not in repository.context
 
 
 @pytest.mark.asyncio

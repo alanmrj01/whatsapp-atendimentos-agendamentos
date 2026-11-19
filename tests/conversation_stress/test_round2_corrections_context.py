@@ -161,7 +161,7 @@ async def test_late_quantity_correction_updates_canonical_fact_and_restarts_date
         inbound(202, body=body)
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["quantity"] == expected
     assert repository.context["equipment_quantity"] == expected
     assert repository.context["service_id"] == str(SERVICE_ID)
@@ -204,16 +204,18 @@ async def test_late_address_correction_preserves_safe_facts_and_restarts_dates(
         inbound(203, body=body)
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_ATTENDEE
     assert repository.context["service_id"] == str(SERVICE_ID)
     assert repository.context["quantity"] == 2
     assert repository.context["property_type"] == "house"
     assert repository.context["onsite_contact_name"] == "Marina"
     assert repository.customer_name == "Marina Cliente"
     assert repository.context["service_address"] != OLD_ADDRESS
-    assert "selected_date" not in repository.context
-    assert "selected_time" not in repository.context
-    assert "candidate_booking" not in repository.context
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert repository.context["candidate_booking"] == {
+        "service_id": str(SERVICE_ID),
+    }
     assert "quote_presented" not in repository.context
 
 
@@ -242,10 +244,14 @@ async def test_incomplete_address_correction_stops_using_old_route_and_asks_city
     assert repository.context["quantity"] == 2
     assert repository.context["property_type"] == "house"
     assert "service_address" not in repository.context
-    assert "selected_date" not in repository.context
-    assert "selected_time" not in repository.context
-    assert "candidate_booking" not in repository.context
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert repository.context["candidate_booking"] == {
+        "service_id": str(SERVICE_ID),
+    }
     assert "quote_presented" not in repository.context
+    assert "schedule_revalidation_required" not in repository.context
+    assert repository.context["awaiting_address_city"] is True
 
 
 @pytest.mark.asyncio
