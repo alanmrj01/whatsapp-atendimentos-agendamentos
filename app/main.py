@@ -29,10 +29,14 @@ from app.api.internal_whatsapp_onboarding import (
 )
 from app.api.whatsapp_webhook import router as whatsapp_webhook_router
 from app.core.config import Environment, get_settings
-from app.core.database import dispose_engine
+from app.core.database import (
+    dispose_engine,
+    get_session_factory,
+)
 from app.core.logging import configure_logging
 from app.mcp_server.runtime import MCPConfigurationError, build_mcp_runtime
 from app.mcp_server.oauth_http import build_oauth_router
+from app.mcp_server.oauth_verifier import SQLAlchemyMcpTokenVerifier
 from app.mcp_server.v2 import build_mcp_v2_runtime
 from app.tasks.cloud_tasks import close_cloud_tasks_client
 
@@ -92,11 +96,48 @@ def create_app(
         application.mount("/mcp", mcp_runtime.app, name="mcp")
 
     application.state.mcp_v2_runtime = None
+
+    oauth_signing_secret = (
+        current_settings.mcp_oauth_signing_key
+    )
+    effective_mcp_v2_token_verifier = (
+        mcp_v2_token_verifier
+    )
+
     if current_settings.mcp_v2_enabled:
-        if mcp_v2_token_verifier is None:
-            raise MCPConfigurationError(
-                "MCP V2 token verifier is required"
-            )
+        if effective_mcp_v2_token_verifier is None:
+            if (
+                not current_settings.mcp_oauth_enabled
+                or oauth_signing_secret is None
+            ):
+                raise MCPConfigurationError(
+                    "MCP V2 token verifier is required"
+                )
+
+            try:
+                effective_mcp_v2_token_verifier = (
+                    SQLAlchemyMcpTokenVerifier(
+                        issuer=(
+                            current_settings
+                            .mcp_v2_issuer_url
+                        ),
+                        resource=(
+                            current_settings
+                            .mcp_v2_resource_server_url
+                        ),
+                        signing_key=(
+                            oauth_signing_secret
+                            .get_secret_value()
+                        ),
+                        session_factory_provider=(
+                            get_session_factory
+                        ),
+                    )
+                )
+            except ValueError:
+                raise MCPConfigurationError(
+                    "MCP V2 OAuth configuration is invalid"
+                ) from None
 
         mcp_v2_runtime = build_mcp_v2_runtime(
             allowed_hosts=current_settings.allowed_mcp_v2_hosts(),
@@ -104,18 +145,22 @@ def create_app(
             resource_server_url=(
                 current_settings.mcp_v2_resource_server_url
             ),
-            token_verifier=mcp_v2_token_verifier,
+            token_verifier=(
+                effective_mcp_v2_token_verifier
+            ),
         )
         application.state.mcp_v2_runtime = mcp_v2_runtime
 
     if current_settings.mcp_oauth_enabled:
-        signing_secret = (
-            current_settings.mcp_oauth_signing_key
-        )
-
-        if signing_secret is None:
+        if (
+            oauth_signing_secret is None
+            or len(
+                oauth_signing_secret.get_secret_value()
+            ) < 32
+        ):
             raise MCPConfigurationError(
-                "MCP OAuth signing key is required"
+                "MCP OAuth signing key is required "
+                "and must be at least 32 characters"
             )
 
         application.include_router(
@@ -126,7 +171,8 @@ def create_app(
                     .mcp_v2_resource_server_url
                 ),
                 signing_key=(
-                    signing_secret.get_secret_value()
+                    oauth_signing_secret
+                    .get_secret_value()
                 ),
             )
         )
