@@ -23,6 +23,7 @@ from app.models.push import WebPushDelivery, WebPushEvent, WebPushSubscription
 from app.models.reengagement import ReengagementDelivery
 from app.models.whatsapp_onboarding import WhatsAppOnboardingAttempt, WhatsAppOnboardingAttemptEvent
 from app.models.marketing import MarketingFunnelEvent, MarketingLeadContact
+from app.models.mcp_oauth import McpOAuthAuthorizationCode, McpOAuthSession
 
 __all__ = [
     "AuthSession",
@@ -49,6 +50,8 @@ __all__ = [
     "Message",
     "MarketingFunnelEvent",
     "MarketingLeadContact",
+    "McpOAuthAuthorizationCode",
+    "McpOAuthSession",
     "ProcessedWebhook",
     "ScheduleBlock",
     "Service",
