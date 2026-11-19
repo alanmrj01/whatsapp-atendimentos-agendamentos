@@ -1,6 +1,17 @@
 name: MCP Server V1 validation
 
 on:
+  push:
+    paths:
+      - 'app/mcp_server/**'
+      - 'app/main.py'
+      - 'app/core/config.py'
+      - 'requirements-prod.txt'
+      - 'requirements.txt'
+      - 'tests/test_mcp_server.py'
+      - 'tests/test_mcp_integration.py'
+      - 'tests/test_health.py'
+      - '.github/workflows/mcp-server-v1.yml'
   workflow_dispatch:
   pull_request:
     paths:
