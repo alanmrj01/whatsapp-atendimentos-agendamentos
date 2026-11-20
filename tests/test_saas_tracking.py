@@ -29,6 +29,7 @@ from app.analytics.posthog import (
 from fastapi import Response
 
 from app.api.marketing_tracking import (
+    QuizLeadContactRequest,
     _decode_attribution_cookie,
     _encode_attribution_cookie,
     _resolve_attribution,
@@ -721,3 +722,41 @@ async def test_meta_ads_rejects_non_brl_before_financial_kpis(monkeypatch) -> No
     assert report.status == "awaiting_integration"
     assert report.ads == []
     assert report.note == "A conta de anúncios precisa reportar os insights em BRL."
+
+
+def test_quiz_contact_request_normalizes_name_phone_and_requires_contact_permission() -> None:
+    from pydantic import ValidationError
+
+    good = QuizLeadContactRequest(
+        lead_name="  João   da Silva ",
+        lead_whatsapp="(12) 99999-0000",
+        quiz_profile="service_first",
+        contact_permission=True,
+    )
+    assert good.lead_name == "João da Silva"
+    assert good.lead_whatsapp == "+5512999990000"
+
+    for invalid in [
+        dict(lead_name="A", lead_whatsapp="(12) 99999-0000",
+             quiz_profile="service_first", contact_permission=True),
+        dict(lead_name="Lead", lead_whatsapp="123",
+             quiz_profile="service_first", contact_permission=True),
+        dict(lead_name="Lead", lead_whatsapp="(12) 99999-0000",
+             quiz_profile="unknown", contact_permission=True),
+        dict(lead_name="Lead", lead_whatsapp="(12) 99999-0000",
+             quiz_profile="service_first", contact_permission=False),
+    ]:
+        with pytest.raises(ValidationError):
+            QuizLeadContactRequest(**invalid)
+
+
+
+def test_quiz_leads_are_independent_of_business_account_and_unique_by_phone() -> None:
+    from app.models.marketing import MarketingQuizLead
+    columns = MarketingQuizLead.__table__.c
+    assert "business_id" not in columns
+    assert columns.whatsapp_e164.nullable is False
+    assert columns.consented_at.nullable is False
+    names = {entry.name for entry in MarketingQuizLead.__table__.constraints}
+    assert "uq_marketing_quiz_leads_whatsapp_e164" in names
+

@@ -9,6 +9,7 @@ from app.platform_admin.analytics import (
     ActiveSubscriptionRow,
     AnalyticsEventRow,
     LeadContactRow,
+    QuizLeadRow,
     PaidCheckoutRow,
     RefundRow,
     _effective_period_start,
@@ -999,3 +1000,44 @@ def test_activation_progress_counts_new_companies_by_stage() -> None:
     assert progress.commercially_activated == 1
     assert metric(summary, "subscriptions").value == 3
     assert metric(summary, "net_revenue").value == 441.0
+
+
+def test_quiz_only_contacts_never_duplicate_registered_account_leads() -> None:
+    abandoned = QuizLeadRow(
+        id=UUID("00000000-0000-0000-0000-000000000200"),
+        lead_name="Lead do quiz",
+        whatsapp_e164="+5512999990000",
+        quiz_profile="service_first",
+        ad_id="9003",
+        created_at=NOW,
+    )
+    signed_up = QuizLeadRow(
+        id=UUID("00000000-0000-0000-0000-000000000201"),
+        lead_name="Lead cadastrado",
+        whatsapp_e164="+5512999991234",
+        quiz_profile="at_risk",
+        ad_id="9003",
+        created_at=NOW,
+    )
+    summary = build_platform_analytics_summary(
+        events=base_events(),
+        paid_checkouts=[],
+        refunds=[],
+        active_subscriptions=[],
+        acquisition_by_business={},
+        activation_at_by_business={},
+        meta_report=meta_report(),
+        now=NOW,
+        days=7,
+        quiz_leads=[abandoned, signed_up],
+        registered_whatsapps={signed_up.whatsapp_e164},
+    )
+    assert len(summary.quiz_leads_only) == 1
+    assert summary.quiz_leads_only[0].lead_name == "Lead do quiz"
+    assert summary.quiz_leads_only[0].whatsapp_e164 == abandoned.whatsapp_e164
+    assert summary.quiz_leads_only[0].quiz_profile == "service_first"
+    assert not any(
+        contact.whatsapp_e164 in {signed_up.whatsapp_e164}
+        for contact in summary.quiz_leads_only
+    )
+

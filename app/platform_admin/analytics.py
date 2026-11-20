@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.meta_ads import MetaAdsReport, fetch_meta_ads_report
 from app.core.config import Settings
-from app.models import BillingCheckout, Business, BusinessWhatsAppConnection, CommercialSubscription, MarketingFunnelEvent, MarketingLeadContact
+from app.models import BillingCheckout, Business, BusinessWhatsAppConnection, CommercialSubscription, MarketingFunnelEvent, MarketingLeadContact, MarketingQuizLead
 from app.models.billing import billing_provider_environment
 from app.platform_admin.schemas import (
     PlatformAnalyticsAdPerformanceItem,
@@ -24,6 +24,7 @@ from app.platform_admin.schemas import (
     PlatformAnalyticsFunnelStep,
     PlatformAnalyticsKpi,
     PlatformAnalyticsLeadRecoveryItem,
+    PlatformAnalyticsQuizLeadItem,
     PlatformAnalyticsQuizAnswerItem,
     PlatformAnalyticsQuizQuestion,
     PlatformAnalyticsSeriesPoint,
@@ -93,6 +94,16 @@ class AnalyticsEventRow:
     event_name: str
     occurred_at: datetime
     properties: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class QuizLeadRow:
+    id: UUID
+    lead_name: str
+    whatsapp_e164: str
+    quiz_profile: str
+    ad_id: str | None
+    created_at: datetime
 
 
 @dataclass(frozen=True)
@@ -804,11 +815,16 @@ def build_platform_analytics_summary(
     lead_contacts: list[LeadContactRow] | None = None,
     connection_at_by_business: dict[UUID, datetime] | None = None,
     lead_recovery_checkouts: list[PaidCheckoutRow] | None = None,
+    quiz_leads: list[QuizLeadRow] | None = None,
+    registered_whatsapps: set[str] | None = None,
 ) -> PlatformAnalyticsSummaryResponse:
     period_start = period_start or (now - timedelta(days=days))
     lead_contacts = lead_contacts or []
     connection_at_by_business = connection_at_by_business or {}
     lead_recovery_checkouts = lead_recovery_checkouts or paid_checkouts
+    quiz_leads = quiz_leads or []
+    registered_whatsapps = set(registered_whatsapps or set())
+    registered_whatsapps.update(contact.whatsapp_e164 for contact in lead_contacts)
 
     raw_quiz_visitors = _visitor_ids(events, "quiz_viewed")
     meta_attribution_active = meta_report.status == "ready"
@@ -1549,6 +1565,20 @@ def build_platform_analytics_summary(
             meta_report=meta_report,
         ),
         lead_recovery=lead_recovery,
+        quiz_leads_only=[
+            PlatformAnalyticsQuizLeadItem(
+                id=contact.id,
+                lead_name=contact.lead_name,
+                whatsapp_e164=contact.whatsapp_e164,
+                quiz_profile=contact.quiz_profile,
+                ad_id=contact.ad_id,
+                created_at=contact.created_at,
+            )
+            for contact in sorted(
+                quiz_leads, key=lambda item: item.created_at, reverse=True
+            )
+            if contact.whatsapp_e164 not in registered_whatsapps
+        ],
         activation_progress=activation_progress,
         meta_ads_status="ready" if meta_ready else "awaiting_integration",
         meta_ads_note=meta_report.note,
@@ -1819,6 +1849,43 @@ class PlatformAnalyticsService:
                 ) in lead_rows
             ]
 
+        quiz_leads: list[QuizLeadRow] = []
+        registered_whatsapps: set[str] = set()
+        quiz_table_ready = await self.db.scalar(
+            select(func.to_regclass("public.marketing_quiz_leads"))
+        )
+        if quiz_table_ready is not None and lead_table_ready is not None:
+            # Account contacts are authoritative across all periods; a contact
+            # must not appear in both the registered and quiz-only lists.
+            registered_rows = await self.db.execute(
+                select(MarketingLeadContact.whatsapp_e164)
+            )
+            registered_whatsapps = {phone for (phone,) in registered_rows}
+            quiz_rows = await self.db.execute(
+                select(
+                    MarketingQuizLead.id,
+                    MarketingQuizLead.lead_name,
+                    MarketingQuizLead.whatsapp_e164,
+                    MarketingQuizLead.quiz_profile,
+                    MarketingQuizLead.ad_id,
+                    MarketingQuizLead.created_at,
+                )
+                .where(MarketingQuizLead.created_at >= period_start)
+                .order_by(MarketingQuizLead.created_at.desc())
+            )
+            quiz_leads = [
+                QuizLeadRow(
+                    id=lead_id,
+                    lead_name=lead_name,
+                    whatsapp_e164=phone,
+                    quiz_profile=profile,
+                    ad_id=ad_id,
+                    created_at=created_at,
+                )
+                for lead_id, lead_name, phone, profile, ad_id, created_at
+                in quiz_rows if phone not in registered_whatsapps
+            ]
+
         paid_business_ids = {checkout.business_id for checkout in paid_checkouts}
         lead_business_ids = {lead.business_id for lead in lead_contacts}
         connection_business_ids = (
@@ -1904,4 +1971,6 @@ class PlatformAnalyticsService:
             lead_contacts=lead_contacts,
             connection_at_by_business=connection_at_by_business,
             lead_recovery_checkouts=lead_recovery_checkouts,
+            quiz_leads=quiz_leads,
+            registered_whatsapps=registered_whatsapps,
         )

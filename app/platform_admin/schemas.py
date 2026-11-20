@@ -241,6 +241,15 @@ class PlatformAnalyticsAdPerformanceItem(BaseModel):
     roas: float | None = None
 
 
+class PlatformAnalyticsQuizLeadItem(BaseModel):
+    id: UUID
+    lead_name: str
+    whatsapp_e164: str
+    quiz_profile: str
+    ad_id: str | None = None
+    created_at: datetime
+
+
 class PlatformAnalyticsLeadRecoveryItem(BaseModel):
     business_id: UUID
     lead_name: str
@@ -342,6 +351,7 @@ class PlatformAnalyticsSummaryResponse(BaseModel):
     traffic_funnels: list[PlatformAnalyticsTrafficFunnel] = Field(default_factory=list)
     activation_progress: PlatformAnalyticsActivationProgress = Field(default_factory=PlatformAnalyticsActivationProgress)
     lead_recovery: list[PlatformAnalyticsLeadRecoveryItem]
+    quiz_leads_only: list[PlatformAnalyticsQuizLeadItem] = Field(default_factory=list)
     meta_ads_status: Literal["ready", "awaiting_integration"]
     meta_ads_note: str | None = None
     series: list[PlatformAnalyticsSeriesPoint]

@@ -107,3 +107,39 @@ class MarketingLeadContact(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+
+class MarketingQuizLead(Base):
+    """Contact provided after quiz completion, independently of account signup."""
+
+    __tablename__ = "marketing_quiz_leads"
+    __table_args__ = (
+        UniqueConstraint(
+            "whatsapp_e164",
+            name="uq_marketing_quiz_leads_whatsapp_e164",
+        ),
+        Index("ix_marketing_quiz_leads_created", "created_at"),
+        CheckConstraint(
+            "whatsapp_e164 ~ '^\\+55[1-9][0-9]{9,10}$'",
+            name="whatsapp_e164_brazilian",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    lead_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    whatsapp_e164: Mapped[str] = mapped_column(String(16), nullable=False)
+    quiz_profile: Mapped[str] = mapped_column(String(32), nullable=False)
+    ad_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    consented_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+        onupdate=func.now(), nullable=False,
+    )

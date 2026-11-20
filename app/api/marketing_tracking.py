@@ -4,12 +4,13 @@ import base64
 import binascii
 from datetime import UTC, datetime, timedelta
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.meta_conversions import (
@@ -24,10 +25,11 @@ from app.analytics.posthog import (
     visitor_distinct_id,
 )
 from app.auth.dependencies import optional_principal, require_origin
+from app.auth.rate_limit import LoginRateLimiter
 from app.auth.service import Principal
 from app.core.config import Environment, Settings, get_settings
 from app.core.database import get_db
-from app.models.marketing import MarketingFunnelEvent
+from app.models.marketing import MarketingFunnelEvent, MarketingQuizLead
 
 router = APIRouter(prefix="/api/v1", tags=["marketing-tracking"])
 Db = Annotated[AsyncSession, Depends(get_db)]
@@ -207,6 +209,83 @@ def _set_identity_cookie(
         samesite="lax",
         path=ANALYTICS_COOKIE_PATH,
     )
+
+
+
+quiz_lead_rate_limiter = LoginRateLimiter(
+    global_limit=90,
+    global_window_seconds=60,
+    email_limit=8,
+    email_window_seconds=60 * 60,
+    detail="Too many quiz contact submissions",
+)
+
+
+class QuizLeadContactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lead_name: str = Field(min_length=2, max_length=120)
+    lead_whatsapp: str = Field(max_length=32)
+    quiz_profile: str = Field(pattern=r"^(service_first|multitask|at_risk)$")
+    contact_permission: Literal[True]
+
+    @field_validator("lead_name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        cleaned = " ".join(value.strip().split())
+        if len(cleaned) < 2:
+            raise ValueError("Name must have at least two characters")
+        return cleaned
+
+    @field_validator("lead_whatsapp")
+    @classmethod
+    def normalize_whatsapp(cls, value: str) -> str:
+        digits = "".join(char for char in value if char.isdigit())
+        if len(digits) in {10, 11}:
+            digits = "55" + digits
+        if len(digits) not in {12, 13} or not digits.startswith("55") or digits[2] == "0":
+            raise ValueError("Invalid Brazilian WhatsApp number with DDD")
+        return "+" + digits
+
+
+@router.post(
+    "/marketing/quiz-leads",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_origin)],
+)
+async def save_quiz_lead_contact(
+    payload: QuizLeadContactRequest,
+    request: Request,
+    db: Db,
+) -> dict[str, bool]:
+    """No PII is sent to analytics, logs or third-party providers."""
+    await quiz_lead_rate_limiter.acquire(payload.lead_whatsapp)
+    acquisition = _decode_attribution_cookie(
+        request.cookies.get(ATTRIBUTION_COOKIE)
+    )
+    ad_id = acquisition.get("ad_id")
+    if not isinstance(ad_id, str):
+        ad_id = None
+    insert_values = dict(
+        id=uuid4(),
+        lead_name=payload.lead_name,
+        whatsapp_e164=payload.lead_whatsapp,
+        quiz_profile=payload.quiz_profile,
+        ad_id=ad_id,
+    )
+    statement = insert(MarketingQuizLead).values(**insert_values)
+    statement = statement.on_conflict_do_update(
+        constraint="uq_marketing_quiz_leads_whatsapp_e164",
+        set_={
+            "lead_name": statement.excluded.lead_name,
+            "quiz_profile": statement.excluded.quiz_profile,
+            "ad_id": statement.excluded.ad_id,
+            "updated_at": func.now(),
+        },
+    )
+    await db.execute(statement)
+    await db.commit()
+    return {"accepted": True}
 
 
 @router.post(

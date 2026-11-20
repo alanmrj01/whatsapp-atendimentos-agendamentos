@@ -22,7 +22,7 @@ from app.models.domain import (
 from app.models.push import WebPushDelivery, WebPushEvent, WebPushSubscription
 from app.models.reengagement import ReengagementDelivery
 from app.models.whatsapp_onboarding import WhatsAppOnboardingAttempt, WhatsAppOnboardingAttemptEvent
-from app.models.marketing import MarketingFunnelEvent, MarketingLeadContact
+from app.models.marketing import MarketingFunnelEvent, MarketingLeadContact, MarketingQuizLead
 from app.models.mcp_oauth import (
     McpOAuthAuthorizationCode,
     McpOAuthAuthorizationFlow,
@@ -54,6 +54,7 @@ __all__ = [
     "Message",
     "MarketingFunnelEvent",
     "MarketingLeadContact",
+    "MarketingQuizLead",
     "McpOAuthAuthorizationCode",
     "McpOAuthAuthorizationFlow",
     "McpOAuthSession",
