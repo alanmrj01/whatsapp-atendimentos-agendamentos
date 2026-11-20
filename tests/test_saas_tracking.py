@@ -760,3 +760,46 @@ def test_quiz_leads_are_independent_of_business_account_and_unique_by_phone() ->
     names = {entry.name for entry in MarketingQuizLead.__table__.constraints}
     assert "uq_marketing_quiz_leads_whatsapp_e164" in names
 
+
+
+@pytest.mark.asyncio
+async def test_public_quiz_lead_capture_is_idempotent_and_does_not_echo_contact(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from fastapi import Request
+    from sqlalchemy.dialects.postgresql import dialect
+    from app.api import marketing_tracking
+
+    monkeypatch.setattr(
+        marketing_tracking.quiz_lead_rate_limiter,
+        "acquire",
+        AsyncMock(),
+    )
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/marketing/quiz-leads",
+        "headers": [],
+    })
+    payload = marketing_tracking.QuizLeadContactRequest(
+        lead_name="Pessoa Teste",
+        lead_whatsapp="(12) 99999-0000",
+        quiz_profile="service_first",
+        contact_permission=True,
+    )
+
+    first = await marketing_tracking.save_quiz_lead_contact(payload, request, db)
+    second = await marketing_tracking.save_quiz_lead_contact(payload, request, db)
+
+    assert first == {"accepted": True}
+    assert second == first
+    assert db.execute.await_count == 2
+    assert db.commit.await_count == 2
+    assert marketing_tracking.quiz_lead_rate_limiter.acquire.await_count == 2
+    compiled = str(db.execute.await_args.args[0].compile(dialect=dialect()))
+    assert "ON CONFLICT ON CONSTRAINT uq_marketing_quiz_leads_whatsapp_e164" in compiled
+    assert "DO UPDATE SET" in compiled
+    assert payload.lead_whatsapp not in str(first)
+    assert payload.lead_name not in str(first)
+
