@@ -143,6 +143,13 @@ MARKETING_LEAD_CONTACTS_MIGRATION_PATH = (
     / "20261111_0044_marketing_lead_contacts.py"
 )
 
+QUIZ_LEADS_MIGRATION_PATH = (
+    PROJECT_ROOT
+    / "alembic"
+    / "versions"
+    / "20261120_0047_marketing_quiz_leads.py"
+)
+
 
 def load_migration(path: Path = MIGRATION_PATH) -> ModuleType:
     spec = importlib.util.spec_from_file_location(
@@ -199,6 +206,31 @@ def test_marketing_lead_contacts_migration_is_isolated_additive_and_reversible()
     assert "alter table conversations" not in upgrade
     assert "alter table business_automation_exclusions" not in upgrade
     assert "drop table marketing_lead_contacts" in downgrade
+
+
+def test_quiz_leads_migration_is_additive_and_reversible_without_touching_accounts() -> None:
+    upgrade = " ".join(
+        render_migration_sql("upgrade", QUIZ_LEADS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+    downgrade = " ".join(
+        render_migration_sql("downgrade", QUIZ_LEADS_MIGRATION_PATH)
+        .lower()
+        .split()
+    )
+
+    assert "create table marketing_quiz_leads" in upgrade
+    assert "uq_marketing_quiz_leads_whatsapp_e164" in upgrade
+    assert "ix_marketing_quiz_leads_created" in upgrade
+    for column in ("lead_name", "whatsapp_e164", "quiz_profile", "consented_at"):
+        assert column in upgrade
+    assert 'alter table "marketing_quiz_leads" enable row level security' in upgrade
+    assert "alter table marketing_lead_contacts" not in upgrade
+    assert "alter table businesses" not in upgrade
+    assert "delete from" not in upgrade
+    assert "insert into" not in upgrade
+    assert "drop table marketing_quiz_leads" in downgrade
 
 
 def test_customer_automation_policy_migration_is_additive_and_reversible() -> None:

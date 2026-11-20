@@ -35,6 +35,7 @@ EXPECTED_TABLES = {
     "messages",
     "marketing_funnel_events",
     "marketing_lead_contacts",
+    "marketing_quiz_leads",
     "processed_webhooks",
     "schedule_blocks",
     "services",
