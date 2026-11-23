@@ -45,7 +45,8 @@ async def test_explicit_quantity_correction_still_updates_and_invalidates_depend
         inbound(301, body=body)
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    # O slot anterior foi invalidado e a seleção volta ao início seguro da agenda.
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["quantity"] == expected
     assert repository.context["equipment_quantity"] == expected
     assert "selected_date" not in repository.context
