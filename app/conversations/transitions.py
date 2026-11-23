@@ -5376,7 +5376,6 @@ def _service_address_from_text(
             and (
                 len(raw_segments) - remove_count >= 3
                 or candidate_state is not None
-                or remove_count > 0
             )
         ):
             city = candidate_city
@@ -5429,9 +5428,8 @@ def _address_has_city_or_state(
         city_label, explicit_state = _split_city_state_label(city_segment)
         normalized_city = normalize_portuguese(city_label)
         city_words = normalized_city.split()
-        separate_state = len(raw_segments) > len(segments)
         if (
-            (explicit_state is not None or separate_state)
+            explicit_state is not None
             and city_words
             and city_words[0] not in _NEIGHBORHOOD_MARKERS
             and not any(character.isdigit() for character in normalized_city)
@@ -5452,7 +5450,7 @@ def _address_has_city_or_state(
     for marker in _NEIGHBORHOOD_MARKERS - {"centro"}:
         match = re.search(
             rf"\b{marker}\b\s+([a-z0-9]+(?:\s+[a-z0-9]+){{1,5}})$",
-            normalized,
+            normalize_portuguese(", ".join(raw_segments)),
         )
         if match:
             tail_tokens = match.group(1).split()
