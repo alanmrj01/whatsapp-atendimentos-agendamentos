@@ -129,6 +129,7 @@ def enrich_context_from_message(
     body: str | None,
     *,
     whatsapp_id: str | None = None,
+    capture_property: bool = True,
 ) -> dict[str, Any]:
     """Extract reusable customer facts independently of the current FSM state.
 
@@ -253,7 +254,7 @@ def enrich_context_from_message(
         updated["installation_height_over_3m"] = height
         updated["work_at_height"] = height
 
-    property_type = _property_type(assertion)
+    property_type = _property_type(assertion) if capture_property else None
     if property_type is not None:
         _assign_fact(updated, "property_type", property_type, is_correction)
 
