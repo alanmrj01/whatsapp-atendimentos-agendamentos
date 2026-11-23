@@ -7269,8 +7269,12 @@ async def test_late_address_with_trailing_details_preserves_selected_slot(
     assert saved_address["city"] == "Jacareí"
     assert saved_address["state"] == "SP"
     assert "CASA 68" in saved_address["address_line"]
-    assert repository.context["selected_date"] == "2026-09-02"
-    assert repository.context["selected_time"] == "09:00"
+    assert repository.context.get("selected_date") == "2026-09-02", (
+        f"after address state={repository.state!r} context={repository.context!r}"
+    )
+    assert repository.context.get("selected_time") == "09:00", (
+        f"after address state={repository.state!r} context={repository.context!r}"
+    )
     assert repository.state not in {
         ConversationState.BOOKING_ADDRESS,
         ConversationState.BOOKING_WEEKDAY,
