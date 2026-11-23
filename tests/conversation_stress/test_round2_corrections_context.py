@@ -161,7 +161,8 @@ async def test_late_quantity_correction_updates_canonical_fact_and_restarts_date
         inbound(202, body=body)
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    # Após corrigir a quantidade, a agenda recomeça pela escolha do dia da semana.
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
     assert repository.context["quantity"] == expected
     assert repository.context["equipment_quantity"] == expected
     assert repository.context["service_id"] == str(SERVICE_ID)
