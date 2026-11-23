@@ -1958,7 +1958,10 @@ async def test_address_required_booking_omits_automatic_price_before_address(
     )
 
     assert transition.state == ConversationState.BOOKING_WEEKDAY
-    body = transition.outbound.body or ""
+    body = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    )
     assert "qual dia da semana" in body.casefold()
     assert "R$ 100,00" not in body
     assert "valor do serviço" not in body.casefold()
