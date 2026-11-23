@@ -1942,7 +1942,8 @@ async def test_address_required_booking_omits_automatic_price_before_address(
     pricing_type: PricingType,
 ) -> None:
     """Do not announce a preliminary service amount that the address may change."""
-    repository = FakeConversationRepository(state=ConversationState.BOOKING_SERVICE)
+    from app.conversations.transitions import _offer_dates
+
     port = FakeBookingPort()
     port.intake = replace(
         port.intake, requires_address=True, pricing_type=pricing_type
@@ -1952,17 +1953,17 @@ async def test_address_required_booking_omits_automatic_price_before_address(
         service=replace(port.plan.service, pricing_type=pricing_type),
     )
 
-    await ConversationEngine(repository, port).process(
-        inbound(99101, action=f"service:{SERVICE_ID}")
+    transition = await _offer_dates(
+        inbound(99101), port, {"service_id": str(SERVICE_ID)}
     )
 
-    assert repository.state == ConversationState.BOOKING_WEEKDAY
-    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert transition.state == ConversationState.BOOKING_WEEKDAY
+    body = transition.outbound.body or ""
     assert "qual dia da semana" in body.casefold()
     assert "R$ 100,00" not in body
     assert "valor do serviço" not in body.casefold()
     assert "valor estimado" not in body.casefold()
-    assert "last_presented_service_price" not in repository.context
+    assert "last_presented_service_price" not in transition.context
     assert "confirm" not in port.calls
 
 
