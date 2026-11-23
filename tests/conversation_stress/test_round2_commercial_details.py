@@ -25,7 +25,7 @@ CHECKPOINTS = (
     pytest.param(
         ConversationState.BOOKING_DATE,
         {"service_id": str(SERVICE_ID)},
-        "escolha uma data",
+        "qual destas datas fica melhor",
         id="date",
     ),
     pytest.param(

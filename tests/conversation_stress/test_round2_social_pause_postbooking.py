@@ -48,7 +48,12 @@ async def test_social_acknowledgement_preserves_checkpoint_without_retry(body: s
     await engine.process(inbound(2800, body=body))
 
     assert repository.state == ConversationState.BOOKING_ADDRESS
-    assert repository.context == before
+    # O novo orquestrador guarda somente um marcador transitório de retomada;
+    # nenhum fato de atendimento, retry ou checkpoint pode ser alterado.
+    assert repository.context == {
+        **before,
+        "social_resume_pending": ConversationState.BOOKING_ADDRESS.value,
+    }
     assert repository.automation_enabled is True
     assert repository.handoff_status == "none"
     assert "repair_attempts" not in repository.context
@@ -103,3 +108,25 @@ async def test_natural_post_booking_decline_completes_cleanly() -> None:
     assert repository.handoff_status == "none"
     assert "cancel_booking" not in port.calls
     assert "reschedule_booking" not in port.calls
+
+
+@pytest.mark.asyncio
+async def test_social_acknowledgement_then_real_address_resumes_without_handoff() -> None:
+    repository, _port, engine = _address_scenario()
+
+    await engine.process(inbound(2840, body="valeu viu"))
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context["social_resume_pending"] == ConversationState.BOOKING_ADDRESS.value
+    assert repository.automation_enabled is True
+
+    await engine.process(
+        inbound(2841, body="Rua das Flores, 10, Centro, São José dos Campos - SP")
+    )
+
+    assert repository.context["service_address"]["city"] == "São José dos Campos"
+    assert "social_resume_pending" not in repository.context
+    assert "repair_attempts" not in repository.context
+    assert repository.state != ConversationState.BOOKING_ADDRESS
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
