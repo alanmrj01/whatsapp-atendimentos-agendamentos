@@ -7166,7 +7166,8 @@ async def _handle_address(
     business_state = getattr(details, "business_state", None)
 
     raw_value = (inbound.body or "").strip()
-    value = _expand_address_abbreviations(raw_value)
+    # Keep address components separated when WhatsApp messages use multiple lines.
+    value = _expand_address_abbreviations(raw_value.replace("\n", ", "))
     normalized = normalize_portuguese(value)
     pending_address = _context_string(context, "pending_service_address")
     city_guess = _context_string(context, "pending_address_city_guess")
