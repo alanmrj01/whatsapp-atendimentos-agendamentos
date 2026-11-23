@@ -7395,3 +7395,49 @@ async def test_address_suffix_without_municipality_never_advances_booking(
     assert repository.state == ConversationState.BOOKING_ADDRESS
     assert repository.context.get("awaiting_address_city") is True
     assert "service_address" not in repository.context
+
+
+@mark.asyncio
+async def test_property_question_during_time_selection_does_not_change_booking_facts() -> None:
+    """Merely asking whether apartments are served must not change this customer's property."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+        },
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    await ConversationEngine(repository, port).process(
+        inbound(98251, body="vocês também atendem apartamento?")
+    )
+    assert repository.context.get("selected_date") == "2026-09-02"
+    assert "property_type" not in repository.context
+
+
+@mark.asyncio
+async def test_address_with_explicit_property_correction_is_not_silently_ignored() -> None:
+    """The address suppresses spurious property inference, but not an actual correction."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "property_type": "building",
+        },
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.intake = replace(port.intake, requires_address=True)
+    port.business_city = "Cidade de Origem"
+    port.business_state = "SP"
+    await ConversationEngine(repository, port).process(
+        inbound(
+            98252,
+            body="Corrigindo, o local é casa, não apartamento. "
+            "O endereço é Rua das Oliveiras, 15, Centro, Jacareí - SP",
+        )
+    )
+    assert repository.context.get("property_type") == "house"
