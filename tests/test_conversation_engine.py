@@ -1936,6 +1936,68 @@ async def test_fixed_and_estimated_prices_use_plain_language() -> None:
         assert expected in repository.outbounds[-1].transition.outbound.body
 
 
+@mark.parametrize("pricing_type", (PricingType.FIXED, PricingType.ESTIMATED))
+@mark.asyncio
+async def test_address_required_booking_omits_automatic_price_before_address(
+    pricing_type: PricingType,
+) -> None:
+    """Do not announce a preliminary service amount that the address may change."""
+    repository = FakeConversationRepository(state=ConversationState.BOOKING_SERVICE)
+    port = FakeBookingPort()
+    port.intake = replace(
+        port.intake, requires_address=True, pricing_type=pricing_type
+    )
+    port.plan = replace(
+        port.plan,
+        service=replace(port.plan.service, pricing_type=pricing_type),
+    )
+
+    await ConversationEngine(repository, port).process(
+        inbound(99101, action=f"service:{SERVICE_ID}")
+    )
+
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    body = repository.outbounds[-1].transition.outbound.body or ""
+    assert "qual dia da semana" in body.casefold()
+    assert "R$ 100,00" not in body
+    assert "valor do serviço" not in body.casefold()
+    assert "valor estimado" not in body.casefold()
+    assert "last_presented_service_price" not in repository.context
+    assert "confirm" not in port.calls
+
+
+@mark.asyncio
+async def test_address_required_price_question_still_gives_base_with_caveat() -> None:
+    """An explicit question before address must remain answerable without final-price claims."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Diagnóstico / manutenção corretiva")
+    ]
+    port.intake = replace(port.intake, requires_address=True)
+
+    await ConversationEngine(repository, port).process(
+        inbound(99102, body="Quanto custa essa visita?")
+    )
+    body = " ".join(
+        message.body or ""
+        for message in (
+            repository.outbounds[-1].transition.outbound,
+            *repository.outbounds[-1].transition.follow_ups,
+        )
+    ).casefold()
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert "r$" in body
+    assert "endereço" in body
+    assert "valor final" in body
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+
+
 @mark.asyncio
 async def test_same_inbound_is_idempotent_with_deterministic_unique_key() -> None:
     repository = FakeConversationRepository()
