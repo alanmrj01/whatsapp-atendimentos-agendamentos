@@ -7231,3 +7231,80 @@ async def test_address_revalidation_requests_only_new_time_when_selected_slot_ch
     assert "horário que você escolheu não está mais disponível" in body
     assert "qual dia da semana" not in body.casefold()
     assert "R$ 180,00" not in body
+
+
+@mark.parametrize(
+    "address",
+    [
+        "Rua das Oliveiras, 15 - Jardim Claro, Jacareí - SP, CEP 12306-740, CASA 68",
+        "Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, CASA 68",
+        "Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, CEP 12306-740. CASA 68",
+    ],
+)
+@mark.asyncio
+async def test_late_address_with_trailing_details_preserves_selected_slot(
+    address: str,
+) -> None:
+    """An explicit city preceding CEP/house details must not trigger a new booking day."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+        },
+        customer_name="Cliente Fictício",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    booking_port.business_city = "Cidade de Origem"
+    booking_port.business_state = "SP"
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(98231, body=address)
+    )
+
+    saved_address = repository.context.get("service_address")
+    assert saved_address is not None, "Valid city already supplied must be recognized"
+    assert saved_address["city"] == "Jacareí"
+    assert saved_address["state"] == "SP"
+    assert "CASA 68" in saved_address["address_line"]
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert repository.state not in {
+        ConversationState.BOOKING_ADDRESS,
+        ConversationState.BOOKING_WEEKDAY,
+        ConversationState.BOOKING_DATE,
+        ConversationState.BOOKING_TIME,
+    }
+
+
+@mark.parametrize(
+    "address",
+    [
+        "Rua das Oliveiras, 15, Jardim Claro, CEP 12306-740, CASA 68",
+        "Rua das Oliveiras, 15, Jardim Claro, SP, CASA 68",
+    ],
+)
+@mark.asyncio
+async def test_late_address_without_city_never_invents_municipality(
+    address: str,
+) -> None:
+    """A trailing CEP or state alone must not be treated as a municipality."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Fictício",
+    )
+    booking_port = FakeBookingPort()
+    booking_port.intake = replace(booking_port.intake, requires_address=True)
+    booking_port.business_city = "Cidade de Origem"
+    booking_port.business_state = "SP"
+
+    await ConversationEngine(repository, booking_port).process(
+        inbound(98232, body=address)
+    )
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context.get("awaiting_address_city") is True
+    assert "service_address" not in repository.context
