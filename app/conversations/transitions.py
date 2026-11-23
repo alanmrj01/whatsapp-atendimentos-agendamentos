@@ -5296,6 +5296,20 @@ def _split_city_state_label(value: str) -> tuple[str, str | None]:
     return raw, None
 
 
+def _is_trailing_address_detail(segment: str) -> bool:
+    """Ignore CEP/unit details only when locating the municipality, never discard them."""
+    normalized = normalize_portuguese(segment)
+    return bool(
+        re.match(
+            r"^(?:cep\s*[:\-]?\s*\d{5}[-\s]?\d{3}\b"
+            r"|\d{5}[-\s]?\d{3}\b"
+            r"|(?:casa|apto|apartamento|bloco|sala|complemento|quadra|lote|fundos)\s*"
+            r"(?:n[oº]?\s*)?\d+\b)",
+            normalized,
+        )
+    )
+
+
 def _service_address_from_text(
     value: str,
     *,
@@ -5308,11 +5322,15 @@ def _service_address_from_text(
         for segment in re.split(r"[,\n]+", expanded)
         if segment.strip()
     ]
+    trailing_details: list[str] = []
+    while len(raw_segments) >= 2 and _is_trailing_address_detail(raw_segments[-1]):
+        trailing_details.insert(0, raw_segments.pop())
+
     city: str | None = None
     state: str | None = None
     remove_count = 0
 
-    alias = _city_alias_from_text(expanded)
+    alias = _city_alias_from_text(", ".join(raw_segments))
     if raw_segments:
         trailing_state = _state_code_from_segment(raw_segments[-1])
         if trailing_state is not None:
@@ -5344,7 +5362,7 @@ def _service_address_from_text(
             if normalize_portuguese(candidate_city) == normalize_portuguese(city):
                 state = candidate_state or state
                 remove_count += 1
-    elif len(raw_segments) - remove_count >= 3 and city_index >= 2:
+    elif city_index >= 1:
         candidate_city, candidate_state = _split_city_state_label(
             raw_segments[city_index]
         )
@@ -5355,6 +5373,11 @@ def _service_address_from_text(
             and not any(character.isdigit() for character in normalized_candidate)
             and first_word not in _NEIGHBORHOOD_MARKERS
             and 1 <= len(normalized_candidate.split()) <= 5
+            and (
+                len(raw_segments) - remove_count >= 3
+                or candidate_state is not None
+                or remove_count > 0
+            )
         ):
             city = candidate_city
             state = candidate_state or state
@@ -5363,6 +5386,7 @@ def _service_address_from_text(
     address_segments = (
         raw_segments[:-remove_count] if remove_count else raw_segments
     )
+    address_segments.extend(trailing_details)
     address_line = ", ".join(address_segments) if address_segments else expanded
     return ServiceAddress(
         address_line=address_line,
@@ -5385,18 +5409,35 @@ def _address_has_city_or_state(
         if f" {city} " in padded:
             return True
 
-    if _city_alias_from_text(value) is not None:
+    raw_segments = [
+        segment.strip()
+        for segment in re.split(r"[,\n]+", value)
+        if segment.strip()
+    ]
+    while len(raw_segments) >= 2 and _is_trailing_address_detail(raw_segments[-1]):
+        raw_segments.pop()
+    if _city_alias_from_text(", ".join(raw_segments)) is not None:
         return True
 
     # UF sozinha não identifica o município. Removemos um segmento final que
     # contenha apenas UF/estado e exigimos uma cidade explícita antes dele.
-    segments = [
-        normalize_portuguese(segment)
-        for segment in re.split(r"[,\n]+", value)
-        if normalize_portuguese(segment)
-    ]
+    segments = [normalize_portuguese(segment) for segment in raw_segments]
     if segments and _state_code_from_segment(segments[-1]) is not None:
         segments = segments[:-1]
+    if len(segments) >= 2:
+        city_segment = raw_segments[len(segments) - 1]
+        city_label, explicit_state = _split_city_state_label(city_segment)
+        normalized_city = normalize_portuguese(city_label)
+        city_words = normalized_city.split()
+        separate_state = len(raw_segments) > len(segments)
+        if (
+            (explicit_state is not None or separate_state)
+            and city_words
+            and city_words[0] not in _NEIGHBORHOOD_MARKERS
+            and not any(character.isdigit() for character in normalized_city)
+            and len(city_words) <= 5
+        ):
+            return True
     if len(segments) >= 3:
         last = segments[-1]
         first_word = last.split()[0] if last.split() else ""
