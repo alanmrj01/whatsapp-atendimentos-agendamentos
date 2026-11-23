@@ -7577,3 +7577,68 @@ async def test_address_with_explicit_property_correction_is_not_silently_ignored
         )
     )
     assert repository.context.get("property_type") == "house"
+
+
+@mark.parametrize(
+    ("address", "detail"),
+    [
+        ("Rua das Oliveiras, 15, Centro, Jacareí - SP, BLOCO B", "BLOCO B"),
+        ("Rua das Oliveiras, 15, Centro, Jacareí - SP, TORRE A", "TORRE A"),
+        ("Rua das Oliveiras, 15, Centro, Jacareí - SP, FUNDOS", "FUNDOS"),
+        ("Rua das Oliveiras, 15, Centro, Jacareí - SP, APTO 101B", "APTO 101B"),
+    ],
+)
+@mark.asyncio
+async def test_alphanumeric_address_suffix_preserves_city_and_slot(
+    address: str, detail: str,
+) -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "property_type": "building",
+        },
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.intake = replace(port.intake, requires_address=True)
+    port.business_city = "Cidade de Origem"
+    port.business_state = "SP"
+    await ConversationEngine(repository, port).process(inbound(98261, body=address))
+    saved = repository.context.get("service_address")
+    assert saved is not None
+    assert saved.get("city") == "Jacareí"
+    assert saved.get("state") == "SP"
+    assert detail.lower() in saved.get("address_line", "").lower()
+    assert repository.context.get("selected_date") == "2026-09-02"
+    assert repository.context.get("selected_time") == "09:00"
+    assert repository.context.get("property_type") == "building"
+
+
+@mark.parametrize(
+    "address",
+    [
+        "Rua das Oliveiras, 15, Centro, BLOCO B",
+        "Rua das Oliveiras, 15, Centro, TORRE A",
+        "Rua das Oliveiras, 15, Centro, FUNDOS",
+    ],
+)
+@mark.asyncio
+async def test_alphanumeric_suffix_without_city_does_not_invent_municipality(
+    address: str,
+) -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.intake = replace(port.intake, requires_address=True)
+    port.business_city = "Cidade de Origem"
+    port.business_state = "SP"
+    await ConversationEngine(repository, port).process(inbound(98262, body=address))
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context.get("awaiting_address_city") is True
+    assert "service_address" not in repository.context
