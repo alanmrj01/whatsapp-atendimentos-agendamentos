@@ -7312,3 +7312,86 @@ async def test_late_address_without_city_never_invents_municipality(
     assert repository.state == ConversationState.BOOKING_ADDRESS
     assert repository.context.get("awaiting_address_city") is True
     assert "service_address" not in repository.context
+
+
+@mark.parametrize(
+    ("address", "suffix"),
+    [
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, APTO 42", "APTO 42"),
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, BLOCO 3", "BLOCO 3"),
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, SALA 12", "SALA 12"),
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, QUADRA 4", "QUADRA 4"),
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, LOTE 9", "LOTE 9"),
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, FUNDOS 2", "FUNDOS 2"),
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, COMPLEMENTO 101", "COMPLEMENTO 101"),
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, CEP 12306-740, APTO 42", "APTO 42"),
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP\nAPTO 45", "APTO 45"),
+        ("Rua das Oliveiras, 15, Jardim Claro, Jacareí - SP, CASA 68", "CASA 68"),
+    ],
+)
+@mark.asyncio
+async def test_address_suffix_matrix_preserves_context_without_property_inference(
+    address: str, suffix: str,
+) -> None:
+    """A suffix in an address is not a new fact about property type or service scope."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "property_type": "building",
+        },
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.intake = replace(port.intake, requires_address=True)
+    port.business_city = "Cidade de Origem"
+    port.business_state = "SP"
+    await ConversationEngine(repository, port).process(inbound(98233, body=address))
+
+    saved = repository.context.get("service_address")
+    assert saved is not None, f"Address rejected: {address!r}"
+    assert saved["city"] == "Jacareí"
+    assert saved["state"] == "SP"
+    assert suffix.casefold() in saved["address_line"].casefold()
+    assert repository.context.get("property_type") == "building"
+    assert repository.context.get("selected_date") == "2026-09-02"
+    assert repository.context.get("selected_time") == "09:00"
+    assert repository.state not in {
+        ConversationState.BOOKING_ADDRESS,
+        ConversationState.BOOKING_WEEKDAY,
+        ConversationState.BOOKING_DATE,
+        ConversationState.BOOKING_TIME,
+    }
+
+
+@mark.parametrize(
+    "address",
+    [
+        "Rua das Oliveiras, 15, Jardim Claro, CEP 12306-740, APTO 42",
+        "Rua das Oliveiras, 15, Jardim Claro, BLOCO 3",
+        "Rua das Oliveiras, 15, Jardim Claro, SALA 12",
+        "Rua das Oliveiras, 15, Jardim Claro, CASA 12",
+        "Rua das Oliveiras, 15, Jardim Claro, CEP 12306-740",
+        "Rua das Oliveiras, 15, Jardim Claro, APTO 11, CEP 12306-740",
+    ],
+)
+@mark.asyncio
+async def test_address_suffix_without_municipality_never_advances_booking(
+    address: str,
+) -> None:
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.intake = replace(port.intake, requires_address=True)
+    port.business_city = "Cidade de Origem"
+    port.business_state = "SP"
+    await ConversationEngine(repository, port).process(inbound(98234, body=address))
+
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert repository.context.get("awaiting_address_city") is True
+    assert "service_address" not in repository.context
