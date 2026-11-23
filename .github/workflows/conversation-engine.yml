@@ -81,7 +81,8 @@ jobs:
           pytest
           tests/test_conversation_interpreter.py
           tests/test_conversation_engine.py
-          tests/conversation_stress/test_round3_orchestration.py
+          tests/test_conversation_robustness.py
+          tests/conversation_stress
           tests/test_conversation_repository.py
           tests/test_service_semantics.py
           tests/test_handoff_reactivation.py
