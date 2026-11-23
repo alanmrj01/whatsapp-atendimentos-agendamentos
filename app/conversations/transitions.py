@@ -5377,8 +5377,9 @@ def _is_trailing_address_detail(segment: str) -> bool:
         re.match(
             r"^(?:cep\s*[:\-]?\s*\d{5}[-\s]?\d{3}\b"
             r"|\d{5}[-\s]?\d{3}\b"
-            r"|(?:casa|apto|apartamento|bloco|sala|complemento|quadra|lote|fundos)\s*"
-            r"(?:n[oº]?\s*)?\d+\b)",
+            r"|(?:casa|apto|apartamento|bloco|sala|complemento|quadra|lote|torre)\s*"
+            r"(?:n[oº]?\s*)?(?:\d+[a-z]?|[a-z])\b"
+            r"|fundos(?:\s+\d+[a-z]?)?\b)",
             normalized,
         )
     )
