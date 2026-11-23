@@ -105,7 +105,10 @@ async def test_explicit_property_restriction_remains_a_valid_site_limit(
     assert repository.context["site_allowed_end"] == expected
     assert repository.context["quantity"] == 2
     assert repository.context["service_address"] == SERVICE_ADDRESS
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert "selected_date" not in repository.context
+    assert "selected_time" not in repository.context
+    assert repository.automation_enabled is True
 
 
 @pytest.mark.asyncio
@@ -116,4 +119,7 @@ async def test_compact_answer_remains_valid_at_site_limit_checkpoint() -> None:
 
     assert repository.context["site_limit_answered"] is True
     assert repository.context["site_allowed_end"] == "17:00"
-    assert repository.state == ConversationState.BOOKING_DATE
+    assert repository.state == ConversationState.BOOKING_WEEKDAY
+    assert "selected_date" not in repository.context
+    assert "selected_time" not in repository.context
+    assert repository.automation_enabled is True
