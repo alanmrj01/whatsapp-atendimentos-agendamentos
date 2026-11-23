@@ -7690,6 +7690,11 @@ async def test_general_property_service_question_without_question_mark_keeps_boo
             "Rua das Oliveiras, 15, Centro, Jacareí - SP",
             "condominium",
         ),
+        (
+            "Corrigindo, não é casa, é apartamento. O endereço é "
+            "Rua das Oliveiras, 15, Centro, Jacareí - SP",
+            "building",
+        ),
     ],
 )
 @mark.asyncio
