@@ -3729,6 +3729,26 @@ async def _service_question_answer(
                     f"Esse valor fica acima do limite de {budget_text} que você informou."
                 )
 
+        if (
+            plan is not None
+            and plan.service.estimated_price is not None
+            and _context_string(context, "fulfillment_type")
+            not in {"equipment_delivery", "equipment_pickup"}
+            and ServiceAddress.from_snapshot(context.get("service_address")) is None
+        ):
+            try:
+                price_intake = await port.get_service_intake(
+                    inbound.business_id, target_id
+                )
+            except BookingRequiresHandoff:
+                price_intake = None
+            if price_intake is not None and price_intake.requires_address:
+                parts.append(
+                    "Para confirmar o valor, ainda preciso do endereço do serviço. "
+                    "Se houver adicional de deslocamento previsto nas regras da "
+                    "empresa, ele será considerado após essa informação."
+                )
+
     if interpretation.has(ConversationIntent.DURATION_QUESTION):
         if plan is None:
             parts.append(
