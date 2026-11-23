@@ -433,6 +433,18 @@ async def determine_transition(
             r"(casa|apartamento|apto|predio|condominio)\b",
             normalized_inbound,
         )
+        if explicit_property is None:
+            # A correction can state the new property without the fixed "o local e" label.
+            # Restrict to the clause before the address and never capture a negated value.
+            correction_clause = re.split(
+                r"\b(?:o\s+)?endereco\b", normalized_inbound, maxsplit=1
+            )[0]
+            explicit_property = re.search(
+                r"(?<!nao )\b(?:e|sera|vai ser|mudou para)\s+"
+                r"(?:em\s+)?(?:um[a]?\s+)?"
+                r"(casa|apartamento|apto|predio|condominio)\b",
+                correction_clause,
+            )
         if explicit_property is not None:
             property_kind = (
                 "house" if explicit_property.group(1) == "casa"
