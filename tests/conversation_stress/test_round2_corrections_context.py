@@ -201,21 +201,27 @@ async def test_late_address_correction_preserves_safe_facts_and_restarts_dates(
         },
     )
 
-    await ConversationEngine(repository, FakeBookingPort()).process(
+    booking_port = FakeBookingPort()
+    await ConversationEngine(repository, booking_port).process(
         inbound(203, body=body)
     )
 
-    assert repository.state == ConversationState.BOOKING_DATE
+    # Uma nova rota exige revalidar o slot escolhido, não começar do zero.
+    assert repository.state == ConversationState.BOOKING_ATTENDEE
     assert repository.context["service_id"] == str(SERVICE_ID)
     assert repository.context["quantity"] == 2
     assert repository.context["property_type"] == "house"
     assert repository.context["onsite_contact_name"] == "Marina"
     assert repository.customer_name == "Marina Cliente"
     assert repository.context["service_address"] != OLD_ADDRESS
-    assert "selected_date" not in repository.context
-    assert "selected_time" not in repository.context
-    assert "candidate_booking" not in repository.context
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert "schedule_revalidation_required" not in repository.context
     assert "quote_presented" not in repository.context
+    assert "times" in booking_port.calls
+    assert booking_port.confirmations == []
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
 
 
 @pytest.mark.asyncio
@@ -234,19 +240,36 @@ async def test_incomplete_address_correction_stops_using_old_route_and_asks_city
         },
     )
 
-    await ConversationEngine(repository, FakeBookingPort()).process(
-        inbound(206, body="corrigindo, o endereço é Rua Nova, 123")
-    )
+    booking_port = FakeBookingPort()
+    # O horário anterior deixa de estar disponível após informar a nova rota.
+    booking_port.times = [BookingOption("14:30", "14:30")]
+    engine = ConversationEngine(repository, booking_port)
+    await engine.process(inbound(206, body="corrigindo, o endereço é Rua Nova, 123"))
 
     assert repository.state == ConversationState.BOOKING_ADDRESS
     assert repository.context["pending_service_address"] == "Rua Nova, 123"
     assert repository.context["quantity"] == 2
     assert repository.context["property_type"] == "house"
     assert "service_address" not in repository.context
-    assert "selected_date" not in repository.context
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert "quote_presented" not in repository.context
+    assert booking_port.confirmations == []
+    assert repository.handoff_status == "none"
+
+    await engine.process(inbound(207, body="Taubaté - SP"))
+
+    assert repository.context["service_address"]["city"] == "Taubaté"
+    assert repository.context["service_address"]["address_line"] == "Rua Nova, 123"
+    assert repository.state == ConversationState.BOOKING_TIME
+    assert repository.context["selected_date"] == "2026-09-02"
     assert "selected_time" not in repository.context
     assert "candidate_booking" not in repository.context
-    assert "quote_presented" not in repository.context
+    assert "schedule_revalidation_required" not in repository.context
+    assert "times" in booking_port.calls
+    assert booking_port.confirmations == []
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
 
 
 @pytest.mark.asyncio
