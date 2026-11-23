@@ -2040,6 +2040,90 @@ async def test_address_required_price_question_still_gives_base_with_caveat() ->
     assert repository.handoff_status == "none"
 
 
+@mark.parametrize(
+    ("pricing_type", "service_label"),
+    [
+        (PricingType.FIXED, "Limpeza e higienização de ar-condicionado"),
+        (PricingType.ESTIMATED, "Limpeza e higienização de ar-condicionado"),
+        (PricingType.ESTIMATED, "Diagnóstico / manutenção corretiva"),
+    ],
+)
+@mark.asyncio
+async def test_requested_price_before_required_address_explains_route_condition(
+    pricing_type: PricingType, service_label: str,
+) -> None:
+    """A requested pre-address amount must not sound like a final location-inclusive price."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.services = [BookingOption(str(SERVICE_ID), service_label)]
+    port.intake = replace(
+        port.intake, pricing_type=pricing_type, requires_address=True
+    )
+    port.plan = replace(
+        port.plan,
+        service=replace(port.plan.service, pricing_type=pricing_type),
+    )
+
+    await ConversationEngine(repository, port).process(
+        inbound(99301, body="Qual é o preço desse serviço?")
+    )
+
+    transition = repository.outbounds[-1].transition
+    message = " ".join(
+        item.body or "" for item in
+        (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "r$ 100,00" in message
+    assert "endereço" in message
+    assert "deslocamento" in message
+    assert "se houver" in message
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert "service_address" not in repository.context
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+
+
+@mark.parametrize("has_address", (False, True))
+@mark.asyncio
+async def test_requested_price_without_missing_address_does_not_add_route_caveat(
+    has_address: bool,
+) -> None:
+    """No caveat is added if the configured service does not need an address, or it is known."""
+    context: dict[str, Any] = {"service_id": str(SERVICE_ID)}
+    if has_address:
+        context["service_address"] = {
+            "address_line": "Rua Fictícia 20",
+            "city": "Jacareí",
+            "state": "SP",
+        }
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context=context,
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Limpeza e higienização de ar-condicionado")
+    ]
+    port.intake = replace(port.intake, requires_address=has_address)
+
+    await ConversationEngine(repository, port).process(
+        inbound(99302, body="Qual é o preço desse serviço?")
+    )
+    transition = repository.outbounds[-1].transition
+    answer = " ".join(
+        item.body or "" for item in
+        (transition.outbound, *transition.follow_ups)
+    ).casefold()
+    assert "r$ 100,00" in answer
+    assert "deslocamento" not in answer
+    assert repository.automation_enabled is True
+
+
 @mark.asyncio
 async def test_same_inbound_is_idempotent_with_deterministic_unique_key() -> None:
     repository = FakeConversationRepository()
