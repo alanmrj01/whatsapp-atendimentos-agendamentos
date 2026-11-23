@@ -226,10 +226,23 @@ async def test_incomplete_late_address_correction_discards_old_route_and_city() 
     assert repository.state == ConversationState.BOOKING_ADDRESS
     assert repository.context["pending_service_address"] == "Rua Nova, 123"
     assert "service_address" not in repository.context
-    assert "selected_date" not in repository.context
-    assert "selected_time" not in repository.context
-    assert "candidate_booking" not in repository.context
+    # O agendamento pode preservar a escolha, mas nunca a rota antiga.
+    # O horário será revalidado apenas quando a cidade for informada.
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
     assert "quote_presented" not in repository.context
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+
+    await engine.process(inbound(2031, body="São José dos Campos - SP"))
+
+    assert repository.context["service_address"]["city"] == "São José dos Campos"
+    assert repository.context["service_address"]["address_line"] == "Rua Nova, 123"
+    assert repository.context["selected_date"] == "2026-09-02"
+    assert repository.context["selected_time"] == "09:00"
+    assert "schedule_revalidation_required" not in repository.context
+    assert repository.state == ConversationState.BOOKING_ATTENDEE
+    assert repository.handoff_status == "none"
 
 
 @pytest.mark.asyncio
