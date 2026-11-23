@@ -96,6 +96,27 @@ jobs:
           tests/test_whatsapp_webhook.py
           -q -p no:cacheprovider
 
+      # Invariantes essenciais executados em toda alteração do motor,
+      # mesmo quando a mudança parecer restrita a uma resposta comercial.
+      - name: Critical customer journeys smoke
+        run: >-
+          pytest
+          tests/test_whatsapp_webhook.py::test_active_fixed_exclusion_prevents_engine_and_outbound
+          tests/test_whatsapp_webhook.py::test_legacy_local_exclusion_blocks_canonical_inbound_before_engine
+          tests/test_outbound_tasks.py::test_repository_final_send_barrier_blocks_legacy_local_exclusion
+          tests/test_conversation_engine.py::test_full_booking_flow_persists_canonical_states_and_context
+          tests/test_conversation_engine.py::test_installation_quote_request_prioritizes_service_over_equipment_catalog
+          tests/test_conversation_engine.py::test_installation_quote_collects_tubing_before_address_and_pricing
+          tests/test_conversation_engine.py::test_address_required_price_question_still_gives_base_with_caveat
+          tests/test_conversation_engine.py::test_required_service_address_is_collected_only_after_date_and_time
+          tests/test_conversation_engine.py::test_selected_time_collects_attendee_and_confirms_whatsapp_before_final_confirmation
+          tests/test_conversation_engine.py::test_slot_unavailable_does_not_complete_booking
+          tests/test_conversation_engine.py::test_handoff_creates_last_outbound_then_disables_automation
+          tests/test_conversation_engine.py::test_book_request_while_choosing_service_does_not_loop_menu_copy
+          tests/test_conversation_engine.py::test_repeated_invalid_interactive_id_handoffs_instead_of_looping
+          tests/test_booking_availability.py::test_real_confirmation_still_rejects_missing_required_address
+          -q -p no:cacheprovider
+
       - name: Critical lifecycle on physical PostgreSQL
         run: >-
           pytest
