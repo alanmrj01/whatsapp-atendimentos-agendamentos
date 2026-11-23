@@ -650,13 +650,31 @@ async def determine_transition(
             inbound.body,
         )
 
+    route_inbound = (
+        replace(inbound, body=property_correction_address)
+        if property_correction_address is not None else inbound
+    )
     transition = await _route_named_conversation(
         conversation,
-        inbound,
+        route_inbound,
         context,
         interpretation,
         booking_port,
     )
+    if (
+        transition is not None
+        and property_correction_changed
+        and transition.state in {
+            ConversationState.BOOKING_WEEKDAY,
+            ConversationState.BOOKING_DATE,
+            ConversationState.BOOKING_TIME,
+        }
+    ):
+        transition = _prepend_transition_body(
+            transition,
+            "Atualizei o tipo do imóvel. Como isso pode mudar a disponibilidade, "
+            "vou conferir as opções de agendamento novamente.",
+        )
     if transition is not None:
         if captured_name is not None:
             transition = replace(transition, customer_name=captured_name)
@@ -1426,22 +1444,8 @@ async def _route_named_conversation(
         )
     elif state is ConversationState.BOOKING_ADDRESS:
         transition = await _handle_address(
-            replace(inbound, body=property_correction_address)
-            if property_correction_address is not None else inbound,
-            context,
-            booking_port,
-            customer_name=customer_name,
+            inbound, context, booking_port, customer_name=customer_name
         )
-        if property_correction_changed and transition.state in {
-            ConversationState.BOOKING_WEEKDAY,
-            ConversationState.BOOKING_DATE,
-            ConversationState.BOOKING_TIME,
-        }:
-            transition = _prepend_transition_body(
-                transition,
-                "Atualizei o tipo do imóvel. Como isso pode mudar a disponibilidade, "
-                "vou conferir as opções de agendamento novamente.",
-            )
     elif state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
         transition = await _handle_equipment_ownership(
             inbound, context, action, booking_port, customer_name=customer_name
