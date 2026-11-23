@@ -399,6 +399,17 @@ async def determine_transition(
         state is ConversationState.BOOKING_ADDRESS
         and _looks_like_address(inbound.body)
     )
+    general_property_question = (
+        action is None
+        and state is not ConversationState.BOOKING_PROPERTY
+        and "?" in (inbound.body or "")
+        and re.search(r"\b(?:atendem?|fazem?|realizam?|trabalham?)\b", normalized_inbound)
+        and re.search(r"\b(?:casa|apartamento|apto|predio|condominio)\b", normalized_inbound)
+        and not re.search(
+            r"\b(?:meu|minha|o local|o imovel|o endereco|eu moro)\b",
+            normalized_inbound,
+        )
+    )
     context = (
         enrich_context_from_message(
             base_context,
@@ -410,8 +421,37 @@ async def determine_transition(
             base_context,
             inbound.body,
             whatsapp_id=inbound.whatsapp_id,
+            capture_property=not general_property_question,
         )
     )
+    property_correction_changed = False
+    property_correction_address: str | None = None
+    if address_reply and interpretation.has_act(ConversationAct.CORRECTION):
+        explicit_property = re.search(
+            r"\b(?:o local|o imovel|o servico|a propriedade)\s+"
+            r"(?:e|sera|vai ser)\s+(?:em\s+)?(?:um[a]?\s+)?"
+            r"(casa|apartamento|apto|predio|condominio)\b",
+            normalized_inbound,
+        )
+        if explicit_property is not None:
+            property_kind = (
+                "house" if explicit_property.group(1) == "casa"
+                else "condominium" if explicit_property.group(1) == "condominio"
+                else "building"
+            )
+            if property_kind != base_context.get("property_type"):
+                context = invalidate_changed_facts(
+                    base_context,
+                    {**context, "property_type": property_kind},
+                )
+                property_correction_changed = True
+            address_match = re.search(
+                r"\b(?:o\s+)?endere[cç]o\s*(?:é|e|eh)\s*[:\-]?\s*(.+)$",
+                inbound.body or "",
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if address_match is not None:
+                property_correction_address = address_match.group(1).strip()
     budget_updates = {
         key: value
         for key, value in (
@@ -1386,8 +1426,22 @@ async def _route_named_conversation(
         )
     elif state is ConversationState.BOOKING_ADDRESS:
         transition = await _handle_address(
-            inbound, context, booking_port, customer_name=customer_name
+            replace(inbound, body=property_correction_address)
+            if property_correction_address is not None else inbound,
+            context,
+            booking_port,
+            customer_name=customer_name,
         )
+        if property_correction_changed and transition.state in {
+            ConversationState.BOOKING_WEEKDAY,
+            ConversationState.BOOKING_DATE,
+            ConversationState.BOOKING_TIME,
+        }:
+            transition = _prepend_transition_body(
+                transition,
+                "Atualizei o tipo do imóvel. Como isso pode mudar a disponibilidade, "
+                "vou conferir as opções de agendamento novamente.",
+            )
     elif state is ConversationState.BOOKING_EQUIPMENT_OWNERSHIP:
         transition = await _handle_equipment_ownership(
             inbound, context, action, booking_port, customer_name=customer_name
