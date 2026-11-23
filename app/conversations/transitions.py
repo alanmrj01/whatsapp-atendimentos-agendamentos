@@ -10838,6 +10838,7 @@ async def _offer_dates(
         return await _restart_service_selection(inbound, port)
     requirements = _requirements_from_context(context)
     fulfillment_type = _context_string(context, "fulfillment_type")
+    defer_automatic_price = False
     try:
         plan = await port.estimate(
             inbound.business_id,
@@ -10846,6 +10847,13 @@ async def _offer_dates(
         )
         if plan.requires_handoff:
             return _handoff_for_reason(plan.handoff_reason)
+        if (
+            fulfillment_type not in {"equipment_delivery", "equipment_pickup"}
+            and context.get("quote_presented") is not True
+            and ServiceAddress.from_snapshot(context.get("service_address")) is None
+        ):
+            intake = await port.get_service_intake(inbound.business_id, service_id)
+            defer_automatic_price = intake.requires_address
         if fulfillment_type in {"equipment_delivery", "equipment_pickup"}:
             dates = _snapshot_options(
                 await port.list_dates(
@@ -10905,7 +10913,7 @@ async def _offer_dates(
     current_service_price = plan.service.estimated_price
     if fulfillment_type in {"equipment_delivery", "equipment_pickup"}:
         estimate = _fulfillment_schedule_intro(plan, context)
-    elif context.get("quote_presented") is True:
+    elif defer_automatic_price or context.get("quote_presented") is True:
         estimate = ""
     elif (
         current_service_price is not None
@@ -10936,6 +10944,7 @@ async def _offer_dates(
     next_context = _intake_context(context)
     if (
         fulfillment_type not in {"equipment_delivery", "equipment_pickup"}
+        and not defer_automatic_price
         and current_service_price is not None
     ):
         next_context["last_presented_service_price"] = str(current_service_price)

@@ -1936,6 +1936,110 @@ async def test_fixed_and_estimated_prices_use_plain_language() -> None:
         assert expected in repository.outbounds[-1].transition.outbound.body
 
 
+@mark.parametrize("pricing_type", (PricingType.FIXED, PricingType.ESTIMATED))
+@mark.asyncio
+async def test_address_required_booking_omits_automatic_price_before_address(
+    pricing_type: PricingType,
+) -> None:
+    """Do not announce a preliminary service amount that the address may change."""
+    from app.conversations.transitions import _offer_dates
+
+    port = FakeBookingPort()
+    port.intake = replace(
+        port.intake, requires_address=True, pricing_type=pricing_type
+    )
+    port.plan = replace(
+        port.plan,
+        service=replace(port.plan.service, pricing_type=pricing_type),
+    )
+
+    transition = await _offer_dates(
+        inbound(99101), port, {"service_id": str(SERVICE_ID)}
+    )
+
+    assert transition.state == ConversationState.BOOKING_WEEKDAY
+    body = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    )
+    assert "qual dia da semana" in body.casefold()
+    assert "R$ 100,00" not in body
+    assert "valor do serviço" not in body.casefold()
+    assert "valor estimado" not in body.casefold()
+    assert "last_presented_service_price" not in transition.context
+    assert "confirm" not in port.calls
+
+
+@mark.parametrize("pricing_type", (PricingType.FIXED, PricingType.ESTIMATED))
+@mark.asyncio
+async def test_address_completed_booking_can_present_calculated_price_at_schedule(
+    pricing_type: PricingType,
+) -> None:
+    """Do not hide the price once the address required for pricing is known."""
+    from app.conversations.transitions import _offer_dates
+
+    port = FakeBookingPort()
+    port.intake = replace(
+        port.intake, requires_address=True, pricing_type=pricing_type
+    )
+    port.plan = replace(
+        port.plan,
+        service=replace(port.plan.service, pricing_type=pricing_type),
+    )
+    transition = await _offer_dates(
+        inbound(99103),
+        port,
+        {
+            "service_id": str(SERVICE_ID),
+            "service_address": {
+                "address_line": "Rua Fictícia, 20",
+                "city": "Jacareí",
+                "state": "SP",
+            },
+        },
+    )
+    body = " ".join(
+        message.body or ""
+        for message in (transition.outbound, *transition.follow_ups)
+    )
+    assert transition.state == ConversationState.BOOKING_WEEKDAY
+    assert "R$ 100,00" in body
+    assert transition.context.get("last_presented_service_price") == "100.00"
+    assert "confirm" not in port.calls
+
+
+@mark.asyncio
+async def test_address_required_price_question_still_gives_base_with_caveat() -> None:
+    """An explicit question before address must remain answerable without final-price claims."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={"service_id": str(SERVICE_ID)},
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.services = [
+        BookingOption(str(SERVICE_ID), "Diagnóstico / manutenção corretiva")
+    ]
+    port.intake = replace(port.intake, requires_address=True)
+
+    await ConversationEngine(repository, port).process(
+        inbound(99102, body="Quanto custa essa visita?")
+    )
+    body = " ".join(
+        message.body or ""
+        for message in (
+            repository.outbounds[-1].transition.outbound,
+            *repository.outbounds[-1].transition.follow_ups,
+        )
+    ).casefold()
+    assert repository.state == ConversationState.BOOKING_ADDRESS
+    assert "r$" in body
+    assert "endereço" in body
+    assert "valor final" in body
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+
+
 @mark.asyncio
 async def test_same_inbound_is_idempotent_with_deterministic_unique_key() -> None:
     repository = FakeConversationRepository()
