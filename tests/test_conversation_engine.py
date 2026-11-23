@@ -7642,3 +7642,79 @@ async def test_alphanumeric_suffix_without_city_does_not_invent_municipality(
     assert repository.state == ConversationState.BOOKING_ADDRESS
     assert repository.context.get("awaiting_address_city") is True
     assert "service_address" not in repository.context
+
+
+@mark.parametrize(
+    "question",
+    [
+        "vcs atendem apartamento",
+        "vocês atendem em prédio",
+        "fazem manutenção em apartamento",
+        "trabalham em condomínio",
+        "atendem casa também",
+        "vocês fazem serviço em apartamento",
+    ],
+)
+@mark.asyncio
+async def test_general_property_service_question_without_question_mark_keeps_booking(
+    question: str,
+) -> None:
+    """A WhatsApp question without punctuation is not a new property declaration."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_TIME,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "property_type": "house",
+        },
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    await ConversationEngine(repository, port).process(inbound(98272, body=question))
+    assert repository.context.get("property_type") == "house"
+    assert repository.context.get("selected_date") == "2026-09-02"
+    assert repository.automation_enabled is True
+    assert repository.handoff_status == "none"
+
+
+@mark.parametrize(
+    ("correction", "expected_property"),
+    [
+        (
+            "Corrigindo, é um apartamento, não casa. O endereço é "
+            "Rua das Oliveiras, 15, Centro, Jacareí - SP",
+            "building",
+        ),
+        (
+            "Corrigindo, mudou para condomínio, não casa. O endereço é "
+            "Rua das Oliveiras, 15, Centro, Jacareí - SP",
+            "condominium",
+        ),
+        (
+            "Corrigindo, não é casa, é apartamento. O endereço é "
+            "Rua das Oliveiras, 15, Centro, Jacareí - SP",
+            "building",
+        ),
+    ],
+)
+@mark.asyncio
+async def test_explicit_property_correction_with_address_is_respected_without_fixed_label(
+    correction: str, expected_property: str,
+) -> None:
+    """Explicit customer changes must not be lost just because they accompany an address."""
+    repository = FakeConversationRepository(
+        state=ConversationState.BOOKING_ADDRESS,
+        context={
+            "service_id": str(SERVICE_ID),
+            "selected_date": "2026-09-02",
+            "selected_time": "09:00",
+            "property_type": "house",
+        },
+        customer_name="Cliente Fictício",
+    )
+    port = FakeBookingPort()
+    port.intake = replace(port.intake, requires_address=True)
+    port.business_city = "Cidade de Origem"
+    port.business_state = "SP"
+    await ConversationEngine(repository, port).process(inbound(98273, body=correction))
+    assert repository.context.get("property_type") == expected_property
