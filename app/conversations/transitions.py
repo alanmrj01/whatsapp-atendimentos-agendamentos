@@ -393,13 +393,19 @@ async def determine_transition(
         base_context.pop("inactivity_followup_pending_response", None)
         base_context.pop("inactivity_followup_outreach_id", None)
 
+    # A complete address is not a new property/quantity declaration:
+    # "CASA 68" must never invalidate a previously selected appointment slot.
+    address_reply = (
+        state is ConversationState.BOOKING_ADDRESS
+        and _looks_like_address(inbound.body)
+    )
     context = (
         enrich_context_from_message(
             base_context,
             None,
             whatsapp_id=inbound.whatsapp_id,
         )
-        if action is not None
+        if action is not None or address_reply
         else enrich_context_from_message(
             base_context,
             inbound.body,
